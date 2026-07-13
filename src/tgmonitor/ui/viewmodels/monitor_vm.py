@@ -1,0 +1,140 @@
+"""MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import asdict
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QObject, Signal
+
+from tgmonitor.core.dto import ChannelDTO, ExportRequest
+from tgmonitor.core.events import (
+    ChannelSubscribed,
+    ChannelUnsubscribed,
+    ErrorOccurred,
+    Event,
+    EventBus,
+    ExportDone,
+    LoginStateChanged,
+    MessageReceived,
+    SettingsChanged,
+)
+
+if TYPE_CHECKING:
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.monitor.service import MonitorService
+
+log = logging.getLogger(__name__)
+
+
+class MonitorViewModel(QObject):
+    message_received = Signal(dict)        # MessageDTO → dict
+    login_state = Signal(str)
+    channels_changed = Signal()
+    export_done = Signal(object, object)   # (result_dict | None, error | None)
+    error = Signal(str)
+    settings_changed = Signal(str, bool, str)  # (what, needs_relogin, backend_label)
+
+    def __init__(
+        self,
+        app: AppService,
+        monitor: MonitorService,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        super().__init__()
+        self.app = app
+        self.monitor = monitor
+        self.loop = loop
+        self.known_channels: dict[int, ChannelDTO] = {}
+        self._wire_bus()
+
+    def _wire_bus(self) -> None:
+        b: EventBus = self.app.bus
+        b.subscribe(MessageReceived, self._on_message_received)
+        b.subscribe(LoginStateChanged, self._on_login_state)
+        b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
+        b.subscribe(ChannelUnsubscribed, self._on_channel_unsubscribed)
+        b.subscribe(ExportDone, self._on_export_done)
+        b.subscribe(ErrorOccurred, self._on_error)
+        b.subscribe(SettingsChanged, self._on_settings_changed)
+
+    # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
+
+    async def _on_message_received(self, e: Event) -> None:
+        if not isinstance(e, MessageReceived) or e.message is None:
+            return
+        self.message_received.emit(asdict(e.message))
+
+    async def _on_login_state(self, e: Event) -> None:
+        if not isinstance(e, LoginStateChanged):
+            return
+        self.login_state.emit(e.state)
+
+    async def _on_channel_subscribed(self, e: Event) -> None:
+        if not isinstance(e, ChannelSubscribed) or e.channel is None:
+            return
+        self.known_channels[e.channel.id] = e.channel
+        self.monitor.add_to_whitelist(e.channel.id)
+        self.channels_changed.emit()
+
+    async def _on_channel_unsubscribed(self, e: Event) -> None:
+        if not isinstance(e, ChannelUnsubscribed):
+            return
+        self.monitor.remove_from_whitelist(e.channel_id)
+        self.channels_changed.emit()
+
+    async def _on_export_done(self, e: Event) -> None:
+        if not isinstance(e, ExportDone):
+            return
+        if e.error:
+            self.export_done.emit(None, e.error)
+        elif e.result is not None:
+            self.export_done.emit(asdict(e.result), None)
+
+    async def _on_error(self, e: Event) -> None:
+        if not isinstance(e, ErrorOccurred):
+            return
+        self.error.emit(f"[{e.source}] {e.message}")
+
+    async def _on_settings_changed(self, e: Event) -> None:
+        if not isinstance(e, SettingsChanged):
+            return
+        new = e.new_settings
+        if new is None:
+            return
+        backend_label = (
+            f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
+        )
+        self.settings_changed.emit(e.what, e.needs_relogin, backend_label)
+
+    # ---- UI 主动调用 ----
+
+    def refresh_joined_channels(self) -> None:
+        async def _go() -> None:
+            chs = await self.app.list_joined_channels()
+            for ch in chs:
+                self.known_channels[ch.id] = ch
+            self.channels_changed.emit()
+        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+
+    def subscribe_channel(self, ch: ChannelDTO) -> None:
+        asyncio.run_coroutine_threadsafe(self.app.subscribe_channel(ch), self.loop)
+
+    def unsubscribe_channel(self, channel_id: int) -> None:
+        async def _go() -> None:
+            await self.app.unsubscribe_channel(channel_id)
+        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+
+    def load_recent_messages(self) -> None:
+        async def _go() -> None:
+            msgs = await self.app.list_messages(limit=200)
+            for m in msgs:
+                self.message_received.emit(asdict(m))
+        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+
+    def start_export(self, req: ExportRequest) -> None:
+        async def _go() -> None:
+            async for _ in self.app.export(req):
+                pass
+        asyncio.run_coroutine_threadsafe(_go(), self.loop)

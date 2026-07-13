@@ -1,0 +1,22 @@
+# CODEOWNERS — 自动给指定 maintainer 分配 review
+# 路径    @github用户名
+
+# 全局默认 owner
+*       @forcetone
+
+# 核心架构
+/src/tgmonitor/core/          @forcetone
+/src/tgmonitor/app.py         @forcetone
+
+# 数据库相关
+/src/tgmonitor/core/storage/  @forcetone
+
+# 对象存储
+/src/tgmonitor/core/objectstore/ @forcetone
+
+# TDLib 集成
+/src/tgmonitor/core/telegram/  @forcetone
+
+# 安全敏感
+/SECURITY.md    @forcetone
+/.env.example   @forcetone

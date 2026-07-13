@@ -1,0 +1,52 @@
+# Auto detect text files and normalize line endings
+* text=auto eol=lf
+
+# Source code
+*.py    text eol=lf
+*.pyi   text eol=lf
+
+# Config
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+*.ini   text eol=lf
+*.cfg   text eol=lf
+
+# Documentation
+*.md    text eol=lf
+*.txt   text eol=lf
+LICENSE text eol=lf
+
+# Shell
+*.sh    text eol=lf
+
+# SQL
+*.sql   text eol=lf
+
+# Binary / 不要 diff
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+
+# Python
+__pycache__/      export-ignore
+*.py[cod]         export-ignore
+*.egg-info/       export-ignore
+.pytest_cache/    export-ignore
+.ruff_cache/      export-ignore
+.venv/            export-ignore
+dist/             export-ignore
+build/            export-ignore
+
+# Session / 数据 — 默认排除,绝对不能进 git
+data/             export-ignore
+*.db              export-ignore
+*.sqlite          export-ignore
+.env              export-ignore

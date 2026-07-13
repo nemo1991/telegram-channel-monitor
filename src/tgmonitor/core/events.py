@@ -1,0 +1,147 @@
+"""EventBus — core 内部 + core↔UI 的事件通道。
+
+设计:
+- 全部 `async`,UI 在订阅回调里通过 Qt signal 转线程安全更新
+- 事件载荷用 `Event` 子类,字段公开
+- 订阅者抛异常被吞掉 + 日志,不互相影响
+- 无第三方依赖,纯 asyncio(避免 aio-pika / redis 之类)
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Awaitable, Callable, TypeVar
+
+from tgmonitor.core.dto import ChannelDTO, ExportResult, MessageDTO
+
+log = logging.getLogger(__name__)
+
+T = TypeVar("T", bound="Event")
+
+
+# ---------- 领域事件 ----------
+
+@dataclass
+class Event:
+    """所有领域事件的基类。"""
+
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class LoginStateChanged(Event):
+    """登录状态机状态变化。"""
+
+    state: str = "unknown"   # phone_required | code_required | password_required | ready | error
+    detail: str = ""
+
+
+@dataclass
+class ChannelDiscovered(Event):
+    """TelegramClient 枚举到的新频道(尚未加入监听白名单)。"""
+
+    channel: ChannelDTO | None = None
+
+
+@dataclass
+class ChannelSubscribed(Event):
+    """用户将一个频道加入监听白名单。"""
+
+    channel: ChannelDTO | None = None
+
+
+@dataclass
+class ChannelUnsubscribed(Event):
+    channel_id: int = 0
+
+
+@dataclass
+class MessageReceived(Event):
+    """一条新消息已成功落库(可被 UI 视为"立即可见")。"""
+
+    message: MessageDTO | None = None
+
+
+@dataclass
+class MessageDeleted(Event):
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+
+
+@dataclass
+class ExportProgress(Event):
+    request_id: str = ""
+    written: int = 0
+    total: int | None = None
+
+
+@dataclass
+class ExportDone(Event):
+    request_id: str = ""
+    result: ExportResult | None = None
+    error: str | None = None
+
+
+@dataclass
+class ErrorOccurred(Event):
+    source: str = ""
+    message: str = ""
+    exception: BaseException | None = None
+
+
+@dataclass
+class SettingsChanged(Event):
+    """设置已变更(已热重载的部分)。"""
+
+    what: str = ""               # "storage" | "objectstore" | "credentials"
+    new_settings: object | None = None  # Settings 实例(供 UI 同步)
+    needs_relogin: bool = False  # True 表示 Telegram 凭据改了,需登出再登入
+    needs_restart: bool = False  # 保留扩展
+
+
+# ---------- Bus ----------
+
+Subscriber = Callable[[Any], Awaitable[None]]
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._subs: dict[type[Event], list[Subscriber]] = {}
+        self._wild: list[Subscriber] = []  # 订阅所有事件
+
+    def subscribe(self, event_type: type[T], fn: Subscriber) -> None:
+        self._subs.setdefault(event_type, []).append(fn)
+
+    def subscribe_all(self, fn: Subscriber) -> None:
+        self._wild.append(fn)
+
+    def unsubscribe(self, event_type: type[Event], fn: Subscriber) -> None:
+        if event_type in self._subs:
+            try:
+                self._subs[event_type].remove(fn)
+            except ValueError:
+                pass
+
+    async def publish(self, event: Event) -> None:
+        # 基类匹配
+        subs: list[Subscriber] = []
+        for cls in type(event).__mro__:
+            if cls is Event:
+                break
+            subs.extend(self._subs.get(cls, []))
+        for fn in subs:
+            try:
+                await fn(event)
+            except Exception:  # noqa: BLE001
+                log.exception("event subscriber raised: %r", fn)
+        for fn in self._wild:
+            try:
+                await fn(event)
+            except Exception:  # noqa: BLE001
+                log.exception("wildcard subscriber raised: %r", fn)
+
+    def publish_threadsafe(self, loop: asyncio.AbstractEventLoop, event: Event) -> None:
+        """从其它线程安全地发布事件(后台下载任务等用)。"""
+        asyncio.run_coroutine_threadsafe(self.publish(event), loop)

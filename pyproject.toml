@@ -1,0 +1,68 @@
+[project]
+name = "tgmonitor"
+version = "0.1.0"
+description = "Telegram 频道监听桌面应用 — UI 与 core 分离,监听/保存/导出 三大组件边界清晰"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "forcetone" }]
+
+dependencies = [
+    # UI
+    "PySide6>=6.6",
+    "qasync>=0.27",
+    # Telegram 官方 (底层 TDLib)
+    "aiotdlib>=0.16",
+    # 配置
+    "pydantic-settings>=2.2",
+    # 导出
+    "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+# 选择性安装:实际用哪个 DB 就装哪个(或都装)
+postgres = ["asyncpg>=0.29"]
+mongo = ["motor>=3.4"]
+# 对象存储 (S3 协议: AWS S3 / MinIO / 阿里 OSS)
+objectstore = ["aioboto3>=13.0"]
+# 一键全装
+all = [
+    "tgmonitor[postgres,mongo,objectstore]",
+]
+
+[project.scripts]
+tgmonitor = "tgmonitor.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tgmonitor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC"]
+ignore = [
+    "E501",   # line length
+    "UP042",  # str + Enum is fine for pydantic-settings / json roundtrip
+    "UP035",  # typing.AsyncIterator is clearer for older readers
+    "SIM105", # contextlib.suppress is less obvious
+    "N818",   # exception naming — we use domain names
+    "B008",   # default-arg call sites in Qt widgets
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
