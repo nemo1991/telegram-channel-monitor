@@ -4,8 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
 from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 

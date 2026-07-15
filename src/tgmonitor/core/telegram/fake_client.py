@@ -51,25 +51,45 @@ class FakeTelegramClient(TelegramClient):
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
-        self._state = "code_required"
-        return self._state
+        # 旧版 Protocol 接口 — 保留向后兼容,内部转发到 submit_phone
+        return await self.submit_phone(phone)
 
-    async def submit_code(self, code: str) -> str:
+    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
+        self._state = "code_required"
+        return self._state, None
+
+    async def start(self) -> tuple[str, str | None]:
+        # Fake 已经"启动"了 — 直接返回状态
+        return self._state, None
+
+    async def nuke_and_rebuild(self, rotate_key: bool = False) -> None:
+        self._state = "phone_required"
+
+    async def submit_code(self, code: str) -> tuple[str, str | None]:
         if code == "00000":
             self._state = "password_required"
         else:
             self._state = "ready"
             self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state
+        return self._state, None
 
-    async def submit_password(self, password: str) -> str:
+    async def submit_password(self, password: str) -> tuple[str, str | None]:
         self._state = "ready"
         self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state
+        return self._state, None
 
     async def logout(self) -> None:
         self._state = "phone_required"
         self._me = None
+
+    async def close(self) -> None:
+        """Fake 无资源,只把状态复位 + 关流。"""
+        for s in list(self._all_streams):
+            try:
+                await s.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+        self._all_streams.clear()
 
     @property
     def state(self) -> str:

@@ -43,17 +43,17 @@ def _noop() -> None:
 
 
 async def test_app_login_state_machine(app, client):
-    state = await app.login("+10000000000")
+    state, _ = await app.submit_phone("+10000000000")
     assert state == "code_required"
-    state = await app.submit_code("12345")
+    state, _ = await app.submit_code("12345")
     assert state == "ready"
 
 
 async def test_app_login_without_credentials_fails(tmp_path):
-    """未配置凭据时,login() 应返回 'error' 而不是崩溃。"""
+    """未配置凭据时,submit_phone() 应返回 ('error', ...) 而不是崩溃。"""
     from tgmonitor.core.app_service import AppService
     from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
-    from tgmonitor.core.events import EventBus, ErrorOccurred
+    from tgmonitor.core.events import ErrorOccurred, EventBus
     from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
     s = Settings(  # type: ignore[call-arg]
@@ -74,8 +74,10 @@ async def test_app_login_without_credentials_fails(tmp_path):
         LocalObjectStore(root=tmp_path / "o"),
         s,
     )
-    state = await app.login("+10000000000")
+    state, detail = await app.submit_phone("+10000000000")
     assert state == "error"
+    assert detail is not None and "API_ID" in detail
+    # 兼容旧断言
     assert errs and "API_ID" in errs[0].message
 
 

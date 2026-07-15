@@ -17,19 +17,35 @@ class TelegramClient(Protocol):
     """业务侧唯一的 Telegram 客户端接口。"""
 
     # ---- 鉴权 ----
-    async def login(self, phone: str) -> str:
-        """发起登录,返回当前状态(phone_required/code_required/password_required/ready)。"""
+    async def start(self) -> tuple[str, str | None]:
+        """应用启动入口。返回 (state, detail)。state ∈ {ready, phone_required, error, ...}。"""
         ...
 
-    async def submit_code(self, code: str) -> str:
-        """提交短信/应用内验证码。返回新状态。"""
+    async def nuke_and_rebuild(self, *, rotate_key: bool = False) -> None:
+        """清掉 session db(可选旋转加密 key),杀掉内部 aiotdlib。调用方负责重建。"""
         ...
 
-    async def submit_password(self, password: str) -> str:
-        """提交 2FA 密码。返回 'ready' 即登录成功。"""
+    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
+        """提交手机号 — 进入 `code_required`。返回 (state, detail)。"""
+        ...
+
+    async def submit_code(self, code: str) -> tuple[str, str | None]:
+        """提交验证码。返回 (state, detail)。错误时**不**改顶层状态,
+        改通过 `AuthErrorOccurred` 事件通知 UI。"""
+        ...
+
+    async def submit_password(self, password: str) -> tuple[str, str | None]:
+        """提交 2FA 密码。返回 (state, detail)。"""
         ...
 
     async def logout(self) -> None: ...
+
+    async def close(self) -> None:
+        """关停 aiotdlib 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
+        ...
+
+    # 旧式 — 留给兼容层;新代码用 submit_phone + submit_code。
+    async def login(self, phone: str) -> str: ...
 
     @property
     def state(self) -> str: ...

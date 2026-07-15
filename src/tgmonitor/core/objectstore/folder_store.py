@@ -14,7 +14,6 @@ from typing import BinaryIO
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
 
-
 _VALID_KEY = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
 

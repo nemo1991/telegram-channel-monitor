@@ -29,6 +29,7 @@ def _media_to_doc(m: MediaDTO) -> dict[str, Any]:
         "object_backend": m.object_backend,
         "thumb_key": m.thumb_key,
         "thumb_backend": m.thumb_backend,
+        "emoji": m.emoji,
     }
 
 
@@ -46,6 +47,7 @@ def _doc_to_media(d: dict[str, Any]) -> MediaDTO:
         object_backend=d.get("object_backend"),
         thumb_key=d.get("thumb_key"),
         thumb_backend=d.get("thumb_backend"),
+        emoji=d.get("emoji"),
     )
 
 

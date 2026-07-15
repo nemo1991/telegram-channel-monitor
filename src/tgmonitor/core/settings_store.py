@@ -12,10 +12,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
-
 
 _LINE = re.compile(r"^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$")
 
@@ -91,6 +89,7 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_API_HASH": s.api_hash,
         "TG_PHONE": s.phone,
         "TG_SESSION_DIR": str(s.session_dir),
+        "TG_PROXY": s.proxy or "",
         "TG_DB_BACKEND": s.db_backend.value,
         "TG_DB_DSN": s.db_dsn,
         "TG_DB_ROOT": str(s.db_root),
@@ -142,8 +141,11 @@ class EditableSettings:
     media_policy: str = "thumbnail"
     data_root: str = "./data"
 
+    # 可选代理 URL(目前只支持 socks5://)
+    proxy: str = ""
+
     @classmethod
-    def from_settings(cls, s: Settings) -> "EditableSettings":
+    def from_settings(cls, s: Settings) -> EditableSettings:
         return cls(
             api_id=s.api_id,
             api_hash=s.api_hash,
@@ -161,6 +163,7 @@ class EditableSettings:
             objectstore_bucket=s.objectstore_bucket,
             media_policy=s.media_policy.value,
             data_root=str(s.data_root),
+            proxy=s.proxy or "",
         )
 
     def validate(self) -> list[str]:
@@ -177,6 +180,9 @@ class EditableSettings:
             errs.append(f"TG_OBJECTSTORE_BACKEND 非法: {self.objectstore_backend}")
         if self.media_policy not in {p.value for p in MediaPolicy}:
             errs.append(f"TG_MEDIA_POLICY 非法: {self.media_policy}")
+        proxy_err = _validate_proxy_url(self.proxy)
+        if proxy_err:
+            errs.append(proxy_err)
         return errs
 
     def to_settings(self) -> Settings:
@@ -197,7 +203,27 @@ class EditableSettings:
             objectstore_bucket=self.objectstore_backend == "s3" and self.objectstore_bucket or self.objectstore_bucket,
             media_policy=MediaPolicy(self.media_policy),
             data_root=Path(self.data_root),
+            proxy=(self.proxy.strip() or None),
         )
+
+
+def _validate_proxy_url(s: str) -> str | None:
+    """校验代理 URL(目前只支持 socks5://[user:pass@]host:port)。空 = 不设置。"""
+    if not s.strip():
+        return None
+    if not s.startswith(("socks5://", "SOCKS5://")):
+        return "TG_PROXY 目前只支持 socks5:// 协议"
+    rest = s.split("://", 1)[1]
+    if "@" in rest:
+        _, hostport = rest.rsplit("@", 1)
+    else:
+        hostport = rest
+    if ":" not in hostport:
+        return "TG_PROXY 必须含 host:port"
+    host, _, port = hostport.rpartition(":")
+    if not host or not port.isdigit():
+        return "TG_PROXY 格式错误(期望 socks5://[user:pass@]host:port)"
+    return None
 
 
 # ---- Settings 重建(用于热重载) ----

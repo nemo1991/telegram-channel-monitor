@@ -69,6 +69,9 @@ class MediaDTO:
     thumb_key: str | None = None
     thumb_backend: str | None = None
 
+    # Sticker 专属 — 关联的 emoji 字符(如 "😀");其它 type 始终 None
+    emoji: str | None = None
+
 
 # ---------- 消息 ----------
 

@@ -34,6 +34,7 @@ def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
         m.object_backend,
         m.thumb_key,
         m.thumb_backend,
+        m.emoji,
     )
 
 
@@ -62,6 +63,7 @@ def _row_to_media(row: asyncpg.Record) -> MediaDTO:
         object_backend=row["object_backend"],
         thumb_key=row["thumb_key"],
         thumb_backend=row["thumb_backend"],
+        emoji=row["emoji"],
     )
 
 
@@ -206,8 +208,9 @@ class PostgresRepository(StorageRepository):
                         INSERT INTO media
                             (message_id, type, mime_type, file_name, file_size,
                              width, height, duration, telegram_file_id,
-                             object_key, object_backend, thumb_key, thumb_backend)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                             object_key, object_backend, thumb_key, thumb_backend,
+                             emoji)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                         """,
                     *_media_to_row(msg_pk, m, idx),
                 )

@@ -49,6 +49,7 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
                 "object_backend": med.object_backend,
                 "thumb_key": med.thumb_key,
                 "thumb_backend": med.thumb_backend,
+                "emoji": med.emoji,
             }
             for med in m.media
         ],
@@ -78,6 +79,7 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
                     object_backend=md.get("object_backend"),
                     thumb_key=md.get("thumb_key"),
                     thumb_backend=md.get("thumb_backend"),
+                    emoji=md.get("emoji"),
                 )
             )
         except (KeyError, ValueError):

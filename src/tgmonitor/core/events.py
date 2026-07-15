@@ -92,6 +92,20 @@ class ErrorOccurred(Event):
 
 
 @dataclass
+class AuthErrorOccurred(ErrorOccurred):
+    """验证码 / 2FA 密码错误等 transient 鉴权错误。
+
+    与顶层 `error` 状态的区别:验证码错不会把我们踢回 `phone_required` —
+    aiotdlib 会自动重新进入 `WaitCode` 状态,用户在原地重输即可。
+    UI 应该弹一个短暂的红色提示行(类似 toast),3 秒后自动消失。
+    继承自 `ErrorOccurred`,这样订阅 `ErrorOccurred` 的代码也能收到。
+    """
+
+    # "code" | "password" | "phone" | "telegram_internal"
+    source: str = "auth"
+
+
+@dataclass
 class SettingsChanged(Event):
     """设置已变更(已热重载的部分)。"""
 

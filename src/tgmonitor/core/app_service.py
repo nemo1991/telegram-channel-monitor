@@ -33,7 +33,6 @@ from tgmonitor.core.events import (
     ChannelUnsubscribed,
     ErrorOccurred,
     EventBus,
-    LoginStateChanged,
     SettingsChanged,
 )
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -84,37 +83,67 @@ class AppService:
             return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
         return None
 
-    async def login(self, phone: str) -> str:
+    async def bootstrap(self) -> tuple[str, str | None]:
+        """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
+
+        返回 (state, detail)。
+        """
+        # 把上一次会话订阅过的频道从 storage 同步到内存 — 不然重启后
+        # `list_subscribed_channels()` 返回空,UI 下栏永远是空的,
+        # 而且历史消息查询的 channel_ids 也算错(变成全集)。
+        # 不区分"用户显式订阅"和"曾经订阅过"的差别 — 简单做法:
+        # storage 里存的所有频道都视作已订阅。channel 删除路径后续 v0.4。
+        persisted = await self.storage.list_channels()
+        self._subscribed = {c.id for c in persisted}
+
+        try:
+            state, detail = await self.client.start()
+        except Exception as e:  # noqa: BLE001
+            await self.bus.publish(ErrorOccurred(source="bootstrap", message=str(e), exception=e))
+            return "error", str(e)
+        # 如果 start 失败 + 检测到 401 → 让底层的 nuke_and_rebuild 接管,
+        # rotate 加密 key + 重建 client + 再 start 一次
+        if state == "error" and detail and "encryption key" in detail:
+            log.warning("bootstrap: 401 detected — rotating key and rebuilding client")
+            await self.client.nuke_and_rebuild(rotate_key=True)
+            from tgmonitor.core.telegram.factory import build_telegram_client
+            await self.client.close()
+            self.client = build_telegram_client(
+                self.settings, use_fake=False, event_bus=self._bus,
+            )
+            state, detail = await self.client.start()
+        # client 端已经 publish 过 LoginStateChanged,这里只 fail-safe 再发一次终态
+        if state == "error":
+            await self.bus.publish(ErrorOccurred(
+                source="bootstrap", message=detail or "start failed",
+            ))
+        return state, detail
+
+    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
+        """用户点「登录」按钮 — 提交手机号 + 触发 aiotdlib 发 code。"""
         err = self._check_credentials()
         if err:
-            await self.bus.publish(ErrorOccurred(source="login", message=err))
-            await self.bus.publish(LoginStateChanged(state="error"))
-            return "error"
+            await self.bus.publish(ErrorOccurred(source="submit_phone", message=err))
+            return "error", err
         try:
-            state = await self.client.login(phone)
+            return await self.client.submit_phone(phone)
         except Exception as e:  # noqa: BLE001
-            await self.bus.publish(ErrorOccurred(source="login", message=str(e), exception=e))
-            state = "error"
-        await self.bus.publish(LoginStateChanged(state=state))
-        return state
+            await self.bus.publish(ErrorOccurred(source="submit_phone", message=str(e), exception=e))
+            return "error", str(e)
 
-    async def submit_code(self, code: str) -> str:
+    async def submit_code(self, code: str) -> tuple[str, str | None]:
         try:
-            state = await self.client.submit_code(code)
+            return await self.client.submit_code(code)
         except Exception as e:  # noqa: BLE001
             await self.bus.publish(ErrorOccurred(source="submit_code", message=str(e), exception=e))
-            state = "error"
-        await self.bus.publish(LoginStateChanged(state=state))
-        return state
+            return "error", str(e)
 
-    async def submit_password(self, password: str) -> str:
+    async def submit_password(self, password: str) -> tuple[str, str | None]:
         try:
-            state = await self.client.submit_password(password)
+            return await self.client.submit_password(password)
         except Exception as e:  # noqa: BLE001
             await self.bus.publish(ErrorOccurred(source="submit_password", message=str(e), exception=e))
-            state = "error"
-        await self.bus.publish(LoginStateChanged(state=state))
-        return state
+            return "error", str(e)
 
     # ---------- 频道 ----------
 
@@ -131,6 +160,13 @@ class AppService:
         await self.bus.publish(ChannelSubscribed(channel=channel))
 
     async def unsubscribe_channel(self, channel_id: int) -> None:
+        # 必须从 storage 真删 — 否则下次启动 bootstrap() 时
+        # `self._subscribed = {c.id for c in storage.list_channels()}` 又把
+        # 它读回来,UI 显示"已监听"列表和上次退订前一样,等于退订无效。
+        try:
+            await self.storage.delete_channel(channel_id)
+        except Exception:  # noqa: BLE001
+            log.exception("delete_channel(%s) failed", channel_id)
         self._subscribed.discard(channel_id)
         await self.bus.publish(ChannelUnsubscribed(channel_id=channel_id))
 
@@ -184,6 +220,11 @@ class AppService:
 
     async def shutdown(self) -> None:
         await self.stop_monitor()
+        # 关 TelegramClient (停 aiotdlib 的 updates_loop + tdjson 子进程)
+        try:
+            await self.client.close()
+        except Exception:  # noqa: BLE001
+            log.exception("client.close() failed")
         await self.storage.close()
         await self.objects.close()
 
@@ -235,10 +276,11 @@ class AppService:
                 await new_storage.connect()
                 await new_storage.init_schema()
                 self.storage = new_storage
-                # 同步已订阅频道集合
-                self._subscribed = {
-                    c.id for c in await new_storage.list_channels()
-                } & self._subscribed
+                # 同步已订阅频道集合 — 用 union 而不是 intersection:
+                # 用户之前的订阅应该被保留(在新存储里没有的就是缺数据,
+                # 也不能默默从内存里抹掉)。
+                new_db_ids = {c.id for c in await new_storage.list_channels()}
+                self._subscribed = (new_db_ids | self._subscribed)
             finally:
                 self._reconfiguring = False
 

@@ -46,8 +46,12 @@ CREATE TABLE IF NOT EXISTS media (
     object_key          TEXT,
     object_backend      TEXT,
     thumb_key           TEXT,
-    thumb_backend       TEXT
+    thumb_backend       TEXT,
+    emoji               TEXT
 );
+
+-- 兼容旧库:已存在的 media 表补 emoji 列(IF NOT EXISTS 幂等)。
+ALTER TABLE media ADD COLUMN IF NOT EXISTS emoji TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_media_message
     ON media (message_id);
