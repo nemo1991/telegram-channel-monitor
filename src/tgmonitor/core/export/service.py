@@ -15,6 +15,15 @@ from typing import AsyncIterator
 from tgmonitor.core.dto import ExportRequest, ExportResult
 from tgmonitor.core.events import EventBus, ExportDone, ExportProgress
 from tgmonitor.core.export.base import EXPORTERS
+# noqa: F401 — 触发 @exporter 装饰器,把所有具体 Exporter 注册到 EXPORTERS。
+# 不能改 __init__.py(会被 ruff 报 unused),但放 service.py 里也无副作用,且
+# 保证只要 ExportService 被 import,EXPORTERS 就 ready。
+from tgmonitor.core.export import (  # noqa: F401
+    csv_exporter,
+    html_exporter,
+    json_exporter,
+    markdown_exporter,
+)
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
 

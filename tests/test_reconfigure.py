@@ -3,15 +3,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from tests.conftest import InMemoryRepository
-
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.events import EventBus, SettingsChanged
-from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
+from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 

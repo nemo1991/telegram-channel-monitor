@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3390ec"/>
+      <stop offset="1" stop-color="#1f6fc4"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角背景 -->
+  <rect width="64" height="64" rx="14" ry="14" fill="url(#g)"/>
+  <!-- 三条向右的信号弧 -->
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round">
+    <path d="M16 42 Q32 32 48 42" opacity="0.45"/>
+    <path d="M22 38 Q32 30 42 38" opacity="0.70"/>
+    <path d="M28 34 Q32 30 36 34" opacity="1.0"/>
+  </g>
+  <!-- 实心圆点(频道中心) -->
+  <circle cx="32" cy="22" r="4" fill="#ffffff"/>
+  <circle cx="32" cy="22" r="2" fill="#5cb85c"/>
+</svg>

@@ -1,4 +1,11 @@
-"""主窗口 — 频道列表 | 消息流 | 工具栏。"""
+"""主窗口 — 左侧栏(账户 + 频道) + 右侧消息流。
+
+侧栏布局:
+  - AccountWidget:凭据表单 + 登录状态 + 登录动作
+  - ChannelWidget:已加入(双击订阅) + 已监听(双击退订)
+
+工具栏:`刷新` `导出` `设置` — **不再有「登录」,登录入口已上移到侧栏**。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +16,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -22,9 +26,11 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MessageDTO
+from tgmonitor.ui.icon import action_icon, load_app_icon
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
+from tgmonitor.ui.widgets.account_widget import AccountWidget
+from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
-from tgmonitor.ui.widgets.login_dialog import LoginDialog
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.settings_dialog import SettingsDialog
 
@@ -41,55 +47,72 @@ class MainWindow(QMainWindow):
         app: AppService,
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop,
-        env_path: "Path | None" = None,
+        env_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.app = app
         self.monitor = monitor
         self.loop = loop
         self.env_path = env_path or Path(".env")
-        self.setWindowTitle("Telegram 频道监听 — tgmonitor")
-        self.resize(1100, 700)
+        self.setWindowTitle("tgmonitor · Telegram 频道监听")
+        self.setWindowIcon(load_app_icon())
+        self.resize(1180, 740)
 
         self._vm = MonitorViewModel(app, monitor, loop)
         self._build_ui()
         self._wire_events()
         self._refresh_state()
+        # 启动后主动拉一次 joined 列表 — 不然 known_channels 是空,
+        # 即便 storage 里已订阅过频道,UI 下栏算 `subscribed` 交集也是空。
+        # 见 MonitorViewModel.bootstrap_ui 的注释。
+        self._vm.bootstrap_ui()
 
     # ---- UI 装配 ----
 
     def _build_ui(self) -> None:
-        # 工具栏
+        # 工具栏(3 动作:刷新 / 导出 / 设置)
         tb = QToolBar("主工具栏")
+        tb.setMovable(False)
         self.addToolBar(tb)
-        self.act_login = QAction("登录", self)
-        self.act_refresh = QAction("刷新频道", self)
-        self.act_export = QAction("导出…", self)
-        self.act_settings = QAction("设置…", self)
-        tb.addAction(self.act_login)
+
+        self.act_refresh = QAction(action_icon("refresh"), "刷新频道", self)
+        self.act_refresh.setToolTip("从 Telegram 拉取当前账号加入的全部频道")
         tb.addAction(self.act_refresh)
+
         tb.addSeparator()
+
+        self.act_export = QAction(action_icon("export"), "导出…", self)
+        self.act_export.setToolTip("把已监听频道的消息导出为 JSON / CSV / Markdown / HTML")
         tb.addAction(self.act_export)
+
         tb.addSeparator()
+
+        self.act_settings = QAction(action_icon("settings"), "设置…", self)
+        self.act_settings.setToolTip("后端、对象存储、媒体策略、代理 等低频配置")
         tb.addAction(self.act_settings)
 
-        # 主分割:左频道 / 右消息
-        splitter = QSplitter(Qt.Horizontal)
+        # 中央:左侧栏 + 右消息流
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # 左:频道面板
+        # --- 左:侧栏(账户 + 频道 双栏) ---
         left = QWidget()
         lv = QVBoxLayout(left)
-        lv.setContentsMargins(8, 8, 8, 8)
-        lv.addWidget(QLabel("已监听频道"))
-        self.channel_list = QListWidget()
-        lv.addWidget(self.channel_list, 1)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(8)
+
+        self.account_panel = AccountWidget(self.app, self.loop, self.env_path, left)
+        self.channel_panel = ChannelWidget(self.app, self.loop, left)
+
+        lv.addWidget(self.account_panel)
+        lv.addWidget(self.channel_panel, 1)
         splitter.addWidget(left)
 
-        # 右:消息流
+        # --- 右:消息流 ---
         self.message_view = MessageView()
         splitter.addWidget(self.message_view)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 820])
         self.setCentralWidget(splitter)
 
         # 状态栏
@@ -97,16 +120,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("未登录")
 
         # 信号
-        self.act_login.triggered.connect(self._on_login)
         self.act_refresh.triggered.connect(self._on_refresh_channels)
         self.act_export.triggered.connect(self._on_export)
         self.act_settings.triggered.connect(self._on_settings)
-        self.channel_list.itemDoubleClicked.connect(self._on_channel_toggle)
+        self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
 
-    # ---- 事件订阅 ----
+    # ---- EventBus → UI(Qt signal 已在 ViewModel 里订阅好) ----
 
     def _wire_events(self) -> None:
-        # ViewModel 已经把 EventBus → Qt signal 转好,这里只接 Qt signal
         self._vm.message_received.connect(self._on_message_received)
         self._vm.login_state.connect(self._on_login_state)
         self._vm.channels_changed.connect(self._refresh_state)
@@ -114,35 +135,25 @@ class MainWindow(QMainWindow):
         self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
 
-    # ---- 槽 ----
-
-    def _on_login(self) -> None:
-        dlg = LoginDialog(self.app, self.loop, self)
-        dlg.exec()
-        self._refresh_state()
+    # ---- 工具栏槽 ----
 
     def _on_refresh_channels(self) -> None:
-        self._refresh_state()
+        self.statusBar().showMessage("拉取频道列表…", 2000)
         self._vm.refresh_joined_channels()
-
-    def _on_channel_toggle(self, item: QListWidgetItem) -> None:
-        cid = item.data(Qt.UserRole)
-        if cid is None:
-            return
-        if cid in self.monitor._whitelist:  # type: ignore[attr-defined]
-            self._vm.unsubscribe_channel(int(cid))
-        else:
-            ch = next(
-                (c for c in self._vm.known_channels.values() if c.id == cid), None
-            )
-            if ch:
-                self._vm.subscribe_channel(ch)
 
     def _on_export(self) -> None:
         if not self.monitor._whitelist:  # type: ignore[attr-defined]
             QMessageBox.information(self, "导出", "请先订阅至少一个频道")
             return
-        dlg = ExportDialog(self.app, list(self.monitor._whitelist), self)  # type: ignore[attr-defined]
+        # 用 monitor._whitelist 是不优雅,但导出需要"已订阅的 id 列表"这语义没变;
+        # 后续可改 AppService.list_subscribed_channels()返回 ids 版本
+        ids = [int(cid) for cid in self.monitor._whitelist]  # type: ignore[attr-defined]
+        # 取 channel DTO(优先用 vm.known_channels,没有就传 stub)
+        chs_by_id: dict[int, object] = {
+            cid: ch for cid, ch in self._vm.known_channels.items() if cid in ids
+        }
+        # export_dialog 只用 channel_ids 字段,DTO 是渲染细节;此处跳过
+        dlg = ExportDialog(self.app, ids, self)
         if dlg.exec():
             self._vm.start_export(dlg.request())
 
@@ -150,24 +161,14 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.app, self.loop, self.env_path, self)
         dlg.exec()
 
-    def _on_settings_changed(self, what: str, needs_relogin: bool, backend_label: str) -> None:
-        msg = f"已热重载: {what} → {backend_label}"
-        self.statusBar().showMessage(msg, 5000)
-        if needs_relogin:
-            QMessageBox.information(
-                self,
-                "凭据已变更",
-                "Telegram 凭据已变更。\n请重新登录以继续监听。",
-            )
-
-    # ---- 回调 ----
+    # ---- 事件回调 ----
 
     def _on_message_received(self, dto_dict: dict) -> None:
         m = MessageDTO(**dto_dict)
         self.message_view.append(m)
 
     def _on_login_state(self, state: str) -> None:
-        self.statusBar().showMessage(f"登录状态: {state}")
+        self.statusBar().showMessage(f"登录状态: {state}", 4000)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         if error:
@@ -183,12 +184,27 @@ class MainWindow(QMainWindow):
         log.warning("error: %s", msg)
         self.statusBar().showMessage(f"⚠ {msg}", 5000)
 
+    def _on_settings_changed(self, what: str, needs_relogin: bool, backend_label: str) -> None:
+        msg = f"已热重载: {what} → {backend_label}"
+        self.statusBar().showMessage(msg, 5000)
+        if needs_relogin:
+            QMessageBox.information(
+                self,
+                "凭据已变更",
+                "Telegram 凭据已变更。\n请重新登录以继续监听。",
+            )
+
     def _refresh_state(self) -> None:
-        self.channel_list.clear()
+        """channels_changed 事件回调:把已知频道渲染到 channel_panel 的两栏。"""
+        # 把 _vm.known_channels 灌到 channel_panel:
+        # - 已加入(joined):vm.known_channels 的全集
+        # - 已监听(subscribed):filter 出 _subscribed
         all_known = self._vm.known_channels
-        for cid, ch in sorted(all_known.items(), key=lambda kv: kv[1].title):
-            item = QListWidgetItem(f"{'✓ ' if cid in self.monitor._whitelist else '   '}{ch.display}")
-            item.setData(Qt.UserRole, cid)
-            self.channel_list.addItem(item)
-        # 拉一次历史
+        self.channel_panel.set_joined(list(all_known.values()))
+        subscribed = [
+            ch for cid, ch in all_known.items()
+            if cid in self.monitor._whitelist  # type: ignore[attr-defined]
+        ]
+        self.channel_panel.set_subscribed(subscribed)
+        # 拉一次最近消息
         self._vm.load_recent_messages()

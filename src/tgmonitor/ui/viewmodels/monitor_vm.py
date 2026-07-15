@@ -110,6 +110,23 @@ class MonitorViewModel(QObject):
 
     # ---- UI 主动调用 ----
 
+    def bootstrap_ui(self) -> None:
+        """MainWindow 构造后调一次:拉一次 joined 列表 + 通知 UI 刷新下栏。
+
+        为什么需要:
+        - bootstrap() 同步了 `_subscribed` 到内存,但 VM 不知道。
+        - VM 的 `known_channels` 只在 `refresh_joined_channels` 或
+          `ChannelSubscribed` 事件后才填充,启动时为空 → `_refresh_state`
+          算 `subscribed` 时筛不出任何行 → 下栏一直空。
+        - 这里的 refresh_joined_channels 同时也补了已知频道的元数据(title /
+          username),下栏才能显示频道名而不是 "频道 -1001xxx"。
+
+        已监听的 id 列表(monitor._whitelist)在 app._setup_async 里已经
+        从 storage 读回并 set,这里只负责把 DTO 拉回来填 known_channels,
+        然后 emit channels_changed 让 UI 算交集并刷新。
+        """
+        self.refresh_joined_channels()
+
     def refresh_joined_channels(self) -> None:
         async def _go() -> None:
             chs = await self.app.list_joined_channels()

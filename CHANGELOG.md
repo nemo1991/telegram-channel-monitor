@@ -7,11 +7,31 @@
 
 ## [Unreleased]
 
-### Planned
-- 媒体原文件下载器(`MediaDownloader.download_one` 接入 `client.download_file`)
-- 消息编辑 / 删除事件完整处理
-- 国际化(英文 UI)
-- 历史回放(`TelegramClient.iter_messages` 真正实现)
+### ✨ Added
+- **SOCKS5 代理** — `Settings.proxy` + `TD_PROXY` 环境变量,`AiClient(proxy_settings=...)` 接入;
+  `EditableSettings` 校验 `socks5://[user:pass@]host:port` 格式;设置对话框里有「测试连接」按钮
+- **侧栏常驻账户面板** — `AccountWidget`:API ID / Hash / 手机号就地编辑 + 保存;
+  状态圆点(红/橙/绿);登录动作(登录 / 提交验证码 / 提交 2FA)**就地切换输入框**,不再弹模态
+- **侧栏频道双栏** — `ChannelWidget`:已加入 + 已监听,双击切换订阅;
+  实时按 `ChannelSubscribed / ChannelUnsubscribed` 事件刷新
+- **应用图标** — SVG(蓝底 + 信号波 + 频道点),`setApplicationIcon` + 窗口标题;工具栏 4 图标独立 SVG;
+  pyproject 不增依赖,资源走 `importlib.resources`
+- **QSS 主题** — `ui/resources/style.qss`:状态点颜色 / 工具栏分组 / 圆角 group box /
+  提示/警告/错误三色 role
+- **重新组织主窗口**:
+  - 工具栏只保留 `刷新频道 · 导出 · 设置`(无「登录」了,已上移侧栏)
+  - 状态栏显示「登录状态」实时事件
+- **测试** — 25 个新单测(proxy URL 解析 12 + 校验 6 + settings/store 往返 5 + TdlibClient 集成 2)
+- **文档** — README 跑通说明改写,标签侧栏 + 代理 + 图标
+
+### 🔧 Changed
+- `core/telegram/tdlib_client.py` 重写为 `aiotdlib.ClientSettings(...)` 调用(0.27+ 兼容),
+  同时支持老版直接 kwargs 调用
+- `core/telegram/factory.py`/`client.py` 等接口未变;边界未变
+- `ui/widgets/settings_dialog.py` 删 Telegram 整组,加 Proxy + 测试连接按钮
+- `ui/widgets/login_dialog.py` 收尾只剩 code + 2FA 输入(auto-show via bus event)
+
+## [0.2.0] - 2026-07-13
 
 ## [0.2.0] - 2026-07-13
 

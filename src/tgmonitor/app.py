@@ -29,7 +29,19 @@ log = logging.getLogger(__name__)
 
 async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     settings = Settings()  # type: ignore[call-arg]
+    # 把相对路径解析成绝对路径,避免从不同 cwd 启动时 session_dir / data_root 不一样
+    # 导致 TDLib 找不到上一回的 session db,被迫重新登录。
+    settings.session_dir = settings.session_dir.resolve()
+    settings.data_root = settings.data_root.resolve()
+    settings.db_root = settings.db_root.resolve()
+    settings.objectstore_root = settings.objectstore_root.resolve()
     settings.ensure_dirs()
+    log.info(
+        "session_dir=%s exists=%s | data_root=%s",
+        settings.session_dir,
+        (settings.session_dir / "tdlib").exists(),
+        settings.data_root,
+    )
 
     bus = EventBus()
     storage = build_storage(settings)
@@ -40,7 +52,7 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     await objects.connect()
 
     # 默认尝试 aiotdlib;失败回退 fake(开发/CI 无凭据也能跑)
-    client = build_telegram_client(settings, use_fake=False)
+    client = build_telegram_client(settings, use_fake=False, event_bus=bus)
     monitor = MonitorService(bus, client, storage, objects, settings)
     app = AppService(bus, client, storage, objects, settings)
     return app, monitor, settings
@@ -75,18 +87,38 @@ def run() -> None:
     loop = QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
 
+    # 应用图标(macOS dock / 任务栏 / 任务管理器)
+    # PySide6 没有 setApplicationIcon,用 QGuiApplication.setWindowIcon(静态)。
+    # 它会影响所有未单独设置 icon 的窗口(包括 MainWindow)。
+    from PySide6.QtGui import QGuiApplication
+
+    from tgmonitor.ui.icon import load_app_icon
+    QGuiApplication.setWindowIcon(load_app_icon())
+
+    # 全局 QSS — 字号 / 间距 / 状态色
+    try:
+        from importlib import resources
+        qss = resources.files("tgmonitor.ui.resources").joinpath("style.qss").read_text("utf-8")
+        qt_app.setStyleSheet(qss)
+    except Exception:  # noqa: BLE001
+        log.warning("failed to load style.qss; falling back to default theme")
+
     # 容器:由 step1 填充,step4 消费
     state: dict[str, object] = {}
 
     async def _setup_async() -> None:
         app_svc, monitor, settings = await _bootstrap()
-        # 启动 monitor
+        # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
         subscribed = await app_svc.storage.list_channels()
         monitor.set_whitelist(c.id for c in subscribed)
         await monitor.start()
+        # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
+        # 这一步会发 LoginStateChanged → UI 自动切到正确状态
         state["app"] = app_svc
         state["monitor"] = monitor
         state["settings"] = settings
+        # bootstrap 是 fire-and-await,UI 已经在主线程上 subscribe 了 bus,能收到事件
+        await app_svc.bootstrap()
 
     async def _shutdown_async() -> None:
         monitor = state.get("monitor")  # type: ignore[assignment]
@@ -132,7 +164,7 @@ def run() -> None:
             qt_app.quit()
             return
 
-        def _on_done(f: "asyncio.Future[None]") -> None:
+        def _on_done(f: asyncio.Future[None]) -> None:
             if f.cancelled():
                 return
             exc = f.exception()

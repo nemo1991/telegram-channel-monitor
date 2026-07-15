@@ -103,12 +103,15 @@ cp .env.example .env
 编辑 `.env`(从 https://my.telegram.org/apps 申请 `TG_API_ID` / `TG_API_HASH`):
 
 ```env
-# Telegram 凭据
+# Telegram 凭据(也可在主窗口左侧「账户」面板里直接填)
 TG_API_ID=123456
 TG_API_HASH=abcdef0123456789abcdef0123456789
 TG_PHONE=+8613800000000
 
-# 数据库后端: postgres | mongo
+# SOCKS5 代理(国内直连 Telegram 不通时常需)
+# TG_PROXY=socks5://user:pass@127.0.0.1:1080
+
+# 数据库后端: postgres | mongo | jsonl
 TG_DB_BACKEND=postgres
 TG_DB_DSN=postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor
 
@@ -159,8 +162,16 @@ uv run python -m tgmonitor
 python -m tgmonitor
 ```
 
-首次运行会弹出**登录对话框**:输入手机号 → 收到 Telegram 验证码 → 输入 → 完成。
-若账号启用了二步验证,会再要求 2FA 密码。
+主窗口布局:
+
+- **左栏「账户」**(常驻):填 API ID / API Hash / 手机号,**保存到 .env**;
+  状态点会从「未配置 → 未登录」流转。点「登录」按钮后,验证码 / 2FA 输入框**就地切换**,
+  无需再去设置弹窗。
+- **左栏「频道」**(常驻):上半「全部(已加入)」双击订阅,下半「已监听」双击退订。
+- **右侧** 实时消息流。
+- **工具栏** 仅 3 动作:`刷新频道` · `导出…` · `设置…`(后端 / 代理 / 媒体策略等低频)。
+
+需要 SOCKS5 代理?设置 → 网络代理 → 填 `socks5://user:pass@host:port` → 测试连接 → 保存并应用。
 
 ---
 

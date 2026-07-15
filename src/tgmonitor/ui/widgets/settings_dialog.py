@@ -15,9 +15,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -29,8 +27,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSpinBox,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -43,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, app: "AppService", loop: asyncio.AbstractEventLoop, env_path: Path, parent=None) -> None:
+    def __init__(self, app: AppService, loop: asyncio.AbstractEventLoop, env_path: Path, parent=None) -> None:
         super().__init__(parent)
         self.app = app
         self.loop = loop
@@ -59,31 +55,32 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(560)
         root = QVBoxLayout(self)
 
-        # === Telegram 区 ===
-        gb_tg = QGroupBox("Telegram")
-        f_tg = QFormLayout(gb_tg)
-        self.in_api_id = QSpinBox()
-        self.in_api_id.setRange(0, 2_000_000_000)
-        self.in_api_hash = QLineEdit()
-        self.in_api_hash.setEchoMode(QLineEdit.Password)
-        self.in_api_hash.setPlaceholderText("32 位 hash,来自 my.telegram.org")
-        self.in_phone = QLineEdit()
-        self.in_phone.setPlaceholderText("+8613800000000")
-        self.in_session_dir = QLineEdit()
-        self.in_session_dir.setPlaceholderText("./data/session")
-        f_tg.addRow("API ID:", self.in_api_id)
-        f_tg.addRow("API Hash:", self.in_api_hash)
-        f_tg.addRow("手机号:", self.in_phone)
-        f_tg.addRow("Session 目录:", self.in_session_dir)
-        self.lbl_tg_warn = QLabel("⚠ 修改 Telegram 凭据后需重新登录")
-        self.lbl_tg_warn.setStyleSheet("color: #cc8800;")
-        self.lbl_tg_warn.setVisible(False)
-        f_tg.addRow("", self.lbl_tg_warn)
-        # 凭据改动提示
-        self.in_api_id.valueChanged.connect(self._maybe_warn_credentials)
-        self.in_api_hash.textChanged.connect(self._maybe_warn_credentials)
-        self.in_phone.textChanged.connect(self._maybe_warn_credentials)
-        root.addWidget(gb_tg)
+        # 顶部提示:Telegram 凭据已迁到主窗口左栏
+        tip = QLabel(
+            "💡 Telegram 凭据(API ID / Hash / 手机号)在<b>主窗口左侧的「账户」面板</b>里。\n"
+            "本对话框专注于后端 / 对象存储 / 媒体策略 / 代理等低频配置。"
+        )
+        tip.setWordWrap(True)
+        tip.setProperty("role", "hint")
+        root.addWidget(tip)
+
+        # === 代理(目前只 SOCKS5)— 在策略之前,影响 TDLib 连通性 ===
+        gb_proxy = QGroupBox("网络代理 (Proxy)")
+        f_p = QFormLayout(gb_proxy)
+        self.in_proxy = QLineEdit()
+        self.in_proxy.setPlaceholderText("socks5://[user:pass@]host:port")
+        self.in_proxy.setToolTip(
+            "国内直连 Telegram 通常不通,需要一个 SOCKS5 代理。\n"
+            "示例:socks5://user:pass@127.0.0.1:1080\n"
+            "(留空 = 不走代理)"
+        )
+        proxy_row = QHBoxLayout()
+        proxy_row.addWidget(self.in_proxy, 1)
+        self.btn_proxy_test = QPushButton("测试连接")
+        self.btn_proxy_test.clicked.connect(self._on_test_proxy)
+        proxy_row.addWidget(self.btn_proxy_test)
+        f_p.addRow("代理 URL:", proxy_row)
+        root.addWidget(gb_proxy)
 
         # === 数据库区 ===
         gb_db = QGroupBox("消息存储 (Database)")
@@ -161,10 +158,7 @@ class SettingsDialog(QDialog):
 
     def _set_initial_values(self) -> None:
         e = self.editable
-        self.in_api_id.setValue(int(e.api_id))
-        self.in_api_hash.setText(e.api_hash)
-        self.in_phone.setText(e.phone)
-        self.in_session_dir.setText(e.session_dir)
+        self.in_proxy.setText(e.proxy)
         self._set_combo(self.cmb_db, e.db_backend)
         self.in_db_dsn.setText(e.db_dsn)
         self.in_db_root.setText(e.db_root)
@@ -185,15 +179,6 @@ class SettingsDialog(QDialog):
             if cmb.itemData(i) == value:
                 cmb.setCurrentIndex(i)
                 return
-
-    def _maybe_warn_credentials(self) -> None:
-        e = self._collect()
-        changed = (
-            e.api_id != self.app.settings.api_id
-            or e.api_hash != self.app.settings.api_hash
-            or e.phone != self.app.settings.phone
-        )
-        self.lbl_tg_warn.setVisible(changed)
 
     def _update_db_fields(self) -> None:
         backend = self.cmb_db.currentData() or DBBackend.POSTGRES.value
@@ -228,11 +213,13 @@ class SettingsDialog(QDialog):
     # ---- 收集 / 验证 / 保存 ----
 
     def _collect(self) -> EditableSettings:
-        e = EditableSettings(
-            api_id=self.in_api_id.value(),
-            api_hash=self.in_api_hash.text().strip(),
-            phone=self.in_phone.text().strip(),
-            session_dir=self.in_session_dir.text().strip() or "./data/session",
+        # 复用现有 app.settings 的凭据 / session_dir / data_root,只覆盖表单字段
+        cur = self.app.settings
+        return EditableSettings(
+            api_id=cur.api_id,
+            api_hash=cur.api_hash,
+            phone=cur.phone,
+            session_dir=str(cur.session_dir),
             db_backend=self.cmb_db.currentData() or DBBackend.POSTGRES.value,
             db_dsn=self.in_db_dsn.text().strip(),
             db_root=self.in_db_root.text().strip() or "./data/messages",
@@ -244,9 +231,9 @@ class SettingsDialog(QDialog):
             objectstore_secret_key=self.in_s3_sk.text().strip(),
             objectstore_bucket=self.in_s3_bucket.text().strip() or "tgmonitor",
             media_policy=self.cmb_media.currentData() or MediaPolicy.THUMBNAIL.value,
-            data_root="./data",
+            data_root=str(cur.data_root),
+            proxy=self.in_proxy.text().strip(),
         )
-        return e
 
     def _on_save_only(self) -> None:
         e = self._collect()
@@ -284,23 +271,11 @@ class SettingsDialog(QDialog):
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.critical(self, "热重载失败", str(exc))
                 return
-            relogin = (
-                new_settings.api_id != self.app.settings.api_id
-                or new_settings.api_hash != self.app.settings.api_hash
-                or new_settings.phone != self.app.settings.phone
+            QMessageBox.information(
+                self,
+                "已应用",
+                f"配置已热重载。\n(.env: {self.env_path})",
             )
-            if relogin:
-                QMessageBox.information(
-                    self,
-                    "已应用",
-                    f"存储/对象存储已热重载。\nTelegram 凭据已变更 — 请重新登录。\n(.env: {self.env_path})",
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "已应用",
-                    f"配置已热重载。\n(.env: {self.env_path})",
-                )
             self.accept()
 
         fut.add_done_callback(_on_done)
@@ -309,6 +284,50 @@ class SettingsDialog(QDialog):
         d = QFileDialog.getExistingDirectory(self, "选择目录", target.text())
         if d:
             target.setText(d)
+
+    def _on_test_proxy(self) -> None:
+        """异步测代理 TCP 可达性,在事件循环里执行,socketserver 超时 3 秒。"""
+        url = self.in_proxy.text().strip()
+        if not url:
+            QMessageBox.information(self, "代理", "代理 URL 为空")
+            return
+        # 在线程里别阻塞 UI:用 run_in_executor
+        import socket
+
+        try:
+            rest = url.split("://", 1)[1]
+            if "@" in rest:
+                _, hp = rest.rsplit("@", 1)
+            else:
+                hp = rest
+            host, _, port_s = hp.rpartition(":")
+            port = int(port_s)
+        except Exception as exc:
+            QMessageBox.warning(self, "代理格式错误", str(exc))
+            return
+
+        loop = asyncio.get_event_loop()
+
+        def _probe() -> str:
+            with socket.create_connection((host, port), timeout=3.0):
+                return "ok"
+
+        async def _go() -> str:
+            try:
+                return await loop.run_in_executor(None, _probe)
+            except Exception as exc:  # noqa: BLE001
+                return f"failed: {exc}"
+
+        fut = asyncio.run_coroutine_threadsafe(_go(), self.loop)
+
+        def _done(f) -> None:
+            res = f.result()
+            if res == "ok":
+                QMessageBox.information(self, "代理", f"可达 {host}:{port} ✓")
+            else:
+                QMessageBox.warning(self, "代理不可达", res)
+
+        fut.add_done_callback(_done)
 
 
 # ---- 显示标签(中英) ----

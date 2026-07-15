@@ -1,112 +1,165 @@
-"""LoginDialog — 登录状态机对应的 UI。
+"""LoginDialog — 仅当账户凭据已填、但 TDLib 要求验证码或 2FA 时弹出。
 
-按当前 state 切换显示 phone → code → 2FA password → ready。
+凭据表单已经搬到主窗口 AccountWidget;这个对话框**只剩 escape hatch**:
+- 收到 `code_required` 事件 → 自动弹,输入验证码提交
+- 收到 `password_required` 事件 → 自动弹,输入 2FA 密码提交
+- 也可工具栏菜单显式调出(未来扩展)。
+
+多数情况下 AccountWidget 就地切换输入框就够了;此对话框是当用户已离开
+账户面板时(比如最小化、或者未在主窗口时弹)Telegram 突然继续问问题的兜底。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from tgmonitor.core.events import LoginStateChanged
+
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
 
+log = logging.getLogger(__name__)
+
 
 class LoginDialog(QDialog):
-    def __init__(self, app: AppService, loop: asyncio.AbstractEventLoop, parent=None) -> None:
+    def __init__(
+        self,
+        app: AppService,
+        loop: asyncio.AbstractEventLoop,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.app = app
         self.loop = loop
         self.setWindowTitle("Telegram 登录")
         self.setModal(True)
+        self._expected_state: str = ""
         self._build()
-        self._init_state()
+        # 自动订阅,按当前状态展示对应页
+        self._auto_show()
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
-        self.status = QLabel("…")
-        root.addWidget(self.status)
+        root.setContentsMargins(16, 16, 16, 16)
+
+        self.status_label = QLabel("…")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(self.status_label)
+
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
-        bb = QDialogButtonBox(QDialogButtonBox.Close)
+
+        # page 0: 验证码
+        p_code = QWidget(); cl = QVBoxLayout(p_code)
+        self.in_code = QLineEdit()
+        self.in_code.setPlaceholderText("Telegram 发到手机的 5 位验证码")
+        self.in_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cl.addWidget(self.in_code)
+        self.stack.addWidget(p_code)
+        self.in_code.returnPressed.connect(self._submit_code)
+
+        # page 1: 2FA 密码
+        p_pwd = QWidget(); pl = QVBoxLayout(p_pwd)
+        self.in_pwd = QLineEdit()
+        self.in_pwd.setEchoMode(QLineEdit.Password)
+        self.in_pwd.setPlaceholderText("二步验证 2FA 密码")
+        self.in_pwd.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pl.addWidget(self.in_pwd)
+        self.stack.addWidget(p_pwd)
+        self.in_pwd.returnPressed.connect(self._submit_password)
+
+        # 按钮
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
+        self.btn_submit = bb.addButton("提交", QDialogButtonBox.AcceptRole)
+        self.btn_submit.clicked.connect(self._on_submit)
         root.addWidget(bb)
 
-        # 页面 0: phone
-        p0 = QWidget(); f0 = QFormLayout(p0)
-        self.in_phone = QLineEdit(self.app.settings.phone)
-        self.in_phone.setPlaceholderText("+8613800000000")
-        f0.addRow("手机号:", self.in_phone)
-        self.btn_phone = bb.addButton("发送验证码", QDialogButtonBox.AcceptRole)
-        self.btn_phone.clicked.connect(self._submit_phone)
-        self.stack.addWidget(p0)
+    # ---- 自动呈现 ----
 
-        # 页面 1: code
-        p1 = QWidget(); f1 = QFormLayout(p1)
-        self.in_code = QLineEdit()
-        f1.addRow("验证码:", self.in_code)
-        self.btn_code = bb.addButton("提交验证码", QDialogButtonBox.AcceptRole)
-        self.btn_code.clicked.connect(self._submit_code)
-        self.stack.addWidget(p1)
+    def _auto_show(self) -> None:
+        async def _on(e: LoginStateChanged) -> None:
+            self._render(e.state, e.detail)
 
-        # 页面 2: 2FA password
-        p2 = QWidget(); f2 = QFormLayout(p2)
-        self.in_pwd = QLineEdit(); self.in_pwd.setEchoMode(QLineEdit.Password)
-        f2.addRow("2FA 密码:", self.in_pwd)
-        self.btn_pwd = bb.addButton("提交密码", QDialogButtonBox.AcceptRole)
-        self.btn_pwd.clicked.connect(self._submit_password)
-        self.stack.addWidget(p2)
+        self.app.bus.subscribe(LoginStateChanged, _on)
+        # 初次拉当前状态
+        try:
+            state = app_get_state(self.app)  # type: ignore[name-defined]
+            self._render(state, "")
+        except Exception:  # noqa: BLE001
+            log.exception("init LoginDialog state")
 
-        # 页面 3: ready
-        p3 = QLabel("已登录 ✓")
-        p3.setAlignment(Qt.AlignCenter)
-        self.stack.addWidget(p3)
-
-    def _init_state(self) -> None:
-        state = self.app.client.state
-        self._show(state)
-
-    def _show(self, state: str) -> None:
-        self.status.setText(f"当前状态: {state}")
-        idx = {"phone_required": 0, "code_required": 1, "password_required": 2, "ready": 3}.get(state, 0)
-        self.stack.setCurrentIndex(idx)
-        if state == "ready":
-            QMessageBox.information(self, "登录", "登录成功")
+    def _render(self, state: str, detail: str = "") -> None:
+        self._expected_state = state
+        if state == "code_required":
+            self.status_label.setText("Telegram 验证码")
+            self.stack.setCurrentIndex(0)
+            self.in_code.setFocus()
+        elif state == "password_required":
+            self.status_label.setText("二步验证 2FA 密码")
+            self.stack.setCurrentIndex(1)
+            self.in_pwd.setFocus()
+        else:
+            self.hide()
 
     # ---- 提交 ----
 
-    def _submit_phone(self) -> None:
-        phone = self.in_phone.text().strip()
-        if not phone:
-            return
-        fut = asyncio.run_coroutine_threadsafe(self.app.login(phone), self.loop)
-        state = fut.result()
-        self._show(state)
+    def _on_submit(self) -> None:
+        if self._expected_state == "code_required":
+            self._submit_code()
+        elif self._expected_state == "password_required":
+            self._submit_password()
 
     def _submit_code(self) -> None:
         code = self.in_code.text().strip()
         if not code:
             return
         fut = asyncio.run_coroutine_threadsafe(self.app.submit_code(code), self.loop)
-        state = fut.result()
-        self._show(state)
+        self.in_code.clear()
+
+        def _on_done(f) -> None:
+            try:
+                state = f.result()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("submit_code failed: %s", exc)
+                return
+            self._render(state)
+
+        fut.add_done_callback(_on_done)
 
     def _submit_password(self) -> None:
         pwd = self.in_pwd.text()
         if not pwd:
             return
         fut = asyncio.run_coroutine_threadsafe(self.app.submit_password(pwd), self.loop)
-        state = fut.result()
-        self._show(state)
+        self.in_pwd.clear()
+
+        def _on_done(f) -> None:
+            try:
+                state = f.result()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("submit_password failed: %s", exc)
+                return
+            self._render(state)
+
+        fut.add_done_callback(_on_done)
+
+
+def app_get_state(app) -> str:  # 顶层 helper,避免循环 import
+    """同步读取当前 client state — 仅用于 UI 初次显示,非 hot-path。"""
+    try:
+        return app.client.state
+    except Exception:  # noqa: BLE001
+        return "unknown"
