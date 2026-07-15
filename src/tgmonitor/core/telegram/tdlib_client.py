@@ -340,6 +340,13 @@ class TdlibTelegramClient(_AiClient):
         )
         if proxy is not None:
             settings_kwargs["proxy_settings"] = proxy
+        # aiotdlib 默认 ClientOptions 会批量下发 disable_top_chats /
+        # ignore_inline_thumbnails / ignore_background_updates 等开关,
+        # 但部分选项受 TDLib "can be set only if can_<X> is true" 规则约束,
+        # 在 user account + 默认安全设置下会被 TDLib 拒(返回 code=400
+        # "Option can't be set"),日志里冒两条 WARNING。
+        # 我们没有需要覆盖的选项 → 关掉,只发 tdlib_parameters + proxy。
+        settings_kwargs["options"] = None
         if ClientSettings is not None:
             super().__init__(settings=ClientSettings(**settings_kwargs))  # type: ignore[arg-type]
         else:  # pragma: no cover

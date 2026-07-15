@@ -5,16 +5,26 @@
   - ChannelWidget:已加入(双击订阅) + 已监听(双击退订)
 
 工具栏:`刷新` `导出` `设置` — **不再有「登录」,登录入口已上移到侧栏**。
+
+退出路径:
+  - 用户点关窗 → `closeEvent` → 同步阻塞跑 async shutdown(用
+    `run_coroutine_threadsafe` + `concurrent.futures.Future.result(timeout=...)`)
+    → accept event,Qt 进入 quit。
+  - 关键:aiotdlib `client.close()`(拆 TDLib 内部 thread + queue)**必须**在
+    CFRunLoop 仍合法持有 mutex 的阶段完成,否则 macOS 上会抛
+    `std::system_error: mutex lock failed: Invalid argument`(libcpp 析构
+    路径上抢已 finalize 的 mutex)。`aboutToQuit` 时 loop 已进入 quit 过渡
+    状态,不再安全 → 关窗路径走 closeEvent 同步阻塞、aboutToQuit 走尽力清理。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
@@ -41,6 +51,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+ShutdownCb = Callable[[], Awaitable[None]]
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -59,6 +72,7 @@ class MainWindow(QMainWindow):
         self.resize(1180, 740)
 
         self._vm = MonitorViewModel(app, monitor, loop)
+        self._shutdown_cb: ShutdownCb | None = None
         self._build_ui()
         self._wire_events()
         self._refresh_state()
@@ -66,6 +80,63 @@ class MainWindow(QMainWindow):
         # 即便 storage 里已订阅过频道,UI 下栏算 `subscribed` 交集也是空。
         # 见 MonitorViewModel.bootstrap_ui 的注释。
         self._vm.bootstrap_ui()
+
+    def set_shutdown_callback(self, cb: ShutdownCb) -> None:
+        """app.py 在 run() 里挂上 shutdown 协程,closeEvent 里同步阻塞跑它。
+
+        为什么不在 aboutToQuit 里跑:
+          - aboutToQuit 时 Qt 已进入 quit 过渡状态,qasync 事件循环上
+            跑 aiotdlib client.close() 会撞 macOS CFRunLoop mutex 析构,
+            抛 `std::system_error: mutex lock failed: Invalid argument`。
+          - closeEvent 在 Qt 退出流程更早的阶段,loop 还活着,安全。
+        """
+        self._shutdown_cb = cb
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """用户点关窗 → 同步阻塞跑 async shutdown(<= 10s)→ 接受 quit。
+
+        关键:`asyncio.run_coroutine_threadsafe(...).result(timeout=...)` 等
+        future 完成时,需要目标 asyncio loop 实际在跑(协程 tick 才会推进)。
+        Qt 在 closeEvent 处理过程中**不会**自己 pump 事件,所以我们每 50ms
+        调一次 `QApplication.processEvents()` 让 loop 跑一会儿,协程才有机会
+        推进。否则永远 10s 超时。
+        """
+        if self._shutdown_cb is not None:
+            try:
+                import concurrent.futures
+
+                from PySide6.QtWidgets import QApplication
+
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._shutdown_cb(), self.loop
+                )
+                qt = QApplication.instance()
+                deadline = 10.0
+                polled = 0.0
+                step = 0.05
+                while not fut.done():
+                    if qt is not None:
+                        qt.processEvents()
+                    try:
+                        fut.result(timeout=step)
+                        break
+                    except concurrent.futures.TimeoutError:
+                        polled += step
+                        if polled >= deadline:
+                            log.warning(
+                                "shutdown timed out after %.1fs; quitting anyway",
+                                deadline,
+                            )
+                            break
+                if fut.done():
+                    try:
+                        fut.result(timeout=0)
+                    except Exception:  # noqa: BLE001
+                        log.exception("shutdown failed in closeEvent")
+            except RuntimeError:
+                # loop 已关(罕见):吃错误,让 quit 继续
+                log.warning("loop unavailable during shutdown")
+        super().closeEvent(event)
 
     # ---- UI 装配 ----
 
@@ -165,6 +236,12 @@ class MainWindow(QMainWindow):
 
     def _on_message_received(self, dto_dict: dict) -> None:
         m = MessageDTO(**dto_dict)
+        # 每次都同步标题表:VM.known_channels 在 channels_changed 时已更新,
+        # 但实时消息可能来自一个刚被发现但还没刷新到 known_channels 的频道。
+        # 把当前的 known_channels 透给 view,渲染时查表。
+        self.message_view.set_channel_titles(
+            {cid: ch.title for cid, ch in self._vm.known_channels.items()}
+        )
         self.message_view.append(m)
 
     def _on_login_state(self, state: str) -> None:
@@ -206,5 +283,10 @@ class MainWindow(QMainWindow):
             if cid in self.monitor._whitelist  # type: ignore[attr-defined]
         ]
         self.channel_panel.set_subscribed(subscribed)
+        # 同步标题表给 MessageView,后续历史消息(下面的 load_recent_messages)
+        # 渲染时就能用真实频道名而不是 #id。
+        self.message_view.set_channel_titles(
+            {cid: ch.title for cid, ch in all_known.items()}
+        )
         # 拉一次最近消息
         self._vm.load_recent_messages()

@@ -146,16 +146,27 @@ def run() -> None:
 
     env_path = Path(".env").resolve()
     win = MainWindow(app_svc, monitor, loop, env_path=env_path)
+    # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
+    # 然后再让 Qt 进入 quit 流程 — 这样 aiotdlib client.close() / TDLib
+    # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
+    # "mutex lock failed: Invalid argument" 析构崩溃。
+    win.set_shutdown_callback(_shutdown_async)
     win.show()
 
     # 退出钩子:任何路径触发 quit(关窗 / SIGINT)→ **先异步清理** → 再真 quit
     # 这样 step 4 的 async 任务在 loop 仍然 alive 时跑完,避开 'Event loop is closed'。
     def _shutdown_then_quit() -> None:
+        # 走到这里说明 aboutToQuit 仍被触发了(非 closeEvent 路径,
+        # 比如 macOS 系统菜单 Quit / SIGTERM)。这时只能尽力:
+        # 派一个 future,设短超时,失败也不抛 — 不阻塞 Qt quit。
         async def _do_shutdown_then_quit() -> None:
             try:
-                await _shutdown_async()
+                await asyncio.wait_for(_shutdown_async(), timeout=5.0)
+            except (TimeoutError, Exception):  # noqa: BLE001
+                log.exception("best-effort shutdown failed")
             finally:
                 qt_app.quit()
+
         try:
             fut = asyncio.ensure_future(_do_shutdown_then_quit())
         except RuntimeError:
