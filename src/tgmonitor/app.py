@@ -14,6 +14,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from pathlib import Path
 
 from tgmonitor.core.app_service import AppService
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 
 async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
+    t0 = time.monotonic()
     settings = Settings()  # type: ignore[call-arg]
     # 把相对路径解析成绝对路径,避免从不同 cwd 启动时 session_dir / data_root 不一样
     # 导致 TDLib 找不到上一回的 session db,被迫重新登录。
@@ -37,24 +39,46 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     settings.objectstore_root = settings.objectstore_root.resolve()
     settings.ensure_dirs()
     log.info(
-        "session_dir=%s exists=%s | data_root=%s",
+        "[bootstrap] settings loaded in %.2fs | session_dir=%s exists=%s | data_root=%s | db_backend=%s",
+        time.monotonic() - t0,
         settings.session_dir,
         (settings.session_dir / "tdlib").exists(),
         settings.data_root,
+        settings.db_backend.value,
     )
 
     bus = EventBus()
+
+    t = time.monotonic()
     storage = build_storage(settings)
     await storage.connect()
+    log.info("[bootstrap] storage.connect() took %.2fs", time.monotonic() - t)
+    t = time.monotonic()
     await storage.init_schema()
+    log.info("[bootstrap] storage.init_schema() took %.2fs", time.monotonic() - t)
 
+    t = time.monotonic()
     objects = build_object_store(settings)
     await objects.connect()
+    log.info(
+        "[bootstrap] objectstore.connect() took %.2fs backend=%s",
+        time.monotonic() - t, settings.objectstore_backend.value,
+    )
 
+    t = time.monotonic()
     # 默认尝试 aiotdlib;失败回退 fake(开发/CI 无凭据也能跑)
     client = build_telegram_client(settings, use_fake=False, event_bus=bus)
+    log.info(
+        "[bootstrap] telegram client built in %.2fs kind=%s",
+        time.monotonic() - t, type(client).__name__,
+    )
+
     monitor = MonitorService(bus, client, storage, objects, settings)
     app = AppService(bus, client, storage, objects, settings)
+    log.info(
+        "[bootstrap] full bootstrap done in %.2fs",
+        time.monotonic() - t0,
+    )
     return app, monitor, settings
 
 
@@ -107,18 +131,29 @@ def run() -> None:
     state: dict[str, object] = {}
 
     async def _setup_async() -> None:
+        t_setup = time.monotonic()
         app_svc, monitor, settings = await _bootstrap()
         # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
+        t = time.monotonic()
         subscribed = await app_svc.storage.list_channels()
         monitor.set_whitelist(c.id for c in subscribed)
+        log.info(
+            "[setup] loaded %d subscribed channels from storage in %.2fs",
+            len(subscribed), time.monotonic() - t,
+        )
+        t = time.monotonic()
         await monitor.start()
+        log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
         # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
         # 这一步会发 LoginStateChanged → UI 自动切到正确状态
         state["app"] = app_svc
         state["monitor"] = monitor
         state["settings"] = settings
         # bootstrap 是 fire-and-await,UI 已经在主线程上 subscribe 了 bus,能收到事件
+        t = time.monotonic()
         await app_svc.bootstrap()
+        log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
+        log.info("[setup] full _setup_async done in %.2fs", time.monotonic() - t_setup)
 
     async def _shutdown_async() -> None:
         monitor = state.get("monitor")  # type: ignore[assignment]

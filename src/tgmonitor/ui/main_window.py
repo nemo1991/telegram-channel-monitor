@@ -100,6 +100,13 @@ class MainWindow(QMainWindow):
         Qt 在 closeEvent 处理过程中**不会**自己 pump 事件,所以我们每 50ms
         调一次 `QApplication.processEvents()` 让 loop 跑一会儿,协程才有机会
         推进。否则永远 10s 超时。
+
+        异常路径:
+          - 协程被 cancel(loop shutdown / 用户二次 quit)→ `fut.cancelled()`;
+            `CancelledError` 是 `BaseException` 不是 `Exception`,**必须**单独接,
+            否则会从 closeEvent 抛出 → Qt 弹 "Error calling Python override"。
+          - 协程自身抛 → log 后放行,不阻塞 quit。
+          - 超时 10s → log warning 放行。
         """
         if self._shutdown_cb is not None:
             try:
@@ -128,14 +135,26 @@ class MainWindow(QMainWindow):
                                 deadline,
                             )
                             break
-                if fut.done():
+                # 收尾:取结果。cancelled 是合法状态(coros 已被 loop 取消,
+                # 比如用户连按 cmd+Q),不当作异常。
+                if fut.cancelled():
+                    log.warning("shutdown coroutine was cancelled")
+                elif fut.done():
                     try:
                         fut.result(timeout=0)
-                    except Exception:  # noqa: BLE001
-                        log.exception("shutdown failed in closeEvent")
+                    except concurrent.futures.CancelledError:
+                        # 竞争:cancelled 标志已 set 但 done() 路径还没看到
+                        log.warning("shutdown coroutine was cancelled (race)")
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("shutdown raised: %s: %s",
+                                    type(exc).__name__, exc)
             except RuntimeError:
                 # loop 已关(罕见):吃错误,让 quit 继续
                 log.warning("loop unavailable during shutdown")
+            except BaseException:  # noqa: BLE001
+                # 最后一道闸:任何意外(包括 CancelledError)都不应让
+                # Qt closeEvent 抛回主循环导致 "Error calling Python override"。
+                log.exception("closeEvent: unexpected error in shutdown")
         super().closeEvent(event)
 
     # ---- UI 装配 ----

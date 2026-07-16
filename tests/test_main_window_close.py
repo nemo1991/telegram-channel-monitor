@@ -167,3 +167,53 @@ def test_set_shutdown_callback_stores(qapp, loop_thread):
 
     win.set_shutdown_callback(cb)
     assert win._shutdown_cb is cb
+
+
+# ---- 协程被 cancel 路径(用户连按 cmd+Q / loop shutdown) ----
+
+
+def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_thread):
+    """回归:`concurrent.futures.CancelledError` 是 BaseException 不是 Exception,
+    closeEvent 必须在收尾时单独接,否则会从 closeEvent 抛回 → Qt 报
+    "Error calling Python override of QMainWindow::closeEvent()"。
+    """
+    task_holder: dict[str, asyncio.Task | None] = {"t": None}
+
+    async def cb() -> None:
+        task_holder["t"] = asyncio.current_task()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            # closeEvent 已主动 cancel 我们,正常退出
+            return
+
+    try:
+        win = _FakeMainWindow(loop_thread.asyncio_loop)
+        win.set_shutdown_callback(cb)
+        # 启动 cb(挂到后台 loop);在 closeEvent 之前先 cancel 它,模拟
+        # loop shutdown / 用户多次 quit 的真实路径:cancel 在 closeEvent 之前
+        # 就已发生,closeEvent 拿到的是个已 cancelled 的 future。
+        loop_thread.asyncio_loop.call_soon_threadsafe(task_holder.__setitem__, "t", None)
+        # 先把 cb 调起来
+        fut_for_setup = asyncio.run_coroutine_threadsafe(
+            cb(), loop_thread.asyncio_loop
+        )
+        # 等 cb 把自己注册到 holder 上(loop 跑几个 tick)
+        deadline_setup = time.monotonic() + 1.0
+        while task_holder["t"] is None and time.monotonic() < deadline_setup:
+            time.sleep(0.02)
+        # 主动 cancel
+        t = task_holder["t"]
+        assert t is not None
+        loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
+        # 给 cancel 一点时间让 future 状态切到 cancelled
+        time.sleep(0.1)
+        # 关键断言:closeEvent 不应抛 — 走到这里如果异常未被吃,
+        # pytest 会以 "Error calling Python override" / CancelledError 失败
+        win.close()
+        assert fut_for_setup.done() or fut_for_setup.cancelled()
+    finally:
+        t = task_holder.get("t")
+        if t is not None and not t.done():
+            loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
+            time.sleep(0.1)

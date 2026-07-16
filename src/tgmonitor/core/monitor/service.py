@@ -65,6 +65,10 @@ class MonitorService:
         self._stop.clear()
         self._stream = self.client.subscribe_updates()
         self._task = asyncio.create_task(self._run(), name="MonitorService")
+        log.info(
+            "MonitorService started; whitelist size=%d",
+            len(self._whitelist),
+        )
 
     async def stop(self) -> None:
         self._stop.set()

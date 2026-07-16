@@ -553,19 +553,38 @@ class TdlibTelegramClient(_AiClient):
 
     async def _do_start_inner(self) -> None:
         """不动 aiotdlib.Client.start()(它会 await authorize 然后 hang);
-        手工复刻启动顺序,等我们自己的 _state_event 来推进。"""
+        手工复刻启动顺序,等我们自己的 _state_event 来推进。
+
+        每一步都有耗时日志,启动卡在哪一步一眼能看出(4:30-5:00 排查场景)。
+        """
+        import time as _t
+        t0 = _t.monotonic()
         # 启动 updates_loop + aiotdlib 内部 task
         self._update_task = asyncio.create_task(self._updates_loop())
         self._running = True
+        log.info("[tdlib] updates_loop task scheduled in %.3fs", _t.monotonic() - t0)
+        t = _t.monotonic()
         await self.execute(SetLogVerbosityLevel(new_verbosity_level=0))  # 暂时无所谓
+        log.info("[tdlib] SetLogVerbosityLevel in %.3fs", _t.monotonic() - t)
         # 走 base 的 _setup_proxy / _setup_options
+        t = _t.monotonic()
         await self._setup_proxy()
+        log.info("[tdlib] _setup_proxy in %.3fs", _t.monotonic() - t)
+        t = _t.monotonic()
         await self._setup_options()
+        log.info("[tdlib] _setup_options in %.3fs (options=None → no-op)", _t.monotonic() - t)
         # 发 GetAuthorizationState 触发状态机 — 这是 fire-and-forget,
         # 响应是 `updateAuthorizationState`,会走 _on_authorization_state_update
+        t = _t.monotonic()
         await self.send(GetAuthorizationState())
+        log.info("[tdlib] GetAuthorizationState sent in %.3fs", _t.monotonic() - t)
         # 等状态机推进 — 任何非 bo 状态都意味着启动成功
+        t = _t.monotonic()
+        log.info("[tdlib] waiting for state machine to advance (current=%s)…",
+                 self._state)
         await self._state_event.wait()
+        log.info("[tdlib] state machine advanced to %s in %.3fs",
+                 self._state, _t.monotonic() - t)
 
     async def start(self) -> tuple[str, str | None]:
         """主入口 — 应用启动时调一次。
@@ -765,11 +784,17 @@ class TdlibTelegramClient(_AiClient):
     # ---- 频道 ----
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        import time as _t
+        t0 = _t.monotonic()
         result: list[ChannelDTO] = []
         try:
             # aiotdlib 0.27: `send()` 是 fire-and-forget(返回 None),
             # 想要响应必须用 `request()`(内部 send + 等 _pending_requests 完成)。
+            t = _t.monotonic()
             chats = await self.request(GetChats(limit=200))  # type: ignore[arg-type]
+            log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
+                     len(chats.chat_ids) if chats and chats.chat_ids else 0,
+                     _t.monotonic() - t)
             if chats is None:
                 return result
             # aiotdlib 0.27 的 pydantic v2 把 `type` 改名为 `type_`(`type` 是 Python
@@ -778,7 +803,9 @@ class TdlibTelegramClient(_AiClient):
             # 注意:0.27 没单独的 ChatTypeChannel,channel 就是 is_channel=True 的
             # supergroup。
             from aiotdlib.api import ChatTypeSupergroup, ChatTypeBasicGroup
-            for cid in chats.chat_ids or []:
+            n_total = len(chats.chat_ids or [])
+            for i, cid in enumerate(chats.chat_ids or []):
+                t_chat = _t.monotonic()
                 chat = await self.request(GetChat(chat_id=cid))
                 if chat is None:
                     continue
@@ -800,8 +827,14 @@ class TdlibTelegramClient(_AiClient):
                         member_count=getattr(chat, "member_count", None) or None,
                     )
                 )
+                # 大账号(>200 频道)单条 GetChat 1s+ → 进度日志便于排查
+                if n_total >= 50 and (i + 1) % 50 == 0:
+                    log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
+                             i + 1, n_total, _t.monotonic() - t0)
         except Exception:  # noqa: BLE001
             log.exception("list_joined_channels failed")
+        log.info("[tdlib] list_joined_channels done: %d channels in %.2fs",
+                 len(result), _t.monotonic() - t0)
         return result
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
