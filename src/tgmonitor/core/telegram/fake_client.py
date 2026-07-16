@@ -161,13 +161,9 @@ class FakeTelegramClient(TelegramClient):
         max_id, count = ch_state
         # 起始 id:from_msg_id=0 → 拉最新 count 条(max_id-count+1 ... max_id);
         # from_msg_id>0 → 从 from_msg_id+1 开始。
-        if from_msg_id == 0:
-            start = max(1, max_id - count + 1)
-        else:
-            start = from_msg_id + 1
+        start = max(1, max_id - count + 1) if from_msg_id == 0 else from_msg_id + 1
         end = max_id
-        yielded = 0
-        for mid in range(start, end + 1):
+        for yielded, mid in enumerate(range(start, end + 1)):
             if self._raise_after_n is not None and yielded == self._raise_after_n:
                 self._raise_after_n = None
                 from tgmonitor.core.telegram.tdlib_client import (
@@ -181,7 +177,6 @@ class FakeTelegramClient(TelegramClient):
                 text=f"history-{channel_id}-{mid}",
                 date=datetime.utcnow(),
             )
-            yielded += 1
             # 让出 loop,模仿真网络
             await asyncio.sleep(0)
 

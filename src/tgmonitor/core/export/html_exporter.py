@@ -123,8 +123,8 @@ class HtmlExporter(Exporter):
             channels=grouped.items(),
             channels_title=channels_title,
         )
-        out_path.write_text(html, encoding="utf-8")
-        return out_path.stat().st_size
+        out_path.write_text(html, encoding="utf-8")  # noqa: ASYNC240 — 文件 IO 同步,已在 IO 阻塞路径,不切线程
+        return out_path.stat().st_size  # noqa: ASYNC240 — 同上
 
 
 def _guess_thumb_mime(key: str, fallback: str | None) -> str:

@@ -183,8 +183,8 @@ class AppService:
     async def sync_channels(
         self,
         channel_ids: list[int],
-        options: "SyncOptions",
-    ) -> "SyncResult":
+        options: SyncOptions,
+    ) -> SyncResult:
         """全量同步 — UI 进度对话框经此调起。
 
         `options` 用 dataclass,UI 端构造(delay_ms 等覆盖 Settings 默认值)。

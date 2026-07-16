@@ -44,7 +44,7 @@ class CsvExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
     ) -> int:
-        with out_path.open("w", encoding="utf-8", newline="") as f:
+        with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()
             for m in messages:
@@ -65,4 +65,4 @@ class CsvExporter(Exporter):
                         "reply_to_msg_id": m.reply_to_msg_id if m.reply_to_msg_id is not None else "",
                     }
                 )
-        return out_path.stat().st_size
+        return out_path.stat().st_size  # noqa: ASYNC240 — 文件 IO 同步,与 write 同步完成

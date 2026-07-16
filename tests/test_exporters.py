@@ -9,14 +9,9 @@ import pytest
 from tests.conftest import make_message, make_photo
 from tgmonitor.core.dto import ChannelDTO, ExportFormat, ExportRequest
 from tgmonitor.core.events import EventBus
+
 # noqa: F401 — 这些 import 触发 `@exporter(...)` 类装饰器,把各 Exporter
 # 注册到全局 EXPORTERS 注册表。即使模块里没有直接用类名,也得 import。
-from tgmonitor.core.export import (
-    csv_exporter,
-    html_exporter,
-    json_exporter,
-    markdown_exporter,
-)
 from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.core.export.service import ExportService
 

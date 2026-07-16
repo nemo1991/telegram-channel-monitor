@@ -32,8 +32,8 @@ class JsonExporter(Exporter):
             "messages": [_message_to_dict(m) for m in messages],
         }
         text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-        out_path.write_text(text, encoding="utf-8")
-        return out_path.stat().st_size
+        out_path.write_text(text, encoding="utf-8")  # noqa: ASYNC240 — 同 csv/html,写文件同步即可
+        return out_path.stat().st_size  # noqa: ASYNC240 — 同上
 
 
 def _message_to_dict(m: MessageDTO) -> dict:

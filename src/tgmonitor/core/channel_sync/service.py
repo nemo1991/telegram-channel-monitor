@@ -21,11 +21,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from tgmonitor.core.dto import (
-    ChannelDTO,
     ChannelSyncResult,
     SyncOptions,
     SyncResult,
@@ -47,9 +46,9 @@ log = logging.getLogger(__name__)
 class ChannelSyncService:
     def __init__(
         self,
-        bus: "EventBus",
+        bus: EventBus,
         client: TelegramClient,
-        storage: "StorageRepository",
+        storage: StorageRepository,
     ) -> None:
         self.bus = bus
         self.client = client
@@ -89,7 +88,7 @@ class ChannelSyncService:
                         detail="",
                     )
                     dto = await self.client.get_channel_metadata(cid)
-                    dto.last_synced_at = datetime.now(timezone.utc)
+                    dto.last_synced_at = datetime.now(UTC)
                     await self.storage.upsert_channel_metadata(dto)
                     ch_result.metadata_updated = True
                     await self._emit_progress(
@@ -149,11 +148,13 @@ class ChannelSyncService:
                                 options.chat_delay_ms / 1000.0
                             )
                         # 整百条触发分页间隔(更重的请求)
-                        if page_count % 100 == 0:
-                            if options.page_delay_ms > 0:
-                                await self._sleep_or_cancel(
-                                    options.page_delay_ms / 1000.0
-                                )
+                        if (
+                            page_count % 100 == 0
+                            and options.page_delay_ms > 0
+                        ):
+                            await self._sleep_or_cancel(
+                                options.page_delay_ms / 1000.0
+                            )
                     result.total_messages_added += added_in_channel
                     await self._emit_progress(
                         cid, "history", progress=ch_result.messages_added,

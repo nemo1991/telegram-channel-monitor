@@ -13,20 +13,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-
+from tests.conftest import InMemoryRepository
 from tgmonitor.core.channel_sync import ChannelSyncService
 from tgmonitor.core.dto import (
     ChannelDTO,
-    MediaType,
     MessageDTO,
     SyncOptions,
     SyncResult,
 )
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
-from tests.conftest import InMemoryRepository
-
 
 # ---- helpers ----
 
@@ -211,9 +207,6 @@ async def test_cancel_stops_sync_immediately(bus, client, storage, settings):
     # per_channel 应包含这个 id(error=cancelled)
     assert 100 in result.per_channel
     assert result.per_channel[100].error == "cancelled"
-    # 进度事件应包含 done 阶段(progress_dlg 显示)
-    captured = _capture_events(bus)
-    # 重新跑一次验证 _capture_events 的 done 阶段出现
 
 
 # ============================================================
@@ -263,7 +256,6 @@ async def test_rate_limit_during_metadata_skips_history(bus, client, storage, se
         include_metadata=True, include_history=True,
         chat_delay_ms=0, page_delay_ms=0,
     )
-    captured = _capture_events(bus)
     result = await svc.sync_channels([100], options)
     assert result.per_channel[100].rate_limited
     # 历史不应被拉(从未走到 history 阶段)
@@ -358,8 +350,8 @@ async def test_metadata_sync_does_not_change_subscribed(
 
 def test_translate_rate_limit_429():
     from tgmonitor.core.telegram.tdlib_client import (
-        TelegramRateLimitError,
         TdlibTelegramClient,
+        TelegramRateLimitError,
     )
 
     class _FakeError:
@@ -372,8 +364,8 @@ def test_translate_rate_limit_429():
 
 def test_translate_rate_limit_flood_wait_text():
     from tgmonitor.core.telegram.tdlib_client import (
-        TelegramRateLimitError,
         TdlibTelegramClient,
+        TelegramRateLimitError,
     )
 
     class _FakeError:

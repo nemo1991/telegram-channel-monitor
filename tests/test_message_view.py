@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -56,7 +56,7 @@ def test_format_aware_utc_also_converts(qapp):
     msg = MessageDTO(
         id=0, channel_id=100, telegram_msg_id=42,
         text="hi", author=None,
-        date=datetime(2026, 7, 15, 13, 50, 10, tzinfo=timezone.utc),
+        date=datetime(2026, 7, 15, 13, 50, 10, tzinfo=UTC),
     )
     line = view._format(msg).split("\n")[0]
     assert ("13:50:10" in line) or ("21:50:10" in line), (

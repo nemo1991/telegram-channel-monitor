@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGroupBox,
@@ -51,14 +51,12 @@ def _kind_color(kind: str) -> QColor:
     }.get(kind, _ICON_GROUP)
 
 
-def _paint_color_block(color: QColor, size: int = 14) -> "QIcon":
+def _paint_color_block(color: QColor, size: int = 14) -> QIcon:
     """生成一个纯色小方块作图标,区分频道类型。
 
     返回 `QIcon`(含一个 QPixmap)而不是 QBrush — `QListWidgetItem.setIcon` 只接
     QIcon / QPixmap,不接 QBrush。
     """
-    from PySide6.QtGui import QIcon, QPainter, QPixmap  # 局部,避免顶层循环 import
-
     pm = QPixmap(QSize(size, size))
     pm.fill(Qt.transparent)
     p = QPainter(pm)

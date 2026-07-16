@@ -56,10 +56,16 @@ class ExportDialog(QDialog):
         form.addRow("频道:", self.lst_channels)
 
         # 时间范围(可选)
-        self.in_from = QLineEdit(); self.in_from.setPlaceholderText("YYYY-MM-DD(可选)")
-        self.in_to = QLineEdit(); self.in_to.setPlaceholderText("YYYY-MM-DD(可选)")
-        row = QWidget(); rl = QHBoxLayout(row); rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(self.in_from); rl.addWidget(QLabel("~")); rl.addWidget(self.in_to)
+        self.in_from = QLineEdit()
+        self.in_from.setPlaceholderText("YYYY-MM-DD(可选)")
+        self.in_to = QLineEdit()
+        self.in_to.setPlaceholderText("YYYY-MM-DD(可选)")
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(self.in_from)
+        rl.addWidget(QLabel("~"))
+        rl.addWidget(self.in_to)
         form.addRow("时间范围:", row)
 
         # 格式
@@ -77,12 +83,15 @@ class ExportDialog(QDialog):
         )
 
         # 输出路径
-        path_row = QWidget(); pl = QHBoxLayout(path_row); pl.setContentsMargins(0, 0, 0, 0)
+        path_row = QWidget()
+        pl = QHBoxLayout(path_row)
+        pl.setContentsMargins(0, 0, 0, 0)
         self.in_path = QLineEdit()
         self.btn_browse = QLabel("[浏览…]")
         self.btn_browse.setStyleSheet("color: #4a90e2; text-decoration: underline;")
         self.btn_browse.mousePressEvent = lambda _e: self._browse()  # type: ignore[assignment]
-        pl.addWidget(self.in_path, 1); pl.addWidget(self.btn_browse)
+        pl.addWidget(self.in_path, 1)
+        pl.addWidget(self.btn_browse)
         form.addRow("输出:", path_row)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

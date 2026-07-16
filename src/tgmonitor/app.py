@@ -174,7 +174,6 @@ def run() -> None:
 
     app_svc: AppService = state["app"]          # type: ignore[assignment]
     monitor: MonitorService = state["monitor"]  # type: ignore[assignment]
-    settings: Settings = state["settings"]      # type: ignore[assignment]
 
     # UI
     from tgmonitor.ui.main_window import MainWindow

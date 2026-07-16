@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
-from tgmonitor.core.dto import ChannelDTO, ExportRequest, ExportResult, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, ExportRequest
 from tgmonitor.core.events import (
     ChannelSubscribed,
     ChannelSyncDone,

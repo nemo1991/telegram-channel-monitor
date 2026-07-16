@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -82,7 +82,7 @@ class MessageView(QListWidget):
         # 或 dto.py 默认工厂 utcnow),必须先 attach UTC tzinfo 再 astimezone(),
         # 否则 astimezone() 会把 naive datetime 当成本地时间,不做时区转换。
         if m.date:
-            dt_utc = m.date.replace(tzinfo=timezone.utc)
+            dt_utc = m.date.replace(tzinfo=UTC)
             dt_local = dt_utc.astimezone()
             dt = dt_local.strftime("%Y-%m-%d %H:%M:%S")
         else:

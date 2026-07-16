@@ -8,9 +8,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -26,8 +24,6 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import (
-    ChannelDTO,
-    ChannelSyncResult,
     SyncOptions,
     SyncResult,
 )

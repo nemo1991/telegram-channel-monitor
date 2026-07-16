@@ -55,9 +55,9 @@ except Exception:  # noqa: BLE001
     _HAVE_AIOTDLIB = False
     ClientSettings = None  # type: ignore[assignment]
 
-from tgmonitor.core.config import Settings
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
-from tgmonitor.core.telegram.client import UpdateStream
+from tgmonitor.core.config import Settings  # noqa: E402 — aiotdlib import 上方有 try/except 守卫
+from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO  # noqa: E402
+from tgmonitor.core.telegram.client import UpdateStream  # noqa: E402
 
 # ---- aiotdlib AuthorizationState.ID → 我们的字符串 ----
 # 注:`API.Types.AUTHORIZATION_STATE_*` 是 aiotdlib 内部常量;
@@ -193,7 +193,7 @@ def _load_or_create_encryption_key(td_dir, *, rotate: bool = False) -> str:
     return key_b64
 
 
-async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:
+async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:  # noqa: ASYNC109 — `timeout` 是 SOCKS5 握手本身的超时,不是 asyncio.wait_for;命名直白可用
     """真做 SOCKS5 握手 — 不光 TCP 端口可达,还要回 greeting + 响应 CONNECT。
 
     返回 `(ok, message)`:ok=True 时 message="SOCKS5 proxy OK: host:port";
@@ -217,10 +217,7 @@ async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]
         return False, "代理未配置"
     try:
         rest = proxy_url.strip().split("://", 1)[1]
-        if "@" in rest:
-            hostport = rest.rsplit("@", 1)[1]
-        else:
-            hostport = rest
+        hostport = rest.rsplit("@", 1)[1] if "@" in rest else rest
         host, _, port_s = hostport.rpartition(":")
         port = int(port_s)
     except Exception as e:  # noqa: BLE001
@@ -711,7 +708,7 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     @staticmethod
-    def _translate_rate_limit(exc: BaseException) -> "TelegramRateLimitError | None":
+    def _translate_rate_limit(exc: BaseException) -> TelegramRateLimitError | None:
         """把 aiotdlib 抛的 AioTDLibError / 含 FLOOD_WAIT 的 Error 归一。
 
         返回:

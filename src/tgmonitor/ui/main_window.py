@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         """
         self._shutdown_cb = cb
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 — Qt 事件覆盖,按 Qt 命名约定
         """用户点关窗 → 同步阻塞跑 async shutdown(<= 10s)→ 接受 quit。
 
         关键:`asyncio.run_coroutine_threadsafe(...).result(timeout=...)` 等
@@ -239,10 +239,6 @@ class MainWindow(QMainWindow):
         # 用 monitor._whitelist 是不优雅,但导出需要"已订阅的 id 列表"这语义没变;
         # 后续可改 AppService.list_subscribed_channels()返回 ids 版本
         ids = [int(cid) for cid in self.monitor._whitelist]  # type: ignore[attr-defined]
-        # 取 channel DTO(优先用 vm.known_channels,没有就传 stub)
-        chs_by_id: dict[int, object] = {
-            cid: ch for cid, ch in self._vm.known_channels.items() if cid in ids
-        }
         # export_dialog 只用 channel_ids 字段,DTO 是渲染细节;此处跳过
         dlg = ExportDialog(self.app, ids, self)
         if dlg.exec():

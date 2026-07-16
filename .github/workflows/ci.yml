@@ -28,6 +28,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Qt system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
+            libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-icccm4 libxcb-image0 libxcb-util1 \
+            libsm6 libice6
+          # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
+          sudo ldconfig
+
       - name: Cache pip
         uses: actions/cache@v4
         with:
@@ -52,6 +66,12 @@ jobs:
       - name: Run pytest
         env:
           PYTHONPATH: src
+          # 强制 Qt 用 offscreen 后端(无显示器),PySide6 在 CI 必设,否则
+          # Linux 上 Qt 会尝试加载 libEGL.so.1 之类系统库;
+          # 单元测试里 test_message_view.py / test_main_window_close.py
+          # 也已 setdefault,但 ENV 在进程启动前定最稳。
+          QT_QPA_PLATFORM: offscreen
+          QT_LOGGING_RULES: "*.warning=false"
         run: |
           python -m pytest -v --tb=short
 

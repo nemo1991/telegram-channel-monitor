@@ -62,7 +62,8 @@ class LoginDialog(QDialog):
         root.addWidget(self.stack, 1)
 
         # page 0: 验证码
-        p_code = QWidget(); cl = QVBoxLayout(p_code)
+        p_code = QWidget()
+        cl = QVBoxLayout(p_code)
         self.in_code = QLineEdit()
         self.in_code.setPlaceholderText("Telegram 发到手机的 5 位验证码")
         self.in_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -71,7 +72,8 @@ class LoginDialog(QDialog):
         self.in_code.returnPressed.connect(self._submit_code)
 
         # page 1: 2FA 密码
-        p_pwd = QWidget(); pl = QVBoxLayout(p_pwd)
+        p_pwd = QWidget()
+        pl = QVBoxLayout(p_pwd)
         self.in_pwd = QLineEdit()
         self.in_pwd.setEchoMode(QLineEdit.Password)
         self.in_pwd.setPlaceholderText("二步验证 2FA 密码")
