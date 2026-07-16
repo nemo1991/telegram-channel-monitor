@@ -135,7 +135,7 @@ def run() -> None:
         app_svc, monitor, settings = await _bootstrap()
         # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
         t = time.monotonic()
-        subscribed = await app_svc.storage.list_channels()
+        subscribed = await app_svc.storage.list_subscribed_channels()
         monitor.set_whitelist(c.id for c in subscribed)
         log.info(
             "[setup] loaded %d subscribed channels from storage in %.2fs",

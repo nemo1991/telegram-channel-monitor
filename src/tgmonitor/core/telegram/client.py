@@ -62,11 +62,30 @@ class TelegramClient(Protocol):
         """identifier: @username 或 t.me/... 链接。"""
         ...
 
+    async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
+        """拉取频道的最新元数据(title/username/member_count/kind)。
+
+        走 GetChat + GetSupergroup / GetBasicGroup — 修原 list_joined_channels
+        元数据 bug:username / member_count 不在 Chat 上,只在 Supergroup /
+        BasicGroup 上。ChannelSyncService 用这个拉元数据。
+        """
+        ...
+
     # ---- 消息流 ----
     async def iter_messages(
         self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
     ) -> AsyncIterator[MessageDTO]:
         """历史回放(若需)。"""
+        ...
+
+    def iter_chat_history(
+        self, channel_id: int, *, from_msg_id: int = 0, limit: int = 100
+    ) -> AsyncIterator[MessageDTO]:
+        """分页拉取频道历史消息(ChannelSyncService 续拉用)。
+
+        from_msg_id=0 表示"最新 N 条",>0 表示"从 from_msg_id 之后正向拉"。
+        返回的迭代器分页自动推进,直到消息耗尽(返回 <limit 条时结束)。
+        """
         ...
 
     def subscribe_updates(self) -> UpdateStream:

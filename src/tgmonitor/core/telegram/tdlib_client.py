@@ -25,8 +25,11 @@ try:
         CheckAuthenticationCode,
         CheckAuthenticationPassword,
         GetAuthorizationState,
+        GetBasicGroup,
         GetChat,
+        GetChatHistory,
         GetChats,
+        GetSupergroup,
         JoinChat,
         LogOut,
         SearchPublicChat,
@@ -704,6 +707,34 @@ class TdlibTelegramClient(_AiClient):
         self._me = None
 
     # ============================================================
+    # 限流 / Flood Wait 处理(ChannelSyncService 用)
+    # ============================================================
+
+    @staticmethod
+    def _translate_rate_limit(exc: BaseException) -> "TelegramRateLimitError | None":
+        """把 aiotdlib 抛的 AioTDLibError / 含 FLOOD_WAIT 的 Error 归一。
+
+        返回:
+          - TelegramRateLimitError(retry_after=...) 如果识别为限流
+          - None 否则(原异常往外抛)
+        """
+        # code=429 是限流的官方 code
+        code = getattr(exc, "code", None)
+        if code == 429:
+            ra = getattr(exc, "retry_after", None)
+            if isinstance(ra, (int, float)) and ra > 0:
+                return TelegramRateLimitError(float(ra))
+            # 没给 retry_after 给个保守 60s
+            return TelegramRateLimitError(60.0)
+        # 字符串里 "FLOOD_WAIT_NNN" 也算(aiotdlib 某些版本 code 不是 429)
+        msg = getattr(exc, "message", None) or str(exc)
+        import re as _re
+        m = _re.search(r"FLOOD_WAIT[_ ](\d+)", msg)
+        if m:
+            return TelegramRateLimitError(float(m.group(1)))
+        return None
+
+    # ============================================================
     # 清理
     # ============================================================
 
@@ -783,13 +814,72 @@ class TdlibTelegramClient(_AiClient):
 
     # ---- 频道 ----
 
+    async def _resolve_channel_metadata(self, chat_id: int) -> ChannelDTO | None:
+        """GetChat + GetSupergroup/GetBasicGroup 拿完整元数据。
+
+        修 `tdlib_client.py:818-819` 旧 bug:`getattr(chat, "username", None)`
+        永远拿不到 — `Chat` 类型没 username / member_count,这些在
+        `Supergroup` / `BasicGroup` 上。
+        """
+        from aiotdlib.api import (
+            ChatTypeBasicGroup,
+            ChatTypeSupergroup,
+        )
+
+        chat = await self.request(GetChat(chat_id=chat_id))
+        if chat is None:
+            return None
+        ct = getattr(chat, "type_", None) or getattr(chat, "type", None)
+        title = chat.title
+        if isinstance(ct, ChatTypeSupergroup):
+            is_channel = bool(getattr(ct, "is_channel", False))
+            kind = "channel" if is_channel else "supergroup"
+            sg = await self.request(
+                GetSupergroup(supergroup_id=ct.supergroup_id)
+            )
+            username = None
+            member_count = None
+            if sg is not None:
+                usernames = getattr(sg, "usernames", None)
+                if usernames is not None:
+                    active = getattr(usernames, "active_usernames", None) or []
+                    if active:
+                        username = active[0]
+                mc = getattr(sg, "member_count", None)
+                if isinstance(mc, int) and mc > 0:
+                    member_count = mc
+            return ChannelDTO(
+                id=chat_id, title=title, username=username, kind=kind,
+                member_count=member_count,
+            )
+        if isinstance(ct, ChatTypeBasicGroup):
+            bg = await self.request(
+                GetBasicGroup(basic_group_id=ct.basic_group_id)
+            )
+            member_count = None
+            if bg is not None:
+                mc = getattr(bg, "member_count", None)
+                if isinstance(mc, int) and mc > 0:
+                    member_count = mc
+            return ChannelDTO(
+                id=chat_id, title=title, username=None, kind="basic_group",
+                member_count=member_count,
+            )
+        return None  # private / secret — 同步功能不覆盖
+
+    async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
+        """ChannelSyncService 用:拉一个频道的最新元数据。"""
+        dto = await self._resolve_channel_metadata(channel_id)
+        if dto is None:
+            # 私有/secret 或 chat 不存在,fallback 给个 stub
+            return ChannelDTO(id=channel_id, title=f"#{channel_id}")
+        return dto
+
     async def list_joined_channels(self) -> list[ChannelDTO]:
         import time as _t
         t0 = _t.monotonic()
         result: list[ChannelDTO] = []
         try:
-            # aiotdlib 0.27: `send()` 是 fire-and-forget(返回 None),
-            # 想要响应必须用 `request()`(内部 send + 等 _pending_requests 完成)。
             t = _t.monotonic()
             chats = await self.request(GetChats(limit=200))  # type: ignore[arg-type]
             log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
@@ -797,37 +887,16 @@ class TdlibTelegramClient(_AiClient):
                      _t.monotonic() - t)
             if chats is None:
                 return result
-            # aiotdlib 0.27 的 pydantic v2 把 `type` 改名为 `type_`(`type` 是 Python
-            # 内建关键字,alias 让位)。ChatType 是 discriminated union,在这里用
-            # isinstance 判 ChatTypeSupergroup / ChatTypeBasicGroup 即可 —
-            # 注意:0.27 没单独的 ChatTypeChannel,channel 就是 is_channel=True 的
-            # supergroup。
-            from aiotdlib.api import ChatTypeSupergroup, ChatTypeBasicGroup
             n_total = len(chats.chat_ids or [])
             for i, cid in enumerate(chats.chat_ids or []):
-                t_chat = _t.monotonic()
-                chat = await self.request(GetChat(chat_id=cid))
-                if chat is None:
+                try:
+                    dto = await self._resolve_channel_metadata(cid)
+                except Exception:  # noqa: BLE001
+                    log.exception("_resolve_channel_metadata(%d) failed", cid)
                     continue
-                ct = getattr(chat, "type_", None) or getattr(chat, "type", None)
-                if isinstance(ct, ChatTypeSupergroup):
-                    # is_channel=True 时为 channel,否则为普通 supergroup(社区/群组)
-                    is_channel = bool(getattr(ct, "is_channel", False))
-                    kind = "channel" if is_channel else "supergroup"
-                elif isinstance(ct, ChatTypeBasicGroup):
-                    kind = "basic_group"
-                else:
+                if dto is None:
                     continue
-                result.append(
-                    ChannelDTO(
-                        id=cid,
-                        title=chat.title,
-                        username=getattr(chat, "username", None) or None,
-                        kind=kind,
-                        member_count=getattr(chat, "member_count", None) or None,
-                    )
-                )
-                # 大账号(>200 频道)单条 GetChat 1s+ → 进度日志便于排查
+                result.append(dto)
                 if n_total >= 50 and (i + 1) % 50 == 0:
                     log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
                              i + 1, n_total, _t.monotonic() - t0)
@@ -836,6 +905,53 @@ class TdlibTelegramClient(_AiClient):
         log.info("[tdlib] list_joined_channels done: %d channels in %.2fs",
                  len(result), _t.monotonic() - t0)
         return result
+
+    # ---- 历史消息分页(全量同步用) ----
+
+    async def iter_chat_history(
+        self,
+        channel_id: int,
+        *,
+        from_msg_id: int = 0,
+        limit: int = 100,
+    ) -> AsyncIterator[MessageDTO]:
+        """分页拉取频道历史消息。
+
+        from_msg_id=0 → 最新 N 条;>0 → 续拉 from_msg_id 之后。
+        TDLib 返回的 messages 是 reverse chronological(递减 id),所以翻页用
+        本批**最后**一条的 id 作为下次 from_msg_id(更小)。
+        限流:每页间不 sleep(由调用方 ChannelSyncService 控)。
+        """
+        from tgmonitor.core.telegram.tdlib_client import _map_message
+        while True:
+            t = GetChatHistory(  # type: ignore[call-arg]
+                chat_id=channel_id,
+                from_message_id=from_msg_id,
+                offset=0,
+                limit=limit,
+            )
+            resp = await self.request(t)
+            if resp is None or not getattr(resp, "messages", None):
+                break
+            batch = list(resp.messages)
+            for raw in batch:
+                if raw is None:
+                    continue
+                # _map_message 自己从 msg.chat_id 取 channel_id,
+                # 不需要外面传;这里只 yield
+                yield _map_message(raw)
+            # TDLib 文档:limit<=100;返回数 < limit → 已到尽头
+            if len(batch) < limit:
+                break
+            # 续拉:用本批最末(最小)id 作为下次 from_message_id
+            last_id = None
+            for raw in batch:
+                rid = getattr(raw, "id", None)
+                if rid is not None and (last_id is None or rid < last_id):
+                    last_id = rid
+            if last_id is None or last_id == from_msg_id:
+                break
+            from_msg_id = last_id
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
         username = identifier.lstrip("@") if identifier.startswith("@") else identifier
@@ -1272,3 +1388,17 @@ def _map_message(msg: BaseObject) -> MessageDTO:  # type: ignore[name-defined]
         edited=getattr(msg, "edit_date", 0) > 0,
         media=media_list,
     )
+
+
+# ---- 限流错误归一 ----
+
+class TelegramRateLimitError(RuntimeError):
+    """TDLib 限流(429 / FLOOD_WAIT_*)归一异常。
+
+    ChannelSyncService 收到这个异常后等 `retry_after_seconds` 再继续,
+    保证不踩 Telegram 限流红线。
+    """
+
+    def __init__(self, retry_after_seconds: float, message: str = "") -> None:
+        self.retry_after_seconds = float(retry_after_seconds)
+        super().__init__(message or f"Telegram rate limit: wait {retry_after_seconds:.0f}s")

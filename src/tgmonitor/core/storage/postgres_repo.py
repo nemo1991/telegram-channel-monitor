@@ -46,6 +46,8 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
         kind=row["kind"],
         member_count=row["member_count"],
         created_at=row["created_at"],
+        is_subscribed=bool(row.get("subscribed", True)),
+        last_synced_at=row.get("last_synced_at"),
     )
 
 
@@ -124,13 +126,18 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO channels (id, title, username, kind, member_count, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO channels
+                    (id, title, username, kind, member_count, created_at,
+                     subscribed, last_synced_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     username = EXCLUDED.username,
                     kind = EXCLUDED.kind,
-                    member_count = EXCLUDED.member_count
+                    member_count = EXCLUDED.member_count,
+                    created_at = EXCLUDED.created_at,
+                    subscribed = EXCLUDED.subscribed,
+                    last_synced_at = EXCLUDED.last_synced_at
                 """,
                 channel.id,
                 channel.title,
@@ -138,14 +145,71 @@ class PostgresRepository(StorageRepository):
                 channel.kind,
                 channel.member_count,
                 channel.created_at,
+                channel.is_subscribed,
+                channel.last_synced_at,
+            )
+
+    async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
+        """只更元数据字段;subscribed 保持旧值(sync 用)。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO channels
+                    (id, title, username, kind, member_count, created_at,
+                     subscribed, last_synced_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    username = EXCLUDED.username,
+                    kind = EXCLUDED.kind,
+                    member_count = EXCLUDED.member_count,
+                    created_at = EXCLUDED.created_at,
+                    last_synced_at = EXCLUDED.last_synced_at
+                """,
+                channel.id,
+                channel.title,
+                channel.username,
+                channel.kind,
+                channel.member_count,
+                channel.created_at,
+                # 首次插入时给个合理默认(False),后续 DO UPDATE 不动 subscribed
+                channel.is_subscribed,
+                channel.last_synced_at,
+            )
+
+    async def set_channel_subscribed(
+        self, channel_id: int, subscribed: bool
+    ) -> None:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            # 不存在就先建一条 stub
+            await conn.execute(
+                """
+                INSERT INTO channels (id, title, subscribed)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (id) DO UPDATE SET subscribed = EXCLUDED.subscribed
+                """,
+                channel_id, f"#{channel_id}", subscribed,
             )
 
     async def list_channels(self) -> list[ChannelDTO]:
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, title, username, kind, member_count, created_at "
+                "SELECT id, title, username, kind, member_count, created_at, "
+                "subscribed, last_synced_at "
                 "FROM channels ORDER BY id"
+            )
+        return [_row_to_channel(r) for r in rows]
+
+    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, title, username, kind, member_count, created_at, "
+                "subscribed, last_synced_at "
+                "FROM channels WHERE subscribed = TRUE ORDER BY id"
             )
         return [_row_to_channel(r) for r in rows]
 
@@ -153,7 +217,8 @@ class PostgresRepository(StorageRepository):
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, title, username, kind, member_count, created_at "
+                "SELECT id, title, username, kind, member_count, created_at, "
+                "subscribed, last_synced_at "
                 "FROM channels WHERE id = $1",
                 channel_id,
             )
@@ -163,6 +228,32 @@ class PostgresRepository(StorageRepository):
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute("DELETE FROM channels WHERE id = $1", channel_id)
+
+    async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT MAX(telegram_msg_id) FROM messages WHERE channel_id = $1",
+                channel_id,
+            )
+
+    async def get_meta(self, key: str) -> str | None:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT value FROM meta WHERE key = $1", key,
+            )
+
+    async def set_meta(self, key: str, value: str) -> None:
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO meta (key, value) VALUES ($1, $2)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                key, value,
+            )
 
     # ---- 消息 ----
 

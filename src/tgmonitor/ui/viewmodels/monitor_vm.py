@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
-from tgmonitor.core.dto import ChannelDTO, ExportRequest
+from tgmonitor.core.dto import ChannelDTO, ExportRequest, ExportResult, MessageDTO
 from tgmonitor.core.events import (
     ChannelSubscribed,
+    ChannelSyncDone,
+    ChannelSyncProgress,
     ChannelUnsubscribed,
     ErrorOccurred,
     Event,
@@ -29,12 +31,20 @@ log = logging.getLogger(__name__)
 
 
 class MonitorViewModel(QObject):
-    message_received = Signal(dict)        # MessageDTO → dict
+    # 直接 emit MessageDTO 本身(不是 asdict)。
+    # 原因:dataclasses.asdict() 会把嵌套的 MediaDTO 也转成 dict,
+    # MainWindow 收到后 `MessageDTO(**dto_dict)` 不递归构回 MediaDTO,
+    # MessageView._format 取 `med.type` 崩溃。Signal(object) 让 Qt 承载
+    # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
+    message_received = Signal(object)
     login_state = Signal(str)
     channels_changed = Signal()
     export_done = Signal(object, object)   # (result_dict | None, error | None)
     error = Signal(str)
     settings_changed = Signal(str, bool, str)  # (what, needs_relogin, backend_label)
+    # 全量同步进度(sync dialog 订阅)
+    sync_progress = Signal(object)         # ChannelSyncProgress
+    sync_done = Signal(object)             # ChannelSyncDone(带 result)
 
     def __init__(
         self,
@@ -58,13 +68,16 @@ class MonitorViewModel(QObject):
         b.subscribe(ExportDone, self._on_export_done)
         b.subscribe(ErrorOccurred, self._on_error)
         b.subscribe(SettingsChanged, self._on_settings_changed)
+        b.subscribe(ChannelSyncProgress, self._on_sync_progress)
+        b.subscribe(ChannelSyncDone, self._on_sync_done)
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
 
     async def _on_message_received(self, e: Event) -> None:
         if not isinstance(e, MessageReceived) or e.message is None:
             return
-        self.message_received.emit(asdict(e.message))
+        # 直接 emit MessageDTO — 不要 asdict,会丢嵌套 MediaDTO 类型
+        self.message_received.emit(e.message)
 
     async def _on_login_state(self, e: Event) -> None:
         if not isinstance(e, LoginStateChanged):
@@ -108,6 +121,16 @@ class MonitorViewModel(QObject):
         )
         self.settings_changed.emit(e.what, e.needs_relogin, backend_label)
 
+    async def _on_sync_progress(self, e: Event) -> None:
+        if not isinstance(e, ChannelSyncProgress):
+            return
+        self.sync_progress.emit(e)
+
+    async def _on_sync_done(self, e: Event) -> None:
+        if not isinstance(e, ChannelSyncDone):
+            return
+        self.sync_done.emit(e)
+
     # ---- UI 主动调用 ----
 
     def bootstrap_ui(self) -> None:
@@ -147,7 +170,7 @@ class MonitorViewModel(QObject):
         async def _go() -> None:
             msgs = await self.app.list_messages(limit=200)
             for m in msgs:
-                self.message_received.emit(asdict(m))
+                self.message_received.emit(m)
         asyncio.run_coroutine_threadsafe(_go(), self.loop)
 
     def start_export(self, req: ExportRequest) -> None:

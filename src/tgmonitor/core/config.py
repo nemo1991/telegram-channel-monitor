@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     media_policy: MediaPolicy = Field(default=MediaPolicy.THUMBNAIL)
     data_root: Path = Field(default=Path("./data"))
 
+    # ---- 全量同步(防封号)— 用户在 UI 多选频道触发时的默认节奏 ----
+    # `chat_delay_ms` 单条 API 间隔(每个 GetSupergroup / getChatHistory 之间)
+    sync_chat_delay_ms: int = Field(default=500, ge=50, le=60000)
+    # `page_delay_ms` getChatHistory 整页之间(每 100 条)
+    sync_page_delay_ms: int = Field(default=1000, ge=100, le=60000)
+    # `resume_from_saved` 续拉:True 时从 storage 已有 max_msg_id 之后拉
+    sync_resume_from_saved: bool = Field(default=True)
+
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。"""
         self.session_dir.mkdir(parents=True, exist_ok=True)

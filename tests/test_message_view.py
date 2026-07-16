@@ -186,3 +186,33 @@ def test_append_dedup_updates_existing_row(qapp):
     view.append(m2)
     assert view.count() == 1
     assert "edited" in view.item(0).text()
+
+
+# ---- 媒体 DTO 回归(Signal(object) 路径) ----
+
+
+def test_append_with_media_dto_does_not_crash(qapp):
+    """回归:之前 VM 用 asdict(e.message) 把嵌套 MediaDTO 转 dict,
+    MainWindow 收到后 `MessageDTO(**dto_dict)` 不递归构回 MediaDTO,
+    MessageView._format 访问 `med.type` 崩 — 'dict' object has no attribute 'type'。
+
+    修法:VM 改 `Signal(object)` 直接 emit MessageDTO,MainWindow 直接 append。
+    本测试构造一个真实含 media 的 MessageDTO 走完整 append 路径,确保不崩。
+    """
+    view = MessageView()
+    msg = MessageDTO(
+        id=0, channel_id=100, telegram_msg_id=42,
+        text="look at this", author=None,
+        date=datetime(2026, 7, 15, 13, 50, 10),
+        media=[MediaDTO(
+            type=MediaType.PHOTO, mime_type="image/jpeg",
+            file_size=1234, width=800, height=600,
+            thumb_key="media/abc.thumb", thumb_backend="local",
+        )],
+    )
+    # 不应抛 AttributeError
+    view.append(msg)
+    text = view.item(0).text()
+    assert "look at this" in text
+    assert "📎" in text
+    assert "photo" in text  # med.type.value 正确渲染

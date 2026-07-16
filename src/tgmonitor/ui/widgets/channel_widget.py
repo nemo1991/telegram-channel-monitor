@@ -2,7 +2,7 @@
 
 把"监听谁"这事最简化:
 - **上半栏「全部(已加入)」**:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
-- **下半栏「已监听」**:`AppService._subscribed` 当前白名单,**双击 = 退订**
+- **下半栏「已监听」**:`AppService._subscribed` 当前白名单,**多选 + 全量同步…**
 
 事件:`ChannelSubscribed / ChannelUnsubscribed` 会刷新下半栏。
 设计原则:订阅是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -71,6 +73,8 @@ def _paint_color_block(color: QColor, size: int = 14) -> "QIcon":
 class ChannelWidget(QGroupBox):
     # 异步拉频道后 → 主线程刷新 list
     joined_loaded = Signal(list)
+    # 用户在"已监听"栏多选 + 点"全量同步…" → 触发 sync dialog
+    sync_requested = Signal(list)   # list[int] channel_ids
 
     def __init__(
         self,
@@ -121,13 +125,21 @@ class ChannelWidget(QGroupBox):
         self.lbl_subs_count = QLabel("已监听:0")
         head_subs.addWidget(self.lbl_subs_count)
         head_subs.addStretch(1)
+        self.btn_sync = QPushButton("全量同步…")
+        self.btn_sync.setToolTip("多选 + 全量拉取元数据 + 历史消息(可调频率防封号)")
+        self.btn_sync.clicked.connect(self._on_sync_clicked)
+        head_subs.addWidget(self.btn_sync)
         root.addLayout(head_subs)
         self.lst_subscribed = QListWidget()
         self.lst_subscribed.setAlternatingRowColors(True)
+        # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
+        self.lst_subscribed.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.lst_subscribed.itemDoubleClicked.connect(self._on_subscribed_double_click)
         root.addWidget(self.lst_subscribed, 2)
 
-        hint2 = QLabel("💡 双击一行 → 移出监听")
+        hint2 = QLabel("💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…")
         hint2.setProperty("role", "hint")
         root.addWidget(hint2)
 
@@ -243,3 +255,23 @@ class ChannelWidget(QGroupBox):
                 log.exception("unsubscribe_channel failed: %s", exc)
 
         fut.add_done_callback(_on_done)
+
+    def _on_sync_clicked(self) -> None:
+        """用户多选 + 全量同步:收集 selected channel_ids,emit sync_requested。"""
+        ids = [
+            int(self.lst_subscribed.item(i).data(Qt.UserRole))
+            for i in range(self.lst_subscribed.count())
+            if self.lst_subscribed.item(i).isSelected()
+        ]
+        if not ids:
+            # 没选:全部订阅
+            ids = [
+                int(self.lst_subscribed.item(i).data(Qt.UserRole))
+                for i in range(self.lst_subscribed.count())
+            ]
+        if not ids:
+            QMessageBox.information(
+                self, "全量同步", "已监听列表为空,先订阅频道"
+            )
+            return
+        self.sync_requested.emit(ids)

@@ -21,6 +21,7 @@ from tgmonitor.core.storage.repository import StorageRepository
 
 REGISTRY_FILE = "channels.json"
 MESSAGES_DIR = "messages"
+META_FILE = "meta.json"
 
 
 def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
@@ -108,10 +109,15 @@ def _channel_to_dict(c: ChannelDTO) -> dict[str, Any]:
         "kind": c.kind,
         "member_count": c.member_count,
         "created_at": c.created_at.isoformat() if c.created_at else None,
+        "is_subscribed": c.is_subscribed,
+        "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
     }
 
 
 def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
+    # 旧 channels.json 缺 is_subscribed / last_synced_at 字段 →
+    # 旧库 migration:is_subscribed 默认 True(保留"存即订"语义),
+    #               last_synced_at 留空。
     return ChannelDTO(
         id=int(d["id"]),
         title=d["title"],
@@ -119,6 +125,11 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
         kind=d.get("kind", "channel"),
         member_count=d.get("member_count"),
         created_at=datetime.fromisoformat(d["created_at"]) if d.get("created_at") else None,
+        is_subscribed=bool(d.get("is_subscribed", True)),
+        last_synced_at=(
+            datetime.fromisoformat(d["last_synced_at"])
+            if d.get("last_synced_at") else None
+        ),
     )
 
 
@@ -194,12 +205,15 @@ class JsonlFileStore(StorageRepository):
         self._root = Path(root)
         self._msg_dir = self._root / MESSAGES_DIR
         self._registry = self._root / REGISTRY_FILE
+        self._meta_path = self._root / META_FILE
         self._channels: dict[int, ChannelDTO] = {}
         self._files: dict[int, _ChannelFile] = {}
         # 跨 save/delete 串行化(同频道并发安全,跨频道亦有序)
         self._write_lock = asyncio.Lock()
         # 全局自增 message id
         self._next_msg_pk = 1
+        # 全局 meta(key -> str)
+        self._meta: dict[str, str] = {}
 
     # ---- 生命周期 ----
 
@@ -218,6 +232,14 @@ class JsonlFileStore(StorageRepository):
                     self._channels[c.id] = c
                 except (json.JSONDecodeError, KeyError, ValueError):
                     continue
+        # 加载 meta
+        if self._meta_path.exists():
+            try:
+                self._meta = json.loads(
+                    self._meta_path.read_text(encoding="utf-8")
+                )
+            except (json.JSONDecodeError, OSError):
+                self._meta = {}
         # 预扫描已有 message id,初始化 _next_msg_pk
         for f in self._msg_dir.glob("*.jsonl"):
             try:
@@ -261,11 +283,68 @@ class JsonlFileStore(StorageRepository):
         self._channels[channel.id] = channel
         self._flush_registry()
 
+    async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
+        """只更元数据字段;is_subscribed 保持旧值。"""
+        existing = self._channels.get(channel.id)
+        merged = ChannelDTO(
+            id=channel.id,
+            title=channel.title,
+            username=channel.username,
+            kind=channel.kind,
+            member_count=channel.member_count,
+            created_at=channel.created_at,
+            is_subscribed=(existing.is_subscribed if existing else False),
+            last_synced_at=channel.last_synced_at,
+        )
+        self._channels[channel.id] = merged
+        self._flush_registry()
+
+    async def set_channel_subscribed(
+        self, channel_id: int, subscribed: bool
+    ) -> None:
+        existing = self._channels.get(channel_id)
+        if existing is None:
+            # 还没建档 — 用 id 做个 stub,subscribe 路径会很快 upsert 完整信息
+            self._channels[channel_id] = ChannelDTO(
+                id=channel_id, title=f"#{channel_id}", is_subscribed=subscribed
+            )
+        else:
+            self._channels[channel_id] = ChannelDTO(
+                id=existing.id, title=existing.title, username=existing.username,
+                kind=existing.kind, member_count=existing.member_count,
+                created_at=existing.created_at,
+                is_subscribed=subscribed,
+                last_synced_at=existing.last_synced_at,
+            )
+        self._flush_registry()
+
     async def list_channels(self) -> list[ChannelDTO]:
         return list(self._channels.values())
 
+    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        return [c for c in self._channels.values() if c.is_subscribed]
+
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
         return self._channels.get(channel_id)
+
+    async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        cf = self._files.get(channel_id) or await self._file_for(channel_id)
+        if not cf.index:
+            return None
+        return max(cf.index.keys()) if cf.index else None
+
+    async def get_meta(self, key: str) -> str | None:
+        return self._meta.get(key)
+
+    async def set_meta(self, key: str, value: str) -> None:
+        self._meta[key] = value
+        # 同步落盘 — meta 量很小(几 KB),每次写都全量 flush。
+        try:
+            self._meta_path.write_text(
+                json.dumps(self._meta, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError:  # noqa: BLE001
+            pass  # 内存值已更新,下次 connect() 重读会丢,不致命
 
     async def delete_channel(self, channel_id: int) -> None:
         self._channels.pop(channel_id, None)

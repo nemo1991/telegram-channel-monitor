@@ -27,6 +27,8 @@ from tgmonitor.core.dto import (
     ChannelDTO,
     ExportRequest,
     MessageDTO,
+    SyncOptions,
+    SyncResult,
 )
 from tgmonitor.core.events import (
     ChannelSubscribed,
@@ -66,6 +68,9 @@ class AppService:
         self._running = False
         # 重入锁:reconfigure 期间阻止 save_message
         self._reconfiguring = False
+        # 全量同步服务(用户多选触发)— 延迟初始化避免循环 import
+        from tgmonitor.core.channel_sync import ChannelSyncService
+        self.channel_sync = ChannelSyncService(bus, client, storage)
 
     # ---------- 鉴权 ----------
 
@@ -88,12 +93,12 @@ class AppService:
 
         返回 (state, detail)。
         """
-        # 把上一次会话订阅过的频道从 storage 同步到内存 — 不然重启后
-        # `list_subscribed_channels()` 返回空,UI 下栏永远是空的,
-        # 而且历史消息查询的 channel_ids 也算错(变成全集)。
-        # 不区分"用户显式订阅"和"曾经订阅过"的差别 — 简单做法:
-        # storage 里存的所有频道都视作已订阅。channel 删除路径后续 v0.4。
-        persisted = await self.storage.list_channels()
+        # 把 storage 里 `is_subscribed=True` 的频道加载到内存 —
+        # 用 `list_subscribed_channels()` 而不是 `list_channels()`:
+        # - 老用户升级:旧 channels.json 没 is_subscribed 字段,InMemoryRepository
+        #   和 storage 三仓实现都默认 True(保留"存即订"语义),所以效果不变。
+        # - 新 sync 发现频道但用户未订阅:不进入 _subscribed,不会偷偷监听。
+        persisted = await self.storage.list_subscribed_channels()
         self._subscribed = {c.id for c in persisted}
 
         try:
@@ -151,24 +156,40 @@ class AppService:
         return await self.client.list_joined_channels()
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        all_chs = await self.storage.list_channels()
-        return [c for c in all_chs if c.id in self._subscribed]
+        # 单一来源:storage.is_subscribed=True 的频道。
+        # 不再以 `self._subscribed` in-memory set 为主 — 否则与 storage 漂移
+        # 时 UI 与 monitor 不同步。
+        return await self.storage.list_subscribed_channels()
 
     async def subscribe_channel(self, channel: ChannelDTO) -> None:
+        # 先 upsert 完整信息(标题等),再设 subscribed=True —
+        # 后者用 set_channel_subscribed 不会改其他字段。
         await self.storage.upsert_channel(channel)
+        await self.storage.set_channel_subscribed(channel.id, True)
         self._subscribed.add(channel.id)
         await self.bus.publish(ChannelSubscribed(channel=channel))
 
     async def unsubscribe_channel(self, channel_id: int) -> None:
-        # 必须从 storage 真删 — 否则下次启动 bootstrap() 时
-        # `self._subscribed = {c.id for c in storage.list_channels()}` 又把
-        # 它读回来,UI 显示"已监听"列表和上次退订前一样,等于退订无效。
+        # 退订 = 关闭订阅标志,不动元数据 / 消息。
+        # 历史消息继续在 storage 里 — 用户重新订阅能看到老历史。
+        # 元数据继续被 sync 刷新 — 退订后仍能反映 title/username 变化。
         try:
-            await self.storage.delete_channel(channel_id)
+            await self.storage.set_channel_subscribed(channel_id, False)
         except Exception:  # noqa: BLE001
-            log.exception("delete_channel(%s) failed", channel_id)
+            log.exception("set_channel_subscribed(%s, False) failed", channel_id)
         self._subscribed.discard(channel_id)
         await self.bus.publish(ChannelUnsubscribed(channel_id=channel_id))
+
+    async def sync_channels(
+        self,
+        channel_ids: list[int],
+        options: "SyncOptions",
+    ) -> "SyncResult":
+        """全量同步 — UI 进度对话框经此调起。
+
+        `options` 用 dataclass,UI 端构造(delay_ms 等覆盖 Settings 默认值)。
+        """
+        return await self.channel_sync.sync_channels(channel_ids, options)
 
     # ---------- 消息流(实时) ----------
 

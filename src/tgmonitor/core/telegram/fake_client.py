@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import AsyncIterator
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
@@ -48,6 +49,10 @@ class FakeTelegramClient(TelegramClient):
         self._channels: dict[int, ChannelDTO] = {}
         self._stream = FakeUpdateStream()
         self._all_streams: list[FakeUpdateStream] = [self._stream]
+        # 全量同步测试 hooks
+        self._history_state: dict[int, tuple[int, int]] = {}
+        self._metadata_override: dict[int, ChannelDTO] = {}
+        self._raise_after_n: int | None = None
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
@@ -113,6 +118,15 @@ class FakeTelegramClient(TelegramClient):
         self._channels[cid] = ch
         return ch
 
+    async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
+        """Fake:返回 `_channels` 里的元数据,否则 stub。同步用。"""
+        if channel_id in self._channels:
+            return self._channels[channel_id]
+        # 注入过 metadata?(全量同步测试用)
+        if channel_id in self._metadata_override:
+            return self._metadata_override[channel_id]
+        return ChannelDTO(id=channel_id, title=f"#{channel_id}")
+
     # ---- 消息流 ----
     async def iter_messages(
         self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
@@ -126,6 +140,51 @@ class FakeTelegramClient(TelegramClient):
             )
             await asyncio.sleep(0)
 
+    async def iter_chat_history(
+        self,
+        channel_id: int,
+        *,
+        from_msg_id: int = 0,
+        limit: int = 100,
+    ) -> AsyncIterator[MessageDTO]:
+        """Fake 全量同步分页历史:模拟"从 from_msg_id+1 拉到 max_id"。
+
+        - max_id 来自注入的 `set_history(channel_id, max_id, count)`;count 条
+          按升序 telegram_msg_id 排,from_msg_id 之后 yield。
+        - 每次 yield 后 `await asyncio.sleep(0)` 让出 loop,模拟网络。
+        - 支持 inject 错误:`raise_after_n_messages` → 第 N+1 条 yield 前抛
+          `TelegramRateLimitError`。
+        """
+        ch_state = self._history_state.get(channel_id)
+        if ch_state is None:
+            return  # 没注入过历史,空
+        max_id, count = ch_state
+        # 起始 id:from_msg_id=0 → 拉最新 count 条(max_id-count+1 ... max_id);
+        # from_msg_id>0 → 从 from_msg_id+1 开始。
+        if from_msg_id == 0:
+            start = max(1, max_id - count + 1)
+        else:
+            start = from_msg_id + 1
+        end = max_id
+        yielded = 0
+        for mid in range(start, end + 1):
+            if self._raise_after_n is not None and yielded == self._raise_after_n:
+                self._raise_after_n = None
+                from tgmonitor.core.telegram.tdlib_client import (
+                    TelegramRateLimitError,
+                )
+                raise TelegramRateLimitError(60.0)
+            yield MessageDTO(
+                id=mid,
+                channel_id=channel_id,
+                telegram_msg_id=mid,
+                text=f"history-{channel_id}-{mid}",
+                date=datetime.utcnow(),
+            )
+            yielded += 1
+            # 让出 loop,模仿真网络
+            await asyncio.sleep(0)
+
     def subscribe_updates(self) -> UpdateStream:
         s = FakeUpdateStream()
         self._all_streams.append(s)
@@ -135,3 +194,17 @@ class FakeTelegramClient(TelegramClient):
     async def simulate_incoming(self, msg: MessageDTO) -> None:
         for s in list(self._all_streams):
             await s.push(msg)
+
+    # ---- 全量同步测试 hooks ----
+
+    def set_history(self, channel_id: int, max_id: int, count: int) -> None:
+        """注入"该频道历史有 count 条,最大 id=max_id"。"""
+        self._history_state[channel_id] = (max_id, count)
+
+    def set_metadata(self, channel: ChannelDTO) -> None:
+        """注入"get_channel_metadata 返回这个"。"""
+        self._metadata_override[channel.id] = channel
+
+    def inject_rate_limit_after(self, n: int) -> None:
+        """iter_chat_history 第 n+1 条 yield 前抛 TelegramRateLimitError(60s)。"""
+        self._raise_after_n = n

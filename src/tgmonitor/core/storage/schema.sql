@@ -8,8 +8,15 @@ CREATE TABLE IF NOT EXISTS channels (
     kind            TEXT        NOT NULL DEFAULT 'channel',
     member_count    INTEGER,
     created_at      TIMESTAMPTZ,
-    first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    subscribed      BOOLEAN     NOT NULL DEFAULT FALSE,
+    last_synced_at  TIMESTAMPTZ
 );
+
+-- 兼容旧库:已存在的 channels 表补 subscribed / last_synced_at 列(IF NOT EXISTS 幂等)。
+-- subscribed 默认 TRUE 保留"存即订"语义 — 旧用户不会被升级变成未订阅。
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribed BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS messages (
     id                  BIGSERIAL PRIMARY KEY,

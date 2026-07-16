@@ -14,14 +14,22 @@ from typing import Any
 
 @dataclass
 class ChannelDTO:
-    """一个被监听的 Telegram 频道/群组。"""
+    """一个 Telegram 频道/群组的元数据 + 元数据同步时间 + 订阅标志。
+
+    - `is_subscribed`: 用户是否把它加进了监听白名单(跟"已被全量 sync 发现"
+      是两件事 — sync 可能发现很多频道,用户只挑其中几个订阅)。
+    - `last_synced_at`: 元数据最近一次被 sync 刷新的时间;消息同步时间走
+      `MessageDTO.date`,不要混。
+    """
 
     id: int                                  # Telegram chat_id(全局唯一)
     title: str
     username: str | None = None              # 公开频道如 @example;私有无
-    kind: str = "channel"                    # channel | supergroup | group
+    kind: str = "channel"                    # channel | supergroup | basic_group
     member_count: int | None = None
     created_at: datetime | None = None
+    is_subscribed: bool = False
+    last_synced_at: datetime | None = None
 
     @property
     def display(self) -> str:
@@ -122,3 +130,39 @@ class ExportResult:
     out_path: str
     message_count: int
     bytes_written: int
+
+
+# ---------- 全量同步(ChannelSyncService) ----------
+
+@dataclass
+class SyncOptions:
+    """用户选的全量同步 options。"""
+
+    include_metadata: bool = True
+    include_history: bool = True
+    history_limit: int | None = None      # None = 拉全部历史
+    chat_delay_ms: int = 500               # 单条 API 间隔(防封号)
+    page_delay_ms: int = 1000              # getChatHistory 分页间
+    resume_from_saved: bool = True         # True: 从 storage max_msg_id 续拉
+
+
+@dataclass
+class ChannelSyncResult:
+    """单个频道的同步结果。"""
+
+    channel_id: int
+    metadata_updated: bool = False
+    messages_added: int = 0          # 本轮新落库的消息数(去重后)
+    history_ended_at_msg_id: int | None = None  # 本轮拉到最早/最新的 msg_id
+    error: str | None = None
+    rate_limited: bool = False
+
+
+@dataclass
+class SyncResult:
+    """全量同步整轮结果。"""
+
+    per_channel: dict[int, ChannelSyncResult] = field(default_factory=dict)
+    total_messages_added: int = 0
+    rate_limited_seconds: float | None = None
+    cancelled: bool = False

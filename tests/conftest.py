@@ -25,6 +25,7 @@ class InMemoryRepository(StorageRepository):
         self.channels: dict[int, ChannelDTO] = {}
         self.messages: dict[tuple[int, int], MessageDTO] = {}
         self._msg_pk = 0
+        self._meta: dict[str, str] = {}
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
@@ -33,8 +34,38 @@ class InMemoryRepository(StorageRepository):
     async def upsert_channel(self, channel: ChannelDTO) -> None:
         self.channels[channel.id] = channel
 
+    async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
+        existing = self.channels.get(channel.id)
+        self.channels[channel.id] = ChannelDTO(
+            id=channel.id, title=channel.title, username=channel.username,
+            kind=channel.kind, member_count=channel.member_count,
+            created_at=channel.created_at,
+            is_subscribed=(existing.is_subscribed if existing else False),
+            last_synced_at=channel.last_synced_at,
+        )
+
+    async def set_channel_subscribed(
+        self, channel_id: int, subscribed: bool
+    ) -> None:
+        existing = self.channels.get(channel_id)
+        if existing is None:
+            self.channels[channel_id] = ChannelDTO(
+                id=channel_id, title=f"#{channel_id}", is_subscribed=subscribed
+            )
+        else:
+            self.channels[channel_id] = ChannelDTO(
+                id=existing.id, title=existing.title, username=existing.username,
+                kind=existing.kind, member_count=existing.member_count,
+                created_at=existing.created_at,
+                is_subscribed=subscribed,
+                last_synced_at=existing.last_synced_at,
+            )
+
     async def list_channels(self) -> list[ChannelDTO]:
         return list(self.channels.values())
+
+    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        return [c for c in self.channels.values() if c.is_subscribed]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
         return self.channels.get(channel_id)
@@ -44,8 +75,23 @@ class InMemoryRepository(StorageRepository):
         for k in [k for k in self.messages if k[0] == channel_id]:
             self.messages.pop(k)
 
+    async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        ids = [mid for (cid, mid) in self.messages if cid == channel_id]
+        return max(ids) if ids else None
+
+    async def get_meta(self, key: str) -> str | None:
+        return self._meta.get(key)
+
+    async def set_meta(self, key: str, value: str) -> None:
+        self._meta[key] = value
+
     async def save_message(self, message: MessageDTO) -> int:
         key = (message.channel_id, message.telegram_msg_id)
+        # 隐式建频道 — 与 jsonl / postgres 行为一致
+        if message.channel_id not in self.channels:
+            self.channels[message.channel_id] = ChannelDTO(
+                id=message.channel_id, title=f"#{message.channel_id}"
+            )
         if key in self.messages:
             message.id = self.messages[key].id
         else:

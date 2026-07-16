@@ -59,6 +59,9 @@ def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
         kind=d.get("kind", "channel"),
         member_count=d.get("member_count"),
         created_at=d.get("created_at"),
+        # 旧文档没 subscribed → True(保留"存即订"语义)
+        is_subscribed=bool(d.get("subscribed", True)),
+        last_synced_at=d.get("last_synced_at"),
     )
 
 
@@ -132,11 +135,45 @@ class MongoRepository(StorageRepository):
             "member_count": channel.member_count,
             "created_at": channel.created_at,
             "first_seen_at": datetime.utcnow(),
+            "subscribed": channel.is_subscribed,
+            "last_synced_at": channel.last_synced_at,
         }
         await self.db.channels.update_one({"_id": channel.id}, {"$set": doc}, upsert=True)
 
+    async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
+        """只更元数据字段;subscribed 保持旧值。"""
+        await self.db.channels.update_one(
+            {"_id": channel.id},
+            {"$set": {
+                "title": channel.title,
+                "username": channel.username,
+                "kind": channel.kind,
+                "member_count": channel.member_count,
+                "created_at": channel.created_at,
+                "last_synced_at": channel.last_synced_at,
+            }},
+            upsert=True,
+        )
+
+    async def set_channel_subscribed(
+        self, channel_id: int, subscribed: bool
+    ) -> None:
+        await self.db.channels.update_one(
+            {"_id": channel_id},
+            {"$set": {
+                "subscribed": subscribed,
+                # 首次建档时给个 title,后续会被 metadata 覆盖
+                "title": f"#{channel_id}",
+            }},
+            upsert=True,
+        )
+
     async def list_channels(self) -> list[ChannelDTO]:
         cursor = self.db.channels.find().sort("_id", 1)
+        return [_doc_to_channel(d) async for d in cursor]
+
+    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        cursor = self.db.channels.find({"subscribed": True}).sort("_id", 1)
         return [_doc_to_channel(d) async for d in cursor]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
@@ -147,6 +184,25 @@ class MongoRepository(StorageRepository):
         await self.db.channels.delete_one({"_id": channel_id})
         # 级联删消息(messages.media 子文档内嵌,无需单独 media 集合操作)
         await self.db.messages.delete_many({"channel_id": channel_id})
+
+    async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        d = await self.db.messages.find_one(
+            {"channel_id": channel_id},
+            sort=[("telegram_msg_id", -1)],
+            projection={"telegram_msg_id": 1},
+        )
+        return int(d["telegram_msg_id"]) if d else None
+
+    async def get_meta(self, key: str) -> str | None:
+        d = await self.db.meta.find_one({"_id": key})
+        return d.get("value") if d else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        await self.db.meta.update_one(
+            {"_id": key},
+            {"$set": {"value": value}},
+            upsert=True,
+        )
 
     # ---- 消息 ----
 

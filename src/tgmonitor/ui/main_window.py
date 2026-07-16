@@ -214,6 +214,7 @@ class MainWindow(QMainWindow):
         self.act_export.triggered.connect(self._on_export)
         self.act_settings.triggered.connect(self._on_settings)
         self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
+        self.channel_panel.sync_requested.connect(self._on_sync_requested)
 
     # ---- EventBus → UI(Qt signal 已在 ViewModel 里订阅好) ----
 
@@ -253,11 +254,11 @@ class MainWindow(QMainWindow):
 
     # ---- 事件回调 ----
 
-    def _on_message_received(self, dto_dict: dict) -> None:
-        m = MessageDTO(**dto_dict)
+    def _on_message_received(self, m: MessageDTO) -> None:
         # 每次都同步标题表:VM.known_channels 在 channels_changed 时已更新,
         # 但实时消息可能来自一个刚被发现但还没刷新到 known_channels 的频道。
         # 把当前的 known_channels 透给 view,渲染时查表。
+        # m 是 MessageDTO 本身(VM 直接 emit,不是 asdict)
         self.message_view.set_channel_titles(
             {cid: ch.title for cid, ch in self._vm.known_channels.items()}
         )
@@ -289,6 +290,58 @@ class MainWindow(QMainWindow):
                 "凭据已变更",
                 "Telegram 凭据已变更。\n请重新登录以继续监听。",
             )
+
+    def _on_sync_requested(self, channel_ids: list[int]) -> None:
+        """侧栏多选 + 全量同步 — 弹 options + 进度对话框,启动后台 task。"""
+        from tgmonitor.core.dto import SyncOptions
+        from tgmonitor.ui.widgets.sync_dialog import (
+            SyncOptionsDialog,
+            SyncProgressDialog,
+        )
+
+        # 取已选频道的 title 给对话框显示
+        titles: dict[int, str] = {}
+        for cid in channel_ids:
+            ch = self._vm.known_channels.get(cid)
+            if ch is not None:
+                titles[cid] = ch.title
+            else:
+                titles[cid] = f"#{cid}"
+
+        defaults = SyncOptions(
+            chat_delay_ms=self.app.settings.sync_chat_delay_ms,
+            page_delay_ms=self.app.settings.sync_page_delay_ms,
+            resume_from_saved=self.app.settings.sync_resume_from_saved,
+        )
+        opts_dlg = SyncOptionsDialog(channel_ids, titles, defaults, self)
+        if not opts_dlg.exec():
+            return
+        options = opts_dlg.options()
+        if options is None:
+            return
+
+        progress_dlg = SyncProgressDialog(
+            titles,
+            cancel_cb=self.app.channel_sync.cancel,
+            parent=self,
+        )
+        # 订阅 VM 的 sync signal → 进度对话框
+        self._vm.sync_progress.connect(progress_dlg.on_progress)
+        self._vm.sync_done.connect(progress_dlg.on_done)
+
+        async def _go() -> None:
+            try:
+                await self.app.sync_channels(channel_ids, options)
+            finally:
+                # 断开信号(避免下一次 sync 又绑一次)
+                try:
+                    self._vm.sync_progress.disconnect(progress_dlg.on_progress)
+                    self._vm.sync_done.disconnect(progress_dlg.on_done)
+                except (RuntimeError, TypeError):
+                    pass
+
+        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        progress_dlg.exec()
 
     def _refresh_state(self) -> None:
         """channels_changed 事件回调:把已知频道渲染到 channel_panel 的两栏。"""

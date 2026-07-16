@@ -115,6 +115,30 @@ class SettingsChanged(Event):
     needs_restart: bool = False  # 保留扩展
 
 
+@dataclass
+class ChannelSyncProgress(Event):
+    """全量同步进度事件 — ChannelSyncService → UI(进度对话框)。
+
+    stage 枚举:
+      - "metadata"   : 拉取 / 刷新元数据
+      - "history"    : 拉取历史消息
+      - "backoff"    : 429 / FLOOD_WAIT 退避中
+      - "done"       : 单频道完成
+      - "failed"     : 单频道失败(error 字段非空)
+    """
+    channel_id: int = 0
+    stage: str = ""
+    progress: int = 0           # 已处理消息数
+    total: int | None = None    # 总数(可空,history 全量无终点)
+    detail: str = ""            # 退避秒数 / 错误消息等
+
+
+@dataclass
+class ChannelSyncDone(Event):
+    """全量同步整轮结束 — UI 进度对话框据此自动关闭。"""
+    result: object = None        # SyncResult(避免循环 import,用 object 占位)
+
+
 # ---------- Bus ----------
 
 Subscriber = Callable[[Any], Awaitable[None]]

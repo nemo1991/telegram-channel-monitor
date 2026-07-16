@@ -36,17 +36,62 @@ class StorageRepository(ABC):
     # ---- 频道 ----
 
     @abstractmethod
-    async def upsert_channel(self, channel: ChannelDTO) -> None: ...
+    async def upsert_channel(self, channel: ChannelDTO) -> None:
+        """全 upsert — 写所有字段(包括 subscribed)。
+        兼容旧调用方。**新代码用 upsert_channel_metadata + set_channel_subscribed**
+        以避免 sync 误改订阅标志。
+        """
+        ...
+
+    @abstractmethod
+    async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
+        """只写元数据字段(title/username/kind/member_count/created_at/last_synced_at),
+        不碰 is_subscribed 标志。ChannelSyncService 用。
+        """
+        ...
+
+    @abstractmethod
+    async def set_channel_subscribed(
+        self, channel_id: int, subscribed: bool
+    ) -> None:
+        """只设订阅标志,不动其它字段。"""
+        ...
 
     @abstractmethod
     async def list_channels(self) -> list[ChannelDTO]: ...
+
+    @abstractmethod
+    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返回 is_subscribed=True 的频道。"""
+        ...
 
     @abstractmethod
     async def get_channel(self, channel_id: int) -> ChannelDTO | None: ...
 
     @abstractmethod
     async def delete_channel(self, channel_id: int) -> None:
-        """删除频道及其所有消息与媒体引用(不删对象存储里的二进制)。"""
+        """删除频道及其所有消息与媒体引用(不删对象存储里的二进制)。
+
+        注:用户退订不应调这个 — 退订走 `set_channel_subscribed(id, False)`,
+        保留元数据 + 历史消息,只是不再喂给 monitor。
+        """
+        ...
+
+    @abstractmethod
+    async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        """续拉历史用 — 返回该频道已落库的最大 `telegram_msg_id`;None 表示无历史。"""
+        ...
+
+    # ---- 全局元数据(meta 表 / 单独文件) ----
+
+    @abstractmethod
+    async def get_meta(self, key: str) -> str | None:
+        """全局单值元数据(同步 checkpoint 等)。"""
+        ...
+
+    @abstractmethod
+    async def set_meta(self, key: str, value: str) -> None:
+        """upsert 语义。"""
         ...
 
     # ---- 消息 ----

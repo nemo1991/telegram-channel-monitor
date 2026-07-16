@@ -102,6 +102,9 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_OBJECTSTORE_BUCKET": s.objectstore_bucket,
         "TG_MEDIA_POLICY": s.media_policy.value,
         "TG_DATA_ROOT": str(s.data_root),
+        "TG_SYNC_CHAT_DELAY_MS": str(s.sync_chat_delay_ms),
+        "TG_SYNC_PAGE_DELAY_MS": str(s.sync_page_delay_ms),
+        "TG_SYNC_RESUME_FROM_SAVED": "true" if s.sync_resume_from_saved else "false",
     }
 
 
@@ -144,6 +147,11 @@ class EditableSettings:
     # 可选代理 URL(目前只支持 socks5://)
     proxy: str = ""
 
+    # 全量同步默认值(UI 跑 sync 时可覆盖)
+    sync_chat_delay_ms: int = 500
+    sync_page_delay_ms: int = 1000
+    sync_resume_from_saved: bool = True
+
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
         return cls(
@@ -164,6 +172,9 @@ class EditableSettings:
             media_policy=s.media_policy.value,
             data_root=str(s.data_root),
             proxy=s.proxy or "",
+            sync_chat_delay_ms=s.sync_chat_delay_ms,
+            sync_page_delay_ms=s.sync_page_delay_ms,
+            sync_resume_from_saved=s.sync_resume_from_saved,
         )
 
     def validate(self) -> list[str]:
@@ -180,6 +191,10 @@ class EditableSettings:
             errs.append(f"TG_OBJECTSTORE_BACKEND 非法: {self.objectstore_backend}")
         if self.media_policy not in {p.value for p in MediaPolicy}:
             errs.append(f"TG_MEDIA_POLICY 非法: {self.media_policy}")
+        if self.sync_chat_delay_ms < 50 or self.sync_chat_delay_ms > 60000:
+            errs.append("TG_SYNC_CHAT_DELAY_MS 应在 50-60000")
+        if self.sync_page_delay_ms < 100 or self.sync_page_delay_ms > 60000:
+            errs.append("TG_SYNC_PAGE_DELAY_MS 应在 100-60000")
         proxy_err = _validate_proxy_url(self.proxy)
         if proxy_err:
             errs.append(proxy_err)
@@ -204,6 +219,9 @@ class EditableSettings:
             media_policy=MediaPolicy(self.media_policy),
             data_root=Path(self.data_root),
             proxy=(self.proxy.strip() or None),
+            sync_chat_delay_ms=self.sync_chat_delay_ms,
+            sync_page_delay_ms=self.sync_page_delay_ms,
+            sync_resume_from_saved=self.sync_resume_from_saved,
         )
 
 
