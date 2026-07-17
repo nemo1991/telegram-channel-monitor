@@ -338,3 +338,80 @@ def test_auth_state_map_covers_lifecycle_keys():
         "authorizationStateClosed",
     }
     assert expected.issubset(keys)
+
+
+# ============================================================
+# 关闭流程的 entry guard(回归:close race 不再撞 10s request 超时
+#  + qasync 跨 loop wakeup RuntimeError)
+# ============================================================
+
+
+def _make_stubbed_client(settings: Settings, bus: EventBus) -> tdc.TdlibTelegramClient:
+    """用空 stub 起一个真实 TdlibTelegramClient 实例。
+
+    `stub_aiotdlib_init` 把 _AiClient.__init__ 变成空操作;我们直接
+    `TdlibTelegramClient(settings, event_bus=bus)` 即可构造(其它 ctor
+    参数走 `settings`)。
+    """
+    return tdc.TdlibTelegramClient(settings, event_bus=bus)
+
+
+def test_list_joined_channels_returns_empty_when_closing(
+    settings, bus, stub_aiotdlib_init, caplog
+):
+    """VM refresh 在 client 关闭时 fire-and-forget 调 list_joined_channels
+    → 应静默返回 [],不抛,不刷 traceback。这是 2026-07-17 启动 race 的
+    修复主断言。
+    """
+    import logging
+    client = _make_stubbed_client(settings, bus)
+    # 模拟 close() 已经设标志
+    client._closing = True
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(client.list_joined_channels())
+    assert result == []
+    # 不应该出现 traceback 异常记录(只应有 INFO「client closing」一句)
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert error_records == [], (
+        f"list_joined_channels 在 closing 时不应记 ERROR;got "
+        f"{[(r.levelname, r.name, r.getMessage()) for r in error_records]}"
+    )
+
+
+def test_submit_phone_raises_client_closing_when_closing(
+    settings, bus, stub_aiotdlib_init
+):
+    """事务性方法(submit_phone / submit_code / 等)在 closing 时抛
+    ClientClosingError,让调用方按自己策略处理 — 但不撞 aiotdlib bridge、
+    不再等 10s request_timeout。
+    """
+    client = _make_stubbed_client(settings, bus)
+    client._closing = True
+
+    async def _go() -> None:
+        with pytest.raises(tdc.ClientClosingError):
+            await client.submit_phone("+8612345")
+        with pytest.raises(tdc.ClientClosingError):
+            await client.submit_code("12345")
+        with pytest.raises(tdc.ClientClosingError):
+            await client.submit_password("hunter2")
+        with pytest.raises(tdc.ClientClosingError):
+            await client.logout()
+        with pytest.raises(tdc.ClientClosingError):
+            await client.start()
+
+    asyncio.run(_go())
+
+
+def test_close_sets_closing_flag(settings, bus, stub_aiotdlib_init):
+    """close() 是入口 contract:第一件事就是 _closing=True,
+    这样任何后续 entry 都立刻 throw。
+    """
+    client = _make_stubbed_client(settings, bus)
+    assert client._closing is False
+
+    async def _go() -> None:
+        await client.close()
+
+    asyncio.run(_go())
+    assert client._closing is True

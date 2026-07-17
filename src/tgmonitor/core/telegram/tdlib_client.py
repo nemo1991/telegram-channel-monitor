@@ -323,6 +323,14 @@ class TdlibTelegramClient(_AiClient):
         # `start` 超时时判断是不是 "401 wrong encryption key"。
         self._seen_error_codes: collections.deque[int] = collections.deque(maxlen=20)
 
+        # 关闭流程标志位 —— `close()` 入口处立刻 True,所有公共 async 方法
+        # 通过 `_check_alive()` 拦截后续 entry。`best-effort` 方法
+        # (如 `list_joined_channels`)自己 catch;事务性方法让它冒到调用方。
+        # 同时阻断启动后 race:`start()` 还没 ready 时 VM 已 fire-and-forget
+        # 调 `list_joined_channels`,aiotdlib bridge 还没绑到当前 loop 上,
+        # `request()` 会撞 10s 超时 + qasync 跨 loop wakeup 噪音。
+        self._closing: bool = False
+
         proxy = parse_socks5_proxy(settings.proxy)
         # tdlib_verbosity 决定 aiotdlib 把多少 TDLib 内部日志转发到 Python logging。
         # 默认 FATAL;调试时调到 INFO 可见 401 等线索。
@@ -581,6 +589,7 @@ class TdlibTelegramClient(_AiClient):
                  self._state, _t.monotonic() - t)
 
     async def start(self) -> tuple[str, str | None]:
+        self._check_alive()
         """主入口 — 应用启动时调一次。
 
         流程:
@@ -640,6 +649,7 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
+        self._check_alive()
         """用户点「登录」时调用 — 改 phone / 触发 aiotdlib 发 code。
 
         若 TDLib 没在 `phone_required` 状态,先 wait_for 至转好。
@@ -667,6 +677,7 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
+        self._check_alive()
         """UI 提交验证码。
 
         把 code push 进队列(由 `_check_authentication_code` 钩子消费),然后等
@@ -681,6 +692,7 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def submit_password(self, password: str) -> tuple[str, str | None]:
+        self._check_alive()
         await self._password_queue.put(password)
         self._state_event.clear()
         try:
@@ -690,6 +702,7 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def logout(self) -> None:
+        self._check_alive()
         """登出 — aiotdlib 会自动反推状态机 Closed → PhoneNumber。"""
         try:
             await self.request(LogOut())
@@ -785,7 +798,13 @@ class TdlibTelegramClient(_AiClient):
         )
 
     async def close(self) -> None:
-        """app exit 时调 — 内部 aiotdlib + 关掉所有订阅流。"""
+        """app exit 时调 — 内部 aiotdlib + 关掉所有订阅流。
+
+        第一件事就 `_closing=True`,让任何还在 in-flight 的协程
+        (`list_joined_channels` / VM refresh / 等)下次 tick 看到
+        `ClientClosingError`,不再排新的 aiotdlib request 进 10s 超时。
+        """
+        self._closing = True
         # 关流
         for s in list(self._streams):
             try:
@@ -794,6 +813,16 @@ class TdlibTelegramClient(_AiClient):
                 pass
         self._streams.clear()
         await self._kill_aiotdlib()
+
+    def _check_alive(self) -> None:
+        """公共 async 方法的 entry guard。
+
+        顺序:在进入 aiotdlib bridge 之前 throw `ClientClosingError`,
+        不让请求排进 10s 超时。**只用于事务性方法**(submit_* / logout);
+        best-effort 方法(`list_joined_channels`)自己处理并 return 占位。
+        """
+        if self._closing:
+            raise ClientClosingError()
 
     @property
     def state(self) -> str:
@@ -859,6 +888,7 @@ class TdlibTelegramClient(_AiClient):
         return None  # private / secret — 同步功能不覆盖
 
     async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
+        self._check_alive()
         """ChannelSyncService 用:拉一个频道的最新元数据。"""
         dto = await self._resolve_channel_metadata(channel_id)
         if dto is None:
@@ -867,6 +897,12 @@ class TdlibTelegramClient(_AiClient):
         return dto
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        # best-effort UX:被 VM `_go` 在 close()/bridge 重启中途 fire-and-forget 调用。
+        # 这里自己判 `_closing`,静默返回空,不抛 `ClientClosingError`(也不 log
+        # traceback,避免 startup race 的噪音)。
+        if self._closing:
+            log.info("[tdlib] list_joined_channels: client closing, returning []")
+            return []
         import time as _t
         t0 = _t.monotonic()
         result: list[ChannelDTO] = []
@@ -880,8 +916,13 @@ class TdlibTelegramClient(_AiClient):
                 return result
             n_total = len(chats.chat_ids or [])
             for i, cid in enumerate(chats.chat_ids or []):
+                # 每个 cid 解析前再 check 一次 —— 拉 mid-loop 时已经被 close()
+                # 也不要把这条请求继续排进 aiotdlib bridge
+                self._check_alive()
                 try:
                     dto = await self._resolve_channel_metadata(cid)
+                except ClientClosingError:
+                    raise
                 except Exception:  # noqa: BLE001
                     log.exception("_resolve_channel_metadata(%d) failed", cid)
                     continue
@@ -891,6 +932,10 @@ class TdlibTelegramClient(_AiClient):
                 if n_total >= 50 and (i + 1) % 50 == 0:
                     log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
                              i + 1, n_total, _t.monotonic() - t0)
+        except ClientClosingError:
+            # mid-loop 命中 `_check_alive()` —— 用户关窗 / 重启触发了 close(),
+            # 静默退出,不再打 traceback
+            log.info("[tdlib] list_joined_channels: aborted (client closing)")
         except Exception:  # noqa: BLE001
             log.exception("list_joined_channels failed")
         log.info("[tdlib] list_joined_channels done: %d channels in %.2fs",
@@ -914,8 +959,12 @@ class TdlibTelegramClient(_AiClient):
         限流:每页间不 sleep(由调用方 ChannelSyncService 控)。
         """
         from tgmonitor.core.telegram.tdlib_client import _map_message
+        # Async generator:`_check_alive()` 在每次分页入口 throw,中途 close() 就
+        # 立刻结束迭代(不再排下一页 GetChatHistory request,免得撞 10s 超时 +
+        # 跨 loop wakeup 噪音)
         while True:
-            t = GetChatHistory(  # type: ignore[call-arg]
+            self._check_alive()
+            t = GetChatHistory(  # type: ignore[call-arg](
                 chat_id=channel_id,
                 from_message_id=from_msg_id,
                 offset=0,
@@ -945,6 +994,7 @@ class TdlibTelegramClient(_AiClient):
             from_msg_id = last_id
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
+        self._check_alive()
         username = identifier.lstrip("@") if identifier.startswith("@") else identifier
         # search 要拿响应 → request;join 不需要响应 → send
         resp = await self.request(SearchPublicChat(username=username))
@@ -1393,3 +1443,15 @@ class TelegramRateLimitError(RuntimeError):
     def __init__(self, retry_after_seconds: float, message: str = "") -> None:
         self.retry_after_seconds = float(retry_after_seconds)
         super().__init__(message or f"Telegram rate limit: wait {retry_after_seconds:.0f}s")
+
+
+class ClientClosingError(RuntimeError):
+    """TdlibClient 已经进入关闭流程(`close()` 已调)。
+
+    公共 async 方法(entry guard)在进入 aiotdlib bridge 之前 throw,
+    避免再撞 10s request 超时 + 跨 loop wakeup 噪音。多数用户面方法是
+    `best-effort`,会自己 catch 住;事务性方法(submit_* / logout)让它冒上去。
+    """
+
+    def __init__(self, message: str = "TdlibClient is closing") -> None:
+        super().__init__(message)
