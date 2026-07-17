@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MessageDTO
-from tgmonitor.ui.icon import action_icon, load_app_icon
+from tgmonitor.ui.icon import action_icon
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.account_widget import AccountWidget
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
@@ -68,7 +68,9 @@ class MainWindow(QMainWindow):
         self.loop = loop
         self.env_path = env_path or Path(".env")
         self.setWindowTitle("tgmonitor · Telegram 频道监听")
-        self.setWindowIcon(load_app_icon())
+        # 进程级 `QGuiApplication.setWindowIcon(load_app_icon())` 已经在 app.py:120
+        # 设过;再单独给主窗口设一次是浪费 lru_cache slot,且会 shadow OS-level
+        # dock 图标可被覆盖的场景(例如 PyInstaller 包的 .icns)。
         self.resize(1180, 740)
 
         self._vm = MonitorViewModel(app, monitor, loop)
@@ -233,12 +235,11 @@ class MainWindow(QMainWindow):
         self._vm.refresh_joined_channels()
 
     def _on_export(self) -> None:
-        if not self.monitor._whitelist:  # type: ignore[attr-defined]
+        if not self.monitor.subscribed_ids:
             QMessageBox.information(self, "导出", "请先订阅至少一个频道")
             return
-        # 用 monitor._whitelist 是不优雅,但导出需要"已订阅的 id 列表"这语义没变;
-        # 后续可改 AppService.list_subscribed_channels()返回 ids 版本
-        ids = [int(cid) for cid in self.monitor._whitelist]  # type: ignore[attr-defined]
+        # 导出需要"已订阅的 id 列表"这语义没变;走 MonitorService 公开 API
+        ids = sorted(int(cid) for cid in self.monitor.subscribed_ids)
         # export_dialog 只用 channel_ids 字段,DTO 是渲染细节;此处跳过
         dlg = ExportDialog(self.app, ids, self)
         if dlg.exec():
@@ -348,7 +349,7 @@ class MainWindow(QMainWindow):
         self.channel_panel.set_joined(list(all_known.values()))
         subscribed = [
             ch for cid, ch in all_known.items()
-            if cid in self.monitor._whitelist  # type: ignore[attr-defined]
+            if cid in self.monitor.subscribed_ids
         ]
         self.channel_panel.set_subscribed(subscribed)
         # 同步标题表给 MessageView,后续历史消息(下面的 load_recent_messages)

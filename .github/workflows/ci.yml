@@ -73,7 +73,28 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
         run: |
+          # -v 看每个 case 名;--tb=short 失败时压栈长度可控;不传 --cov 给默认 pytest
+          # 跑路径(下面 coverage step 单独收集,矩阵设阈门会带来 churn,故只产 artifact)
           python -m pytest -v --tb=short
+
+      - name: Run pytest with coverage
+        env:
+          PYTHONPATH: src
+          QT_QPA_PLATFORM: offscreen
+          QT_LOGGING_RULES: "*.warning=false"
+        run: |
+          # 第二次跑只为了收集分支覆盖 + xml 报告(不产覆盖率门控);
+          # coverage 在 pyproject [dependency-groups].dev 已列,装在前面 pip install 步骤
+          python -m coverage run -m pytest -q
+          python -m coverage xml -o coverage.xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # 以 OS + Python 版本为名,跨矩阵下不互相覆盖
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: warn
 
   lint:
     name: ruff
