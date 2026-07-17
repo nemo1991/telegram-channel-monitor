@@ -415,3 +415,60 @@ def test_close_sets_closing_flag(settings, bus, stub_aiotdlib_init):
 
     asyncio.run(_go())
     assert client._closing is True
+
+
+@pytest.mark.parametrize("state", ["uninit", "phone_required", "code_required", "password_required", "error"])
+def test_list_joined_channels_returns_empty_when_state_not_ready(
+    settings, bus, stub_aiotdlib_init, state, caplog
+):
+    """VM 的 bootstrap_ui 在 app 启动后立刻 fire-and-forget 调 list_joined_channels,
+    这时 bridge 还在 `_state in {uninit, phone_required, code_required, ...}` 中。
+    把这些状态统一早返 + DEBUG log,不撞 aiotdlib bridge,不再 10s request_timeout。
+
+    2026-07-18 早实测:`RuntimeError: loop ... is not the running loop` 后立刻跟
+    `list_joined_channels failed` 10s 超时 —— bridge 没 ready,VM 硬拉,撞 aiotdlib
+    内部排队的 cross-loop wakeup。
+    """
+    import logging
+    client = _make_stubbed_client(settings, bus)
+    client._state = state  # 不走 start(),直接拨成中间态
+    assert client._closing is False  # 确保 readiness 检查才是关键,_closing=False
+
+    with caplog.at_level(logging.DEBUG):
+        result = asyncio.run(client.list_joined_channels())
+    assert result == []
+    # 应该 print 出我们新增的 DEBUG 一行,而不是 traceback
+    debug_msgs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("state=" in r.getMessage() and "not ready" in r.getMessage()
+               for r in debug_msgs), (
+        f"expected DEBUG 'state=… not ready' 记录;got {[r.getMessage() for r in caplog.records]}"
+    )
+    # 不应该 ERROR 级别
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert error_records == []
+
+
+def test_list_joined_channels_in_ready_state_still_calls_request(
+    settings, bus, stub_aiotdlib_init
+):
+    """最简回归:`_state="ready"` 时不应该被新 guard 拦截,应该真的进
+    `request(GetChats)`。stub aiotdlib 让 `request` 抛一个洞,我们只断它被调
+    到 / 怎么到的。
+    """
+    client = _make_stubbed_client(settings, bus)
+    client._state = "ready"
+
+    called = []
+
+    async def _fake_request(req):  # type: ignore[no-untyped-def]
+        called.append(req)
+        # 模拟 TDLib 返回空 chat 列表(常见 — 没新消息 / 拒访)
+        class _R:
+            chat_ids: list = []
+        return _R()
+
+    client.request = _fake_request  # type: ignore[method-assign]
+
+    result = asyncio.run(client.list_joined_channels())
+    assert result == []
+    assert len(called) == 1  # 进了一步,没被早返拦下

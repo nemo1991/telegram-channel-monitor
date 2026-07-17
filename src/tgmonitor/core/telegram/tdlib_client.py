@@ -897,11 +897,20 @@ class TdlibTelegramClient(_AiClient):
         return dto
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
-        # best-effort UX:被 VM `_go` 在 close()/bridge 重启中途 fire-and-forget 调用。
-        # 这里自己判 `_closing`,静默返回空,不抛 `ClientClosingError`(也不 log
-        # traceback,避免 startup race 的噪音)。
+        # best-effort UX:被 VM `_go` 在三种时机 fire-and-forget 调用:
+        #   1) close() 中途
+        #   2) startup 时 bridge 还没 ready(VM 的 `bootstrap_ui` 在
+        #      `_setup_async` 走 `app.bootstrap()` 的同时并行 fire 了 `list_*`,
+        #      但 bridge/_state="ready" 还没等到 — 真打开 app 时撞这个)
+        #   3) LoginStateChanged 转 ready 后 VM 再拉一次
+        # 这三种情况都早返 [],不抛、不刷 10s request_timeout traceback,
+        # 让 VM 自然 idle,等下次 LoginStateChanged 或用户点 Refresh 再触发。
         if self._closing:
             log.info("[tdlib] list_joined_channels: client closing, returning []")
+            return []
+        if self._state != "ready":
+            log.debug("[tdlib] list_joined_channels: state=%r (not ready yet), returning []",
+                      self._state)
             return []
         import time as _t
         t0 = _t.monotonic()
