@@ -31,7 +31,15 @@
 - `ui/widgets/settings_dialog.py` 删 Telegram 整组,加 Proxy + 测试连接按钮
 - `ui/widgets/login_dialog.py` 收尾只剩 code + 2FA 输入(auto-show via bus event)
 
-## [0.2.0] - 2026-07-13
+### 🔧 Changed
+- `REVIEW.md`(new)— 一次 sweep 的 review report,列出分层违规、dead-code、CHANGELOG 重复标题、重复 setWindowIcon、coverage 配置缺失等
+- `MonitorService.subscribed_ids` 公共属性 — UI 不再读 `_whitelist` private 字段;移除三处 `# type: ignore[attr-defined]`
+- `tdlib_client._set_state` 去除历史 dead-switch `if False else asyncio.create_task(...)`,改纯 `create_task`
+- `MainWindow` 不再单独 `setWindowIcon(load_app_icon())` — `QGuiApplication.setWindowIcon` 已是 process-wide
+- `pyproject.toml` 加 `[tool.coverage.run]` / `[tool.coverage.report]`,CI 加 coverage xml artifact 上传;**不设阈值**
+- `pyproject.toml` 加 `[project.urls]`(Homepage / Repository / Issues / Documentation)
+- 图标统一到 Lucide(stroke-width=1.75, currentColor, round caps);新增 3 个 kind 图标(megaphone / users / user-round);删 orphan SVG
+- `channel_widget.py` 删 `_paint_color_block` / `_kind_color` / `_ICON_*` ~30 行 QPainter 色块代码,改用 `action_icon("kind_channel|supergroup|group")`
 
 ## [0.2.0] - 2026-07-13
 

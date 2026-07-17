@@ -59,6 +59,16 @@ class MonitorService:
     def remove_from_whitelist(self, channel_id: int) -> None:
         self._whitelist.discard(channel_id)
 
+    @property
+    def subscribed_ids(self) -> frozenset[int]:
+        """订阅频道 id 的快照集合 — UI 只读访问用。
+
+        内部 `_whitelist` 仍由 `set_whitelist` / `add_to_whitelist` /
+        `remove_from_whitelist` 维护;每次访问返回一个新 `frozenset` 副本,
+        UI 端不会意外修改内部状态。
+        """
+        return frozenset(self._whitelist)
+
     async def start(self) -> None:
         if self._task is not None:
             return

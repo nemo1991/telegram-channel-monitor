@@ -397,14 +397,8 @@ class TdlibTelegramClient(_AiClient):
         self._state_event.set()
         if self._bus is not None:
             try:
-                from tgmonitor.core.events import LoginStateChanged
                 # 用 fire-and-forget task — 不要 await,避免让 `_updates_loop` 卡住
-                self._bus.publish_threadsafe(
-                    asyncio.get_event_loop(),
-                    LoginStateChanged(state=new_state, detail=detail),
-                ) if False else asyncio.create_task(
-                    self._safe_publish_state(new_state, detail)
-                )
+                asyncio.create_task(self._safe_publish_state(new_state, detail))
             except Exception:  # noqa: BLE001
                 log.exception("scheduling LoginStateChanged failed")
 

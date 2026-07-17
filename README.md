@@ -203,6 +203,10 @@ PYTHONPATH=src python3 -m pytest tests/test_exporters.py
 
 # Lint
 ruff check src tests
+
+# Coverage(xml 上传到 CI artifact)
+python -m coverage run -m pytest -q
+python -m coverage report
 ```
 
 测试覆盖:
@@ -213,6 +217,29 @@ ruff check src tests
 | `tests/test_objectstore.py` | LocalObjectStore CRUD + 越界防御 | 5 |
 | `tests/test_exporters.py` | 4 格式快照 + 缩略图内嵌 + 注册表 | 6 |
 | `tests/test_monitor_and_app.py` | Monitor 去重/事件/AppService 登录/订阅 | 4 |
+
+### 🤖 CI (GitHub Actions)
+
+每次 push / PR 都会触发两道 job(见 `.github/workflows/ci.yml`):
+
+- **`test` 矩阵** — Ubuntu + macOS × Python 3.11 / 3.12 / 3.13(6 个组合)
+  - 装 Qt offscreen 系统库(`libegl1` 等)+ `QT_QPA_PLATFORM=offscreen`,
+    Linux runner 上 PySide6 才不崩在 `libEGL.so.1`
+  - 跑 `pytest -v --tb=short`
+  - 跑 `coverage run` + `coverage xml`,per-OS-per-Python-version 上传成
+    `coverage-${{ matrix.os }}-${{ matrix.python-version }}` artifact
+  - **不设覆盖率阈值**(避免新代码被 churn 拒绝,各 PR 自己看 artifact)
+- **`lint`** — `ruff check src tests`(任何 noqa 0 容忍)
+
+CI 跑无凭据:不读 `TG_API_ID` / `TG_API_HASH` / `TG_PHONE`,所有 Telegram
+相关代码路径走 `FakeTelegramClient`。见 [SECURITY.md](SECURITY.md)。
+
+本地复跑:
+
+```bash
+# 与 CI 等价(本地装了 PySide6 / libEGL 后)
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen pytest -v --tb=short
+```
 
 ---
 
@@ -238,6 +265,8 @@ tgmonitor/
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
+├── REVIEW.md                  # 代码 review 报告(每次 sweep 增量)
+├── ATTRIBUTIONS.md            # 第三方许可(Lucide 等)
 ├── .env.example
 ├── .github/
 │   ├── workflows/ci.yml
@@ -247,19 +276,25 @@ tgmonitor/
 │   ├── __main__.py            # 入口
 │   ├── app.py                 # 组合根 + qasync
 │   ├── core/                  # ⚠ 禁 import UI
-│   │   ├── config.py
+│   │   ├── config.py          # pydantic Settings
 │   │   ├── events.py          # EventBus + 领域事件
 │   │   ├── dto.py             # 跨边界 DTO
 │   │   ├── app_service.py     # UI 唯一门面
+│   │   ├── settings_store.py  # .env 读/写
 │   │   ├── telegram/          # TDLib 集成(唯一接触点)
-│   │   ├── monitor/           # 监听/去重/落库
-│   │   ├── storage/           # Postgres / Mongo 仓储
-│   │   ├── objectstore/       # S3 / Local 对象存储
-│   └── ui/                    # PySide6
-│       ├── main_window.py
-│       ├── viewmodels/
-│       └── widgets/
-└── tests/
+│   │   ├── monitor/           # 监听/去重/落库 (MonitorService + MediaDownloader)
+│   │   ├── channel_sync/      # 多选全量同步(元数据 + 历史)
+│   │   ├── storage/           # Postgres / Mongo / JSONL 仓储
+│   │   ├── objectstore/       # S3 / Local / Folder 对象存储
+│   │   └── export/            # JSON / CSV / Markdown / HTML
+│   ├── ui/                    # PySide6
+│   │   ├── main_window.py
+│   │   ├── icon.py            # SVG → QIcon (Lucide 风格)
+│   │   ├── viewmodels/
+│   │   ├── widgets/           # AccountWidget / ChannelWidget / dialogs / MessageView
+│   │   └── resources/         # QSS 主题
+│   └── resources/             # app icon + toolbar SVGs(importlib.resources)
+└── tests/                     # 130+ 用例,全离线
 ```
 
 ---
@@ -292,3 +327,4 @@ tgmonitor/
 - [aiotdlib](https://github.com/pylakey/aiotdlib) — TDLib 的 Python asyncio 封装
 - [PySide6](https://www.qt.io/qt-for-python) · [qasync](https://github.com/CabbageDevelopment/qasync)
 - [asyncpg](https://github.com/MagicStack/asyncpg) · [motor](https://github.com/mongodb/motor) · [aioboto3](https://github.com/terricain/aioboto3)
+- [Lucide](https://lucide.dev/) — 工具栏 / 频道类型图标(ISC 许可),见 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)

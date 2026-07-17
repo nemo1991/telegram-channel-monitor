@@ -30,6 +30,13 @@ all = [
     "tgmonitor[postgres,mongo,objectstore]",
 ]
 
+[project.urls]
+# GitHub 仓库位置 — `pip show tgmonitor` 可见;PyPI 上传后 README 顶部 / 包页也可读
+Homepage = "https://github.com/forcetone/tgmonitor"
+Repository = "https://github.com/forcetone/tgmonitor"
+Issues = "https://github.com/forcetone/tgmonitor/issues"
+Documentation = "https://github.com/forcetone/tgmonitor/blob/main/docs/ARCHITECTURE.md"
+
 [project.scripts]
 tgmonitor = "tgmonitor.__main__:main"
 
@@ -60,9 +67,29 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-ra -q"
 
+[tool.coverage.run]
+# 仓库内 Python 源码;branch on 看分支覆盖率
+source = ["src/tgmonitor"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
+    "coverage>=7.0",
 ]

@@ -109,6 +109,8 @@ async for _ in app.export(req):
 
 **封装原则**:TDLib 的 `Update` / `Message` / `Photo` / `Document` 等类型**绝不出本目录**;`tdlib_client.py` 内部用 `mapping.py` 归一化为 `MessageDTO` / `MediaDTO`。
 
+**代理(SOCKS5)**:`Settings.proxy` + `TD_PROXY` 环境变量,由 `TgProxy` 适配进 aiotdlib 的 `proxy_settings`;见 [CONTRIBUTING.md § 代理与 aiotdlib 调试](../CONTRIBUTING.md)。
+
 ### 3.5 `core/storage/` — 消息持久化
 
 两套实现共享同一组方法签名,查询语义对齐(按 `date ASC, id ASC` 排序)。
@@ -148,7 +150,7 @@ class YamlExporter(Exporter):
         ...
 ```
 
-`ExportService.run(request)` 是 async iterator,逐批拉消息 + yield 进度事件 + 调 Exporter 写盘。
+`ExportService.run(request)` 是 async iterator,逐批拉消息 + yield 进度事件 + 调 Exporter 写盘。新增导出格式的流程见 [CONTRIBUTING.md § 添加新的导出格式](../CONTRIBUTING.md#-添加新的存储--对象存储--导出后端)。
 
 ### 3.8 `core/monitor/service.py` — 监听服务
 
@@ -249,6 +251,10 @@ ExportDialog 选参数 ──► AppService.export(req)
 
 - `InMemoryRepository` / `LocalObjectStore` / `FakeTelegramClient` 全在 `tests/conftest.py`
 - core 单测**不**起 Postgres/Mongo/S3/TDLib 真实服务
+- UI 测试(QMainWindow / QListWidget / MessageView)在 `QT_QPA_PLATFORM=offscreen`
+  下运行 —— 见 `.github/workflows/ci.yml`(`Install Qt system dependencies (Ubuntu)`
+  + `pytest` step 的 `QT_QPA_PLATFORM: offscreen` env)。CI 默认 offscreen,本地
+  装 dev 依赖后直接 `pytest` 即可
 - 真实集成(可选)用 `testcontainers`:
   - PostgresRepo + testcontainers/postgres
   - MongoRepo + testcontainers/mongodb
