@@ -125,6 +125,50 @@
 
 ---
 
+## 🌐 代理与 aiotdlib 调试
+
+国内 / 受限网络下,Telegram 服务器常需要经 SOCKS5 代理。本节说怎么
+**启用** 与 **调试** 这条路,不解释 Telegram 协议本身(那是 TDLib 文档的事)。
+
+### 启用 SOCKS5 代理
+
+1. 起一个 SOCKS5 代理(本地 ss / outline / ssh -D 都可以)
+2. 在 `.env` 加一行(用户名密码可省,主机端口必有):
+   ```env
+   TG_PROXY=socks5://[user:pass@]host:port
+   ```
+3. 启动 `python -m tgmonitor`,侧栏「账户」状态点会先转「配置中」,代理通了才能继续登录
+4. UI 也可改:设置 → 网络代理 → 填同样的 URL → 点「测试连接」→
+   保存并应用(走 `SettingsChanged` 事件,无需重启 app)
+
+`Settings.proxy`(pydantic 字段)会校验 URL 格式;非法值会抛 `ValueError`,
+UI 弹错误框。
+
+### 开发 aiotdlib 路径
+
+- `aiotdlib>=0.16` 是硬性要求(`pyproject.toml` dependencies)。低于 0.16
+  的版本 `ClientSettings` API 不同,会启动失败
+- 本项目在 `core/telegram/factory.py` 优先 import 真 `aiotdlib.AiClient`,
+  失败回落到 `FakeTelegramClient`(开发 / CI 无凭据时)
+- TDLib 二进制由 aiotdlib 在 install 阶段自行下载;如果网络受限,手动
+  放到 `aiotdlib/tdlib/` 下
+
+### 看 TDLib 日志
+
+```bash
+# 启动时抬高 verbosity
+TD_LOG_LEVEL=DEBUG python -m tgmonitor
+
+# 或者只读 session 文件里的事件
+TG_SESSION_DIR=./data/session   # 默认
+```
+
+TDLib 会在 stderr 里吐原始 `updateAuthorizationState` / `updateNewMessage`
+事件流 —— 这些是 `core/telegram/tdlib_client.py` 订阅的源头,改它之前先确认
+这里的事件字段确实有变化。
+
+---
+
 ## 🔐 安全
 
 **请勿**在 issue / PR / commit 中粘贴:
