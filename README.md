@@ -327,3 +327,4 @@ tgmonitor/
 - [aiotdlib](https://github.com/pylakey/aiotdlib) — TDLib 的 Python asyncio 封装
 - [PySide6](https://www.qt.io/qt-for-python) · [qasync](https://github.com/CabbageDevelopment/qasync)
 - [asyncpg](https://github.com/MagicStack/asyncpg) · [motor](https://github.com/mongodb/motor) · [aioboto3](https://github.com/terricain/aioboto3)
+- [Lucide](https://lucide.dev/) — 工具栏 / 频道类型图标(ISC 许可),见 [ATTRIBUTIONS.md](ATTRIBUTIONS.md)

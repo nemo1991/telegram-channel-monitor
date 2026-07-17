@@ -13,8 +13,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGroupBox,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
+from tgmonitor.ui.icon import action_icon
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -38,34 +39,22 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-_ICON_CHANNEL = QColor("#3390ec")
-_ICON_SUPER = QColor("#5cb85c")
-_ICON_GROUP = QColor("#f0ad4e")
+# 频道类型 → Lucide 图标名。
+# 单色、currentColor 风格,与工具栏 UI 一致;row title 已带 title 文字,
+# 单色图标不再承担"颜色编码"语义(megaphone / users / user-round 已经表意)。
+_KIND_ICON_NAMES: dict[str, str] = {
+    "channel": "kind_channel",
+    "supergroup": "kind_supergroup",
+    "group": "kind_group",
+}
 
 
-def _kind_color(kind: str) -> QColor:
-    return {
-        "channel": _ICON_CHANNEL,
-        "supergroup": _ICON_SUPER,
-        "group": _ICON_GROUP,
-    }.get(kind, _ICON_GROUP)
+def _kind_icon(kind: str) -> QIcon:
+    """频道类型图标 —— Lucide 单色,见 `ATTRIBUTIONS.md` 与 `ui/icon.py`。
 
-
-def _paint_color_block(color: QColor, size: int = 14) -> QIcon:
-    """生成一个纯色小方块作图标,区分频道类型。
-
-    返回 `QIcon`(含一个 QPixmap)而不是 QBrush — `QListWidgetItem.setIcon` 只接
-    QIcon / QPixmap,不接 QBrush。
+    未知 kind 一律 fallback 到 group(user-round)。
     """
-    pm = QPixmap(QSize(size, size))
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setBrush(color)
-    p.setPen(Qt.NoPen)
-    p.drawRoundedRect(1, 1, size - 2, size - 2, 3, 3)
-    p.end()
-    return QIcon(pm)
+    return action_icon(_KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]))
 
 
 class ChannelWidget(QGroupBox):
@@ -149,7 +138,7 @@ class ChannelWidget(QGroupBox):
         for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
             item = QListWidgetItem(ch.display)
             item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_paint_color_block(_kind_color(ch.kind)))
+            item.setIcon(_kind_icon(ch.kind))
             self.lst_joined.addItem(item)
         self.lbl_joined_count.setText(f"全部(已加入):{len(channels)}")
 
@@ -159,7 +148,7 @@ class ChannelWidget(QGroupBox):
         for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
             item = QListWidgetItem(ch.display)
             item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_paint_color_block(_kind_color(ch.kind)))
+            item.setIcon(_kind_icon(ch.kind))
             self.lst_subscribed.addItem(item)
         self.lbl_subs_count.setText(f"已监听:{len(channels)}")
 
@@ -191,7 +180,7 @@ class ChannelWidget(QGroupBox):
         self._subscribed_ids.add(ch.id)
         item = QListWidgetItem(ch.display)
         item.setData(Qt.UserRole, ch.id)
-        item.setIcon(_paint_color_block(_kind_color(ch.kind)))
+        item.setIcon(_kind_icon(ch.kind))
         self.lst_subscribed.addItem(item)
         self.lbl_subs_count.setText(f"已监听:{len(self._subscribed_ids)}")
 
