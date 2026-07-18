@@ -33,7 +33,9 @@ jobs:
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
       # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好,跳过
-      - name: Install Qt system dependencies (Ubuntu)
+      # libc++-dev 给 aiotdlib 的 bundled TDLib .so 提供 libc++.so.1(否则
+      # test_main_window_channels 里直接构造 TdlibTelegramClient 会 OSError)
+      - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -43,7 +45,8 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libxcb-icccm4 libxcb-image0 libxcb-util1 \
-            libsm6 libice6
+            libsm6 libice6 \
+            libc++-dev
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 

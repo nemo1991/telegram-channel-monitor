@@ -257,6 +257,10 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
 
     修复方向:list_joined_channels 应最多等 N 秒让 _state 走到 "ready",
     再决定 early return / 真请求。
+
+    注意:TdlibTelegramClient 创建(含 asyncio.Event)必须跑在 background
+    loop(qloop)上,避免 Python 3.9 下 Event loop 绑定错误
+    ("attached to a different loop")。
     """
     from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
     from tgmonitor.core.events import EventBus
@@ -273,32 +277,40 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
         objectstore_backend=ObjectStoreBackend.LOCAL,
     )
     bus = EventBus()
-    client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-    client._state = "tdlib_parameters"  # 中间态
+    captured = {"called": False}
 
-    captured = {"called": False, "chs": []}
+    async def _setup_and_go():
+        """在 background loop 上一气呵成:构造 client → 设中间态 → 模拟 request
+        → 0.3s 后推到 ready → list_joined_channels。"""
+        client = tdc.TdlibTelegramClient(settings, event_bus=bus)
+        client._state = "tdlib_parameters"  # 中间态
 
-    class _R:
-        chat_ids: list = [42, 99]
+        class _R:
+            chat_ids: list = [42, 99]
 
-    async def _fake_request(req):
-        captured["called"] = True
-        return _R()
+        async def _fake_request(req):  # noqa: ARG001
+            captured["called"] = True
+            return _R()
 
-    client.request = _fake_request  # type: ignore[method-assign]
+        client.request = _fake_request  # type: ignore[method-assign]
 
-    # 0.3s 后把 state 推到 ready(模拟 aiotdlib 事件推进)
-    import threading as _th
-    _th.Timer(0.3, lambda: setattr(client, "_state", "ready")).start()
+        # 0.3s 后在_同一个_ loop 上把 state 推到 ready — 必须用 ensure_future
+        # (而非跨线程 Timer),否则 polling 协程读不到另一个线程的 setattr 结果
+        # 注意:必须走 _set_state 而非 setattr,因为 _wait_for_state 也依赖
+        # _state_event 状态来决定用 sleep(0.05) 还是 wait_for(event.wait()) 路径。
+        async def _delay_ready():
+            import asyncio as _asyncio
+            await _asyncio.sleep(0.3)
+            client._set_state("ready")
 
-    async def _go():
+        asyncio.ensure_future(_delay_ready())
+
         return await client.list_joined_channels()
 
-    # 在一个真正的 loop 上跑,等结果
-    fut = asyncio.run_coroutine_threadsafe(_go(), qloop)
+    fut = asyncio.run_coroutine_threadsafe(_setup_and_go(), qloop)
     fut.result(timeout=5.0)
     # 如果 list_joined_channels 是 fire-and-forget "先看 state, 非 ready 立即 []",
-    # 那 _go 会立即返回 [] 且 _fake_request 永远不会被调
+    # 那 _setup_and_go 会立即返回 [] 且 _fake_request 永远不会被调
     assert captured["called"], (
         "list_joined_channels 没有等到 state 走到 ready,而是在中间态就 []"
     )
@@ -316,6 +328,9 @@ def test_wait_for_state_does_not_spin_when_event_already_set(qapp, qloop, tmp_pa
          spin 至死)。测试方法:用一个**伴随**的 ping 协程同时跑,如果
          `_wait_for_state` 在 spin,ping 不会被 pump;如果 sleep 让出 CPU,
          ping 会被 pump。
+
+    注意:TdlibTelegramClient 创建必须在 background loop 上完成(见前一个
+    test 的说明),故全部逻辑包在 `_run` 协程内。
     """
     import time as _t
 
@@ -333,48 +348,53 @@ def test_wait_for_state_does_not_spin_when_event_already_set(qapp, qloop, tmp_pa
         objectstore_backend=ObjectStoreBackend.LOCAL,
     )
     bus = EventBus()
-    client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-    # state 永远停在 tdlib_parameters(≠ ready)。但 event 已经被前面的
-    # _set_state(...) 隐式 set 至少一次(任何构造路径都不可能保持 clear)
-    client._state = "tdlib_parameters"
-    # 强制模拟 event set:
-    client._state_event.set()
 
-    async def _ping_loop() -> int:
-        """伴随协程:每 ~50ms 记一次 tick,验证 qasync loop 没被 _wait_for_state peg 死。"""
-        ticks = 0
-        deadline = _t.monotonic() + 6.0
-        while _t.monotonic() < deadline:
-            await asyncio.sleep(0.05)
-            ticks += 1
-        return ticks
+    async def _run():
+        client = tdc.TdlibTelegramClient(settings, event_bus=bus)
+        # state 永远停在 tdlib_parameters(≠ ready)。但 event 已经被前面的
+        # _set_state(...) 隐式 set 至少一次(任何构造路径都不可能保持 clear)
+        client._state = "tdlib_parameters"
+        # 强制模拟 event set:
+        client._state_event.set()
 
-    async def _wait() -> float:
-        t0 = _t.monotonic()
-        try:
-            await client._wait_for_state("ready", timeout=2.0)
-        except TimeoutError:
-            pass
-        return _t.monotonic() - t0
+        async def _ping_loop() -> int:
+            """伴随协程:每 ~50ms 记一次 tick,验证 qasync loop 没被 _wait_for_state peg 死。"""
+            ticks = 0
+            deadline = _t.monotonic() + 6.0
+            while _t.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+                ticks += 1
+            return ticks
 
-    # 两个协程同时跑;如果 _wait 是 hot-spin,ping 完全没机会 tick(< 10 ticks)
-    # 如果 _wait sleep-yield CPU,ping 应能 tick 50+
-    fut_wait = asyncio.run_coroutine_threadsafe(_wait(), qloop)
-    fut_ping = asyncio.run_coroutine_threadsafe(_ping_loop(), qloop)
+        async def _wait() -> float:
+            t0 = _t.monotonic()
+            try:
+                await client._wait_for_state("ready", timeout=2.0)
+            except TimeoutError:
+                pass
+            return _t.monotonic() - t0
 
-    # _wait_for_state 必须 ≤ 2.5s 内退出(不要 spin 死)
-    elapsed = fut_wait.result(timeout=3.0)
-    assert elapsed <= 2.5, (
-        f"_wait_for_state 总耗时 {elapsed:.2f}s,期望 ≤ 2.5s — "
-        f"spin 的话会远超 timeout(应 2s 退)"
-    )
+        # 两个协程同时跑;如果 _wait 是 hot-spin,ping 完全没机会 tick(< 10 ticks)
+        # 如果 _wait sleep-yield CPU,ping 应能 tick 50+
+        wait_task = asyncio.ensure_future(_wait())
+        ping_task = asyncio.ensure_future(_ping_loop())
 
-    ticks = fut_ping.result(timeout=8.0)
-    # 6s 周期,50ms 间隔 → 理论 ~120 ticks;最少应能 80+(spin 时 0~2)
-    assert ticks >= 40, (
-        f"ping 协程只 tick {ticks} 次 — 说明 qasync loop 被 _wait_for_state "
-        f"peg 死,UI 会卡住。期望 ≥ 40 ticks(每 50ms 一次)。"
-    )
+        elapsed = await asyncio.wait_for(wait_task, timeout=3.0)
+        ticks = await asyncio.wait_for(ping_task, timeout=8.0)
+
+        # _wait_for_state 必须 ≤ 2.5s 内退出(不要 spin 死)
+        assert elapsed <= 2.5, (
+            f"_wait_for_state 总耗时 {elapsed:.2f}s,期望 ≤ 2.5s — "
+            f"spin 的话会远超 timeout(应 2s 退)"
+        )
+        # 6s 周期,50ms 间隔 → 理论 ~120 ticks;最少应能 80+(spin 时 0~2)
+        assert ticks >= 40, (
+            f"ping 协程只 tick {ticks} 次 — 说明 qasync loop 被 _wait_for_state "
+            f"peg 死,UI 会卡住。期望 ≥ 40 ticks(每 50ms 一次)。"
+        )
+
+    fut = asyncio.run_coroutine_threadsafe(_run(), qloop)
+    fut.result(timeout=15.0)
 
 
 def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
