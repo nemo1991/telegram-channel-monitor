@@ -827,21 +827,31 @@ class TdlibTelegramClient(_AiClient):
     async def _wait_for_state(self, target: str, *, timeout: float) -> None:  # noqa: ASYNC109 — `timeout` 是 state-machine 推进的最大等待时间,不是 asyncio.wait_for 的语义;命名直白可用
         """等 `_state` 推进到 `target`(或超时)。
 
-        用 `_state_event.wait()` 配合 0.5s 间隔 polling,避免错过 race 时序里的
-        state 变化 —`_state_event` 是 set-only(event 在 clear 后第一次 set 才
-        推进,后续重复 set 不会再推进),所以不能光 await event.wait(),要轮询。
+        等价于 Python `Event.wait()`,但 `Event` 是 **set-only** —— 一旦 set,
+        后续 `wait()` 立即返回(不真 yield),所以纯 `wait()/wait_for()` polling
+        会**spin**(每轮都 await 一次已经 done 的 Future,次数能跑到 1000/s,
+        吃满 qasync loop,Qt 事件没机会 pump,UI 冻死)。
+
+        正确做法:
+          1) event 已 set 时**主动 `asyncio.sleep(0.05)`** 让出 CPU,
+             重新 poll `_state` — 因为我们要等的是"状态变化",不是"event set";
+          2) event 未 set 时 `wait_for(state_event.wait(), 0.5)` 真等 fire。
         """
         import time as _t
         deadline = _t.monotonic() + timeout
         while _t.monotonic() < deadline:
             if self._state == target:
                 return
-            # _state_event 被 `_set_state` 在每次变化时 set;wait_for 拿这个
+            if self._state_event.is_set():
+                # event 早就被前面的 _set_state(...) set 过了 — 主动 yield,
+                # 然后重新读 self._state。因为我们等的是"状态变成 target",
+                # 不是"event set"。
+                await asyncio.sleep(0.05)
+                continue
             try:
                 await asyncio.wait_for(self._state_event.wait(), timeout=0.5)
             except TimeoutError:
                 continue
-        # 最后看一眼(可能在 wait_for 期间到了)
         if self._state == target:
             return
         raise TimeoutError(f"state did not reach {target!r} within {timeout}s")

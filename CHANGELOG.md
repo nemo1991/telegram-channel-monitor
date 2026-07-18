@@ -59,6 +59,13 @@
   Ready,channels 永不显示**直到用户手动 refresh。改成**最多等 8 秒**让
   `_state` 走到 `ready` 再真请求;仍 best-effort,超时 / `_closing` / 永久
   非 ready 时返 `[]` + DEBUG log
+- **`_wait_for_state` spin 冻 UI** (2026-07-18 17:17 用户反馈"卡住无反应") —
+  `_state_event` 是 Python `Event` 语义(set-only),之前 polling 路径
+  `wait_for(state_event.wait(), 0.5)` 在 event 已 set 时立即返回,**没真正
+  yield CPU**;qasync 的 loop 被这个子循环 peg 满,Qt 事件 8s 全没机会 pump,
+  UI 完全不响应。改成 event 已 set 时主动 `asyncio.sleep(0.05)` 让出 CPU +
+  重新 poll `self._state` —— 是等"状态变化"而非"event set",两者在 set-only
+  Event 下不相等
 - **`list_joined_channels` close race** — `close()` 标志 + 事务性方法(`submit_phone/code/password/logout/start/get_channel_metadata/join_channel`/`iter_chat_history` 分页入口)的 `_check_alive()` 公共 entry,提前抛 `ClientClosingError`,不进 10s aiotdlib request
 
 ## [0.2.0] - 2026-07-13

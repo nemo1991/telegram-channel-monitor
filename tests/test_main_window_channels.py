@@ -304,6 +304,79 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
     )
 
 
+def test_wait_for_state_does_not_spin_when_event_already_set(qapp, qloop, tmp_path):
+    """`_state_event` 是 set-only — 一旦被前面的 `_set_state(...)` set 住,
+    后续 `wait()` 立即返回,不等 CPU。如果 `_wait_for_state` 用纯
+    `wait_for(state_event.wait(), ...)` polling,**没让出 CPU**,qasync
+    loop 8s 被 peg 满,Qt 事件无法 pump,UI 冻死(2026-07-18 17:17 用户报)。
+
+    验证两条路径同时成立:
+      1) "state 已到 target" 时立即 return(不做 8s 等)
+      2) "state 永远不变" 时**让出 CPU**给 qasync loop,8s 内退出(而不是
+         spin 至死)。测试方法:用一个**伴随**的 ping 协程同时跑,如果
+         `_wait_for_state` 在 spin,ping 不会被 pump;如果 sleep 让出 CPU,
+         ping 会被 pump。
+    """
+    import time as _t
+
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.events import EventBus
+    from tgmonitor.core.telegram import tdlib_client as tdc
+
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None, api_id=1, api_hash="x" * 32, phone="+8612345",
+        session_dir=tmp_path / "session",
+        db_root=tmp_path / "m",
+        objectstore_root=tmp_path / "o",
+        media_policy=MediaPolicy.METADATA,
+        db_backend=DBBackend.JSONL,
+        objectstore_backend=ObjectStoreBackend.LOCAL,
+    )
+    bus = EventBus()
+    client = tdc.TdlibTelegramClient(settings, event_bus=bus)
+    # state 永远停在 tdlib_parameters(≠ ready)。但 event 已经被前面的
+    # _set_state(...) 隐式 set 至少一次(任何构造路径都不可能保持 clear)
+    client._state = "tdlib_parameters"
+    # 强制模拟 event set:
+    client._state_event.set()
+
+    async def _ping_loop() -> int:
+        """伴随协程:每 ~50ms 记一次 tick,验证 qasync loop 没被 _wait_for_state peg 死。"""
+        ticks = 0
+        deadline = _t.monotonic() + 6.0
+        while _t.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+            ticks += 1
+        return ticks
+
+    async def _wait() -> float:
+        t0 = _t.monotonic()
+        try:
+            await client._wait_for_state("ready", timeout=2.0)
+        except TimeoutError:
+            pass
+        return _t.monotonic() - t0
+
+    # 两个协程同时跑;如果 _wait 是 hot-spin,ping 完全没机会 tick(< 10 ticks)
+    # 如果 _wait sleep-yield CPU,ping 应能 tick 50+
+    fut_wait = asyncio.run_coroutine_threadsafe(_wait(), qloop)
+    fut_ping = asyncio.run_coroutine_threadsafe(_ping_loop(), qloop)
+
+    # _wait_for_state 必须 ≤ 2.5s 内退出(不要 spin 死)
+    elapsed = fut_wait.result(timeout=3.0)
+    assert elapsed <= 2.5, (
+        f"_wait_for_state 总耗时 {elapsed:.2f}s,期望 ≤ 2.5s — "
+        f"spin 的话会远超 timeout(应 2s 退)"
+    )
+
+    ticks = fut_ping.result(timeout=8.0)
+    # 6s 周期,50ms 间隔 → 理论 ~120 ticks;最少应能 80+(spin 时 0~2)
+    assert ticks >= 40, (
+        f"ping 协程只 tick {ticks} 次 — 说明 qasync loop 被 _wait_for_state "
+        f"peg 死,UI 会卡住。期望 ≥ 40 ticks(每 50ms 一次)。"
+    )
+
+
 def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
     """Initial:MainWindow.__init__ 完时,如果 VM 没数据,_refresh_state 应
     渲染空集而不是 NoReturnError 或 stale 数据。
