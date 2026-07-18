@@ -51,6 +51,14 @@
 - **`list_joined_channels` 启动 race** — `bootstrap_ui` 在 `app.bootstrap()` 之前 fire-and-forget
   拉已订阅频道列表,bridge `_state!="ready"`,撞 aiotdlib 10s `request_timeout`;新增 entry guard
   `if self._state != "ready`: 静默返回 [],DEBUG 日志
+- **logged-in 下频道 panel 不显示** (2026-07-18 用户反馈) — 之前 `if state != "ready" → 立即 []`
+  在 aiotdlib 走 `WaitTdlibParameters → ... → Ready` 多步过渡时太激进:
+  `start()` await 的 `_state_event.wait()` 任何变化都 set,所以可能在
+  WaitTdlibParameters 就返;`bootstrap_ui` 紧接着 fire-and-forget 调
+  `list_joined_channels` 时 `_state` 还是中间态,guard 立即 [],**错过稍后才到的
+  Ready,channels 永不显示**直到用户手动 refresh。改成**最多等 8 秒**让
+  `_state` 走到 `ready` 再真请求;仍 best-effort,超时 / `_closing` / 永久
+  非 ready 时返 `[]` + DEBUG log
 - **`list_joined_channels` close race** — `close()` 标志 + 事务性方法(`submit_phone/code/password/logout/start/get_channel_metadata/join_channel`/`iter_chat_history` 分页入口)的 `_check_alive()` 公共 entry,提前抛 `ClientClosingError`,不进 10s aiotdlib request
 
 ## [0.2.0] - 2026-07-13

@@ -824,6 +824,28 @@ class TdlibTelegramClient(_AiClient):
         if self._closing:
             raise ClientClosingError()
 
+    async def _wait_for_state(self, target: str, *, timeout: float) -> None:  # noqa: ASYNC109 — `timeout` 是 state-machine 推进的最大等待时间,不是 asyncio.wait_for 的语义;命名直白可用
+        """等 `_state` 推进到 `target`(或超时)。
+
+        用 `_state_event.wait()` 配合 0.5s 间隔 polling,避免错过 race 时序里的
+        state 变化 —`_state_event` 是 set-only(event 在 clear 后第一次 set 才
+        推进,后续重复 set 不会再推进),所以不能光 await event.wait(),要轮询。
+        """
+        import time as _t
+        deadline = _t.monotonic() + timeout
+        while _t.monotonic() < deadline:
+            if self._state == target:
+                return
+            # _state_event 被 `_set_state` 在每次变化时 set;wait_for 拿这个
+            try:
+                await asyncio.wait_for(self._state_event.wait(), timeout=0.5)
+            except TimeoutError:
+                continue
+        # 最后看一眼(可能在 wait_for 期间到了)
+        if self._state == target:
+            return
+        raise TimeoutError(f"state did not reach {target!r} within {timeout}s")
+
     @property
     def state(self) -> str:
         return self._state
@@ -900,18 +922,37 @@ class TdlibTelegramClient(_AiClient):
         # best-effort UX:被 VM `_go` 在三种时机 fire-and-forget 调用:
         #   1) close() 中途
         #   2) startup 时 bridge 还没 ready(VM 的 `bootstrap_ui` 在
-        #      `_setup_async` 走 `app.bootstrap()` 的同时并行 fire 了 `list_*`,
+        #      `app.bootstrap()` 完成前后 fire 了 `list_*`,
         #      但 bridge/_state="ready" 还没等到 — 真打开 app 时撞这个)
         #   3) LoginStateChanged 转 ready 后 VM 再拉一次
-        # 这三种情况都早返 [],不抛、不刷 10s request_timeout traceback,
+        # 这三种情况都"安静走",不撞 aiotdlib 10s request_timeout,
         # 让 VM 自然 idle,等下次 LoginStateChanged 或用户点 Refresh 再触发。
+        #
+        # 关键(2026-07-18 修复):之前 `if self._state != "ready": return []`
+        # 立即返回,但**bootstrap race 路径下**老版本会错过稍后才到的 "ready":
+        #   - `start()` 等的是 `_state_event.wait()`,任何状态变化都 set,
+        #     所以 aiotdlib 触发 `updateAuthorizationState(WaitTdlibParameters)`
+        #     就可能让 start() 提前返(state="tdlib_parameters")
+        #   - VM.bootstrap_ui 紧接着 fire list_joined_channels
+        #   - guard 看到 state != "ready" → 立即 [],错过 200ms 后到的 "ready"
+        #   - channels 永不显示,直到用户手动 Refresh
+        # 现在改成"非 ready 时短暂等待再判"。
         if self._closing:
             log.info("[tdlib] list_joined_channels: client closing, returning []")
             return []
         if self._state != "ready":
-            log.debug("[tdlib] list_joined_channels: state=%r (not ready yet), returning []",
-                      self._state)
-            return []
+            # 等 ≤ N 秒让 aiotdlib 完成从 Wait* → Ready 的过渡
+            # 仍 best-effort:超过 N 秒还没 ready(网络挂了/401/...)就 []
+            try:
+                await self._wait_for_state("ready", timeout=8.0)
+            except TimeoutError:
+                log.debug(
+                    "[tdlib] list_joined_channels: state=%r (未到 ready,8s 超时)",
+                    self._state,
+                )
+                return []
+            if self._state != "ready":
+                return []
         import time as _t
         t0 = _t.monotonic()
         result: list[ChannelDTO] = []

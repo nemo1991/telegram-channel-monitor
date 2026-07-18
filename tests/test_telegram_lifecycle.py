@@ -423,7 +423,10 @@ def test_list_joined_channels_returns_empty_when_state_not_ready(
 ):
     """VM 的 bootstrap_ui 在 app 启动后立刻 fire-and-forget 调 list_joined_channels,
     这时 bridge 还在 `_state in {uninit, phone_required, code_required, ...}` 中。
-    把这些状态统一早返 + DEBUG log,不撞 aiotdlib bridge,不再 10s request_timeout。
+    现在策略:
+      - 非 ready 时**等**最多 N 秒让 state 走到 ready(best-effort 救用户)
+      - N 秒超时 / state 永远不到 ready,返回 `[]` + DEBUG log
+      - 不撞 aiotdlib bridge,不再 10s request_timeout
 
     2026-07-18 早实测:`RuntimeError: loop ... is not the running loop` 后立刻跟
     `list_joined_channels failed` 10s 超时 —— bridge 没 ready,VM 硬拉,撞 aiotdlib
@@ -435,13 +438,17 @@ def test_list_joined_channels_returns_empty_when_state_not_ready(
     assert client._closing is False  # 确保 readiness 检查才是关键,_closing=False
 
     with caplog.at_level(logging.DEBUG):
+        # 把 wait timeout 设小,让测试快 — 验证 "非 ready 不动 + 超时返 []"
         result = asyncio.run(client.list_joined_channels())
     assert result == []
-    # 应该 print 出我们新增的 DEBUG 一行,而不是 traceback
+    # 应该 print 出"未到 ready"的 DEBUG 一行
     debug_msgs = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert any("state=" in r.getMessage() and "not ready" in r.getMessage()
-               for r in debug_msgs), (
-        f"expected DEBUG 'state=… not ready' 记录;got {[r.getMessage() for r in caplog.records]}"
+    assert any(
+        "state=" in r.getMessage() and "未到 ready" in r.getMessage()
+        for r in debug_msgs
+    ), (
+        f"expected DEBUG 'state=… 未到 ready' 记录;got "
+        f"{[r.getMessage() for r in caplog.records]}"
     )
     # 不应该 ERROR 级别
     error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
