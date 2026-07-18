@@ -85,14 +85,27 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
 def run() -> None:
     """启动 GUI。
 
-    事件循环模式:
-      step 1) `loop.run_until_complete(_setup_async)` — 同步阻塞做 async 装配
-      step 2) `show window` — UI 显示
-      step 3) `loop.run_forever()` — Qt + asyncio 共跑,直到触发 aboutToQuit
-      step 4) aboutToQuit 钩子上挂的 `_shutdown_then_quit` 先跑 async 清理,再真 quit
-              (必须在 loop 还活着时跑完,否则 'with loop' 退出会 close 掉 loop)
+    事件循环模式(单 loop 持续运行,绝不暂停):
+      step 0) 创建 qasync `QEventLoop`,set 为当前事件循环
+      step 1) 用 `asyncio.ensure_future` 把 `_setup_then_show` 调度到该 loop
+              — 此时 loop 尚未 `run_forever`,但 Task 已绑定到正确 loop 上
+      step 2) `aboutToQuit` 信号 + 信号处理 + `qt_app.exec` 都不需要;
+              改用 `with loop: loop.run_forever()` 跑 Qt+asyncio 共循环
+      step 3) `_setup_then_show` 在 loop 内与 Qt 事件交错执行:async 装配 → UI 构造 → window.show
+      step 4) aboutToQuit 钩子挂的 `_shutdown_then_quit` 先跑 async 清理 → 然后 qt_app.quit
 
-    不要在 async 协程里 `await loop.run_forever()` —— 会被 "Event loop already running" 拒。
+    **关键区别 — 取消 `loop.run_until_complete`**:
+    旧版用 `loop.run_until_complete(_setup_async)` 再 `run_forever()`,中间
+    qasync 的 `__is_running` 被设为 False,asyncio `_set_running_loop(None)`,
+    Tasks 处于 paused 状态。aiotdlib 内部 thread 在这段窗口发 IO wakeup 时,
+    `Task.__step()` 检查 "loop is the running loop" 失败,抛 `RuntimeError:
+    loop ... is not the running loop`,日志刷「qasync._QEventLoop: Exception in
+    callback Task.task_wakeup()」。
+
+    新版用单 `run_forever()` + `ensure_future`,loop 始终 running,这窗口不复存在,
+    根因消除。
+
+    不要在协程里 `await loop.run_forever()` —— 会撞 "Event loop already running"。
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -127,33 +140,65 @@ def run() -> None:
     except Exception:  # noqa: BLE001
         log.warning("failed to load style.qss; falling back to default theme")
 
-    # 容器:由 step1 填充,step4 消费
+    # 容器:由 setup_then_show 填充,shutdown 时消费
     state: dict[str, object] = {}
+    setup_failed: list[BaseException] = []
 
-    async def _setup_async() -> None:
-        t_setup = time.monotonic()
-        app_svc, monitor, settings = await _bootstrap()
-        # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
-        t = time.monotonic()
-        subscribed = await app_svc.storage.list_subscribed_channels()
-        monitor.set_whitelist(c.id for c in subscribed)
-        log.info(
-            "[setup] loaded %d subscribed channels from storage in %.2fs",
-            len(subscribed), time.monotonic() - t,
-        )
-        t = time.monotonic()
-        await monitor.start()
-        log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
-        # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
-        # 这一步会发 LoginStateChanged → UI 自动切到正确状态
-        state["app"] = app_svc
-        state["monitor"] = monitor
-        state["settings"] = settings
-        # bootstrap 是 fire-and-await,UI 已经在主线程上 subscribe 了 bus,能收到事件
-        t = time.monotonic()
-        await app_svc.bootstrap()
-        log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
-        log.info("[setup] full _setup_async done in %.2fs", time.monotonic() - t_setup)
+    # `.env` 解析:同步 I/O,放 loop 外,不阻塞 qasync 的事件循环
+    env_path = Path(".env").resolve()
+
+    async def _setup_then_show() -> None:
+        """一次性做完:async 装配 → MainWindow 构造 → window.show()。
+
+        整个跑在 qasync 的 loop 上,与 Qt 事件交错。这样 loop 始终 running,
+        彻底去掉旧 `run_until_complete` + `run_forever` 中间的 paused 窗口。
+        """
+        try:
+            t_setup = time.monotonic()
+            app_svc, monitor, settings = await _bootstrap()
+
+            # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
+            t = time.monotonic()
+            subscribed = await app_svc.storage.list_subscribed_channels()
+            monitor.set_whitelist(c.id for c in subscribed)
+            log.info(
+                "[setup] loaded %d subscribed channels from storage in %.2fs",
+                len(subscribed), time.monotonic() - t,
+            )
+            t = time.monotonic()
+            await monitor.start()
+            log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
+
+            # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
+            # 这一步会发 LoginStateChanged → main_window 订阅在它之后,所以事件不丢
+            state["app"] = app_svc
+            state["monitor"] = monitor
+            state["settings"] = settings
+            t = time.monotonic()
+            await app_svc.bootstrap()
+            log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
+
+            # UI 构造 — 现在 services 都 ready,事件总线已就位
+            from tgmonitor.ui.main_window import MainWindow
+            win = MainWindow(app_svc, monitor, loop, env_path=env_path)
+            # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
+            # 然后再让 Qt 进入 quit 流程 — 这样 aiotdlib client.close() / TDLib
+            # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
+            # "mutex lock failed: Invalid argument" 析构崩溃。
+            win.set_shutdown_callback(_shutdown_async)
+            win.show()
+            state["win"] = win
+            log.info("[setup] full _setup_then_show done in %.2fs",
+                     time.monotonic() - t_setup)
+        except BaseException as e:  # noqa: BLE001
+            # 不能 raise 出 setup_then_show —— 没人在 await 它,异常会被
+            # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出
+            setup_failed.append(e)
+            log.exception("[setup] failed: %s", e)
+            try:
+                qt_app.quit()
+            except Exception:  # noqa: BLE001
+                log.exception("qt_app.quit() raised during setup failure")
 
     async def _shutdown_async() -> None:
         monitor = state.get("monitor")  # type: ignore[assignment]
@@ -169,23 +214,8 @@ def run() -> None:
             except Exception:  # noqa: BLE001
                 log.exception("app.shutdown() failed")
 
-    # step 1: 同步阻塞做 async 装配(loop 此时尚未运行)
-    loop.run_until_complete(_setup_async())
-
-    app_svc: AppService = state["app"]          # type: ignore[assignment]
-    monitor: MonitorService = state["monitor"]  # type: ignore[assignment]
-
-    # UI
-    from tgmonitor.ui.main_window import MainWindow
-
-    env_path = Path(".env").resolve()
-    win = MainWindow(app_svc, monitor, loop, env_path=env_path)
-    # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
-    # 然后再让 Qt 进入 quit 流程 — 这样 aiotdlib client.close() / TDLib
-    # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
-    # "mutex lock failed: Invalid argument" 析构崩溃。
-    win.set_shutdown_callback(_shutdown_async)
-    win.show()
+    # step 1: 调度 setup 到 loop(run_forever 还没跑,Task 等待 loop 启动)
+    setup_task = asyncio.ensure_future(_setup_then_show(), loop=loop)
 
     # 退出钩子:任何路径触发 quit(关窗 / SIGINT)→ **先异步清理** → 再真 quit
     # 这样 step 4 的 async 任务在 loop 仍然 alive 时跑完,避开 'Event loop is closed'。
@@ -202,7 +232,7 @@ def run() -> None:
                 qt_app.quit()
 
         try:
-            fut = asyncio.ensure_future(_do_shutdown_then_quit())
+            fut = asyncio.ensure_future(_do_shutdown_then_quit(), loop=loop)
         except RuntimeError:
             # loop 已关(罕见):尽力清理后退出
             log.warning("loop already closed, skipping async shutdown")
@@ -232,7 +262,19 @@ def run() -> None:
             # 部分平台不支持(如 Windows 的某些信号);忽略
             pass
 
-    # step 2 + 3: 跑事件循环(同时消化 Qt 信号 与 asyncio 任务)
+    # 单 loop 持续运行 — setup_task 与 Qt 事件交错 tick,不再有 paused 窗口
     with loop:
         loop.run_forever()
     # 此处 loop 已被 QEventLoop.__exit__ close,async 任务保证在退出前完成
+    # 如果 setup 失败,setup_failed 里有异常,告知调用方
+    if setup_task.done() and setup_task.exception() is not None:
+        # 通常 setup_task.exception() 已被 qt_app.quit 触发而走 cleanup 路径,不会到这里;
+        # 这里只是兜底 —— 比如 Qt event loop 在 setup 失败前就退出
+        log.warning("setup_task ended with exception: %s", setup_task.exception())
+
+    # 清理 setup_task 异常引用,避免 "Task exception was never retrieved" 警告
+    if setup_task.done():
+        try:
+            setup_task.exception()
+        except (asyncio.CancelledError, asyncio.InvalidStateError):
+            pass

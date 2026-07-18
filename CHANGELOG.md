@@ -41,6 +41,18 @@
 - 图标统一到 Lucide(stroke-width=1.75, currentColor, round caps);新增 3 个 kind 图标(megaphone / users / user-round);删 orphan SVG
 - `channel_widget.py` 删 `_paint_color_block` / `_kind_color` / `_ICON_*` ~30 行 QPainter 色块代码,改用 `action_icon("kind_channel|supergroup|group")`
 
+### 🐛 Fixed
+- **qasync `RuntimeError: loop ... is not the running loop`** (2026-07-18 08:00 实测) —
+  `app.run()` 原本的 `loop.run_until_complete(_setup_async)` + `loop.run_forever()` 模式
+  在两步之间留一个 qasync `__is_running=False` 但 `closed=False` 的 paused 窗口;
+  aiotdlib 内部 IO thread 在这段时间 wake asyncio Task 时,`Task.__step()` 检查失败抛
+  `RuntimeError`。改成单 `run_forever()` + `asyncio.ensure_future(_setup_then_show(), loop=loop)`,
+  loop 始终 running,根因消除
+- **`list_joined_channels` 启动 race** — `bootstrap_ui` 在 `app.bootstrap()` 之前 fire-and-forget
+  拉已订阅频道列表,bridge `_state!="ready"`,撞 aiotdlib 10s `request_timeout`;新增 entry guard
+  `if self._state != "ready`: 静默返回 [],DEBUG 日志
+- **`list_joined_channels` close race** — `close()` 标志 + 事务性方法(`submit_phone/code/password/logout/start/get_channel_metadata/join_channel`/`iter_chat_history` 分页入口)的 `_check_alive()` 公共 entry,提前抛 `ClientClosingError`,不进 10s aiotdlib request
+
 ## [0.2.0] - 2026-07-13
 
 ### ✨ Added
