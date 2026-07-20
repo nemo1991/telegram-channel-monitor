@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self._vm = MonitorViewModel(app, monitor, loop)
         self._shutdown_cb: ShutdownCb | None = None
         self._build_ui()
+        self._wire_shortcuts()
         self._wire_events()
         self._refresh_state()
         self._vm.bootstrap_ui()
@@ -233,6 +234,7 @@ class MainWindow(QMainWindow):
         self.header.btn_logout.clicked.connect(self._on_logout_clicked)
         self.header.btn_action.clicked.connect(self._on_header_action)
         self.header.search_bar.text_changed.connect(self._on_search_changed)
+        self.header.btn_theme.clicked.connect(self._on_theme_toggle)
 
         # Dashboard 快速操作
         self.dashboard.on_refresh = self._on_refresh_channels
@@ -242,6 +244,56 @@ class MainWindow(QMainWindow):
         # ChannelWidget 信号
         self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
         self.channel_panel.sync_requested.connect(self._on_sync_requested)
+
+    def _wire_shortcuts(self) -> None:
+        """全局键盘快捷键。
+
+          Ctrl+1/2/3/4 — 切换 tab
+          Ctrl+R      — 刷新频道列表
+          Ctrl+F      — 聚焦搜索框
+          Ctrl+E      — 导出
+          Ctrl+T      — 切换主题
+        """
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        for idx in range(4):
+            sc = QShortcut(QKeySequence(f"Ctrl+{idx + 1}"), self)
+            sc.activated.connect(lambda i=idx: self._switch_tab(i))
+
+        sc_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
+        sc_refresh.activated.connect(self._on_refresh_channels)
+
+        sc_search = QShortcut(QKeySequence("Ctrl+F"), self)
+        sc_search.activated.connect(self._focus_search)
+
+        sc_export = QShortcut(QKeySequence("Ctrl+E"), self)
+        sc_export.activated.connect(self._on_export)
+
+        sc_theme = QShortcut(QKeySequence("Ctrl+T"), self)
+        sc_theme.activated.connect(self._on_theme_toggle)
+
+    def _switch_tab(self, idx: int) -> None:
+        self.nav.set_current(idx)
+        # nav.set_current 已经 emit current_changed,stack 会自动跟
+
+    def _focus_search(self) -> None:
+        """聚焦到搜索框 + 自动切到 LIVE 页(搜索只在消息视图里有意义)"""
+        self._switch_tab(0)
+        self.header.search_bar.edit.setFocus()
+        self.header.search_bar.edit.selectAll()
+
+    def _on_theme_toggle(self) -> None:
+        """切换浅色/暗色主题。"""
+        from tgmonitor.ui.theme import ThemeManager
+
+        new = ThemeManager.toggle()
+        # 更新主题按钮图标
+        self.header.btn_theme.setText("☀" if new.value == "dark" else "🌙")
+        # 刷新 nav bar 内部样式
+        self.nav.refresh_theme()
+        self.status_bar.showMessage(
+            f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题", 2000,
+        )
 
     # ======================== ViewModel 事件绑定 ========================
 
@@ -430,6 +482,7 @@ class _HeaderBar(QWidget):
 
     btn_logout = None  # type: ignore[assignment]
     btn_action = None  # type: ignore[assignment]
+    btn_theme = None  # type: ignore[assignment]
     search_bar = None  # type: ignore[assignment]
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -469,6 +522,15 @@ class _HeaderBar(QWidget):
         self.btn_logout.setObjectName("headerActionBtn")
         self.btn_logout.setVisible(False)
         hbox.addWidget(self.btn_logout)
+
+        # 主题切换按钮 — 显示「当前切到该主题后会变成什么」
+        from tgmonitor.ui.theme import ThemeManager
+        cur = ThemeManager.current()
+        self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
+        self.btn_theme.setObjectName("headerActionBtn")
+        self.btn_theme.setFixedWidth(36)
+        self.btn_theme.setToolTip("切换主题(Ctrl+T)")
+        hbox.addWidget(self.btn_theme)
 
     def update_state(self, state: str, detail: str = "") -> None:
         dot = _STATE_DOT.get(state, "⚪")

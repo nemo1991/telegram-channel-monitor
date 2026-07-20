@@ -1,4 +1,4 @@
-"""VerticalNavBar — 左侧竖向导航(暗色底,图标+标签)。
+"""VerticalNavBar — 左侧竖向导航(深色底,跨主题)。
 
 4 个 Tab:
   0: 实时流(LIVE)   — 实时消息流
@@ -7,7 +7,7 @@
   3: 设置(SETTINGS) — 所有配置(凭据/存储/代理/媒体/同步)
 
 设计:
-- 暗色底(#1e1e2e → #16162a),与内容区白底形成强烈对比
+- 在浅色和暗色模式下都用深色底 — 形成稳定的"导航锚点",不被主题切换影响
 - 每个按钮 = 24px 图标 + 10px 标签文字(竖直堆叠)
 - 选中态:白色图标+文字 + 左侧 3px accent 条
 - 悬停态:微亮背景
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.ui.icon import action_icon
+from tgmonitor.ui.theme import Theme, ThemeManager
 
 _NAV_ITEMS = [
     ("nav_live", "实时流"),
@@ -40,6 +41,7 @@ class _NavButton(QWidget):
         super().__init__()
         self._index = index
         self._active = False
+        self._hover_bg = "#252540"
 
         self.setFixedSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -69,13 +71,28 @@ class _NavButton(QWidget):
             self._refresh_style()
 
     def _refresh_style(self) -> None:
+        # 主题感知:dark 模式 active 用稍亮色以区分,light 模式 active 用深色
+        theme = ThemeManager.current()
+        if theme == Theme.DARK:
+            active_bg = "#2a2a3e"
+            inactive_fg = "#8a8fa8"
+            hover_bg = "#252540"
+        else:
+            active_bg = "#1e1e2e"
+            inactive_fg = "#8a8fa8"
+            hover_bg = "#16162a"
+
+        active_fg = "#ffffff"
+        border_color = "#5b9cf5"
+        self._hover_bg = hover_bg
+
         if self._active:
-            bg = "#2a2a3e"
-            fg = "#ffffff"
-            border_left = "3px solid #5b9cf5"
+            bg = active_bg
+            fg = active_fg
+            border_left = f"3px solid {border_color}"
         else:
             bg = "transparent"
-            fg = "#8a8fa8"
+            fg = inactive_fg
             border_left = "3px solid transparent"
         self.setStyleSheet(
             f"background:{bg};border-left:{border_left};"
@@ -90,8 +107,8 @@ class _NavButton(QWidget):
     def enterEvent(self, event) -> None:  # noqa: N802
         if not self._active:
             self.setStyleSheet(
-                "background:#252540;border-left:3px solid transparent;"
-                "border-top:none;border-right:none;border-bottom:none;"
+                f"background:{self._hover_bg};border-left:3px solid transparent;"
+                f"border-top:none;border-right:none;border-bottom:none;"
             )
         super().enterEvent(event)
 
@@ -127,12 +144,7 @@ class VerticalNavBar(QWidget):
         vbox.addWidget(logo)
         vbox.addSpacing(8)
 
-        for idx, icon_name, label in zip(
-            range(len(_NAV_ITEMS)),
-            [it[0] for it in _NAV_ITEMS],
-            [it[1] for it in _NAV_ITEMS],
-            strict=False,
-        ):
+        for idx, (icon_name, label) in enumerate(_NAV_ITEMS):
             btn = _NavButton(idx, icon_name, label)
             btn.clicked.connect(self._on_btn_clicked)
             self._buttons.append(btn)
@@ -155,3 +167,8 @@ class VerticalNavBar(QWidget):
     def set_current(self, idx: int) -> None:
         if 0 <= idx < len(self._buttons):
             self._on_btn_clicked(idx)
+
+    def refresh_theme(self) -> None:
+        """主题切换后调用,刷新所有按钮颜色。"""
+        for btn in self._buttons:
+            btn._refresh_style()

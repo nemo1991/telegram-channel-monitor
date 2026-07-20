@@ -132,13 +132,17 @@ def run() -> None:
     from tgmonitor.ui.icon import load_app_icon
     QGuiApplication.setWindowIcon(load_app_icon())
 
-    # 全局 QSS — 字号 / 间距 / 状态色
+    # 全局 QSS — 字号 / 间距 / 状态色(由 ThemeManager 统一管理)
     try:
-        from importlib import resources
-        qss = resources.files("tgmonitor.ui.resources").joinpath("style.qss").read_text("utf-8")
-        qt_app.setStyleSheet(qss)
+        # 读 TG_THEME 环境变量决定启动主题(默认 LIGHT)
+        import os as _os
+
+        from tgmonitor.ui.theme import Theme, ThemeManager
+        env_theme = _os.environ.get("TG_THEME", "light").lower()
+        start_theme = Theme.DARK if env_theme == "dark" else Theme.LIGHT
+        ThemeManager.apply(start_theme)
     except Exception:  # noqa: BLE001
-        log.warning("failed to load style.qss; falling back to default theme")
+        log.warning("failed to load theme; falling back to default")
 
     # 容器:由 setup_then_show 填充,shutdown 时消费
     state: dict[str, object] = {}
