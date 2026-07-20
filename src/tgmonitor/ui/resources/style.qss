@@ -305,3 +305,14 @@ QLabel[role="error"] {
     color: #d9534f;
     font-size: 12px;
 }
+
+/* ===== 消息详情面板 ===== */
+#messageDetail {
+    background: #ffffff;
+    border-left: 1px solid #e2e4e9;
+}
+#metaCard {
+    background: #fafbfc;
+    border: 1px solid #e2e4e9;
+    border-radius: 6px;
+}

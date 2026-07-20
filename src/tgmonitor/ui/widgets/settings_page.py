@@ -314,14 +314,23 @@ class SettingsPage(QWidget):
                 self._set_form_row_visible(idx, is_s3)
 
     def _find_form_row(self, widget: QWidget) -> int | None:
-        """在 form layout 里找到 widget 所在行。"""
+        """在 form layout 里找到 widget 所在行。
+
+        `fl.itemAt(row, role)` 返回 `QLayoutItem`(不是 tuple),
+        调 `.widget()` 拿真实控件再做相等检查。
+        """
         for g in self.findChildren(QGroupBox):
             fl = g.findChild(QFormLayout)
             if fl is None:
                 continue
             for i in range(fl.rowCount()):
-                _, fw = fl.itemAt(i, QFormLayout.FieldRole)
-                if fw and fw.widget() and (fw.widget() is widget or _is_child_of(widget, fw.widget())):
+                item = fl.itemAt(i, QFormLayout.FieldRole)
+                if item is None:
+                    continue
+                fw = item.widget()
+                if fw is None:
+                    continue
+                if fw is widget or _is_child_of(widget, fw):
                     return i
         return None
 

@@ -53,6 +53,7 @@ from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
+from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.search_bar import SearchBar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
@@ -143,6 +144,10 @@ class MainWindow(QMainWindow):
                     try:
                         fut.result(timeout=step)
                         break
+                    except concurrent.futures.CancelledError:
+                        # 协程被 cancel(loop shutdown / 用户二次 quit)— 视为正常退出
+                        log.warning("shutdown coroutine was cancelled (during poll)")
+                        break
                     except concurrent.futures.TimeoutError:
                         polled += step
                         if polled >= deadline:
@@ -164,6 +169,8 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 log.warning("loop unavailable during shutdown")
             except BaseException:  # noqa: BLE001
+                # 最后一道闸:任何意外(包括 CancelledError)都不应让
+                # Qt closeEvent 抛回主循环导致 "Error calling Python override"。
                 log.exception("closeEvent: unexpected error in shutdown")
         super().closeEvent(event)
 
@@ -194,9 +201,16 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setFrameShape(QFrame.NoFrame)
 
-        # 0: 实时流
+        # 0: 实时流(MessageView + MessageDetail 横向并排)
+        live_page = QWidget()
+        live_layout = QHBoxLayout(live_page)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(0)
         self.live_view = MessageView()
-        self.stack.addWidget(self.live_view)
+        self.message_detail = MessageDetail()
+        live_layout.addWidget(self.live_view, 1)
+        live_layout.addWidget(self.message_detail, 0)
+        self.stack.addWidget(live_page)
 
         # 1: 大盘
         self.dashboard = DashboardWidget(self.app, self.monitor, loop=self.loop)
@@ -244,6 +258,9 @@ class MainWindow(QMainWindow):
         # ChannelWidget 信号
         self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
         self.channel_panel.sync_requested.connect(self._on_sync_requested)
+
+        # MessageView → MessageDetail(点击消息显示详情)
+        self.live_view.message_selected.connect(self.message_detail.show_message)
 
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键。

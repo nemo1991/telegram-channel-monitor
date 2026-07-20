@@ -309,6 +309,17 @@ QLabel[role="error"] {
     font-size: 12px;
 }
 
+/* ===== 消息详情面板 ===== */
+#messageDetail {
+    background: #232333;
+    border-left: 1px solid #353550;
+}
+#metaCard {
+    background: #2c2c40;
+    border: 1px solid #353550;
+    border-radius: 6px;
+}
+
 /* ===== 搜索框(浅色中由 SearchBar 内联样式控制) ===== */
 #searchBar {
     background: #2c2c40;

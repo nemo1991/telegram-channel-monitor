@@ -11,9 +11,15 @@
 """
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import timezone
 
-from PySide6.QtCore import Qt
+# Python 3.10+ 有 `datetime.UTC`,3.9 只能从 timezone.utc 取
+try:
+    from datetime import UTC  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover
+    UTC = timezone.utc  # type: ignore[misc]
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
@@ -24,6 +30,9 @@ class MessageView(QListWidget):
     MAX_ITEMS = 1000
     _ROLE_MSG_ID = Qt.UserRole
     _ROLE_DTO = Qt.UserRole + 1
+
+    # 用户点击一条消息 → emit MessageDTO 给详情面板
+    message_selected = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -36,6 +45,14 @@ class MessageView(QListWidget):
         self._channel_titles: dict[int, str] = {}
         # 过滤文本(空 = 不过滤)
         self._filter_text: str = ""
+
+        self.itemClicked.connect(self._on_item_clicked)
+
+    def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        """点击一条消息 → 透传 MessageDTO。"""
+        dto = item.data(self._ROLE_DTO)
+        if isinstance(dto, MessageDTO):
+            self.message_selected.emit(dto)
 
     def set_channel_titles(self, titles: dict[int, str]) -> None:
         self._channel_titles = dict(titles)
