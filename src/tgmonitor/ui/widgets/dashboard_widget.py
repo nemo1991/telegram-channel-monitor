@@ -20,14 +20,16 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.monitor.service import MonitorService
+
+import asyncio
 
 log = logging.getLogger(__name__)
 
@@ -131,11 +135,13 @@ class DashboardWidget(QWidget):
         self,
         app: AppService,
         monitor: MonitorService,
+        loop: asyncio.AbstractEventLoop | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._app = app
         self._monitor = monitor
+        self._loop = loop
         self._build()
         self._wire_bus()
 
@@ -188,6 +194,9 @@ class DashboardWidget(QWidget):
         self.card_storage = _StatCard("存储后端", "settings")
         cards.addWidget(self.card_storage)
 
+        self.card_total_messages = _StatCard("消息总数", "kind_channel")
+        cards.addWidget(self.card_total_messages)
+
         root.addLayout(cards)
 
         # --- 快速操作行 ---
@@ -223,7 +232,30 @@ class DashboardWidget(QWidget):
         self.activity_list.setAlternatingRowColors(True)
         tl_vbox.addWidget(self.activity_list)
 
-        root.addWidget(tl_group, 1)
+        root.addWidget(tl_group, 2)
+
+        # --- 已订阅频道统计表 ---
+        stats_group = QGroupBox("频道统计")
+        sg_vbox = QVBoxLayout(stats_group)
+        sg_vbox.setContentsMargins(0, 0, 0, 0)
+        sg_vbox.setSpacing(0)
+
+        self.stats_table = QTableWidget(0, 3)
+        self.stats_table.setHorizontalHeaderLabels(["频道", "类型", "消息数"])
+        self.stats_table.verticalHeader().setVisible(False)
+        self.stats_table.setFrameShape(QFrame.NoFrame)
+        self.stats_table.setAlternatingRowColors(True)
+        self.stats_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.stats_table.setSelectionMode(QTableWidget.NoSelection)
+        # 表格 stretch:第一列拉满
+        hdr = self.stats_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.stats_table.setMaximumHeight(180)
+        sg_vbox.addWidget(self.stats_table)
+
+        root.addWidget(stats_group, 1)
 
     # ---------- EventBus ----------
 
@@ -324,3 +356,48 @@ class DashboardWidget(QWidget):
         db_label = settings.db_backend.value if settings.db_backend else "?"
         os_label = settings.objectstore_backend.value if settings.objectstore_backend else "?"
         self.card_storage.set_value(f"DB:{db_label}", f"对象:{os_label}")
+
+        # 异步拉取每频道消息数 + 填表
+        self._refresh_per_channel_stats(subscribed_count)
+
+    def _refresh_per_channel_stats(self, total_subscribed: int) -> None:
+        """后台 fetch 每频道消息数 → 填表格。
+
+        `subscribed_count` 是本参数,实际从 monitor.subscribed_ids 拿列表。
+        """
+        subscribed_ids = list(self._monitor.subscribed_ids)
+        if not subscribed_ids:
+            self.stats_table.setRowCount(0)
+            self.card_total_messages.set_value("0", "无已订阅频道")
+            return
+
+        if self._loop is None:
+            return  # 测试环境无 loop
+
+        async def _go() -> None:
+            storage = self._app.storage
+            rows: list[tuple[str, str, int]] = []
+            total = 0
+            for cid in subscribed_ids:
+                try:
+                    count = await storage.count_messages(cid)
+                except Exception:  # noqa: BLE001
+                    count = 0
+                total += count
+                rows.append((f"#{cid}", "—", count))
+            self._apply_stats_table(rows, total)
+
+        asyncio.run_coroutine_threadsafe(_go(), self._loop)
+
+    def _apply_stats_table(
+        self, rows: list[tuple[str, str, int]], total: int,
+    ) -> None:
+        """从 background loop 调回主线程填充表格。"""
+        self.card_total_messages.set_value(f"{total:,}", "已监听频道累计")
+        self.stats_table.setRowCount(len(rows))
+        for i, (title, kind, count) in enumerate(rows):
+            self.stats_table.setItem(i, 0, QTableWidgetItem(title))
+            self.stats_table.setItem(i, 1, QTableWidgetItem(kind))
+            count_item = QTableWidgetItem(f"{count:,}")
+            count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.stats_table.setItem(i, 2, count_item)

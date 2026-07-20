@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.live_view)
 
         # 1: 大盘
-        self.dashboard = DashboardWidget(self.app, self.monitor)
+        self.dashboard = DashboardWidget(self.app, self.monitor, loop=self.loop)
         self.stack.addWidget(self.dashboard)
 
         # 2: 频道
