@@ -32,7 +32,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -49,8 +48,6 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import MessageDTO, SyncOptions
 from tgmonitor.core.events import AuthErrorOccurred, LoginStateChanged
-from tgmonitor.core.settings_store import EditableSettings
-from tgmonitor.ui.icon import action_icon
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget

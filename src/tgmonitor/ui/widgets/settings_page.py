@@ -462,7 +462,7 @@ class SettingsPage(QWidget):
                 writer.close()
                 await writer.wait_closed()
                 return f"✅ 可达: {host}:{port}"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return "❌ 超时: 3 秒未响应"
             except Exception as exc:
                 return f"❌ 失败: {exc}"

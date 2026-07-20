@@ -67,11 +67,9 @@ class MessageView(QListWidget):
         if m.author and text in m.author.lower():
             return True
         title = self._channel_titles.get(m.channel_id, "")
-        if title and text in title.lower():
-            return True
-        if str(m.telegram_msg_id) == text or text.lstrip("#") == str(m.telegram_msg_id):
-            return True
-        return False
+        return bool(title and text in title.lower()) or (
+            str(m.telegram_msg_id) == text or text.lstrip("#") == str(m.telegram_msg_id)
+        )
 
     def append(self, m: MessageDTO) -> None:
         key = (m.channel_id, m.telegram_msg_id)
@@ -105,10 +103,8 @@ class MessageView(QListWidget):
         while self.count() > self.MAX_ITEMS:
             old_row = self.count() - 1
             old_item = self.takeItem(old_row)
-            # 同步 _seen:任何指向 >= old_row 的 index -= 1
+            # 同步 _seen:任何指向 == old_row 的删除,> old_row 的 -= 1
             if old_item is not None:
-                old_msg_id = old_item.data(self._ROLE_MSG_ID)
-                # 找对应的 channel_id
                 for k, v in list(self._seen.items()):
                     if v == old_row:
                         del self._seen[k]
@@ -131,7 +127,7 @@ class MessageView(QListWidget):
             dt_local = dt_utc.astimezone()
             dt = dt_local.strftime("%H:%M:%S")
         else:
-            dt = "?"
+            dt = "[?]"
         # 频道名:有 title 用 title,没有用 #id 回退
         title = self._channel_titles.get(m.channel_id)
         ch_label = f"[{title}]" if title else f"[#{m.channel_id}]"
