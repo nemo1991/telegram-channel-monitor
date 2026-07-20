@@ -57,6 +57,7 @@ from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
 from tgmonitor.ui.widgets.message_view import MessageView
+from tgmonitor.ui.widgets.search_bar import SearchBar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.sync_dialog import (
     SyncOptionsDialog,
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         self.nav.current_changed.connect(self.stack.setCurrentIndex)
         self.header.btn_logout.clicked.connect(self._on_logout_clicked)
         self.header.btn_action.clicked.connect(self._on_header_action)
+        self.header.search_bar.text_changed.connect(self._on_search_changed)
 
         # Dashboard 快速操作
         self.dashboard.on_refresh = self._on_refresh_channels
@@ -293,6 +295,10 @@ class MainWindow(QMainWindow):
                 log.exception("logout failed: %s", exc)
 
         fut.add_done_callback(_on_done)
+
+    def _on_search_changed(self, txt: str) -> None:
+        """搜索框内容变化 → 透传给 LIVE view 的 MessageView 过滤。"""
+        self.live_view.set_filter(txt)
 
     def _on_header_action(self) -> None:
         """头栏「登录」按钮 — 弹 LoginDialog(复用现有代码)"""
@@ -420,13 +426,14 @@ class MainWindow(QMainWindow):
 # ======================== 紧凑头栏 ========================
 
 class _HeaderBar(QWidget):
-    """顶部紧凑信息栏:左标题 + 右登录状态 + 操作。
+    """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
 
     不再用 QToolBar,改为自定义 widget,视觉更紧凑。
     """
 
     btn_logout = None  # type: ignore[assignment]
     btn_action = None  # type: ignore[assignment]
+    search_bar = None  # type: ignore[assignment]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -435,12 +442,16 @@ class _HeaderBar(QWidget):
 
         hbox = QHBoxLayout(self)
         hbox.setContentsMargins(16, 0, 16, 0)
-        hbox.setSpacing(8)
+        hbox.setSpacing(12)
 
-        # 左: 标题 / 搜索
+        # 左: 标题
         title = QLabel("tgmonitor")
         title.setObjectName("appTitle")
         hbox.addWidget(title)
+
+        # 搜索条
+        self.search_bar = SearchBar()
+        hbox.addWidget(self.search_bar)
         hbox.addStretch(1)
 
         # 右: 状态 + 操作

@@ -17,9 +17,9 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -57,7 +57,15 @@ def _kind_icon(kind: str) -> QIcon:
     return action_icon(_KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]))
 
 
-class ChannelWidget(QGroupBox):
+class ChannelWidget(QWidget):
+    """频道管理面板 — 已加入 + 已监听 双栏 + 搜索过滤。
+
+    已加入:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
+    已监听:`AppService._subscribed` 当前白名单,**双击 = 退订;多选 + 全量同步**
+
+    搜索:实时按频道名/username 过滤两个列表。
+    """
+
     # 异步拉频道后 → 主线程刷新 list
     joined_loaded = Signal(list)
     # 用户在"已监听"栏多选 + 点"全量同步…" → 触发 sync dialog
@@ -69,7 +77,7 @@ class ChannelWidget(QGroupBox):
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__("频道", parent)
+        super().__init__(parent)
         self.app = app
         self.loop = loop
         self._joined: dict[int, ChannelDTO] = {}
@@ -83,40 +91,63 @@ class ChannelWidget(QGroupBox):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 16, 10, 10)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(12)
 
-        # 上栏
+        # 顶部搜索框
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 搜索频道名 / username…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._apply_filter)
+        root.addWidget(self.search_edit)
+
+        # 上栏 — 已加入
+        joined_card = QWidget()
+        joined_card.setObjectName("channelCard")
+        joined_layout = QVBoxLayout(joined_card)
+        joined_layout.setContentsMargins(12, 12, 12, 12)
+        joined_layout.setSpacing(8)
+
         head_joined = QHBoxLayout()
-        self.lbl_joined_count = QLabel("全部(已加入):0")
+        self.lbl_joined_count = QLabel("已加入频道")
+        self.lbl_joined_count.setObjectName("cardSectionTitle")
         head_joined.addWidget(self.lbl_joined_count)
         head_joined.addStretch(1)
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setToolTip("从 Telegram 拉取当前账号加入的全部频道/群组")
         self.btn_refresh.clicked.connect(self._on_refresh)
         head_joined.addWidget(self.btn_refresh)
-        root.addLayout(head_joined)
+        joined_layout.addLayout(head_joined)
 
         self.lst_joined = QListWidget()
         self.lst_joined.setAlternatingRowColors(True)
         self.lst_joined.itemDoubleClicked.connect(self._on_joined_double_click)
-        root.addWidget(self.lst_joined, 3)
+        joined_layout.addWidget(self.lst_joined, 3)
 
-        # 提示
-        hint = QLabel("💡 双击一行 → 加入监听白名单")
-        hint.setProperty("role", "hint")
-        root.addWidget(hint)
+        joined_hint = QLabel("💡 双击一行 → 加入监听白名单")
+        joined_hint.setProperty("role", "hint")
+        joined_layout.addWidget(joined_hint)
 
-        # 下栏
+        root.addWidget(joined_card, 3)
+
+        # 下栏 — 已监听
+        subs_card = QWidget()
+        subs_card.setObjectName("channelCard")
+        subs_layout = QVBoxLayout(subs_card)
+        subs_layout.setContentsMargins(12, 12, 12, 12)
+        subs_layout.setSpacing(8)
+
         head_subs = QHBoxLayout()
-        self.lbl_subs_count = QLabel("已监听:0")
+        self.lbl_subs_count = QLabel("已监听")
+        self.lbl_subs_count.setObjectName("cardSectionTitle")
         head_subs.addWidget(self.lbl_subs_count)
         head_subs.addStretch(1)
         self.btn_sync = QPushButton("全量同步…")
         self.btn_sync.setToolTip("多选 + 全量拉取元数据 + 历史消息(可调频率防封号)")
         self.btn_sync.clicked.connect(self._on_sync_clicked)
         head_subs.addWidget(self.btn_sync)
-        root.addLayout(head_subs)
+        subs_layout.addLayout(head_subs)
+
         self.lst_subscribed = QListWidget()
         self.lst_subscribed.setAlternatingRowColors(True)
         # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
@@ -124,11 +155,35 @@ class ChannelWidget(QGroupBox):
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.lst_subscribed.itemDoubleClicked.connect(self._on_subscribed_double_click)
-        root.addWidget(self.lst_subscribed, 2)
+        subs_layout.addWidget(self.lst_subscribed, 2)
 
-        hint2 = QLabel("💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…")
-        hint2.setProperty("role", "hint")
-        root.addWidget(hint2)
+        subs_hint = QLabel("💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…")
+        subs_hint.setProperty("role", "hint")
+        subs_layout.addWidget(subs_hint)
+
+        root.addWidget(subs_card, 2)
+
+    def _apply_filter(self, text: str) -> None:
+        """搜索过滤 — 实时按频道名/username 隐藏不匹配项。"""
+        text = text.strip().lower()
+        for lst, mapping in (
+            (self.lst_joined, self._joined),
+            (self.lst_subscribed, self._joined),  # 用 joined 字典取 title
+        ):
+            for i in range(lst.count()):
+                item = lst.item(i)
+                if item is None:
+                    continue
+                cid = item.data(Qt.UserRole)
+                ch = mapping.get(int(cid)) if cid is not None else None
+                if not text:
+                    item.setHidden(False)
+                    continue
+                if ch is None:
+                    item.setHidden(True)
+                    continue
+                hay = (ch.title or "").lower() + " " + (ch.username or "").lower()
+                item.setHidden(text not in hay)
 
     # ---- 数据装载 ----
 
@@ -140,7 +195,9 @@ class ChannelWidget(QGroupBox):
             item.setData(Qt.UserRole, ch.id)
             item.setIcon(_kind_icon(ch.kind))
             self.lst_joined.addItem(item)
-        self.lbl_joined_count.setText(f"全部(已加入):{len(channels)}")
+        self.lbl_joined_count.setText(f"已加入频道 · {len(channels)}")
+        # 触发过滤(数据变了)
+        self._apply_filter(self.search_edit.text())
 
     def set_subscribed(self, channels: list[ChannelDTO]) -> None:
         self._subscribed_ids = {c.id for c in channels}
@@ -150,7 +207,9 @@ class ChannelWidget(QGroupBox):
             item.setData(Qt.UserRole, ch.id)
             item.setIcon(_kind_icon(ch.kind))
             self.lst_subscribed.addItem(item)
-        self.lbl_subs_count.setText(f"已监听:{len(channels)}")
+        self.lbl_subs_count.setText(f"已监听 · {len(channels)}")
+        # 触发过滤
+        self._apply_filter(self.search_edit.text())
 
     def merge_joined(self, channels: list[ChannelDTO]) -> None:
         """合并 — 拉刷新时不全清空,只追加新频道(更柔和)。"""

@@ -244,6 +244,18 @@ QStatusBar::item { border: none; }
     background: transparent;
 }
 
+/* ===== 频道卡片(ChannelWidget 上/下栏) ===== */
+#channelCard {
+    background: #ffffff;
+    border: 1px solid #e2e4e9;
+    border-radius: 10px;
+}
+#cardSectionTitle {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a2e;
+}
+
 /* ===== 状态点(留作兼容,新 UI 用 emoji) ===== */
 QFrame#statusDot {
     border-radius: 8px;
