@@ -38,14 +38,14 @@ def load_app_icon() -> QIcon:
     return _svg_icon("app_icon.svg", sizes=(16, 24, 32, 48, 64, 128, 256))
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def action_icon(name: str) -> QIcon:
     """工具栏 / 列表项 / 状态指示图标(单色,follow currentColor)。
 
     `name` 对应 `resources/icons/<name>.svg`。目前注册:
     - 工具栏动作:`refresh` / `export` / `settings`
-    - 频道类型(`ChannelWidget._kind_icon` 用):
-      `kind_channel`(megaphone)/ `kind_supergroup`(users)/ `kind_group`(user-round)
+    - 频道类型:`kind_channel` / `kind_supergroup` / `kind_group`
+    - 导航栏:`nav_live` / `nav_dashboard` / `nav_channels`
 
     sizes=(16, 20, 24)三个档位覆盖 macOS Retina(16@2x=32)与 Windows
     标准 (16 / 20 / 24)显示环境。

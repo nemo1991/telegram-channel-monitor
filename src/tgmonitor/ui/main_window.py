@@ -1,20 +1,29 @@
-"""主窗口 — 左侧栏(账户 + 频道) + 右侧消息流。
+"""主窗口 — 导航(左) + 内容页(QStackedWidget)。
 
-侧栏布局:
-  - AccountWidget:凭据表单 + 登录状态 + 登录动作
-  - ChannelWidget:已加入(双击订阅) + 已监听(双击退订)
+架构从「工具栏 + splitter 侧栏」改为「竖向导航 + 四页内容」:
 
-工具栏:`刷新` `导出` `设置` — **不再有「登录」,登录入口已上移到侧栏**。
+  ┌─────────────────────────────────────────────┐
+  │ ●                          🟢 已登录  [登出] │ ← 紧凑头栏
+  ├──┬──────────────────────────────────────────┤
+  │  │                                           │
+  │ 📡  │  QStackedWidget                        │
+  │ 实时│   0: 实时流(LIVE) — MessageView 全宽     │
+  │    │   1: 大盘(DASHBOARD) — 统计 + 活动        │
+  │ 📊  │   2: 频道(CHANNELS) — ChannelWidget     │
+  │ 大盘│   3: 设置(SETTINGS) — 整页配置           │
+  │    │                                           │
+  │ 📋  │                                           │
+  │ 频道│                                           │
+  │    │                                           │
+  │ ⚙  │                                           │
+  │ 设置│                                           │
+  ├──┴──────────────────────────────────────────┤
+  │ 🟢 Ready · 3 channels · 0 new               │ ← 状态栏
+  └─────────────────────────────────────────────┘
 
-退出路径:
-  - 用户点关窗 → `closeEvent` → 同步阻塞跑 async shutdown(用
-    `run_coroutine_threadsafe` + `concurrent.futures.Future.result(timeout=...)`)
-    → accept event,Qt 进入 quit。
-  - 关键:aiotdlib `client.close()`(拆 TDLib 内部 thread + queue)**必须**在
-    CFRunLoop 仍合法持有 mutex 的阶段完成,否则 macOS 上会抛
-    `std::system_error: mutex lock failed: Invalid argument`(libcpp 析构
-    路径上抢已 finalize 的 mutex)。`aboutToQuit` 时 loop 已进入 quit 过渡
-    状态,不再安全 → 关窗路径走 closeEvent 同步阻塞、aboutToQuit 走尽力清理。
+退出路径(保持与旧版一致):
+  closeEvent → 同步阻塞 async shutdown → accept
+  aboutToQuit → 尽力清理(备用)
 """
 from __future__ import annotations
 
@@ -23,26 +32,35 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
-    QSplitter,
+    QPushButton,
+    QStackedWidget,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
-from tgmonitor.core.dto import MessageDTO
-from tgmonitor.ui.icon import action_icon
+from tgmonitor.core.dto import MessageDTO, SyncOptions
+from tgmonitor.core.events import AuthErrorOccurred, LoginStateChanged
+from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
-from tgmonitor.ui.widgets.account_widget import AccountWidget
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
+from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
-from tgmonitor.ui.widgets.settings_dialog import SettingsDialog
+from tgmonitor.ui.widgets.search_bar import SearchBar
+from tgmonitor.ui.widgets.settings_page import SettingsPage
+from tgmonitor.ui.widgets.sync_dialog import (
+    SyncOptionsDialog,
+    SyncProgressDialog,
+)
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -50,8 +68,31 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-
 ShutdownCb = Callable[[], Awaitable[None]]
+
+# ---- 状态映射 ----
+_STATE_DOT = {
+    "ready": "🟢",
+    "error": "🔴",
+    "phone_required": "🟡",
+    "code_required": "🟡",
+    "password_required": "🟡",
+    "closed": "⚪",
+    "logging_out": "⏳",
+    "closing": "⏳",
+    "uninit": "⚪",
+}
+_STATE_LABEL = {
+    "ready": "已登录",
+    "error": "错误",
+    "phone_required": "未登录",
+    "code_required": "需验证码",
+    "password_required": "需 2FA",
+    "closed": "会话关闭",
+    "logging_out": "登出中…",
+    "closing": "关闭中…",
+    "uninit": "启动中…",
+}
 
 
 class MainWindow(QMainWindow):
@@ -68,48 +109,22 @@ class MainWindow(QMainWindow):
         self.loop = loop
         self.env_path = env_path or Path(".env")
         self.setWindowTitle("tgmonitor · Telegram 频道监听")
-        # 进程级 `QGuiApplication.setWindowIcon(load_app_icon())` 已经在 app.py:120
-        # 设过;再单独给主窗口设一次是浪费 lru_cache slot,且会 shadow OS-level
-        # dock 图标可被覆盖的场景(例如 PyInstaller 包的 .icns)。
         self.resize(1180, 740)
 
         self._vm = MonitorViewModel(app, monitor, loop)
         self._shutdown_cb: ShutdownCb | None = None
         self._build_ui()
+        self._wire_shortcuts()
         self._wire_events()
         self._refresh_state()
-        # 启动后主动拉一次 joined 列表 — 不然 known_channels 是空,
-        # 即便 storage 里已订阅过频道,UI 下栏算 `subscribed` 交集也是空。
-        # 见 MonitorViewModel.bootstrap_ui 的注释。
         self._vm.bootstrap_ui()
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
-        """app.py 在 run() 里挂上 shutdown 协程,closeEvent 里同步阻塞跑它。
-
-        为什么不在 aboutToQuit 里跑:
-          - aboutToQuit 时 Qt 已进入 quit 过渡状态,qasync 事件循环上
-            跑 aiotdlib client.close() 会撞 macOS CFRunLoop mutex 析构,
-            抛 `std::system_error: mutex lock failed: Invalid argument`。
-          - closeEvent 在 Qt 退出流程更早的阶段,loop 还活着,安全。
-        """
         self._shutdown_cb = cb
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 — Qt 事件覆盖,按 Qt 命名约定
-        """用户点关窗 → 同步阻塞跑 async shutdown(<= 10s)→ 接受 quit。
+    # ======================== closeEvent (保持原逻辑) ========================
 
-        关键:`asyncio.run_coroutine_threadsafe(...).result(timeout=...)` 等
-        future 完成时,需要目标 asyncio loop 实际在跑(协程 tick 才会推进)。
-        Qt 在 closeEvent 处理过程中**不会**自己 pump 事件,所以我们每 50ms
-        调一次 `QApplication.processEvents()` 让 loop 跑一会儿,协程才有机会
-        推进。否则永远 10s 超时。
-
-        异常路径:
-          - 协程被 cancel(loop shutdown / 用户二次 quit)→ `fut.cancelled()`;
-            `CancelledError` 是 `BaseException` 不是 `Exception`,**必须**单独接,
-            否则会从 closeEvent 抛出 → Qt 弹 "Error calling Python override"。
-          - 协程自身抛 → log 后放行,不阻塞 quit。
-          - 超时 10s → log warning 放行。
-        """
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self._shutdown_cb is not None:
             try:
                 import concurrent.futures
@@ -117,7 +132,7 @@ class MainWindow(QMainWindow):
                 from PySide6.QtWidgets import QApplication
 
                 fut = asyncio.run_coroutine_threadsafe(
-                    self._shutdown_cb(), self.loop
+                    self._shutdown_cb(), self.loop,
                 )
                 qt = QApplication.instance()
                 deadline = 10.0
@@ -129,6 +144,10 @@ class MainWindow(QMainWindow):
                     try:
                         fut.result(timeout=step)
                         break
+                    except concurrent.futures.CancelledError:
+                        # 协程被 cancel(loop shutdown / 用户二次 quit)— 视为正常退出
+                        log.warning("shutdown coroutine was cancelled (during poll)")
+                        break
                     except concurrent.futures.TimeoutError:
                         polled += step
                         if polled >= deadline:
@@ -137,21 +156,17 @@ class MainWindow(QMainWindow):
                                 deadline,
                             )
                             break
-                # 收尾:取结果。cancelled 是合法状态(coros 已被 loop 取消,
-                # 比如用户连按 cmd+Q),不当作异常。
                 if fut.cancelled():
                     log.warning("shutdown coroutine was cancelled")
                 elif fut.done():
                     try:
                         fut.result(timeout=0)
                     except concurrent.futures.CancelledError:
-                        # 竞争:cancelled 标志已 set 但 done() 路径还没看到
                         log.warning("shutdown coroutine was cancelled (race)")
                     except Exception as exc:  # noqa: BLE001
                         log.warning("shutdown raised: %s: %s",
                                     type(exc).__name__, exc)
             except RuntimeError:
-                # loop 已关(罕见):吃错误,让 quit 继续
                 log.warning("loop unavailable during shutdown")
             except BaseException:  # noqa: BLE001
                 # 最后一道闸:任何意外(包括 CancelledError)都不应让
@@ -159,66 +174,145 @@ class MainWindow(QMainWindow):
                 log.exception("closeEvent: unexpected error in shutdown")
         super().closeEvent(event)
 
-    # ---- UI 装配 ----
+    # ======================== UI 装配 ========================
 
     def _build_ui(self) -> None:
-        # 工具栏(3 动作:刷新 / 导出 / 设置)
-        tb = QToolBar("主工具栏")
-        tb.setMovable(False)
-        self.addToolBar(tb)
+        central = QWidget()
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.act_refresh = QAction(action_icon("refresh"), "刷新频道", self)
-        self.act_refresh.setToolTip("从 Telegram 拉取当前账号加入的全部频道")
-        tb.addAction(self.act_refresh)
+        # ---- 左: 导航栏 ----
+        self.nav = VerticalNavBar()
+        root.addWidget(self.nav)
 
-        tb.addSeparator()
+        # ---- 右: 头栏 + 内容 + 状态栏 ----
+        right = QWidget()
+        right.setObjectName("contentArea")
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
 
-        self.act_export = QAction(action_icon("export"), "导出…", self)
-        self.act_export.setToolTip("把已监听频道的消息导出为 JSON / CSV / Markdown / HTML")
-        tb.addAction(self.act_export)
+        # 紧凑头栏
+        self.header = _HeaderBar()
+        right_layout.addWidget(self.header)
 
-        tb.addSeparator()
+        # QStackedWidget 内容页
+        self.stack = QStackedWidget()
+        self.stack.setFrameShape(QFrame.NoFrame)
 
-        self.act_settings = QAction(action_icon("settings"), "设置…", self)
-        self.act_settings.setToolTip("后端、对象存储、媒体策略、代理 等低频配置")
-        tb.addAction(self.act_settings)
+        # 0: 实时流(MessageView + MessageDetail 横向并排)
+        live_page = QWidget()
+        live_layout = QHBoxLayout(live_page)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(0)
+        self.live_view = MessageView()
+        self.message_detail = MessageDetail()
+        live_layout.addWidget(self.live_view, 1)
+        live_layout.addWidget(self.message_detail, 0)
+        self.stack.addWidget(live_page)
 
-        # 中央:左侧栏 + 右消息流
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # 1: 大盘
+        self.dashboard = DashboardWidget(self.app, self.monitor, loop=self.loop)
+        self.stack.addWidget(self.dashboard)
 
-        # --- 左:侧栏(账户 + 频道 双栏) ---
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(8)
+        # 2: 频道
+        channels_page = QWidget()
+        ch_layout = QVBoxLayout(channels_page)
+        ch_layout.setContentsMargins(16, 16, 16, 16)
+        ch_layout.setSpacing(12)
+        ch_title = QLabel("频道管理")
+        ch_title.setObjectName("pageTitle")
+        ch_layout.addWidget(ch_title)
+        self.channel_panel = ChannelWidget(self.app, self.loop)
+        ch_layout.addWidget(self.channel_panel, 1)
+        self.stack.addWidget(channels_page)
 
-        self.account_panel = AccountWidget(self.app, self.loop, self.env_path, left)
-        self.channel_panel = ChannelWidget(self.app, self.loop, left)
+        # 3: 设置
+        self.settings_page = SettingsPage(self.app, self.loop, self.env_path)
+        self.stack.addWidget(self.settings_page)
 
-        lv.addWidget(self.account_panel)
-        lv.addWidget(self.channel_panel, 1)
-        splitter.addWidget(left)
-
-        # --- 右:消息流 ---
-        self.message_view = MessageView()
-        splitter.addWidget(self.message_view)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([360, 820])
-        self.setCentralWidget(splitter)
+        self.stack.setCurrentIndex(0)
+        right_layout.addWidget(self.stack, 1)
 
         # 状态栏
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("未登录")
+        self.status_bar = self.statusBar()
+        self.status_bar.showMessage("就绪")
 
-        # 信号
-        self.act_refresh.triggered.connect(self._on_refresh_channels)
-        self.act_export.triggered.connect(self._on_export)
-        self.act_settings.triggered.connect(self._on_settings)
+        root.addWidget(right, 1)
+        self.setCentralWidget(central)
+
+        # ---- 信号连接 ----
+        self.nav.current_changed.connect(self.stack.setCurrentIndex)
+        self.header.btn_logout.clicked.connect(self._on_logout_clicked)
+        self.header.btn_action.clicked.connect(self._on_header_action)
+        self.header.search_bar.text_changed.connect(self._on_search_changed)
+        self.header.btn_theme.clicked.connect(self._on_theme_toggle)
+
+        # Dashboard 快速操作
+        self.dashboard.on_refresh = self._on_refresh_channels
+        self.dashboard.on_export = self._on_export
+        self.dashboard.on_sync_all = self._on_sync_all_channels
+
+        # ChannelWidget 信号
         self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
         self.channel_panel.sync_requested.connect(self._on_sync_requested)
 
-    # ---- EventBus → UI(Qt signal 已在 ViewModel 里订阅好) ----
+        # MessageView → MessageDetail(点击消息显示详情)
+        self.live_view.message_selected.connect(self.message_detail.show_message)
+
+    def _wire_shortcuts(self) -> None:
+        """全局键盘快捷键。
+
+          Ctrl+1/2/3/4 — 切换 tab
+          Ctrl+R      — 刷新频道列表
+          Ctrl+F      — 聚焦搜索框
+          Ctrl+E      — 导出
+          Ctrl+T      — 切换主题
+        """
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        for idx in range(4):
+            sc = QShortcut(QKeySequence(f"Ctrl+{idx + 1}"), self)
+            sc.activated.connect(lambda i=idx: self._switch_tab(i))
+
+        sc_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
+        sc_refresh.activated.connect(self._on_refresh_channels)
+
+        sc_search = QShortcut(QKeySequence("Ctrl+F"), self)
+        sc_search.activated.connect(self._focus_search)
+
+        sc_export = QShortcut(QKeySequence("Ctrl+E"), self)
+        sc_export.activated.connect(self._on_export)
+
+        sc_theme = QShortcut(QKeySequence("Ctrl+T"), self)
+        sc_theme.activated.connect(self._on_theme_toggle)
+
+    def _switch_tab(self, idx: int) -> None:
+        self.nav.set_current(idx)
+        # nav.set_current 已经 emit current_changed,stack 会自动跟
+
+    def _focus_search(self) -> None:
+        """聚焦到搜索框 + 自动切到 LIVE 页(搜索只在消息视图里有意义)"""
+        self._switch_tab(0)
+        self.header.search_bar.edit.setFocus()
+        self.header.search_bar.edit.selectAll()
+
+    def _on_theme_toggle(self) -> None:
+        """切换浅色/暗色主题。"""
+        from tgmonitor.ui.theme import ThemeManager
+
+        new = ThemeManager.toggle()
+        # 更新主题按钮图标
+        self.header.btn_theme.setText("☀" if new.value == "dark" else "🌙")
+        # 刷新 nav bar 内部样式
+        self.nav.refresh_theme()
+        self.status_bar.showMessage(
+            f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题", 2000,
+        )
+
+    # ======================== ViewModel 事件绑定 ========================
 
     def _wire_events(self) -> None:
         self._vm.message_received.connect(self._on_message_received)
@@ -228,41 +322,81 @@ class MainWindow(QMainWindow):
         self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
 
-    # ---- 工具栏槽 ----
+        # 订阅 EventBus 登录状态变化(状态点更新)
+        self.app.bus.subscribe(LoginStateChanged, self._on_bus_login)
+        self.app.bus.subscribe(AuthErrorOccurred, self._on_bus_auth_error)
+
+    # ======================== 槽 ========================
 
     def _on_refresh_channels(self) -> None:
-        self.statusBar().showMessage("拉取频道列表…", 2000)
+        self.status_bar.showMessage("拉取频道列表…", 2000)
         self._vm.refresh_joined_channels()
 
     def _on_export(self) -> None:
         if not self.monitor.subscribed_ids:
             QMessageBox.information(self, "导出", "请先订阅至少一个频道")
             return
-        # 导出需要"已订阅的 id 列表"这语义没变;走 MonitorService 公开 API
         ids = sorted(int(cid) for cid in self.monitor.subscribed_ids)
-        # export_dialog 只用 channel_ids 字段,DTO 是渲染细节;此处跳过
         dlg = ExportDialog(self.app, ids, self)
         if dlg.exec():
             self._vm.start_export(dlg.request())
 
-    def _on_settings(self) -> None:
-        dlg = SettingsDialog(self.app, self.loop, self.env_path, self)
-        dlg.exec()
+    def _on_sync_all_channels(self) -> None:
+        """大盘快速操作:全量同步所有已订阅频道。"""
+        ids = list(self.monitor.subscribed_ids)
+        if not ids:
+            QMessageBox.information(self, "全量同步", "已监听列表为空,先订阅频道")
+            return
+        self._on_sync_requested(ids)
 
-    # ---- 事件回调 ----
+    def _on_logout_clicked(self) -> None:
+        fut = asyncio.run_coroutine_threadsafe(
+            self.app.client.logout(), self.loop,
+        )
+
+        def _on_done(f) -> None:
+            try:
+                f.result()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("logout failed: %s", exc)
+
+        fut.add_done_callback(_on_done)
+
+    def _on_search_changed(self, txt: str) -> None:
+        """搜索框内容变化 → 透传给 LIVE view 的 MessageView 过滤。"""
+        self.live_view.set_filter(txt)
+
+    def _on_header_action(self) -> None:
+        """头栏「登录」按钮 — 弹 LoginDialog(复用现有代码)"""
+        from tgmonitor.ui.widgets.login_dialog import LoginDialog
+        dlg = LoginDialog(self.app, self.loop, self)
+        dlg.exec()
+        # 登录成功后刷新状态
+        self._refresh_state()
+
+    # ======================== EventBus 回调 ========================
+
+    async def _on_bus_login(self, e) -> None:
+        if not isinstance(e, LoginStateChanged):
+            return
+        self.header.update_state(e.state, e.detail)
+        self._refresh_state()
+
+    async def _on_bus_auth_error(self, e) -> None:
+        if not isinstance(e, AuthErrorOccurred):
+            return
+        self.status_bar.showMessage(f"⚠ {e.message}", 5000)
+
+    # ======================== VM 事件回调 ========================
 
     def _on_message_received(self, m: MessageDTO) -> None:
-        # 每次都同步标题表:VM.known_channels 在 channels_changed 时已更新,
-        # 但实时消息可能来自一个刚被发现但还没刷新到 known_channels 的频道。
-        # 把当前的 known_channels 透给 view,渲染时查表。
-        # m 是 MessageDTO 本身(VM 直接 emit,不是 asdict)
-        self.message_view.set_channel_titles(
+        self.live_view.set_channel_titles(
             {cid: ch.title for cid, ch in self._vm.known_channels.items()}
         )
-        self.message_view.append(m)
+        self.live_view.append(m)
 
     def _on_login_state(self, state: str) -> None:
-        self.statusBar().showMessage(f"登录状态: {state}", 4000)
+        self.status_bar.showMessage(f"登录状态: {state}", 4000)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         if error:
@@ -271,16 +405,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "导出完成",
-                f"已写入 {result['out_path']}\n{result['message_count']} 条消息,{result['bytes_written']} 字节",
+                f"已写入 {result['out_path']}\n"
+                f"{result['message_count']} 条消息,"
+                f"{result['bytes_written']} 字节",
             )
 
     def _on_error(self, msg: str) -> None:
         log.warning("error: %s", msg)
-        self.statusBar().showMessage(f"⚠ {msg}", 5000)
+        self.status_bar.showMessage(f"⚠ {msg}", 5000)
 
-    def _on_settings_changed(self, what: str, needs_relogin: bool, backend_label: str) -> None:
+    def _on_settings_changed(
+        self, what: str, needs_relogin: bool, backend_label: str,
+    ) -> None:
         msg = f"已热重载: {what} → {backend_label}"
-        self.statusBar().showMessage(msg, 5000)
+        self.status_bar.showMessage(msg, 5000)
         if needs_relogin:
             QMessageBox.information(
                 self,
@@ -288,28 +426,20 @@ class MainWindow(QMainWindow):
                 "Telegram 凭据已变更。\n请重新登录以继续监听。",
             )
 
-    def _on_sync_requested(self, channel_ids: list[int]) -> None:
-        """侧栏多选 + 全量同步 — 弹 options + 进度对话框,启动后台 task。"""
-        from tgmonitor.core.dto import SyncOptions
-        from tgmonitor.ui.widgets.sync_dialog import (
-            SyncOptionsDialog,
-            SyncProgressDialog,
-        )
+    # ======================== 同步请求 ========================
 
-        # 取已选频道的 title 给对话框显示
+    def _on_sync_requested(self, channel_ids: list[int]) -> None:
         titles: dict[int, str] = {}
         for cid in channel_ids:
             ch = self._vm.known_channels.get(cid)
-            if ch is not None:
-                titles[cid] = ch.title
-            else:
-                titles[cid] = f"#{cid}"
+            titles[cid] = ch.title if ch else f"#{cid}"
 
         defaults = SyncOptions(
             chat_delay_ms=self.app.settings.sync_chat_delay_ms,
             page_delay_ms=self.app.settings.sync_page_delay_ms,
             resume_from_saved=self.app.settings.sync_resume_from_saved,
         )
+
         opts_dlg = SyncOptionsDialog(channel_ids, titles, defaults, self)
         if not opts_dlg.exec():
             return
@@ -322,7 +452,6 @@ class MainWindow(QMainWindow):
             cancel_cb=self.app.channel_sync.cancel,
             parent=self,
         )
-        # 订阅 VM 的 sync signal → 进度对话框
         self._vm.sync_progress.connect(progress_dlg.on_progress)
         self._vm.sync_done.connect(progress_dlg.on_done)
 
@@ -330,7 +459,6 @@ class MainWindow(QMainWindow):
             try:
                 await self.app.sync_channels(channel_ids, options)
             finally:
-                # 断开信号(避免下一次 sync 又绑一次)
                 try:
                     self._vm.sync_progress.disconnect(progress_dlg.on_progress)
                     self._vm.sync_done.disconnect(progress_dlg.on_done)
@@ -340,11 +468,10 @@ class MainWindow(QMainWindow):
         asyncio.run_coroutine_threadsafe(_go(), self.loop)
         progress_dlg.exec()
 
+    # ======================== 状态刷新 ========================
+
     def _refresh_state(self) -> None:
-        """channels_changed 事件回调:把已知频道渲染到 channel_panel 的两栏。"""
-        # 把 _vm.known_channels 灌到 channel_panel:
-        # - 已加入(joined):vm.known_channels 的全集
-        # - 已监听(subscribed):filter 出 _subscribed
+        """channels_changed / 登录状态变化 / 定时 触发刷新。"""
         all_known = self._vm.known_channels
         self.channel_panel.set_joined(list(all_known.values()))
         subscribed = [
@@ -352,10 +479,101 @@ class MainWindow(QMainWindow):
             if cid in self.monitor.subscribed_ids
         ]
         self.channel_panel.set_subscribed(subscribed)
-        # 同步标题表给 MessageView,后续历史消息(下面的 load_recent_messages)
-        # 渲染时就能用真实频道名而不是 #id。
-        self.message_view.set_channel_titles(
+
+        self.live_view.set_channel_titles(
             {cid: ch.title for cid, ch in all_known.items()}
         )
-        # 拉一次最近消息
         self._vm.load_recent_messages()
+
+        # 更新 dashboard 统计
+        self.dashboard.update_stats(len(all_known), len(subscribed))
+
+
+# ======================== 紧凑头栏 ========================
+
+class _HeaderBar(QWidget):
+    """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
+
+    不再用 QToolBar,改为自定义 widget,视觉更紧凑。
+    """
+
+    btn_logout = None  # type: ignore[assignment]
+    btn_action = None  # type: ignore[assignment]
+    btn_theme = None  # type: ignore[assignment]
+    search_bar = None  # type: ignore[assignment]
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("headerBar")
+        self.setFixedHeight(44)
+
+        hbox = QHBoxLayout(self)
+        hbox.setContentsMargins(16, 0, 16, 0)
+        hbox.setSpacing(12)
+
+        # 左: 标题
+        title = QLabel("tgmonitor")
+        title.setObjectName("appTitle")
+        hbox.addWidget(title)
+
+        # 搜索条
+        self.search_bar = SearchBar()
+        hbox.addWidget(self.search_bar)
+        hbox.addStretch(1)
+
+        # 右: 状态 + 操作
+        self.state_dot = QLabel("⚪")
+        self.state_dot.setFixedWidth(20)
+        hbox.addWidget(self.state_dot)
+
+        self.state_label = QLabel("就绪")
+        self.state_label.setObjectName("headerState")
+        hbox.addWidget(self.state_label)
+
+        self.btn_action = QPushButton("登录")
+        self.btn_action.setObjectName("headerActionBtn")
+        self.btn_action.setVisible(False)
+        hbox.addWidget(self.btn_action)
+
+        self.btn_logout = QPushButton("登出")
+        self.btn_logout.setObjectName("headerActionBtn")
+        self.btn_logout.setVisible(False)
+        hbox.addWidget(self.btn_logout)
+
+        # 主题切换按钮 — 显示「当前切到该主题后会变成什么」
+        from tgmonitor.ui.theme import ThemeManager
+        cur = ThemeManager.current()
+        self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
+        self.btn_theme.setObjectName("headerActionBtn")
+        self.btn_theme.setFixedWidth(36)
+        self.btn_theme.setToolTip("切换主题(Ctrl+T)")
+        hbox.addWidget(self.btn_theme)
+
+    def update_state(self, state: str, detail: str = "") -> None:
+        dot = _STATE_DOT.get(state, "⚪")
+        label = _STATE_LABEL.get(state, state)
+        if state == "error" and detail:
+            label = f"{label}:{detail[:40]}"
+
+        self.state_dot.setText(dot)
+        self.state_label.setText(label)
+
+        # 根据状态显隐操作按钮
+        if state == "ready":
+            self.btn_action.setVisible(False)
+            self.btn_logout.setVisible(True)
+        elif state in ("phone_required", "closed", "uninit"):
+            self.btn_action.setText("登录")
+            self.btn_action.setVisible(True)
+            self.btn_logout.setVisible(False)
+        elif state in ("code_required",):
+            self.btn_action.setText("验证码")
+            self.btn_action.setVisible(True)
+            self.btn_logout.setVisible(False)
+        elif state in ("password_required",):
+            self.btn_action.setText("2FA 密码")
+            self.btn_action.setVisible(True)
+            self.btn_logout.setVisible(False)
+        else:
+            self.btn_action.setVisible(False)
+            self.btn_logout.setVisible(False)
