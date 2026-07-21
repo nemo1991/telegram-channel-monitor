@@ -308,6 +308,9 @@ class MainWindow(QMainWindow):
         self.header.btn_theme.setText("☀" if new.value == "dark" else "🌙")
         # 刷新 nav bar 内部样式
         self.nav.refresh_theme()
+        # 频道类型图标(已 tinted)需要按新主题重画
+        if hasattr(self.channel_panel, "refresh_theme"):
+            self.channel_panel.refresh_theme()
         self.status_bar.showMessage(
             f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题", 2000,
         )

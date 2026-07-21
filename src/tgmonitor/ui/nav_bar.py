@@ -9,19 +9,23 @@
 设计:
 - 在浅色和暗色模式下都用深色底 — 形成稳定的"导航锚点",不被主题切换影响
 - 每个按钮 = 24px 图标 + 10px 标签文字(竖直堆叠)
-- 选中态:白色图标+文字 + 左侧 3px accent 条
-- 悬停态:微亮背景
+- 选中态:白色图标+文字 + 左侧 3px accent 条 + 浅蓝渐变叠层
+- 悬停态:微亮背景(永远比 idle 亮、永远比 active 暗)
+- **图标走 tinted_action_icon(显式注入 fg)**:Qt 的 QSvgRenderer 不解析
+  currentColor,所以不能依赖 QSS color → SVG currentColor 链路 — 必须
+  在 SVG 字节上直接替换为 hex。这是项目内 nav 唯一的图标加载入口。
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
     QVBoxLayout,
     QWidget,
 )
 
-from tgmonitor.ui.icon import action_icon
+from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
 
 _NAV_ITEMS = [
@@ -30,6 +34,33 @@ _NAV_ITEMS = [
     ("nav_channels", "频道"),
     ("nav_settings", "设置"),
 ]
+
+# ---- 配色 token(直接 hex,不走 ThemeManager accent(),让本文件自包含) ----
+# 主题切换时按 DARK/LIGHT 二选一,新主题再加分支即可。
+_DARK = {
+    "active_bg": "#3a3a55",       # 比 hover 亮 1 阶
+    "hover_bg": "#2c2c45",        # 比 idle bg(#1e1e2e)亮 1 阶
+    "idle_bg": "transparent",
+    "active_fg": "#ffffff",
+    "inactive_fg": "#b0b5c8",     # WCAG AA 过(对 #1e1e2e)
+    "accent": "#7bb4ff",          # 亮色主题感更强
+    "accent_overlay": "rgba(123,180,255,0.18)",
+    "accent_glow": "rgba(123,180,255,0.35)",
+}
+_LIGHT = {
+    "active_bg": "#1e1e2e",       # light 模式 nav 底故意保持深色(锚点)
+    "hover_bg": "#2a2a40",        # 比 active 暗 1 阶 — 修正"hover 反向"
+    "idle_bg": "transparent",
+    "active_fg": "#ffffff",
+    "inactive_fg": "#b0b5c8",     # light 主题下也用浅灰(fg 对深底通用)
+    "accent": "#5b9cf5",          # 浅色主题标准蓝
+    "accent_overlay": "rgba(91,156,245,0.22)",
+    "accent_glow": "rgba(91,156,245,0.40)",
+}
+
+
+def _palette() -> dict:
+    return _DARK if ThemeManager.current() == Theme.DARK else _LIGHT
 
 
 class _NavButton(QWidget):
@@ -41,7 +72,8 @@ class _NavButton(QWidget):
         super().__init__()
         self._index = index
         self._active = False
-        self._hover_bg = "#252540"
+        self._hovering = False
+        self._icon_name = icon_name
 
         self.setFixedSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
@@ -52,8 +84,6 @@ class _NavButton(QWidget):
         vbox.setAlignment(Qt.AlignCenter)
 
         self._ico_label = QLabel()
-        pix = action_icon(icon_name).pixmap(24, 24)
-        self._ico_label.setPixmap(pix)
         self._ico_label.setFixedSize(24, 24)
         self._ico_label.setAlignment(Qt.AlignCenter)
         vbox.addWidget(self._ico_label, 0, Qt.AlignCenter)
@@ -71,32 +101,40 @@ class _NavButton(QWidget):
             self._refresh_style()
 
     def _refresh_style(self) -> None:
-        # 主题感知:dark 模式 active 用稍亮色以区分,light 模式 active 用深色
-        theme = ThemeManager.current()
-        if theme == Theme.DARK:
-            active_bg = "#2a2a3e"
-            inactive_fg = "#8a8fa8"
-            hover_bg = "#252540"
-        else:
-            active_bg = "#1e1e2e"
-            inactive_fg = "#8a8fa8"
-            hover_bg = "#16162a"
-
-        active_fg = "#ffffff"
-        border_color = "#5b9cf5"
-        self._hover_bg = hover_bg
-
+        p = _palette()
+        # ---- 图标:按状态用 tinted 出来的两套 ----
         if self._active:
-            bg = active_bg
-            fg = active_fg
-            border_left = f"3px solid {border_color}"
+            icon = tinted_action_icon(self._icon_name, QColor(p["active_fg"]))
         else:
-            bg = "transparent"
-            fg = inactive_fg
+            icon = tinted_action_icon(self._icon_name, QColor(p["inactive_fg"]))
+        self._ico_label.setPixmap(icon.pixmap(24, 24))
+
+        # ---- 背景:active / hover / idle 三态清晰分层 ----
+        if self._active:
+            bg = p["active_bg"]
+        elif self._hovering:
+            bg = p["hover_bg"]
+        else:
+            bg = p["idle_bg"]
+        fg = p["active_fg"] if self._active else p["inactive_fg"]
+
+        # active 时:左 accent 条 + 浅蓝渐变叠层 + 微 glow 描边
+        # 否则:左 3px 透明占位(防止 1px 抖动)
+        if self._active:
+            border_left = f"3px solid {p['accent']}"
+            extra = (
+                f"background-image: linear-gradient(90deg, {p['accent_overlay']}, transparent);"
+                f"border-top: 1px solid {p['accent_glow']};"
+                f"border-right: 1px solid {p['accent_glow']};"
+                f"border-bottom: 1px solid {p['accent_glow']};"
+            )
+        else:
             border_left = "3px solid transparent"
+            extra = ""
+
         self.setStyleSheet(
             f"background:{bg};border-left:{border_left};"
-            f"border-top:none;border-right:none;border-bottom:none;"
+            f"border-top:none;border-right:none;border-bottom:none;{extra}"
         )
         self._txt_label.setStyleSheet(f"color:{fg};font-size:10px;")
 
@@ -106,14 +144,13 @@ class _NavButton(QWidget):
 
     def enterEvent(self, event) -> None:  # noqa: N802
         if not self._active:
-            self.setStyleSheet(
-                f"background:{self._hover_bg};border-left:3px solid transparent;"
-                f"border-top:none;border-right:none;border-bottom:none;"
-            )
+            self._hovering = True
+            self._refresh_style()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:  # noqa: N802
-        if not self._active:
+        if self._hovering:
+            self._hovering = False
             self._refresh_style()
         super().leaveEvent(event)
 
@@ -132,17 +169,14 @@ class VerticalNavBar(QWidget):
         self.setObjectName("navBar")
 
         vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(0, 20, 0, 0)
+        vbox.setContentsMargins(0, 16, 0, 0)
         vbox.setSpacing(4)
         vbox.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
-        # app 标志(小圆点 logo)
-        logo = QLabel("●")
-        logo.setAlignment(Qt.AlignCenter)
-        logo.setFixedWidth(64)
-        logo.setStyleSheet("color:#5b9cf5;font-size:20px;font-weight:bold;")
-        vbox.addWidget(logo)
-        vbox.addSpacing(8)
+        # 顶部 12px 留白 — 替代之前的 Unicode `●` logo(单字符跨字体
+        # # 渲染不一致,看着像占位)。header bar 已有 `appTitle` 文本品牌锚点,
+        # # nav 不再重复。
+        vbox.addSpacing(12)
 
         for idx, (icon_name, label) in enumerate(_NAV_ITEMS):
             btn = _NavButton(idx, icon_name, label)
@@ -169,6 +203,6 @@ class VerticalNavBar(QWidget):
             self._on_btn_clicked(idx)
 
     def refresh_theme(self) -> None:
-        """主题切换后调用,刷新所有按钮颜色。"""
+        """主题切换后调用,刷新所有按钮颜色 + 图标。"""
         for btn in self._buttons:
             btn._refresh_style()

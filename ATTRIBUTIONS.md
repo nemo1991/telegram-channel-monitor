@@ -23,5 +23,9 @@ Contributors)。
 | `src/tgmonitor/resources/icons/kind_channel.svg`       | Lucide `megaphone`  |
 | `src/tgmonitor/resources/icons/kind_supergroup.svg`    | Lucide `users`      |
 | `src/tgmonitor/resources/icons/kind_group.svg`         | Lucide `user-round` |
+| `src/tgmonitor/resources/icons/nav_dashboard.svg`      | Lucide `layout-dashboard` |
+| `src/tgmonitor/resources/icons/nav_settings.svg`       | Lucide `settings`   |
+| `src/tgmonitor/resources/icons/nav_live.svg`           | Lucide `radio`(2 道大弧 + 中心点) |
+| `src/tgmonitor/resources/icons/nav_channels.svg`       | Lucide `list`(3 dot + 3 line) |
 
-`app_icon.svg` 是项目自有设计,不属于 Lucide。
+`app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。

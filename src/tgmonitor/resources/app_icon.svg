@@ -1,20 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#3390ec"/>
       <stop offset="1" stop-color="#1f6fc4"/>
     </linearGradient>
   </defs>
-  <!-- 圆角背景 -->
-  <rect width="64" height="64" rx="14" ry="14" fill="url(#g)"/>
-  <!-- 三条向右的信号弧 -->
-  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round">
-    <path d="M16 42 Q32 32 48 42" opacity="0.45"/>
-    <path d="M22 38 Q32 30 42 38" opacity="0.70"/>
-    <path d="M28 34 Q32 30 36 34" opacity="1.0"/>
-  </g>
-  <!-- 实心圆点(频道中心) -->
-  <circle cx="32" cy="22" r="4" fill="#ffffff"/>
-  <circle cx="32" cy="22" r="2" fill="#5cb85c"/>
+  <!-- 圆角蓝渐变背景(产品身份锚点) -->
+  <rect width="64" height="64" rx="14" ry="14" fill="url(#bg)"/>
+
+  <!-- 信号塔(左 1/3):三角顶 + 矩形杆 + 梯形基座 + 1 道小信号波 -->
+  <!-- 塔尖 -->
+  <path d="M16 7 L19 14 L13 14 Z" fill="#ffffff"/>
+  <!-- 塔杆 -->
+  <rect x="14.5" y="14" width="3" height="26" fill="#ffffff"/>
+  <!-- 塔基(梯形) -->
+  <path d="M8 40 L24 40 L21 46 L11 46 Z" fill="#ffffff" opacity="0.85"/>
+  <!-- 信号波(一道小弧,提示"监听") -->
+  <path d="M5 22 Q11 17 17 22" stroke="#ffffff" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.6"/>
+
+  <!-- 频道条(右 2/3):3 行,顶条 highlight 绿 = 正在监听的频道 -->
+  <rect x="30" y="18" width="28" height="4" rx="2" fill="#22c55e"/>
+  <rect x="30" y="28" width="28" height="4" rx="2" fill="#ffffff" opacity="0.85"/>
+  <rect x="30" y="38" width="20" height="4" rx="2" fill="#ffffff" opacity="0.55"/>
 </svg>

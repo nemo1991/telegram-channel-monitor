@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
-from tgmonitor.ui.icon import action_icon
+from tgmonitor.ui.icon import tinted_action_icon
+from tgmonitor.ui.theme import Theme, ThemeManager
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -52,9 +53,17 @@ _KIND_ICON_NAMES: dict[str, str] = {
 def _kind_icon(kind: str) -> QIcon:
     """频道类型图标 —— Lucide 单色,见 `ATTRIBUTIONS.md` 与 `ui/icon.py`。
 
+    fg 跟当前主题:QListWidget 在 light 主题用 #1a1a2e,dark 主题用 #f0f1fa。
+    Qt 的 QSvgRenderer 不解析 currentColor,所以走 tinted_action_icon
+    显式注入 hex,避免图标在 list row 上渲染成黑团。
+
     未知 kind 一律 fallback 到 group(user-round)。
     """
-    return action_icon(_KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]))
+    fg = "#f0f1fa" if ThemeManager.current() == Theme.DARK else "#1a1a2e"
+    return tinted_action_icon(
+        _KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]),
+        QColor(fg),
+    )
 
 
 class ChannelWidget(QWidget):
@@ -321,3 +330,16 @@ class ChannelWidget(QWidget):
             )
             return
         self.sync_requested.emit(ids)
+
+    def refresh_theme(self) -> None:
+        """主题切换后调用 — 重渲两个 list 的频道类型图标(tinted color 跟主题变)。
+
+        数据缓存 _joined / _subscribed_ids 不动,只是 setIcon 重画一次。
+        """
+        joined = list(self._joined.values())
+        if joined:
+            self.set_joined(joined)
+        if self._subscribed_ids:
+            sub = [c for cid, c in self._joined.items() if cid in self._subscribed_ids]
+            if sub:
+                self.set_subscribed(sub)

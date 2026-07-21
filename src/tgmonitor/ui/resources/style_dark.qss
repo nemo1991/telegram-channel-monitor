@@ -11,7 +11,9 @@
  *   text_strong #f0f1fa  (主文字)
  *   text_normal #c0c4d0  (正文)
  *   text_muted  #7a7d8e  (提示)
- *   accent      #7bb4ff  (高亮,比浅色更亮以保证对比)
+ *   accent      {accent}(由 ThemeManager 注入;暗色=#7bb4ff / hover=#a3c8ff)
+ *
+ * 状态色:Tailwind v3,与浅色共享 — saturated 状态色在两底色上都过 WCAG。
  */
 
 /* ===== 全局 ===== */
@@ -116,13 +118,13 @@ QLabel[role="card-title"] {
     padding: 8px 24px;
     border: none;
     border-radius: 6px;
-    background: #4a8be4;
+    background: {accent};
     color: #ffffff;
     font-size: 13px;
     font-weight: 600;
 }
 #primaryBtn:hover {
-    background: #7bb4ff;
+    background: {accentHover};
 }
 #primaryBtn:pressed {
     background: #3a7bd4;
@@ -139,13 +141,13 @@ QPushButton {
 QPushButton:hover { background: #353550; }
 QPushButton:pressed { background: #2c2c40; }
 QPushButton:default {
-    background: #4a8be4;
+    background: {accent};
     color: white;
     border: none;
 }
-QPushButton:default:hover { background: #7bb4ff; }
+QPushButton:default:hover { background: {accentHover}; }
 QPushButton:disabled {
-    color: #5a5d6a;
+    color: #6e7180;
     background: #232333;
     border-color: #353550;
 }
@@ -157,10 +159,10 @@ QLineEdit, QSpinBox {
     border-radius: 5px;
     background: #2c2c40;
     color: #f0f1fa;
-    selection-background-color: #4a8be4;
+    selection-background-color: {accent};
 }
 QLineEdit:focus, QSpinBox:focus {
-    border-color: #7bb4ff;
+    border-color: {accent};
     outline: none;
 }
 
@@ -179,7 +181,7 @@ QComboBox {
     color: #f0f1fa;
 }
 QComboBox:focus {
-    border-color: #7bb4ff;
+    border-color: {accent};
 }
 QComboBox::drop-down {
     border: none;
@@ -207,7 +209,7 @@ QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     padding: 0 8px;
-    color: #7bb4ff;
+    color: {accent};
     font-size: 13px;
 }
 
@@ -233,6 +235,7 @@ QListWidget::item:hover {
 QListWidget::item:selected {
     background: #4a8be4;
     color: #ffffff;
+    border-left: 3px solid {accent};
 }
 
 /* ===== 表格 ===== */
@@ -290,10 +293,10 @@ QFrame#statusDot {
     min-height: 16px;
     max-height: 16px;
 }
-QFrame#statusDot[state="ready"]    { background: #5cb85c; }
-QFrame#statusDot[state="pending"]  { background: #f0ad4e; }
-QFrame#statusDot[state="error"]    { background: #d9534f; }
-QFrame#statusDot[state="unset"]    { background: #999999; }
+QFrame#statusDot[state="ready"]    { background: #16a34a; }
+QFrame#statusDot[state="pending"]  { background: #f59e0b; }
+QFrame#statusDot[state="error"]    { background: #dc2626; }
+QFrame#statusDot[state="unset"]    { background: #94a3b8; }
 
 /* ===== 提示 / Warn / Error ===== */
 QLabel[role="hint"] {

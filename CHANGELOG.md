@@ -7,6 +7,41 @@
 
 ## [Unreleased]
 
+### 🔧 Fixed (post-Phase-5 UI polish, 2026-07-21)
+- **左侧 nav icon 显示不全** — `icon.py` 加 `tinted_action_icon(name, color)`,在 SVG 字节层
+  把 `currentColor` 替换为 `QColor.name()`(Qt `QSvgRenderer` 不解析 `currentColor`,
+  所以过去所有 nav / 频道类型图标在 painter 上都是黑团);nav / 顶栏 / ChannelWidget 全切
+  到 tinted 入口
+- **nav `nav_channels.svg` 错位** — 之前是 Lucide 风格的"火箭/纸飞机"(几何时序误拼),
+  跟"频道管理"语义不符;改为 Lucide `list` 风格(3 个 dot + 3 条 line)
+- **nav `nav_live.svg` 拥挤** — 4 道弧 + 中心点 24px 下糊;减为 2 道大弧 + 中心点
+- **nav hover/active 颜色太深** — dark 模式 active `#2a2a3e` vs hover `#252540` 仅差 2 个
+  hex step(肉眼难分);light 模式 hover `#16162a` 比 active `#1e1e2e` 还暗(affordance 反向)。
+  重排色阶:dark `idle transparent → hover #2c2c45 → active #3a3a55`,light `idle → hover
+  #2a2a40 → active #1e1e2e`,active 永远比 hover 亮 1 阶;inactive fg 提到 `#b0b5c8`
+  (WCAG AA 5.8:1,过)
+- **active 选中态不明显** — 在 active 时叠 `linear-gradient(90deg, rgba({accent}, 0.18), transparent)`
+  + 1px accent glow 描边,跟非 active 的纯 bg 拉开视觉差距
+- **nav 顶部 Unicode `●` logo 删除** — 跨字体渲染不一致,看着像占位;header bar 已有
+  `appTitle` 文本品牌锚点,nav 不再重复
+- **QListWidget 选中态对比太弱** — light 主题 `selected` bg 从 `#d6e4fa` 加深到 `#b6d0f0`
+  (对比从 2 阶拉到 4 阶),加 3px accent 左边线;两主题都改
+- **disabled 文字过 WCAG** — light `#b0b4c0` → `#8a8d96`,dark `#5a5d6a` → `#6e7180`
+- **状态色 2014 → Tailwind v3** — ready `#5cb85c` → `#16a34a`,pending `#f0ad4e` → `#f59e0b`,
+  error `#d9534f` → `#dc2626`,unset `#999999` → `#94a3b8`(语义不变,两主题共用,saturated
+  状态色在两底色上均过 WCAG)
+- **`ThemeManager` accent 集中** — 加 `ACCENT_LIGHT` / `ACCENT_DARK` / `ACCENT_*_HOVER` class
+  attribute + `accent(kind)` 方法;QSS 走 `{accent}` / `{accentHover}` 占位符在 `apply()`
+  注入,避免 `#5b9cf5` / `#4a8be4` / `#7bb4ff` 散落
+- **header 按钮文字加深** — `#headerActionBtn` text `#3a3d4a` → `#5a5d64`,Refresh / Export
+  图标(走 tinted 链)fg 与 button color 一致
+- **app icon 重设计** — 旧 3-弧 + 中心点在 16×16 下糊成一团、绿点消失;改为「信号塔 +
+  频道条」:左 1/3 塔(三角顶 + 矩形杆 + 梯形基座 + 1 道信号波),右 2/3 三条频道 list
+  (顶条 highlight 绿)。16×16 下塔尖 1px 三角、绿条 4×1px、白条 4×1px — 全部 ≥ 1px 物理
+  像素,taskbar / 256×256 about 都清晰
+
+### ✨ Added
+
 ### ✨ Added
 - **SOCKS5 代理** — `Settings.proxy` + `TD_PROXY` 环境变量,`AiClient(proxy_settings=...)` 接入;
   `EditableSettings` 校验 `socks5://[user:pass@]host:port` 格式;设置对话框里有「测试连接」按钮
