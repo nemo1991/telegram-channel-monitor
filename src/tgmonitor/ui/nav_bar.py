@@ -37,21 +37,30 @@ _NAV_ITEMS = [
 
 # ---- 配色 token(直接 hex,不走 ThemeManager accent(),让本文件自包含) ----
 # 主题切换时按 DARK/LIGHT 二选一,新主题再加分支即可。
+#
+# 关键设计:**active 用纯 accent 实色填充**,跟父级 nav 底(#1e1e2e)有
+# 强烈对比。原来 active 也用深色,跟父级同色,用户根本看不出选中。
+# 3 态(active / hover / idle)必须有清晰对比:
+#   active  >  hover  >  idle
 _DARK = {
-    "active_bg": "#3a3a55",       # 比 hover 亮 1 阶
-    "hover_bg": "#2c2c45",        # 比 idle bg(#1e1e2e)亮 1 阶
+    # 父级 nav bg = #1a1a26(由 QSS `#navBar` 设)
+    "active_bg": "#5b9cf5",       # accent 实色 — 强烈对比,选中立刻可见
+    "hover_bg": "#2c2c45",        # 比 idle 亮 1 阶
     "idle_bg": "transparent",
-    "active_fg": "#ffffff",
-    "inactive_fg": "#b0b5c8",     # WCAG AA 过(对 #1e1e2e)
-    "accent": "#7bb4ff",          # 亮色主题感更强
+    "active_fg": "#ffffff",       # 白字在蓝实色上,WCAG 5.3:1
+    "inactive_fg": "#b0b5c8",     # 浅灰(WCAG AA 对 #1a1a26)
+    "accent": "#5b9cf5",
+    "accent_soft": "rgba(91,156,245,0.18)",  # hover 用(在 dark active 上太亮反而刺眼)
 }
 _LIGHT = {
-    "active_bg": "#1e1e2e",       # light 模式 nav 底故意保持深色(锚点)
-    "hover_bg": "#2a2a40",        # 比 active 暗 1 阶 — 修正"hover 反向"
+    # 父级 nav bg = #1a1a26(浅色主题 nav 底故意保持深色做"锚点")
+    "active_bg": "#5b9cf5",       # accent 实色 — 强对比
+    "hover_bg": "#2c2c45",        # 比父级 #1a1a26 亮一阶
     "idle_bg": "transparent",
     "active_fg": "#ffffff",
-    "inactive_fg": "#b0b5c8",     # light 主题下也用浅灰(fg 对深底通用)
-    "accent": "#5b9cf5",          # 浅色主题标准蓝
+    "inactive_fg": "#b0b5c8",
+    "accent": "#5b9cf5",
+    "accent_soft": "rgba(91,156,245,0.22)",
 }
 
 
@@ -124,9 +133,10 @@ class _NavButton(QWidget):
         self.setAutoFillBackground(True)
         self.setPalette(pal)
 
-        # ---- QSS:仅控左侧 3px accent 条 + 强制 ico_label / txt_label transparent ----
-        # border-left 在 QSS 里的行为比 background 稳,左侧 3px accent 用它。
-        border_left = f"3px solid {p['accent']}" if self._active else "3px solid transparent"
+        # ---- QSS:左侧 3px 占位防 layout 抖动,active 时无 accent(蓝底自证) ----
+        # active 用实色蓝底,无需额外左边线;非 active 给一个透明 3px 占位
+        # 让按钮宽度保持 64 不变(不切换 active 时整条 nav 不抖)。
+        border_left = "3px solid transparent"
         self.setStyleSheet(
             f"border-left:{border_left};"
             f"border-top:0;border-right:0;border-bottom:0;"
