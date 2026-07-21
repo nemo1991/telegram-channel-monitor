@@ -16,6 +16,10 @@ import contextlib
 
 import pytest
 
+# `stub_aiotdlib_init` 由 tests/conftest.py 统一提供(全局 fixture)
+# — 不在 test_telegram_lifecycle.py 再 re-export,否则会 shadow conftest 版,
+#   导致 aiotdlib stub 不生效,TdlibTelegramClient 构造触发 native 析构
+#   路径,在 3.11 + Linux 上 segfault。
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.events import AuthErrorOccurred, EventBus, LoginStateChanged
 from tgmonitor.core.telegram import tdlib_client as tdc
@@ -40,13 +44,6 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def bus() -> EventBus:
     return EventBus()
-
-
-@pytest.fixture
-def stub_aiotdlib_init():
-    """stub 已在 tests/conftest.py 统一提供,这里 re-export 仅为向后兼容
-    旧 import 语句。"""
-    yield
 
 
 @contextlib.asynccontextmanager
