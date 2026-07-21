@@ -3,7 +3,7 @@ name = "tgmonitor"
 version = "0.1.0"
 description = "Telegram 频道监听桌面应用 — UI 与 core 分离,监听/保存/导出 三大组件边界清晰"
 readme = "README.md"
-requires-python = "==3.13"
+requires-python = "~=3.13.0"
 license = { text = "MIT" }
 authors = [{ name = "forcetone" }]
 

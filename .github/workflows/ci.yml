@@ -49,18 +49,11 @@ jobs:
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
-      # Windows 上 aiotdlib wheel 依赖 vc_redist(2015–2022+);windows-latest
-      # runner 自带,但我们显式 choco install 一份,避免某天镜像换 base image
-      # 导致 TDLib 加载失败。TDLib 自身的 native dll 不需要额外装 —
-      # aiotdlib 0.27 已解耦 native lib,由 aiotdlib-***-win_amd64.whl 直接带
-      # tdjson.dll(随 wheel 装到 site-packages/aiotdlib/)。我们做一次 sanity:
-      # 装完后 `where tdjson.dll` 能定位到 wheel 内的 dll。
-      - name: Install vcredist (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install -y vcredist2015-2022
-          # sanity:确认 aiotdlib wheel 把 tdjson.dll 带进了
-          python -c "import aiotdlib, os; p=os.path.join(os.path.dirname(aiotdlib.__file__), 'tdjson.dll'); print('tdjson.dll =', p, 'exists=' + str(os.path.exists(p)))"
+      # Windows 上不需要装额外 system 库:
+      # - windows-latest runner 自带 VC++ redist for Python 3.13 wheels
+      # - aiotdlib 0.27 把 tdjson.dll 直接打进 wheel site-packages/aiotdlib/
+      #   解耦后不再依赖 brew/apt,无需跨平台 native lib 设置
+      # sanity 在 install 之后做(下一组的 pytest 之前),不阻塞此 step。
 
       # pip 缓存以 pyproject + 锁文件 hash 为 key(锁文件变 → 缓存失效)
       - name: Cache pip
