@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -31,12 +31,12 @@ from tgmonitor.core.dto import MessageDTO
 
 
 def _to_local_str(dt: datetime | None) -> str:
-    """跨 Python 版本转本地时区字符串(Python 3.9 没 datetime.UTC)。"""
+    """naive datetime 视作 UTC 转本地时区字符串。"""
     if dt is None:
         return "—"
     if dt.tzinfo is None:
         # 假设是 naive UTC(项目里 _map_message 行为)
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 

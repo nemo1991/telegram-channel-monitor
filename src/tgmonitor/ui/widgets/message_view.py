@@ -11,13 +11,7 @@
 """
 from __future__ import annotations
 
-from datetime import timezone
-
-# Python 3.10+ 有 `datetime.UTC`,3.9 只能从 timezone.utc 取
-try:
-    from datetime import UTC  # type: ignore[attr-defined]
-except ImportError:  # pragma: no cover
-    UTC = timezone.utc  # type: ignore[misc]
+from datetime import UTC
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
