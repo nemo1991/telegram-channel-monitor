@@ -44,7 +44,7 @@ class _FakeMsg:
         self.is_channel_post = True
         self.author_signature = ""
         # messageText wrapper — 类名必须 = "MessageText" 让 _SERVICE_HANDLERS 命中
-        self.content = _MessageText(text)
+        self.content = MessageText(text)
 
 
 class _FormattedText:
@@ -54,7 +54,9 @@ class _FormattedText:
         self.text = text
 
 
-class _MessageText:
+# 类名不带下划线 — `type(...).__name__` 会是 "MessageText",_SERVICE_HANDLERS
+# 字典里就这一行能命中
+class MessageText:  # noqa: N801 — 名字必须跟 TDLib 一致
     """TDLib 的 messageText content 包装。"""
 
     def __init__(self, text: str) -> None:
