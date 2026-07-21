@@ -30,7 +30,11 @@ from tgmonitor.core.telegram import tdlib_client as tdc
 
 
 class _FakeMsg:
-    """`Message` 的最小可映射 stub(只需要 _map_message 读到的字段)。"""
+    """`TDLib Message` 的最小可映射 stub(只需要 _map_message 读到的字段)。
+
+    TDLib 的 updateNewMessage 包一层,handler 读 update.message 才拿到
+    Message 本身;所以这里有 _FakeUpdateNewMessage 包一层。
+    """
 
     def __init__(self, chat_id: int = 100, msg_id: int = 1, text: str = "hi") -> None:
         self.id = msg_id
@@ -51,6 +55,13 @@ class _FakeTextContent:
 class _FakeText:
     def __init__(self, text: str) -> None:
         self.text = text
+
+
+class _FakeUpdateNewMessage:
+    """包一层,模拟 aiotdlib 的 UpdateNewMessage(update.message = Message)。"""
+
+    def __init__(self, msg: _FakeMsg) -> None:
+        self.message = msg
 
 
 @pytest.fixture
@@ -82,7 +93,7 @@ async def test_on_new_message_pushes_to_subscribed_stream(
     stream = client.subscribe_updates()
 
     # 直接调 handler(等价于 aiotdlib receive loop 收到 updateNewMessage)
-    update = _FakeMsg(chat_id=100, msg_id=42, text="hello world")
+    update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=42, text="hello world"))
     await client._on_new_message(client, update)
 
     # 200ms 内 stream 应该能拿到
@@ -133,7 +144,7 @@ async def test_monitor_service_publishes_message_received(
     await asyncio.sleep(0.05)
 
     # 调 _on_new_message — 应该推到 stream → _handle → bus.publish
-    update = _FakeMsg(chat_id=100, msg_id=1, text="live update test")
+    update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=1, text="live update test"))
     await client._on_new_message(client, update)
 
     try:
@@ -181,7 +192,7 @@ async def test_on_new_message_skips_non_whitelisted_channel(
     await asyncio.sleep(0.05)
 
     # 频道 200 不在白名单
-    update = _FakeMsg(chat_id=200, msg_id=1, text="ignored")
+    update = _FakeUpdateNewMessage(_FakeMsg(chat_id=200, msg_id=1, text="ignored"))
     await client._on_new_message(client, update)
 
     # 等够长让 _run 有机会处理(确认它不会发)
