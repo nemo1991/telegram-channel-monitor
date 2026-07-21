@@ -12,13 +12,13 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (${{ matrix.python-version }})
+    name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.13"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       # 拉源码 — shallow clone 已够(测试只读 HEAD 状态)
@@ -32,9 +32,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
-      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好,跳过
-      # libc++-dev 给 aiotdlib 的 bundled TDLib .so 提供 libc++.so.1(否则
-      # test_main_window_channels 里直接构造 TdlibTelegramClient 会 OSError)
+      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好,跳过;
+      # windows-latest runner 也自带 Qt 运行时依赖,只需装 vcredist 兜底 TDLib native
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -49,6 +48,19 @@ jobs:
             libc++-dev
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
+
+      # Windows 上 aiotdlib wheel 依赖 vc_redist(2015–2022+);windows-latest
+      # runner 自带,但我们显式 choco install 一份,避免某天镜像换 base image
+      # 导致 TDLib 加载失败。TDLib 自身的 native dll 不需要额外装 —
+      # aiotdlib 0.27 已解耦 native lib,由 aiotdlib-***-win_amd64.whl 直接带
+      # tdjson.dll(随 wheel 装到 site-packages/aiotdlib/)。我们做一次 sanity:
+      # 装完后 `where tdjson.dll` 能定位到 wheel 内的 dll。
+      - name: Install vcredist (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y vcredist2015-2022
+          # sanity:确认 aiotdlib wheel 把 tdjson.dll 带进了
+          python -c "import aiotdlib, os; p=os.path.join(os.path.dirname(aiotdlib.__file__), 'tdjson.dll'); print('tdjson.dll =', p, 'exists=' + str(os.path.exists(p)))"
 
       # pip 缓存以 pyproject + 锁文件 hash 为 key(锁文件变 → 缓存失效)
       - name: Cache pip
@@ -115,12 +127,11 @@ jobs:
     name: ruff
     runs-on: ubuntu-latest
     steps:
-      # lint 只跑 ruff,Python 版本 pin 3.12(版本间行为差异在 lint 规则里很小;
-      # 走单 Python 节省 CI 资源)
+      # lint 只跑 ruff,Python 版本 pin 3.13(同 test 矩阵,版本一致)
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       # 装 ruff 而非走 setup-python 的 pip cache —— lint job 没有 cache step,
       # 直接 pip install 避免引入额外 cache key 配置
       - run: python -m pip install ruff

@@ -61,7 +61,7 @@
 
 **代码风格**:
 
-- Python 3.11+ 特性(`str | None` / `dataclass(slots=True)` / `match` 等)
+- Python 3.13 特性(`str | None` / `dataclass(slots=True)` / `match` 等 3.10+ 语法;Python 锁死 3.13)
 - 全部公共方法用 type hints
 - 用 `from __future__ import annotations`
 - 用 ruff:`ruff check` 必须 0 警告

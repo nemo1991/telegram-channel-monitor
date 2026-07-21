@@ -3,7 +3,7 @@
 > **Telegram 频道监听桌面应用** — 监听 / 保存 / 导出,UI 与 core 彻底分离,边界清晰。
 
 [![CI](https://github.com/forcetone/tgmonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/forcetone/tgmonitor/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 **v0.2.0** — 新增 JSONL 消息存储、两级分片对象存储、设置对话框与热重载
@@ -59,7 +59,7 @@
 
 ## 📦 安装
 
-需要 **Python 3.11+**(代码使用 `str | None` 与 `dataclass(slots=True)` 等 3.10+ 特性)。
+需要 **Python 3.13**(代码锁定该版本,跨平台 wheel 由 GitHub Actions 矩阵验证 Ubuntu / macOS / Windows)。
 
 ```bash
 git clone https://github.com/forcetone/tgmonitor.git
@@ -222,7 +222,7 @@ python -m coverage report
 
 每次 push / PR 都会触发两道 job(见 `.github/workflows/ci.yml`):
 
-- **`test` 矩阵** — Ubuntu + macOS × Python 3.11 / 3.12 / 3.13(6 个组合)
+- **`test` 矩阵** — Ubuntu + macOS + Windows × Python 3.13(3 个 OS,Python 锁单版本)
   - 装 Qt offscreen 系统库(`libegl1` 等)+ `QT_QPA_PLATFORM=offscreen`,
     Linux runner 上 PySide6 才不崩在 `libEGL.so.1`
   - 跑 `pytest -v --tb=short`

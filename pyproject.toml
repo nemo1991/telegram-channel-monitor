@@ -3,7 +3,7 @@ name = "tgmonitor"
 version = "0.1.0"
 description = "Telegram 频道监听桌面应用 — UI 与 core 分离,监听/保存/导出 三大组件边界清晰"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.13"
 license = { text = "MIT" }
 authors = [{ name = "forcetone" }]
 
@@ -12,7 +12,7 @@ dependencies = [
     "PySide6>=6.6",
     "qasync>=0.27",
     # Telegram 官方 (底层 TDLib)
-    "aiotdlib>=0.16",
+    "aiotdlib==0.27.*",
     # 配置
     "pydantic-settings>=2.2",
     # 导出
@@ -49,7 +49,7 @@ packages = ["src/tgmonitor"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC"]

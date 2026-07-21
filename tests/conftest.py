@@ -227,8 +227,9 @@ def make_photo(channel_id: int = 100, msg_id: int = 1) -> MessageDTO:
 
 # ---- aiotdlib stub ---------------------------------------------------
 # 背景:`aiotdlib.Client.__init__` 会调 native `td_json_client_create()`,
-# 在 Linux + Python 3.11/3.12 上 segfault(已知 CI 现状,3.13 + macOS
-# 才稳定)。任何要构造 `TdlibTelegramClient` 的测试都需要这个 stub —
+# stub 仍保留:本地 pyenv/老 Python 上偶发 native 析构挂死,
+# 单元测试无需为此 surface area。任何要构造 `TdlibTelegramClient` 的测试都
+# 需要这个 stub —
 # 它把父类 __init__ 换成 no-op,只塞一些 aiotdlib 期望的内部属性。
 # 之前定义在 test_telegram_lifecycle.py;提到 conftest 后
 # test_main_window_channels.py / test_live_updates.py 也能复用。
