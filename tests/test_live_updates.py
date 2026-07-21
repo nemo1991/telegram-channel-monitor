@@ -43,18 +43,22 @@ class _FakeMsg:
         self.edit_date = 0
         self.is_channel_post = True
         self.author_signature = ""
-        # messageText wrapper
-        self.content = _FakeTextContent(text)
+        # messageText wrapper — 类名必须 = "MessageText" 让 _SERVICE_HANDLERS 命中
+        self.content = _MessageText(text)
 
 
-class _FakeTextContent:
-    def __init__(self, text: str) -> None:
-        self.text = _FakeText(text)
+class _FormattedText:
+    """模拟 aiotdlib 的 FormattedText pydantic model。"""
 
-
-class _FakeText:
     def __init__(self, text: str) -> None:
         self.text = text
+
+
+class _MessageText:
+    """TDLib 的 messageText content 包装。"""
+
+    def __init__(self, text: str) -> None:
+        self.text = _FormattedText(text)
 
 
 class _FakeUpdateNewMessage:
