@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Iterator
 
 import pytest
 
@@ -44,49 +43,10 @@ def bus() -> EventBus:
 
 
 @pytest.fixture
-def stub_aiotdlib_init() -> Iterator[None]:
-    """把 aiotdlib.Client.__init__ 换成 no-op,跳过文件检查 + 默认参数验证。"""
-    original = tdc._AiClient.__init__
-
-    def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        # 不调 super,只塞一些 aiotdlib 期望的内部状态,这样 _updates_loop
-        # 之类的占位方法不至于 AttributeError
-        self._update_task = None
-        self._running = False
-        self._handlers_tasks = set()
-        self._pending_requests = {}
-        self._pending_messages = {}
-        self._updates_handlers = {}
-        self._authorized_event = asyncio.Event()
-        self._state = ""
-        self._middlewares = []
-        self._middlewares_handlers = []
-        self.tdjson_client = type(
-            "StubTd", (), {"receive": _async_iter([]), "send": _noop_send, "close": _noop_close, "execute": _noop_execute},
-        )()
-        # 父类期望的
-        self.settings = kwargs.get("settings") or (
-            args[0] if args else None
-        )
-
-    def _noop_send(*a, **k):
-        return None
-
-    async def _noop_close(*a, **k):
-        return None
-
-    async def _noop_execute(*a, **k):
-        return None
-
-    async def _async_iter(items):
-        for x in items:
-            yield x
-
-    tdc._AiClient.__init__ = _safe_init  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        tdc._AiClient.__init__ = original  # type: ignore[assignment]
+def stub_aiotdlib_init():
+    """stub 已在 tests/conftest.py 统一提供,这里 re-export 仅为向后兼容
+    旧 import 语句。"""
+    yield
 
 
 @contextlib.asynccontextmanager

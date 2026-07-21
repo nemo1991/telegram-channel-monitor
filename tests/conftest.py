@@ -1,8 +1,9 @@
 """共用 fixtures:InMemoryRepository + LocalObjectStore + FakeTelegramClient。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
-from typing import AsyncIterator
+from typing import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.telegram import tdlib_client as tdc
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
@@ -221,3 +223,58 @@ def make_photo(channel_id: int = 100, msg_id: int = 1) -> MessageDTO:
             )
         ],
     )
+
+
+# ---- aiotdlib stub ---------------------------------------------------
+# 背景:`aiotdlib.Client.__init__` 会调 native `td_json_client_create()`,
+# 在 Linux + Python 3.11/3.12 上 segfault(已知 CI 现状,3.13 + macOS
+# 才稳定)。任何要构造 `TdlibTelegramClient` 的测试都需要这个 stub —
+# 它把父类 __init__ 换成 no-op,只塞一些 aiotdlib 期望的内部属性。
+# 之前定义在 test_telegram_lifecycle.py;提到 conftest 后
+# test_main_window_channels.py / test_live_updates.py 也能复用。
+@pytest.fixture
+def stub_aiotdlib_init() -> Iterator[None]:
+    """把 aiotdlib.Client.__init__ 换成 no-op,跳过 native 加载。"""
+    original = tdc._AiClient.__init__
+
+    def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._update_task = None
+        self._running = False
+        self._handlers_tasks = set()
+        self._pending_requests = {}
+        self._pending_messages = {}
+        self._updates_handlers = {}
+        self._authorized_event = asyncio.Event()
+        self._state = ""
+        self._middlewares = []
+        self._middlewares_handlers = []
+        self.tdjson_client = type(
+            "StubTd",
+            (),
+            {
+                "receive": _async_iter([]),
+                "send": _noop_send,
+                "close": _noop_close,
+                "execute": _noop_execute,
+            },
+        )()
+        self.settings = kwargs.get("settings") or (args[0] if args else None)
+
+    def _noop_send(*a, **k):
+        return None
+
+    async def _noop_close(*a, **k):
+        return None
+
+    async def _noop_execute(*a, **k):
+        return None
+
+    async def _async_iter(items):
+        for x in items:
+            yield x
+
+    tdc._AiClient.__init__ = _safe_init  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        tdc._AiClient.__init__ = original  # type: ignore[assignment]

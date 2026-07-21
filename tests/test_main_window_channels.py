@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-from typing import Iterator
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -24,62 +23,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.service import MonitorService
-from tgmonitor.core.telegram import tdlib_client as tdc
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
-
-@pytest.fixture
-def stub_aiotdlib_init() -> Iterator[None]:
-    """跳过 aiotdlib.Client.__init__ 的 native TDLib 加载。
-
-    背景:aiotdlib 的 `Client.__init__` 会调 `tdjson.Client.create()` 触发
-    native `td_json_client_create()`。在 Linux + Python 3.11/3.12 上这个
-    native 调用有兼容性问题(3.11/3.12 segfault,3.13 + macOS 正常),但
-    本文件测试要的是 TdlibTelegramClient 的 _state 状态机 / _wait_for_state
-    行为,完全不需要 native TDLib。所以把父类 __init__ stub 成 no-op,
-    同样绕开问题(与 test_telegram_lifecycle.py:47 用法一致)。
-    """
-    original = tdc._AiClient.__init__
-
-    def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        # 塞 aiotdlib 期望的内部属性,让子类方法 / _updates_loop 不崩
-        self._update_task = None
-        self._running = False
-        self._handlers_tasks = set()
-        self._pending_requests = {}
-        self._pending_messages = {}
-        self._updates_handlers = {}
-        self._authorized_event = asyncio.Event()
-        self._state = ""
-        self._middlewares = []
-        self._middlewares_handlers = []
-        self.tdjson_client = type("StubTd", (), {
-            "receive": _async_iter([]),
-            "send": _noop_send,
-            "close": _noop_close,
-            "execute": _noop_execute,
-        })()
-        self.settings = kwargs.get("settings") or (args[0] if args else None)
-
-    def _noop_send(*a, **k):
-        return None
-
-    async def _noop_close(*a, **k):
-        return None
-
-    async def _noop_execute(*a, **k):
-        return None
-
-    async def _async_iter(items):
-        for x in items:
-            yield x
-
-    tdc._AiClient.__init__ = _safe_init  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        tdc._AiClient.__init__ = original  # type: ignore[assignment]
+# `stub_aiotdlib_init` fixture 由 tests/conftest.py 统一提供
 
 
 class _LoopThread:
