@@ -19,7 +19,6 @@ aiotdlib 会在 receive loop 收到 packet 时按 update.ID 派发 — 我们直
 from __future__ import annotations
 
 import asyncio
-import gc
 from datetime import UTC, datetime
 
 import pytest
@@ -90,26 +89,6 @@ def bus() -> EventBus:
     return EventBus()
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_after_test():
-    """测试跑完后强制 gc 一次,确保 TdlibTelegramClient 子类引用的 native
-    aiotdlib 实例在 interpreter shutdown 之前就被释放。否则 Python 退出
-    时 aiotdlib / TDLib 的 native 析构函数会 segfault(aborted 134)。
-
-    3.11/3.13 + Linux 上的 aiotdlib 0.27 有这个 native teardown 问题;
-    stub fixture 不彻底解决,得让对象先于 atexit 被 GC 掉。
-    """
-    yield
-    gc.collect()
-    # 再让一次 aio loop 跑空
-    try:
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(asyncio.sleep(0))
-        loop.close()
-    except Exception:  # noqa: BLE001
-        pass
-
-
 @pytest.mark.asyncio
 async def test_on_new_message_pushes_to_subscribed_stream(
     settings, bus, stub_aiotdlib_init,
@@ -117,20 +96,27 @@ async def test_on_new_message_pushes_to_subscribed_stream(
     """最小路径:`_on_new_message` 调起后,`subscribe_updates()` 拿到的 stream
     应该能 `__anext__` 到 MessageDTO。"""
     client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-    stream = client.subscribe_updates()
-
-    # 直接调 handler(等价于 aiotdlib receive loop 收到 updateNewMessage)
-    update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=42, text="hello world"))
-    await client._on_new_message(client, update)
-
-    # 200ms 内 stream 应该能拿到
+    # 把 _update_task 置 None,让 aiotdlib.Client.__del__ 跳过 native 析构
+    # (stub 场景下 update_task 永远是 None,但 aiotdlib 父类会照常走析构)
+    client._update_task = None
     try:
-        msg = await asyncio.wait_for(stream.__anext__(), timeout=0.2)
-    except (TimeoutError, StopAsyncIteration) as e:
-        pytest.fail(f"stream 没收到消息: {e!r}")
-    assert msg.channel_id == 100
-    assert msg.telegram_msg_id == 42
-    assert msg.text == "hello world"
+        stream = client.subscribe_updates()
+
+        # 直接调 handler(等价于 aiotdlib receive loop 收到 updateNewMessage)
+        update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=42, text="hello world"))
+        await client._on_new_message(client, update)
+
+        # 200ms 内 stream 应该能拿到
+        try:
+            msg = await asyncio.wait_for(stream.__anext__(), timeout=0.2)
+        except (TimeoutError, StopAsyncIteration) as e:
+            pytest.fail(f"stream 没收到消息: {e!r}")
+        assert msg.channel_id == 100
+        assert msg.telegram_msg_id == 42
+        assert msg.text == "hello world"
+    finally:
+        # 显式清理 — 让 GC 在 atexit 之前释放实例
+        client._streams.clear()
 
 
 @pytest.mark.asyncio
@@ -150,6 +136,7 @@ async def test_monitor_service_publishes_message_received(
     await objects.connect()
 
     client = tdc.TdlibTelegramClient(settings, event_bus=bus)
+    client._update_task = None
     monitor = MonitorService(bus, client, storage, objects, settings)
     monitor.set_whitelist([100])  # 频道 100 在白名单
 
@@ -189,6 +176,10 @@ async def test_monitor_service_publishes_message_received(
     assert captured[0].text == "live update test"
     assert captured[0].channel_id == 100
 
+    # 清理 — 显式清空 streams + 取消 monitor task
+    client._streams.clear()
+    monitor._task = None
+
 
 @pytest.mark.asyncio
 async def test_on_new_message_skips_non_whitelisted_channel(
@@ -204,6 +195,7 @@ async def test_on_new_message_skips_non_whitelisted_channel(
     await objects.connect()
 
     client = tdc.TdlibTelegramClient(settings, event_bus=bus)
+    client._update_task = None
     monitor = MonitorService(bus, client, storage, objects, settings)
     monitor.set_whitelist([100])  # 不含 200
 
@@ -227,3 +219,7 @@ async def test_on_new_message_skips_non_whitelisted_channel(
     await monitor.stop()
 
     assert not received, "非白名单频道不该派发 MessageReceived"
+
+    # 清理
+    client._streams.clear()
+    monitor._task = None
