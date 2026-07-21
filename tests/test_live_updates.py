@@ -19,6 +19,7 @@ aiotdlib 会在 receive loop 收到 packet 时按 update.ID 派发 — 我们直
 from __future__ import annotations
 
 import asyncio
+import gc
 from datetime import UTC, datetime
 
 import pytest
@@ -87,6 +88,26 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def bus() -> EventBus:
     return EventBus()
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_after_test():
+    """测试跑完后强制 gc 一次,确保 TdlibTelegramClient 子类引用的 native
+    aiotdlib 实例在 interpreter shutdown 之前就被释放。否则 Python 退出
+    时 aiotdlib / TDLib 的 native 析构函数会 segfault(aborted 134)。
+
+    3.11/3.13 + Linux 上的 aiotdlib 0.27 有这个 native teardown 问题;
+    stub fixture 不彻底解决,得让对象先于 atexit 被 GC 掉。
+    """
+    yield
+    gc.collect()
+    # 再让一次 aio loop 跑空
+    try:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @pytest.mark.asyncio
