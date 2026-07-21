@@ -44,8 +44,6 @@ _DARK = {
     "active_fg": "#ffffff",
     "inactive_fg": "#b0b5c8",     # WCAG AA 过(对 #1e1e2e)
     "accent": "#7bb4ff",          # 亮色主题感更强
-    "accent_overlay": "rgba(123,180,255,0.18)",
-    "accent_glow": "rgba(123,180,255,0.35)",
 }
 _LIGHT = {
     "active_bg": "#1e1e2e",       # light 模式 nav 底故意保持深色(锚点)
@@ -54,8 +52,6 @@ _LIGHT = {
     "active_fg": "#ffffff",
     "inactive_fg": "#b0b5c8",     # light 主题下也用浅灰(fg 对深底通用)
     "accent": "#5b9cf5",          # 浅色主题标准蓝
-    "accent_overlay": "rgba(91,156,245,0.22)",
-    "accent_glow": "rgba(91,156,245,0.40)",
 }
 
 
@@ -103,6 +99,7 @@ class _NavButton(QWidget):
     def _refresh_style(self) -> None:
         p = _palette()
         # ---- 图标:按状态用 tinted 出来的两套 ----
+        # 用当前主题的明确 fg 注入 SVG(避开 QSvgRenderer 不解析 currentColor 的坑)。
         if self._active:
             icon = tinted_action_icon(self._icon_name, QColor(p["active_fg"]))
         else:
@@ -110,33 +107,41 @@ class _NavButton(QWidget):
         self._ico_label.setPixmap(icon.pixmap(24, 24))
 
         # ---- 背景:active / hover / idle 三态清晰分层 ----
+        # **重要**:除 QSS 外,再用 setAutoFillBackground + QPalette 兜底。
+        # 在某些 Qt 平台(macOS offscreen、Wayland)QSS 的 `background` 在
+        # QWidget 上可能不生效;走 palette 是 Qt 最稳的路径,跟平台无关。
         if self._active:
-            bg = p["active_bg"]
+            bg = QColor(p["active_bg"])
         elif self._hovering:
-            bg = p["hover_bg"]
+            bg = QColor(p["hover_bg"])
         else:
-            bg = p["idle_bg"]
-        fg = p["active_fg"] if self._active else p["inactive_fg"]
+            bg = Qt.transparent
+        fg = QColor(p["active_fg"] if self._active else p["inactive_fg"])
 
-        # active 时:左 accent 条 + 浅蓝渐变叠层 + 微 glow 描边
-        # 否则:左 3px 透明占位(防止 1px 抖动)
-        if self._active:
-            border_left = f"3px solid {p['accent']}"
-            extra = (
-                f"background-image: linear-gradient(90deg, {p['accent_overlay']}, transparent);"
-                f"border-top: 1px solid {p['accent_glow']};"
-                f"border-right: 1px solid {p['accent_glow']};"
-                f"border-bottom: 1px solid {p['accent_glow']};"
-            )
-        else:
-            border_left = "3px solid transparent"
-            extra = ""
+        # ---- Palette:背景色(最稳) ----
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), bg)
+        self.setAutoFillBackground(True)
+        self.setPalette(pal)
 
+        # ---- QSS:仅控左侧 3px accent 条 + 强制 ico_label / txt_label transparent ----
+        # border-left 在 QSS 里的行为比 background 稳,左侧 3px accent 用它。
+        border_left = f"3px solid {p['accent']}" if self._active else "3px solid transparent"
         self.setStyleSheet(
-            f"background:{bg};border-left:{border_left};"
-            f"border-top:none;border-right:none;border-bottom:none;{extra}"
+            f"border-left:{border_left};"
+            f"border-top:0;border-right:0;border-bottom:0;"
         )
-        self._txt_label.setStyleSheet(f"color:{fg};font-size:10px;")
+
+        # ---- label palette + QSS(双保险) ----
+        for lbl in (self._ico_label, self._txt_label):
+            lbl.setAutoFillBackground(False)  # 不要 label 自己填底色
+            lbl_pal = lbl.palette()
+            lbl_pal.setColor(lbl.foregroundRole(), fg)
+            lbl.setPalette(lbl_pal)
+        self._ico_label.setStyleSheet("background: transparent;")
+        self._txt_label.setStyleSheet(
+            f"background: transparent;color:{fg.name()};font-size:10px;"
+        )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         super().mousePressEvent(event)
