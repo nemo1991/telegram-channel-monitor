@@ -24,16 +24,20 @@ jobs:
       # 拉源码 — shallow clone 已够(测试只读 HEAD 状态)
       - uses: actions/checkout@v4
 
-      # Python ${{ matrix.python-version }} — actions/setup-python 是官方 v5,
-      # 直接装到 PATH,后面的 `python -m pip` 走它(无 uv 依赖以减小 surface)
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      # 一站式装 uv + Python + 缓存驱动:`uv sync` 靠 `cache-dependency-glob`
+      # 自动监控 uv.lock 变化,lock 变 → 失效;不走 actions/cache@v4,
+      # 跨平台 cache path 自动(Library/Caches/uv / ~/.cache/uv / %LOCALAPPDATA%\uv)
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
-      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好,跳过;
-      # windows-latest runner 也自带 Qt 运行时依赖,只需装 vcredist 兜底 TDLib native
+      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好;
+      # windows-latest runner 自带 Qt 运行时 + VC++ redist,跳过
+      # libc++-dev 给 aiotdlib 的 bundled TDLib .so 提供 libc++.so.1
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -49,35 +53,18 @@ jobs:
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
-      # Windows 上不需要装额外 system 库:
-      # - windows-latest runner 自带 VC++ redist for Python 3.13 wheels
-      # - aiotdlib 0.27 把 tdjson.dll 直接打进 wheel site-packages/aiotdlib/
-      #   解耦后不再依赖 brew/apt,无需跨平台 native lib 设置
-      # sanity 在 install 之后做(下一组的 pytest 之前),不阻塞此 step。
-
-      # pip 缓存以 pyproject + 锁文件 hash 为 key(锁文件变 → 缓存失效)
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-${{ matrix.python-version }}-
-            ${{ runner.os }}-pip-
-
-      # 装全部依赖 + 测试 + aiotdlib(以保证 import 链通)
+      # uv sync 一次性装:
+      #   - [project.dependencies] (PySide6 / qasync / aiotdlib / pydantic-settings / Jinja2)
+      #   - [project.optional-dependencies] 全部 (postgres/mongo/objectstore)
+      #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
+      # `-q` 关 progress bar,CI 日志干净
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # 装全部依赖 + 测试 + aiotdlib(以保证 import 链通)
-          python -m pip install -e ".[all,postgres,mongo,objectstore]"
-          python -m pip install pytest pytest-asyncio ruff coverage
+        run: uv sync --all-extras --group dev -q
 
-      # 仅 sanity check 入口注册;fake client 缺凭据时启动会卡在 QR,`|| true` 让
-      # CI 不因 fake 模式失败(exit 124 / KeyboardInterrupt 都吞)
+      # 仅 sanity check 入口注册;fake client 缺凭据时启动会卡在 QR,
+      # `|| true` 让 CI 不因 fake 模式失败(exit 124 / KeyboardInterrupt 都吞)
       - name: Verify CLI entry
-        run: |
-          python -m tgmonitor --help || true
+        run: uv run tgmonitor --help || true
         shell: bash
 
       - name: Run pytest
@@ -85,14 +72,14 @@ jobs:
           PYTHONPATH: src
           # 强制 Qt 用 offscreen 后端(无显示器),PySide6 在 CI 必设,否则
           # Linux 上 Qt 会尝试加载 libEGL.so.1 之类系统库;
-          # 单元测试里 test_message_view.py / test_main_window_close.py
-          # 也已 setdefault,但 ENV 在进程启动前定最稳。
+          # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳
           QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
         run: |
-          # -v 看每个 case 名;--tb=short 失败时压栈长度可控;不传 --cov 给默认 pytest
-          # 跑路径(下面 coverage step 单独收集,矩阵设阈门会带来 churn,故只产 artifact)
-          python -m pytest -v --tb=short
+          # -v 看每个 case 名;--tb=short 失败时压栈长度可控;
+          # `uv run` 自动激活 venv(PYTHONPATH 也透传),装好的 editable 项目
+          # 在 .venv 里直接可用,无需 python -m pip install -e 再来一次
+          uv run python -m pytest -v --tb=short
 
       # 再跑一次只为收集 branch coverage + 产 xml 报告(不设阈值门控)
       - name: Run pytest with coverage
@@ -101,10 +88,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
         run: |
-          # 第二次跑只为了收集分支覆盖 + xml 报告(不产覆盖率门控);
-          # coverage 在 pyproject [dependency-groups].dev 已列,装在前面 pip install 步骤
-          python -m coverage run -m pytest -q
-          python -m coverage xml -o coverage.xml
+          # coverage 已经在 --group dev 里装好;`uv run` 注入 PATH
+          uv run coverage run -m pytest -q
+          uv run coverage xml -o coverage.xml
 
       # 以 OS + Python 版本为名,跨矩阵下不互相覆盖;若 coverage.xml
       # 不存在(说明 pytest 失败或根本没装 coverage),warn 不 fail
@@ -120,14 +106,19 @@ jobs:
     name: ruff
     runs-on: ubuntu-latest
     steps:
-      # lint 只跑 ruff,Python 版本 pin 3.13(同 test 矩阵,版本一致)
+      # lint 单独 job:不走 .venv 也行,`uv tool run ruff` 直接拉 ruff 到临时 env
+      # 跑 ruff,免一次完整 uv sync(只装 ruff 即可,~10MB)
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      # 装 ruff 而非走 setup-python 的 pip cache —— lint job 没有 cache step,
-      # 直接 pip install 避免引入额外 cache key 配置
-      - run: python -m pip install ruff
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
       # 0 容忍:任何 E/F/I/B/UP/N/SIM/ASYNC 警告都让本 job 红,见 pyproject.toml
-      # [tool.ruff.lint].select 配置
-      - run: ruff check src tests
+      # [tool.ruff.lint].select 配置。`uv tool run` 临时拉 ruff(~10MB)不污染
+      # 主 venv — lint 不需要 PySide6 等 700MB+ 的大包
+      - name: Run ruff
+        run: uv tool run --from "ruff>=0.5" ruff check src tests
