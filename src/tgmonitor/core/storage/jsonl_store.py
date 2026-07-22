@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +90,7 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         channel_id=int(d["channel_id"]),
         telegram_msg_id=int(d["telegram_msg_id"]),
         author=d.get("author"),
-        date=datetime.fromisoformat(d["date"]) if d.get("date") else datetime.utcnow(),
+        date=datetime.fromisoformat(d["date"]) if d.get("date") else datetime.now(UTC),
         text=d.get("text", ""),
         views=d.get("views"),
         forwards=d.get("forwards"),

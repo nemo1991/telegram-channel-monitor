@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import AsyncIterator, Iterator
 
 import pytest
@@ -129,7 +129,11 @@ class InMemoryRepository(StorageRepository):
             if date_to and m.date > date_to:
                 continue
             out.append(m)
-        out.sort(key=lambda m: (m.date, m.id))
+        # 归一化为 aware UTC 再排序 — 测试 fixture 默认 datetime() 是 naive,
+        # dto.py default_factory / tdlib _map_message 现在是 aware UTC,
+        # 直接 < 比较会 TypeError。生产代码走的是 Postgres/Mongo/JSONL,
+        # 它们各自处理 tzinfo,不在 conftest 范围。
+        out.sort(key=lambda m: (m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC), m.id))
         return out[:limit] if limit else out
 
     async def count_messages(self, channel_id: int) -> int:

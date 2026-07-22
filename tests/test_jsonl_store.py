@@ -1,7 +1,7 @@
 """JsonlFileStore 单测 — 验证文件后端与抽象语义对齐。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
@@ -98,10 +98,10 @@ async def test_delete_message_and_channel(tmp_path: Path):
     await store.connect()
     await store.upsert_channel(ChannelDTO(id=7, title="x"))
     await store.save_message(
-        MessageDTO(id=0, channel_id=7, telegram_msg_id=1, text="a", date=datetime.utcnow())
+        MessageDTO(id=0, channel_id=7, telegram_msg_id=1, text="a", date=datetime.now(UTC))
     )
     await store.save_message(
-        MessageDTO(id=0, channel_id=7, telegram_msg_id=2, text="b", date=datetime.utcnow())
+        MessageDTO(id=0, channel_id=7, telegram_msg_id=2, text="b", date=datetime.now(UTC))
     )
     await store.delete_message(7, 1)
     assert await store.count_messages(7) == 1

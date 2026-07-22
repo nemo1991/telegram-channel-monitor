@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -134,7 +134,7 @@ class MongoRepository(StorageRepository):
             "kind": channel.kind,
             "member_count": channel.member_count,
             "created_at": channel.created_at,
-            "first_seen_at": datetime.utcnow(),
+            "first_seen_at": datetime.now(UTC),
             "subscribed": channel.is_subscribed,
             "last_synced_at": channel.last_synced_at,
         }

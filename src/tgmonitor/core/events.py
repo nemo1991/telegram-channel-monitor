@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, TypeVar
 
 from tgmonitor.core.dto import ChannelDTO, ExportResult, MessageDTO
@@ -27,7 +27,7 @@ T = TypeVar("T", bound="Event")
 class Event:
     """所有领域事件的基类。"""
 
-    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass

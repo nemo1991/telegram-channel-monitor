@@ -130,11 +130,13 @@ class MessageView(QListWidget):
         self._seen.clear()
 
     def _format(self, m: MessageDTO) -> str:
-        # 本地时区 — m.date 是 **naive UTC**(来自 _map_message 的 utcfromtimestamp
-        # 或 dto.py 默认工厂 utcnow),必须先 attach UTC tzinfo 再 astimezone(),
-        # 否则 astimezone() 会把 naive datetime 当成本地时间,不做时区转换。
+        # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂
+        # `datetime.now(UTC)`,或 _map_message 的 `datetime.fromtimestamp(ts, UTC)`)。
+        # 如果 m.date 没 tzinfo(从旧 JSONL 反序列化),fallback attach UTC tzinfo,
+        # 然后 astimezone() 转本地;否则 astimezone() 把 naive 当成本地时间,
+        # 不做时区转换。
         if m.date:
-            dt_utc = m.date.replace(tzinfo=UTC)
+            dt_utc = m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC)
             dt_local = dt_utc.astimezone()
             dt = dt_local.strftime("%H:%M:%S")
         else:

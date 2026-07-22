@@ -7,7 +7,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,7 +117,7 @@ class HtmlExporter(Exporter):
         channels_title = {cid: (ch.title if ch else f"#{cid}") for cid, ch in channels.items()}
         html = self._tmpl.render(
             title="Telegram 频道导出",
-            generated_at=datetime.utcnow().isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
             channel_count=len(channels),
             message_count=len(messages),
             channels=grouped.items(),

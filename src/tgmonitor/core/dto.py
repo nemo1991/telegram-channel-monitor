@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -91,7 +91,7 @@ class MessageDTO:
     channel_id: int                         # FK → channels.id
     telegram_msg_id: int                    # 在该频道内的 message_id
     author: str | None = None
-    date: datetime = field(default_factory=datetime.utcnow)
+    date: datetime = field(default_factory=lambda: datetime.now(UTC))
     text: str = ""
     views: int | None = None
     forwards: int | None = None

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import AsyncIterator
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
@@ -175,7 +175,7 @@ class FakeTelegramClient(TelegramClient):
                 channel_id=channel_id,
                 telegram_msg_id=mid,
                 text=f"history-{channel_id}-{mid}",
-                date=datetime.utcnow(),
+                date=datetime.now(UTC),
             )
             # 让出 loop,模仿真网络
             await asyncio.sleep(0)

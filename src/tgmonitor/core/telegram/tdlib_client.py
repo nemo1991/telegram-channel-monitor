@@ -1354,11 +1354,12 @@ def _handle_call(content: Any) -> str:
 
 
 def _handle_video_chat_scheduled(content: Any) -> str:
+    from datetime import UTC
     from datetime import datetime as _dt
     start = getattr(content, "start_date", 0) or 0
     if not start:
         return "📅 视频通话已安排"
-    return "📅 视频通话已安排 " + _dt.utcfromtimestamp(start).strftime("%Y-%m-%d %H:%M UTC")
+    return "📅 视频通话已安排 " + _dt.fromtimestamp(start, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _handle_gift(content: Any) -> str:
@@ -1463,6 +1464,7 @@ def _map_message(msg: BaseObject) -> MessageDTO:  # type: ignore[name-defined]
     (messageText / messagePhoto / ...) 在 Python 侧是独立类。
     dispatch 用 `type(content).__name__`,见顶部注释。
     """
+    from datetime import UTC
     from datetime import datetime as _dt
 
     chat_id = getattr(msg, "chat_id", 0)
@@ -1482,7 +1484,7 @@ def _map_message(msg: BaseObject) -> MessageDTO:  # type: ignore[name-defined]
         channel_id=chat_id,
         telegram_msg_id=getattr(msg, "id", 0),
         author=getattr(msg, "author_signature", None),
-        date=_dt.utcfromtimestamp(date_ts) if date_ts else _dt.utcnow(),
+        date=_dt.fromtimestamp(date_ts, UTC) if date_ts else _dt.now(UTC),
         text=text_value,
         views=getattr(msg, "views", None),
         forwards=getattr(msg, "forwards", None),

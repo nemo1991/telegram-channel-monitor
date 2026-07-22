@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,7 +33,7 @@ class MarkdownExporter(Exporter):
         lines: list[str] = []
         lines.append("# Telegram 频道导出")
         lines.append("")
-        lines.append(f"- 导出时间: `{datetime.utcnow().isoformat()}Z`")
+        lines.append(f"- 导出时间: `{datetime.now(UTC).isoformat()}`")
         lines.append(f"- 频道数: {len(channels)},消息数: {len(messages)}")
         lines.append("")
 
