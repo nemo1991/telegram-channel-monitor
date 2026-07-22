@@ -38,15 +38,14 @@
 
 1. Fork & clone
 2. 创建分支:`git checkout -b feat/my-feature` 或 `fix/my-bug`
-3. 安装开发环境:
+3. 安装开发环境(uv 一步搞定,跟 CI 一致):
    ```bash
-   pip install -e ".[all,postgres,mongo,objectstore]"
-   pip install pytest pytest-asyncio ruff
+   uv sync --all-extras --group dev
    ```
 4. 跑测试确保基线绿:
    ```bash
-   PYTHONPATH=src pytest
-   ruff check src tests
+   PYTHONPATH=src uv run pytest
+   uv run ruff check src tests
    ```
 
 ### 开发

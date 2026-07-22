@@ -26,7 +26,7 @@
 - `TODO` / `FIXME` / `XXX` / `HACK` 总数: **0**(干净)
 - 单文件行数 > 400 的:`core/telegram/tdlib_client.py` (1401)、
   `core/storage/jsonl_store.py` (428)、`ui/main_window.py` (360,临界)、
-  `ui/widgets/account_widget.py` (432)、`ui/widgets/settings_dialog.py` (362,临界)
+  `ui/widgets/account_widget.py` (432)、`ui/widgets/settings_page.py` (362,临界)
 
 ### 完整读了
 - `src/tgmonitor/ui/icon.py`(图标系统)
@@ -45,7 +45,7 @@
   需要 lifecycle + signal rebinding 设计,留给下一轮
 - `core/channel_sync/service.py:sync_channels` —— 142 行含元数据 / 历史 / 取消 /
   退避 4 个独立维度,需要先写行为测试再拆
-- `ui/widgets/account_widget.py:_build` 118 行 / `settings_dialog.py:_build`
+- `ui/widgets/account_widget.py:_build` 118 行 / `settings_page.py:_build`
   108 行 —— Qt 样板多,但 ROI 低,等抽出 `FormRow` helper 后再说
 
 ---
@@ -135,7 +135,7 @@ CI 上无追溯。
 - `ui/main_window.py:_build_ui` 57 行
 - `ui/main_window.py:_on_sync_requested` 50 行 —— 包含 dialog 启停 / progress
   信号管理,逻辑可以但视觉上粘
-- `ui/widgets/account_widget.py:_build` 118 行 / `settings_dialog.py:_build`
+- `ui/widgets/account_widget.py:_build` 118 行 / `settings_page.py:_build`
   108 行 —— Qt 样板多,先抽 `FormRow` helper 再拆
 - `ui/main_window.py:closeEvent` 63 行 —— 见方法论"故意不碰"
 

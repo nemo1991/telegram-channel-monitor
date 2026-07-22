@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+### 📝 Docs
+- **docs: README / CONTRIBUTING / SECURITY 全切 uv 工作流** — pip 路径
+  示例全部替换为 `uv sync` / `uv run`,跟 CI 一致;README「测试覆盖」
+  表按 `pytest --collect-only` 实际跑出的 151 用例补全(从老的 4 行 +
+  错的 20 用例 → 17 行 + 正确 151);SECURITY.md 受支持版本 `0.1.x` → `0.2.x`;
+  REVIEW.md 和 `settings_page.py` docstring 残留的 `settings_dialog.py`
+  文件名引用改回新名(`settings_page.py`)。
+- **chore: batched quick wins** — `datetime.utcnow()` / `utcfromtimestamp()`
+  全切 aware UTC(`datetime.now(UTC)` / `fromtimestamp(ts, UTC)`),11 处
+  调用点 + `tests/conftest.py` 修一个 latent 排序 bug;CI actions 升 major
+  (`actions/checkout@v4`→`v5`、`astral-sh/setup-uv@v6`→`v7`)避开 Node 20
+  deprecation;`pyproject.toml` 版本 `0.1.0` → `0.2.0` 跟 README / SECURITY
+  对齐。
+
 ### 🛠 Changed
 - **CI matrix 移除 `windows-latest`** — upstream `aiotdlib 0.27.x` 在 PyPI 上不发
   Windows wheel(只 `macosx_*` + `manylinux_2_28_*` 四个),`uv sync` 在 Windows 上

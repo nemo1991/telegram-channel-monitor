@@ -6,8 +6,8 @@
 
 | 版本 | 支持 |
 |---|---|
-| 0.1.x | ✅ |
-| < 0.1 | ❌ |
+| 0.2.x | ✅ |
+| < 0.2 | ❌ |
 
 ## ⚠️ 重要提示:本应用处理敏感凭据
 
@@ -63,10 +63,11 @@
 
 ## 📜 依赖安全
 
-CI 使用 `pip` 默认源。如需审计:
+CI 通过 `uv` 锁 `uv.lock`(`requires-python = "~=3.13.0"`),自动解析
+PyPI 默认源。如需审计:
 
 ```bash
-pip install pip-audit
+uv tool install pip-audit
 pip-audit
 ```
 

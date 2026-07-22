@@ -1,6 +1,6 @@
 """SettingsPage — 整页设置(不再是模态对话框)。
 
-囊括 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
+囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
 以 QScrollArea 内分组排列,底部固定「保存到 .env」+「保存并应用」按钮。
 
 分组:

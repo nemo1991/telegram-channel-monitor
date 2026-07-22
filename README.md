@@ -66,31 +66,33 @@ git clone https://github.com/forcetone/tgmonitor.git
 cd tgmonitor
 ```
 
-使用 [uv](https://github.com/astral-sh/uv)(推荐):
+使用 [uv](https://github.com/astral-sh/uv)(推荐,跟 CI 一致):
 
 ```bash
 uv sync --all-extras
 ```
 
-或使用 pip:
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[all]"
-```
+> **为什么 uv?** 单二进制 / lockfile 跟 CI 同步 / 装 `--all-extras` 一行搞定
+> / `uv run` 自动激活 venv。Windows 路径已从 CI 撤掉(见 [Platform Support](#-platform-support)),
+> 但本地用 uv 是所有平台的统一方式。
 
 ### 选择性安装(按需)
 
+`uv sync` 默认装 `tgmonitor[all]`(postgres + mongo + objectstore 全装)。要更轻量,
+用 `--extra` 选:
+
 ```bash
-# 只用 PostgreSQL + S3
-pip install -e ".[postgres,objectstore]"
+# 只装 PostgreSQL + S3
+uv sync --extra postgres --extra objectstore
 
-# 只用 MongoDB + S3
-pip install -e ".[mongo,objectstore]"
+# 只装 MongoDB + S3
+uv sync --extra mongo --extra objectstore
 
-# 只要核心(默认 Postgres + Local 存储)
-pip install -e .
+# 只要核心(默认 Postgres + Local 存储,无 optional dep)
+uv sync
 ```
+
+> `[project.optional-dependencies]` 完整列表见 [pyproject.toml](pyproject.toml)。
 
 ---
 
@@ -260,31 +262,42 @@ CI 一致,排查问题也走同一条路径。
 ## 🧪 测试
 
 ```bash
-# 全部测试(20 个,全离线,无需 Telegram/DB/S3)
-PYTHONPATH=src python3 -m pytest
-
-# 详细
-PYTHONPATH=src python3 -m pytest -v
+# 全部测试(151 个,全离线,无需 Telegram/DB/S3)
+PYTHONPATH=src uv run pytest -v
 
 # 某个文件
-PYTHONPATH=src python3 -m pytest tests/test_exporters.py
+PYTHONPATH=src uv run pytest tests/test_exporters.py
 
 # Lint
-ruff check src tests
+uv tool run --from "ruff>=0.5" ruff check src tests
 
 # Coverage(xml 上传到 CI artifact)
-python -m coverage run -m pytest -q
-python -m coverage report
+PYTHONPATH=src uv run coverage run -m pytest -q
+PYTHONPATH=src uv run coverage report
 ```
 
-测试覆盖:
+测试覆盖(`pytest --collect-only -q` 实际跑出来,2026-07-22):
 
 | 文件 | 范围 | 用例数 |
 |---|---|---|
-| `tests/test_storage.py` | InMemoryRepository 查询/去重/级联删除 | 5 |
+| `tests/test_app_run.py` | qasync `loop.run_forever` 模式 | 4 |
+| `tests/test_channel_sync.py` | 多选全量同步 + resume | 14 |
+| `tests/test_exporters.py` | JSON / CSV / Markdown / HTML 快照 + 注册表 | 6 |
+| `tests/test_folder_store.py` | FolderObjectStore 两级分片 | 5 |
+| `tests/test_jsonl_store.py` | JsonlFileStore 文件后端语义 | 5 |
+| `tests/test_live_updates.py` | 实时更新 dispatch + 去重 | 3 |
+| `tests/test_main_window_channels.py` | ChannelWidget VM bootstrap | 5 |
+| `tests/test_main_window_close.py` | close 流程 / shutdown callback / qasync 跨 loop | 7 |
+| `tests/test_map_message.py` | TDLib UpdateNewMessage → DTO 映射 22 种 content 类型 | 22 |
+| `tests/test_message_view.py` | MessageView 时区/去重/dedup bg | 11 |
+| `tests/test_monitor_and_app.py` | Monitor 去重/事件/AppService 登录/订阅 | 5 |
 | `tests/test_objectstore.py` | LocalObjectStore CRUD + 越界防御 | 5 |
-| `tests/test_exporters.py` | 4 格式快照 + 缩略图内嵌 + 注册表 | 6 |
-| `tests/test_monitor_and_app.py` | Monitor 去重/事件/AppService 登录/订阅 | 4 |
+| `tests/test_proxy.py` | `parse_socks5_proxy` + `validate_proxy_url` | 27 |
+| `tests/test_reconfigure.py` | 运行时设置热重载 | 4 |
+| `tests/test_settings_store.py` | .env atomic read/write | 5 |
+| `tests/test_storage.py` | InMemoryRepository 查询/去重/级联删除 | 5 |
+| `tests/test_telegram_lifecycle.py` | TDLib 状态机 + aiotdlib bridge | 18 |
+| **合计** | | **151** |
 
 ### 🤖 CI (GitHub Actions)
 
@@ -306,7 +319,7 @@ CI 跑无凭据:不读 `TG_API_ID` / `TG_API_HASH` / `TG_PHONE`,所有 Telegram
 
 ```bash
 # 与 CI 等价(本地装了 PySide6 / libEGL 后)
-PYTHONPATH=src QT_QPA_PLATFORM=offscreen pytest -v --tb=short
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest -v --tb=short
 ```
 
 ---
@@ -314,12 +327,11 @@ PYTHONPATH=src QT_QPA_PLATFORM=offscreen pytest -v --tb=short
 ## 🛠️ 开发
 
 ```bash
-# 装开发依赖
-pip install -e ".[all]"
-pip install pytest pytest-asyncio ruff
+# 装所有 dev 依赖(pytest / pytest-asyncio / ruff / coverage)
+uv sync --all-extras --group dev
 
-# 装 pre-commit(可选)
-pip install pre-commit
+# 装 pre-commit(可选,uv tool 全局隔离)
+uv tool install pre-commit
 pre-commit install
 ```
 
