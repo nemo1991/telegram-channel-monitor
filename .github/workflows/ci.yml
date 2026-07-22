@@ -27,7 +27,7 @@ jobs:
 
     steps:
       # 拉源码 — shallow clone 已够(测试只读 HEAD 状态)
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # 一站式装 uv + Python + 缓存驱动:`uv sync` 靠 `cache-dependency-glob`
       # 自动监控 uv.lock 变化,lock 变 → 失效;不走 actions/cache@v4,
@@ -112,7 +112,7 @@ jobs:
     steps:
       # lint 单独 job:不走 .venv 也行,`uv tool run ruff` 直接拉 ruff 到临时 env
       # 跑 ruff,免一次完整 uv sync(只装 ruff 即可,~10MB)
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
