@@ -72,12 +72,6 @@ class TelegramClient(Protocol):
         ...
 
     # ---- 消息流 ----
-    async def iter_messages(
-        self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
-    ) -> AsyncIterator[MessageDTO]:
-        """历史回放(若需)。"""
-        ...
-
     def iter_chat_history(
         self, channel_id: int, *, from_msg_id: int = 0, limit: int = 100
     ) -> AsyncIterator[MessageDTO]:
@@ -85,6 +79,17 @@ class TelegramClient(Protocol):
 
         from_msg_id=0 表示"最新 N 条",>0 表示"从 from_msg_id 之后正向拉"。
         返回的迭代器分页自动推进,直到消息耗尽(返回 <limit 条时结束)。
+        """
+        ...
+
+    # ---- 媒体下载 ----
+    async def download_file(self, file_id: str) -> bytes | None:
+        """下载 TDLib 文件原 bytes;失败 / 超时返 None,**不抛**。
+
+        实现约定(给 MediaDownloader 用的契约):
+          - 两步:异步 `DownloadFile` 触发 + `GetFile` 轮询到 `is_downloading_completed`。
+          - 失败(网络 / 权限 / 30 min hard cap)→ 返 None,monitor 循环继续。
+          - 真拿到 bytes 才返非 None bytes。
         """
         ...
 

@@ -53,6 +53,8 @@ class FakeTelegramClient(TelegramClient):
         self._history_state: dict[int, tuple[int, int]] = {}
         self._metadata_override: dict[int, ChannelDTO] = {}
         self._raise_after_n: int | None = None
+        # 媒体下载测试 hooks(REVIEW M2.1 接入)
+        self._downloads: dict[str, bytes | None] = {}
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
@@ -128,6 +130,17 @@ class FakeTelegramClient(TelegramClient):
         return ChannelDTO(id=channel_id, title=f"#{channel_id}")
 
     # ---- 消息流 ----
+    async def download_file(self, file_id: str) -> bytes | None:
+        """Fake 下载:返回 `set_download(file_id, ...)` 注入的 bytes。
+
+        - set_download(file_id, bytes):返这些 bytes(模拟成功)。
+        - set_download(file_id, None):返 None(模拟下载失败)。
+        - 都没注入过 → KeyError → 走 `self._downloads.get(file_id)` 默认 None。
+        - `await asyncio.sleep(0)` 让出 loop,模仿真网络 round-trip。
+        """
+        await asyncio.sleep(0)
+        return self._downloads.get(file_id)
+
     async def iter_messages(
         self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
     ) -> AsyncIterator[MessageDTO]:
@@ -199,6 +212,10 @@ class FakeTelegramClient(TelegramClient):
     def set_metadata(self, channel: ChannelDTO) -> None:
         """注入"get_channel_metadata 返回这个"。"""
         self._metadata_override[channel.id] = channel
+
+    def set_download(self, file_id: str, data: bytes | None) -> None:
+        """注入"download_file(file_id) 返回 data";data=None 模拟失败。"""
+        self._downloads[file_id] = data
 
     def inject_rate_limit_after(self, n: int) -> None:
         """iter_chat_history 第 n+1 条 yield 前抛 TelegramRateLimitError(60s)。"""

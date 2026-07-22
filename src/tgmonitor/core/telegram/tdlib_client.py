@@ -24,11 +24,13 @@ try:
         BaseObject,
         CheckAuthenticationCode,
         CheckAuthenticationPassword,
+        DownloadFile,
         GetAuthorizationState,
         GetBasicGroup,
         GetChat,
         GetChatHistory,
         GetChats,
+        GetFile,
         GetSupergroup,
         JoinChat,
         LogOut,
@@ -1071,6 +1073,70 @@ class TdlibTelegramClient(_AiClient):
         if False:  # pragma: no cover
             yield None  # type: ignore[misc]
         return
+
+    # ---- 媒体下载(REVIEW M2.1 — 真实现) ----
+
+    async def download_file(self, file_id: str) -> bytes | None:
+        """两步下载原文件 bytes;失败 / 超时返 None,**不抛**(让 monitor 循环继续)。
+
+        步骤:
+          1) DownloadFile(synchronous=False) 触发后台下载(priority=1, 不等)。
+          2) GetFile 轮询直到 `local.is_downloading_completed`;读 `local.path`。
+          3) 边界:
+             - 入口 _check_alive():close 中 throw ClientClosingError(已有)。
+             - 30 min hard cap:超过 → 返 None + WARNING。
+             - GetFile 返 None / path 缺失 → 返 None + WARNING。
+        """
+        import asyncio as _aio
+        import time as _t
+        from pathlib import Path as _Path
+
+        self._check_alive()
+        # 1) 触发后台下载(不等 — DownloadFile synchronous=False)
+        try:
+            await self.request(
+                DownloadFile(file_id=file_id, priority=1, synchronous=False)
+            )
+        except ClientClosingError:
+            raise  # 让 close() 路径正常 throw,monitor loop 兜底
+        except Exception as e:  # noqa: BLE001
+            log.warning("DownloadFile(%s) failed: %s", file_id, e)
+            return None
+
+        # 2) 轮询直到 complete 或 hard cap
+        deadline = _t.monotonic() + 1800.0  # 30 min
+        while _t.monotonic() < deadline:
+            self._check_alive()
+            try:
+                f = await self.request(GetFile(file_id=file_id))
+            except ClientClosingError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.warning("GetFile(%s) failed: %s", file_id, e)
+                return None
+            if f is None:
+                log.warning("GetFile(%s) returned None", file_id)
+                return None
+            local = getattr(f, "local", None)
+            if local is None:
+                log.warning("GetFile(%s).local is None", file_id)
+                return None
+            if getattr(local, "is_downloading_completed", False):
+                path = getattr(local, "path", None)
+                if not path:
+                    log.warning("GetFile(%s).local.path missing on complete", file_id)
+                    return None
+                try:
+                    # Path.read_bytes 是 sync IO;asyncio.to_thread 把
+                    # 它 off-loop 跑,免得在 qasync / uvloop loop 上 block。
+                    return await _aio.to_thread(_Path(path).read_bytes)
+                except OSError as e:
+                    log.warning("read_bytes(%s) failed: %s", path, e)
+                    return None
+            await _aio.sleep(0.5)
+
+        log.warning("download_file(%s) timed out after 30 min", file_id)
+        return None
 
     def subscribe_updates(self) -> UpdateStream:
         s = _AiotdlibUpdateStream()
