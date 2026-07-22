@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### 🛠 Changed
+- **CI matrix 移除 `windows-latest`** — upstream `aiotdlib 0.27.x` 在 PyPI 上不发
+  Windows wheel(只 `macosx_*` + `manylinux_2_28_*` 四个),`uv sync` 在 Windows 上
+  会触发 TDLib sdist 编译,需 MSVC + OpenSSL + gperf + PHP,`windows-latest` runner
+  默认不带这套工具链,每次必失败。源码层跨平台(全 `pathlib` / 无 POSIX-only 假设),
+  但 CI 不再验证 Windows,跟实际能力对齐。README 新增「🖥️ Platform Support」
+  章节,说明 Linux / macOS 由 CI 验证,Windows 推荐用 WSL2,原生编译需自备
+  MSVC 工具链。
+
 ### 🔧 Fixed (post-Phase-5 UI polish, 2026-07-21)
 - **左侧 nav icon 显示不全** — `icon.py` 加 `tinted_action_icon(name, color)`,在 SVG 字节层
   把 `currentColor` 替换为 `QColor.name()`(Qt `QSvgRenderer` 不解析 `currentColor`,

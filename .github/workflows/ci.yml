@@ -18,7 +18,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # windows-latest 不在 matrix — upstream aiotdlib 0.27.x 不发布
+        # Windows wheel,uv sync 在 Windows 会触发 TDLib sdist 编译,
+        # 需 MSVC + OpenSSL + gperf + PHP,windows-latest runner 没装,
+        # 必失败。源码层跨平台(全 pathlib / 无 POSIX-only 假设),但
+        # 不在 CI 验证 — 见 README"Platform Support"
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       # 拉源码 — shallow clone 已够(测试只读 HEAD 状态)
@@ -35,8 +40,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
-      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好;
-      # windows-latest runner 自带 Qt 运行时 + VC++ redist,跳过
+      # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好。
       # libc++-dev 给 aiotdlib 的 bundled TDLib .so 提供 libc++.so.1
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'

@@ -59,7 +59,7 @@
 
 ## 📦 安装
 
-需要 **Python 3.13**(代码锁定该版本,跨平台 wheel 由 GitHub Actions 矩阵验证 Ubuntu / macOS / Windows)。
+需要 **Python 3.13**(代码锁定该版本,跨平台 wheel 由 GitHub Actions 矩阵验证 **Ubuntu / macOS**;Windows 源码层可跑但 aiotdlib 上游无 Windows wheel,见 [🖥️ Platform Support](#-platform-support))。
 
 ```bash
 git clone https://github.com/forcetone/tgmonitor.git
@@ -175,6 +175,74 @@ python -m tgmonitor
 
 ---
 
+## 🖥️ Platform Support
+
+| 平台 | 状态 | 安装方式 |
+|---|---|---|
+| **Linux**(Ubuntu 22.04+,Debian 12+,Fedora 39+ 等) | ✅ CI 验证 | `uv sync --all-extras` |
+| **macOS**(12+,Intel + Apple Silicon) | ✅ CI 验证 | `uv sync --all-extras` |
+| **Windows 11 + WSL2** | ✅ 推荐 Windows 路径 | 装 WSL2 + Ubuntu,在 Ubuntu 里 `uv sync --all-extras` |
+| **Windows 原生**(10 / 11) | ⚠️ **不在 CI 矩阵** — 源码可跑,但需本地编译 TDLib | 见下方「[Windows 原生编译](#windows-原生编译)」 |
+
+### 为什么 Windows 不在 CI 矩阵?
+
+依赖 `aiotdlib==0.27.*`,它在 PyPI 上只发
+`macosx_10_9_x86_64` / `macosx_11_0_arm64` / `manylinux_2_28_aarch64` /
+`manylinux_2_28_x86_64` 四个 wheel,**不发 Windows wheel**。`uv sync` 在
+Windows 上会回落到 sdist 编译,触发 TDLib 的 CMake 构建 — 需要
+**MSVC + OpenSSL + gperf + PHP CLI**,这四样不在 `windows-latest` runner
+的默认镜像里,要装齐得花 5-10 分钟,且每次 runner 镜像季度更新都得手动复核。
+
+权衡后选了「源码跨平台 + CI 不验 Windows」,而不是「CI 装全套 MSVC 工具链」:
+
+- 装好全套工具链 ≈ 8-16h 工程 + 每 PR 多 ~15 分钟
+- 测试覆盖本身很小(主要是 stdlib + asyncio + Qt offscreen),Windows-only
+  失败极少,CI 加 Windows 边际收益低
+- 真出 Windows 问题,issue 反馈比 CI 反馈更快
+
+**revisit 触发条件**:upstream aiotdlib 发 Windows wheel,或 issue 累计 ≥3 个
+Windows 安装问题。
+
+### Windows 原生编译
+
+需要:
+
+1. **Python 3.13** — 从 <https://www.python.org/downloads/windows/> 下 Windows
+   installer(64-bit),**不要用 Microsoft Store 版**(PATH 有坑)
+2. **Visual Studio Build Tools 2022**(免费) — <https://visualstudio.microsoft.com/downloads/>,
+   选「**Desktop development with C++**」workload,提供 MSVC + Windows SDK + CMake
+3. **OpenSSL v3.x** — 从 <https://slproweb.com/products/Win32OpenSSL.html> 下预编译版
+4. **gperf** — <https://gnuwin32.sourceforge.net/packages/gperf.htm>
+5. **PHP CLI** — <https://windows.php.net/download/>(TDLib 生成 `td_api.h` 用)
+6. **uv** — `winget install astral-sh.uv` 或 `pip install uv`
+
+```powershell
+git clone https://github.com/forcetone/tgmonitor.git
+cd tgmonitor
+uv sync --all-extras
+uv run python -m tgmonitor
+```
+
+首次 `uv sync` 会花 ~10 分钟编译 TDLib;之后增量编译,uv 会缓存。
+
+### Windows + WSL2(推荐)
+
+Windows 11 用户装 WSL2,体验跟 Linux 完全一致:
+
+```powershell
+wsl --install -d Ubuntu-24.04   # 一次性,需要重启
+# 在 Ubuntu 终端里:
+git clone https://github.com/forcetone/tgmonitor.git
+cd tgmonitor
+uv sync --all-extras
+uv run python -m tgmonitor   # GUI 走 WSLg
+```
+
+`aiotdlib` 的 manylinux wheel 直接装,30 秒搞定。代理 / 路径 / shell 行为跟
+CI 一致,排查问题也走同一条路径。
+
+---
+
 ## 📤 导出
 
 工具栏 → **导出…**,选择:
@@ -222,7 +290,7 @@ python -m coverage report
 
 每次 push / PR 都会触发两道 job(见 `.github/workflows/ci.yml`):
 
-- **`test` 矩阵** — Ubuntu + macOS + Windows × Python 3.13(3 个 OS,Python 锁单版本)
+- **`test` 矩阵** — Ubuntu + macOS × Python 3.13(2 个 OS,Python 锁单版本;Windows 不在矩阵,见 [🖥️ Platform Support](#-platform-support))
   - 装 Qt offscreen 系统库(`libegl1` 等)+ `QT_QPA_PLATFORM=offscreen`,
     Linux runner 上 PySide6 才不崩在 `libEGL.so.1`
   - 跑 `pytest -v --tb=short`
