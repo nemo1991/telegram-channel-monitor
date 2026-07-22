@@ -99,7 +99,7 @@ jobs:
       # 以 OS + Python 版本为名,跨矩阵下不互相覆盖;若 coverage.xml
       # 不存在(说明 pytest 失败或根本没装 coverage),warn 不 fail
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           # 以 OS + Python 版本为名,跨矩阵下不互相覆盖
           name: coverage-${{ matrix.os }}-${{ matrix.python-version }}

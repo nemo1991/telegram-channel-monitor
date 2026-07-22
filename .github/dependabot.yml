@@ -1,0 +1,41 @@
+# Dependabot — 周一周扫依赖更新。
+#
+# uv ecosystem(2024-Q4 加入 GitHub)替代了 pip-compile,
+# 直接读 uv.lock 生成 PR,质量比 pip 生态好。
+# 不自动合并 — Quality + breaking 改动人工 review。
+#
+# 注意:`uv.lock` 不在这次列的 ecosystem 里,但 uv ecosystem
+# 默认就会跟踪 `pyproject.toml` + `uv.lock`;若以后 uv 加了
+# 单独的 lockfile ecosystem,再切换。
+
+version: 2
+
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+    # 默认 open-pull-requests-limit: 5 已够,不显式列
+    # groups: 不分组 — 单包升级一个 PR,review 粒度细
+
+  # GitHub Actions 周扫,跟 uv 解耦。
+  # 不然 setup-uv / checkout 又会落后 major。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "Asia/Shanghai"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "ci"

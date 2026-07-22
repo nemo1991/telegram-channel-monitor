@@ -7,6 +7,19 @@
 
 ## [Unreleased]
 
+### 🔧 Fixed
+- **test: 加 `tests/__init__.py`** — 把 `tests/` 标成 Python package,
+  修 `from tests.conftest import …` 风格的 fragility;`pytest` binary 入口
+  和 IDE 单文件跑现在都能正常 collect(此前 151 测试只在 `python -m pytest`
+  下能跑)。
+- **ci: `actions/upload-artifact@v4` → `@v5`** — 顺手把上次 major 升级漏掉的
+  action 也升了,Node 20 deprecation 警告全清。
+- **ci: 加 `.github/dependabot.yml`** — uv ecosystem 周一 09:00 扫 `uv.lock`
+  开自动 PR;GitHub Actions ecosystem 周一 09:30 扫 workflow 升级。
+  不自动合,人工 review。
+- **ci: 加 `.github/workflows/audit.yml`** — 周一 09:30 UTC 跑 `pip-audit --strict`,
+  基于 `uv.lock` 扫 CVE,不挡主 CI,失败即通知。
+
 ### 📝 Docs
 - **docs: README / CONTRIBUTING / SECURITY 全切 uv 工作流** — pip 路径
   示例全部替换为 `uv sync` / `uv run`,跟 CI 一致;README「测试覆盖」

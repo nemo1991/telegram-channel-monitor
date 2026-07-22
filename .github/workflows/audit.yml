@@ -1,0 +1,38 @@
+# Supply-chain audit — 周一跑一次 pip-audit(基于 uv.lock)。
+#
+# 时机:在 Dependabot(09:00)开 PR 之后跑(09:30 UTC = 17:30 Asia/Shanghai,
+# 留 8h 给 Dependabot 处理),作为 baseline。
+# --strict:任何 CVE 都 fail;漏洞发现即在 GitHub 通知,人工评估后再发 fix。
+#
+# 不挡主 CI(`test` / `lint`):单独 cron workflow。
+
+name: supply-chain audit
+
+on:
+  schedule:
+    # 周一 09:30 UTC(17:30 Asia/Shanghai)
+    - cron: "30 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install pip-audit (uv-managed tool)
+        run: uv tool install pip-audit
+
+      # pip-audit 1.0+ 原生支持 PEP 751 / uv.lock(2024-Q4)
+      # 直接传 lockfile 路径就行,无需先导出 requirements.txt
+      - name: Audit uv.lock
+        run: pip-audit --strict
