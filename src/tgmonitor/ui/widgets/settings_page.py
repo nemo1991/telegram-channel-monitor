@@ -253,6 +253,16 @@ class SettingsPage(QWidget):
             self.cmb_media.addItem(p.value, p)
         f.addRow("媒体下载:", self.cmb_media)
 
+        self.in_media_max = QSpinBox()
+        self.in_media_max.setRange(0, 10240)  # 0 = 无限制,10 GB 上限
+        self.in_media_max.setSuffix(" MB")
+        self.in_media_max.setSingleStep(10)
+        # 工具提示说明 0 的含义
+        self.in_media_max.setToolTip(
+            "单文件下载上限。0 = 无限制(慎用,可能下载 GB 级视频把磁盘占满)。"
+        )
+        f.addRow("单文件大小上限:", self.in_media_max)
+
         self.in_data_root = QLineEdit()
         self.in_data_root.setPlaceholderText("./data")
         data_root_row = QHBoxLayout()
@@ -364,6 +374,7 @@ class SettingsPage(QWidget):
             objectstore_secret_key=self.in_os_secret_key.text().strip(),
             objectstore_bucket=self.in_os_bucket.text().strip() or "tgmonitor",
             media_policy=self.cmb_media.currentData().value,
+            media_max_mb=self.in_media_max.value(),
             data_root=self.in_data_root.text().strip() or "./data",
             proxy=self.in_proxy.text().strip(),
             sync_chat_delay_ms=self.in_chat_delay.value(),
@@ -400,6 +411,7 @@ class SettingsPage(QWidget):
         idx = self.cmb_media.findData(s.media_policy)
         if idx >= 0:
             self.cmb_media.setCurrentIndex(idx)
+        self.in_media_max.setValue(s.media_max_bytes // (1024 * 1024))
         self.in_data_root.setText(str(s.data_root))
 
         self.in_chat_delay.setValue(s.sync_chat_delay_ms)

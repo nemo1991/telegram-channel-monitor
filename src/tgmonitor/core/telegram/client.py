@@ -44,9 +44,6 @@ class TelegramClient(Protocol):
         """关停 aiotdlib 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
         ...
 
-    # 旧式 — 留给兼容层;新代码用 submit_phone + submit_code。
-    async def login(self, phone: str) -> str: ...
-
     @property
     def state(self) -> str: ...
 

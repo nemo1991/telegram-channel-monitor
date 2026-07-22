@@ -7,7 +7,39 @@
 
 ## [Unreleased]
 
-### 🔧 Fixed
+### ✨ Added
+- **`TelegramClient.download_file` Protocol + TDLib 真实现 + Fake 双胞胎**
+  (2026-07-22,commit `d6247b1`)。两步:`DownloadFile(synchronous=False)`
+  触发后台下载 + `GetFile` 轮询到 `local.is_downloading_completed` 读 bytes;
+  失败 / 30 min hard cap → 返 None 不抛,monitor loop 继续。`Path.read_bytes`
+  用 `asyncio.to_thread` off-loop 跑,免 block qasync / uvloop loop
+  (ruff ASYNC240 修)。
+- **`MediaDownloader.download_one` 真实现 + wire `MonitorService._handle`
+  FULL 分支**(commit `29ed08d`)。`media.telegram_file_id` 拉原文件 →
+  `objects.put` → `dataclasses.replace` 返新 MediaDTO(`object_key` /
+  `object_backend` / `file_size` 已填);`MonitorService` 加可选 `downloader`
+  字段,FULL 模式现在**实际下得到原文件**,之前是 metadata + thumb + 空 key。
+- **`Settings.media_max_bytes`** — 单文件下载上限,默认 200 MB,0 = 无限制。
+  UI `SettingsPage` 加 `QSpinBox`(MB 显示,0-10240 MB);`.env` 字段
+  `TG_MEDIA_MAX_BYTES`(bytes)。pydantic 校验 `ge=0`。`EditableSettings`
+  用 `media_max_mb: int`(UI 友好)+ `settings_to_pairs` 写 bytes。
+- **测试** — `tests/test_media_downloader.py` 9 个新用例覆盖:成功路径、
+  file_id 缺失、known-size 拦截、`max_bytes=0` 无限制、download 失败、
+  unknown-size hard cap、make_key 稳定性、ObjectMeta size 透传。
+
+### 🔧 Changed
+- **删 `iter_messages` Protocol + tdlib_client stub + fake_client impl** —
+  grep 0 caller,纯冗余;tdlib 真正的历史接口是 `iter_chat_history`
+  (`ChannelSyncService` 在用)。
+- **删 `login(phone)` Protocol 方法** — 旧版鉴权入口,新代码走
+  `submit_phone` + `submit_code`;`FakeTelegramClient.login` 仍保留作
+  内部转发(`submit_phone` proxy)。
+
+### 🐛 Fixed
+- **REVIEW M2.1**:FULL 模式下用户之前**下不到任何原文件** — `MediaDownloader.download_one`
+  永远返 None,只是元数据 + 缩略图 + 一个空 key。现在真实现,完整下载链路打通。
+
+### 🔧 Fixed (Stage A+B, 2026-07-22)
 - **test: 加 `tests/__init__.py`** — 把 `tests/` 标成 Python package,
   修 `from tests.conftest import …` 风格的 fragility;`pytest` binary 入口
   和 IDE 单文件跑现在都能正常 collect(此前 151 测试只在 `python -m pytest`

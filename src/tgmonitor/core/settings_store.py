@@ -101,6 +101,7 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_OBJECTSTORE_SECRET_KEY": s.objectstore_secret_key or "",
         "TG_OBJECTSTORE_BUCKET": s.objectstore_bucket,
         "TG_MEDIA_POLICY": s.media_policy.value,
+        "TG_MEDIA_MAX_BYTES": str(s.media_max_bytes),
         "TG_DATA_ROOT": str(s.data_root),
         "TG_SYNC_CHAT_DELAY_MS": str(s.sync_chat_delay_ms),
         "TG_SYNC_PAGE_DELAY_MS": str(s.sync_page_delay_ms),
@@ -142,6 +143,9 @@ class EditableSettings:
     objectstore_bucket: str = "tgmonitor"
 
     media_policy: str = "thumbnail"
+    # 单文件下载上限(MB);0 = 无限制。Settings 里是 bytes,
+    # 这里是 MB(UI 显示友好)。
+    media_max_mb: int = 200
     data_root: str = "./data"
 
     # 可选代理 URL(目前只支持 socks5://)
@@ -170,6 +174,9 @@ class EditableSettings:
             objectstore_secret_key=s.objectstore_secret_key or "",
             objectstore_bucket=s.objectstore_bucket,
             media_policy=s.media_policy.value,
+            # Settings 里是 bytes,UI 显示 MB。整除:999_999 bytes 显示 0 MB
+            # 不够精细,但跟"无配置 = 200 MB"对齐;用户改 MB 后 × 1024*1024。
+            media_max_mb=s.media_max_bytes // (1024 * 1024),
             data_root=str(s.data_root),
             proxy=s.proxy or "",
             sync_chat_delay_ms=s.sync_chat_delay_ms,
@@ -191,6 +198,8 @@ class EditableSettings:
             errs.append(f"TG_OBJECTSTORE_BACKEND 非法: {self.objectstore_backend}")
         if self.media_policy not in {p.value for p in MediaPolicy}:
             errs.append(f"TG_MEDIA_POLICY 非法: {self.media_policy}")
+        if self.media_max_mb < 0:
+            errs.append("TG_MEDIA_MAX_BYTES(MB) 不能为负;0 表示无限制")
         if self.sync_chat_delay_ms < 50 or self.sync_chat_delay_ms > 60000:
             errs.append("TG_SYNC_CHAT_DELAY_MS 应在 50-60000")
         if self.sync_page_delay_ms < 100 or self.sync_page_delay_ms > 60000:
@@ -217,6 +226,7 @@ class EditableSettings:
             objectstore_secret_key=self.objectstore_secret_key or None,
             objectstore_bucket=self.objectstore_backend == "s3" and self.objectstore_bucket or self.objectstore_bucket,
             media_policy=MediaPolicy(self.media_policy),
+            media_max_bytes=self.media_max_mb * 1024 * 1024,
             data_root=Path(self.data_root),
             proxy=(self.proxy.strip() or None),
             sync_chat_delay_ms=self.sync_chat_delay_ms,

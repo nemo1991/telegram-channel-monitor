@@ -1065,15 +1065,6 @@ class TdlibTelegramClient(_AiClient):
         await self.send(JoinChat(chat_id=resp.id))
         return ChannelDTO(id=resp.id, title=resp.title, username=resp.username or None)
 
-    # ---- 消息历史(当前为占位) ----
-
-    async def iter_messages(
-        self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
-    ) -> AsyncIterator[MessageDTO]:
-        if False:  # pragma: no cover
-            yield None  # type: ignore[misc]
-        return
-
     # ---- 媒体下载(REVIEW M2.1 — 真实现) ----
 
     async def download_file(self, file_id: str) -> bytes | None:

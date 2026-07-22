@@ -75,6 +75,15 @@ class Settings(BaseSettings):
 
     # ---- 业务策略 ----
     media_policy: MediaPolicy = Field(default=MediaPolicy.THUMBNAIL)
+    # 单文件下载上限(bytes);0 = 无限制。MediaDownloader 拒绝 > 此值的文件,
+    # 防止 FULL 模式误订 GB 级视频把本地 / 对象存储爆掉。
+    # .env 字段名:`TG_MEDIA_MAX_BYTES`(沿用 TG_ 前缀 + 大写蛇形)。
+    # Default 用 binary 200 MB(209_715_200 = 200 * 1024 * 1024),跟
+    # EditableSettings.media_max_mb 整除对齐 — 避免 round-trip 漂 10 MB。
+    media_max_bytes: int = Field(
+        default=209_715_200,  # 200 MB (binary)
+        ge=0,
+    )
     data_root: Path = Field(default=Path("./data"))
 
     # ---- 全量同步(防封号)— 用户在 UI 多选频道触发时的默认节奏 ----

@@ -141,18 +141,6 @@ class FakeTelegramClient(TelegramClient):
         await asyncio.sleep(0)
         return self._downloads.get(file_id)
 
-    async def iter_messages(
-        self, channel_id: int, *, from_msg_id: int = 0, limit: int | None = None
-    ) -> AsyncIterator[MessageDTO]:
-        for i in range(limit or 0):
-            yield MessageDTO(
-                id=i,
-                channel_id=channel_id,
-                telegram_msg_id=from_msg_id + i + 1,
-                text=f"history {i}",
-            )
-            await asyncio.sleep(0)
-
     async def iter_chat_history(
         self,
         channel_id: int,

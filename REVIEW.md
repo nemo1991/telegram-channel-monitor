@@ -140,16 +140,20 @@ CI 上无追溯。
 - `ui/main_window.py:closeEvent` 63 行 —— 见方法论"故意不碰"
 
 ### M2. Stub / 死代码
-- `core/monitor/service.py:180-182` `MediaDownloader.download_one` 返回 `None`
-  —— 真下载要 wire `TdlibClient.download_file(file_id)`,要设计 storage
-  write-back 与 retry。需要单独 PR。
-- `core/telegram/tdlib_client.py:964-969` `iter_messages` stub(返回空)——
-  Protocol 定义了但谁都不调用;要么实现要么删 protocol 方法
-- `core/telegram/client.py:75-79` Protocol 定义 `iter_messages` 没消费者
-- `core/telegram/client.py:48` 旧版 `login(phone)` Protocol 方法没人调
-- `core/monitor/service.py:153-158` `_maybe_store_thumb` 是 `return None`
-  stub,留作 MediaDownloader 接入点
-- `_set_state` 旧 dead-switch `if False else` 见 Important-2 已修
+- ✅ **`MediaDownloader.download_one` 真实现**(2026-07-22,commit `29ed08d`)
+  — 走 `client.download_file` → `objects.put` → `dataclasses.replace` 返新 DTO;
+  `Settings.media_max_bytes` 兜底(默认 200 MB,0 = 无限制);FULL 模式用户**实际
+  下得到原文件**。
+- ✅ **新增 `TelegramClient.download_file` Protocol + tdlib 真实现 + Fake 双胞胎**
+  (commit `d6247b1`)— 两步:`DownloadFile(synchronous=False)` 触发 + `GetFile`
+  轮询到 `local.is_downloading_completed` + 30 min hard cap;失败 / 超时返 None
+  不抛。
+- ✅ **删 `iter_messages` 三处零 caller**(Protocol / tdlib_client stub / fake impl)
+  — grep 0 caller,纯冗余。
+- ✅ **删 `login(phone)` Protocol 方法**(fake 仍保留 `login` 单方法,内部转发到
+  `submit_phone`,Protocol 是 runtime_checkable 不强制所有 Protocol 成员在 impl)。
+- ⚠️ `_maybe_store_thumb` 维持 `return None` 空 hook(留给未来 thumb pipeline;
+  本 PR 不引入缩略图下载,scope 控制)。MediaDownloader 已**不**走这条路径。
 
 ### M3. 信号生命周期 / 资源管理
 - `ui/main_window.py:325-336` SyncProgressDialog 在 `_go` future 的
