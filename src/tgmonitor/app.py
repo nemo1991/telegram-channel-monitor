@@ -15,7 +15,6 @@ import logging
 import signal
 import sys
 import time
-from pathlib import Path
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import Settings
@@ -31,19 +30,16 @@ log = logging.getLogger(__name__)
 async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     t0 = time.monotonic()
     settings = Settings()  # type: ignore[call-arg]
-    # 把相对路径解析成绝对路径,避免从不同 cwd 启动时 session_dir / data_root 不一样
-    # 导致 TDLib 找不到上一回的 session db,被迫重新登录。
-    settings.session_dir = settings.session_dir.resolve()
-    settings.data_root = settings.data_root.resolve()
-    settings.db_root = settings.db_root.resolve()
-    settings.objectstore_root = settings.objectstore_root.resolve()
+    # v1.0.1:Settings 的 Path defaults 已经是 platform-native 绝对路径
+    # (~/Library/Application Support/tgmonitor/...),不再需要 .resolve()
+    # 把相对路径强制绝对 — 之前这步是 cwd-relative 的根因。
     settings.ensure_dirs()
     log.info(
-        "[bootstrap] settings loaded in %.2fs | session_dir=%s exists=%s | data_root=%s | db_backend=%s",
+        "[bootstrap] settings loaded in %.2fs | data_dir=%s session=%s exists=%s | db_backend=%s",
         time.monotonic() - t0,
+        settings.data_root,
         settings.session_dir,
         (settings.session_dir / "tdlib").exists(),
-        settings.data_root,
         settings.db_backend.value,
     )
 
@@ -148,8 +144,11 @@ def run() -> None:
     state: dict[str, object] = {}
     setup_failed: list[BaseException] = []
 
-    # `.env` 解析:同步 I/O,放 loop 外,不阻塞 qasync 的事件循环
-    env_path = Path(".env").resolve()
+    # `.env` 解析:同步 I/O,放 loop 外,不阻塞 qasync 的事件循环。
+    # v1.0.1:走 platform-native 目录(macOS ~/Library/Application Support/
+    # tgmonitor/.env 等),Settings.model_config.env_file 同源 — 不依赖 cwd。
+    from tgmonitor.core.config import _user_data_dir
+    env_path = _user_data_dir() / ".env"
 
     async def _setup_then_show() -> None:
         """一次性做完:async 装配 → MainWindow 构造 → window.show()。

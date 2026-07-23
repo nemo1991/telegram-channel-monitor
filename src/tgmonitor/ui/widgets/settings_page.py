@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend
+from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
 
 if TYPE_CHECKING:
@@ -141,13 +141,19 @@ class SettingsPage(QWidget):
         f.addRow("手机号:", self.in_phone)
 
         self.in_session_dir = QLineEdit()
-        self.in_session_dir.setPlaceholderText("./data/session")
-        # 浏览按钮
+        self.in_session_dir.setPlaceholderText(str(_user_data_dir() / "session"))
+        # 浏览按钮 + 恢复默认按钮(v1.0.1:platform-native 默认路径)
         sdir_row = QHBoxLayout()
         sdir_row.addWidget(self.in_session_dir, 1)
         btn_sdir = QPushButton("浏览…")
         btn_sdir.clicked.connect(lambda: self._browse_dir(self.in_session_dir))
         sdir_row.addWidget(btn_sdir)
+        btn_sdir_default = QPushButton("默认")
+        btn_sdir_default.setToolTip("恢复为 platform-native 默认目录")
+        btn_sdir_default.clicked.connect(
+            lambda: self._set_default(self.in_session_dir, "session")
+        )
+        sdir_row.addWidget(btn_sdir_default)
         f.addRow("Session 目录:", sdir_row)
 
         root.addWidget(g)
@@ -184,11 +190,17 @@ class SettingsPage(QWidget):
 
         db_root_row = QHBoxLayout()
         self.in_db_root = QLineEdit()
-        self.in_db_root.setPlaceholderText("./data/messages")
+        self.in_db_root.setPlaceholderText(str(_user_data_dir() / "messages"))
         db_root_row.addWidget(self.in_db_root, 1)
         btn_dbr = QPushButton("浏览…")
         btn_dbr.clicked.connect(lambda: self._browse_dir(self.in_db_root))
         db_root_row.addWidget(btn_dbr)
+        btn_dbr_default = QPushButton("默认")
+        btn_dbr_default.setToolTip("恢复为 platform-native 默认目录")
+        btn_dbr_default.clicked.connect(
+            lambda: self._set_default(self.in_db_root, "messages")
+        )
+        db_root_row.addWidget(btn_dbr_default)
         f.addRow("JSONL 目录:", db_root_row)
 
         # DB 后端切换 → 显隐 DSN / 目录
@@ -210,11 +222,17 @@ class SettingsPage(QWidget):
         # 本地
         os_root_row = QHBoxLayout()
         self.in_os_root = QLineEdit()
-        self.in_os_root.setPlaceholderText("./data/media")
+        self.in_os_root.setPlaceholderText(str(_user_data_dir() / "media"))
         os_root_row.addWidget(self.in_os_root, 1)
         btn_osr = QPushButton("浏览…")
         btn_osr.clicked.connect(lambda: self._browse_dir(self.in_os_root))
         os_root_row.addWidget(btn_osr)
+        btn_osr_default = QPushButton("默认")
+        btn_osr_default.setToolTip("恢复为 platform-native 默认目录")
+        btn_osr_default.clicked.connect(
+            lambda: self._set_default(self.in_os_root, "media")
+        )
+        os_root_row.addWidget(btn_osr_default)
         f.addRow("本地目录:", os_root_row)
 
         # S3
@@ -264,12 +282,18 @@ class SettingsPage(QWidget):
         f.addRow("单文件大小上限:", self.in_media_max)
 
         self.in_data_root = QLineEdit()
-        self.in_data_root.setPlaceholderText("./data")
+        self.in_data_root.setPlaceholderText(str(_user_data_dir()))
         data_root_row = QHBoxLayout()
         data_root_row.addWidget(self.in_data_root, 1)
         btn_dr = QPushButton("浏览…")
         btn_dr.clicked.connect(lambda: self._browse_dir(self.in_data_root))
         data_root_row.addWidget(btn_dr)
+        btn_dr_default = QPushButton("默认")
+        btn_dr_default.setToolTip("恢复为 platform-native 默认目录")
+        btn_dr_default.clicked.connect(
+            lambda: self._set_default(self.in_data_root, "")
+        )
+        data_root_row.addWidget(btn_dr_default)
         f.addRow("数据根目录:", data_root_row)
 
         root.addWidget(g)
@@ -358,16 +382,17 @@ class SettingsPage(QWidget):
 
     def _collect(self) -> EditableSettings:
         """收集当前表单值 → EditableSettings。"""
+        ud = _user_data_dir()
         return EditableSettings(  # type: ignore[call-arg]
             api_id=self.in_api_id.value(),
             api_hash=self.in_api_hash.text().strip(),
             phone=self.in_phone.text().strip(),
-            session_dir=self.in_session_dir.text().strip() or "./data/session",
+            session_dir=self.in_session_dir.text().strip() or str(ud / "session"),
             db_backend=self.cmb_db.currentData().value,
             db_dsn=self.in_db_dsn.text().strip(),
-            db_root=self.in_db_root.text().strip() or "./data/messages",
+            db_root=self.in_db_root.text().strip() or str(ud / "messages"),
             objectstore_backend=self.cmb_os.currentData().value,
-            objectstore_root=self.in_os_root.text().strip() or "./data/media",
+            objectstore_root=self.in_os_root.text().strip() or str(ud / "media"),
             objectstore_endpoint=self.in_os_endpoint.text().strip(),
             objectstore_region=self.in_os_region.text().strip() or "us-east-1",
             objectstore_access_key=self.in_os_access_key.text().strip(),
@@ -375,7 +400,7 @@ class SettingsPage(QWidget):
             objectstore_bucket=self.in_os_bucket.text().strip() or "tgmonitor",
             media_policy=self.cmb_media.currentData().value,
             media_max_mb=self.in_media_max.value(),
-            data_root=self.in_data_root.text().strip() or "./data",
+            data_root=self.in_data_root.text().strip() or str(ud),
             proxy=self.in_proxy.text().strip(),
             sync_chat_delay_ms=self.in_chat_delay.value(),
             sync_page_delay_ms=self.in_page_delay.value(),
@@ -507,6 +532,16 @@ class SettingsPage(QWidget):
         )
         if dir_path:
             line_edit.setText(dir_path)
+
+    @staticmethod
+    def _set_default(line_edit: QLineEdit, subdir: str) -> None:
+        """v1.0.1:把字段重置为 platform-native 默认路径。
+
+        `subdir=""` → 直接是 user_data_dir 本身(`data_root` 用);
+        其他(`session` / `messages` / `media`)→ user_data_dir / subdir。
+        """
+        target = _user_data_dir() / subdir if subdir else _user_data_dir()
+        line_edit.setText(str(target))
 
 
 def _is_child_of(child: QWidget, parent: QWidget) -> bool:

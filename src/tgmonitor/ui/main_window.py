@@ -107,7 +107,11 @@ class MainWindow(QMainWindow):
         self.app = app
         self.monitor = monitor
         self.loop = loop
-        self.env_path = env_path or Path(".env")
+        # v1.0.1:env_path fallback 跟 app.py 同步 — platform-native
+        # (~/.local/share/tgmonitor/.env / ~/Library/Application Support/tgmonitor/.env),
+        # 不依赖 cwd。
+        from tgmonitor.core.config import _user_data_dir
+        self.env_path = env_path or (_user_data_dir() / ".env")
         self.setWindowTitle("tgmonitor · Telegram 频道监听")
         self.resize(1180, 740)
 
