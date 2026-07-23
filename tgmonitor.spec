@@ -33,7 +33,12 @@ tg_resources = collect_data_files("tgmonitor.resources")
 ui_resources = collect_data_files("tgmonitor.ui.resources")
 
 datas = []
-datas += [(src, "aiotdlib") for src, _ in aiotdlib_data]
+# aiotdlib 的 native lib 在 pkg 内是 `aiotdlib/tdlib/libtdjson_*.dylib`。
+# aiotdlib.tdjson loader 走 `pathlib.Path(__file__).parent / "tdlib" / binary_name`,
+# 所以 destination 必须是 `aiotdlib/tdlib` —— PyInstaller 才把文件展到
+# `<bundle>/Contents/Resources/aiotdlib/tdlib/libtdjson_*.dylib`,loader 找得到。
+# (用 `aiotdlib` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
+datas += [(src, "aiotdlib/tdlib") for src, _ in aiotdlib_data]
 datas += [(src, "tgmonitor/resources") for src, _ in tg_resources]
 datas += [(src, "tgmonitor/ui/resources") for src, _ in ui_resources]
 
