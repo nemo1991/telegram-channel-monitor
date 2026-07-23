@@ -46,6 +46,14 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tgmonitor"]
+# 默认 hatchling wheel 只装 .py 文件。`importlib.resources.files(...).read_bytes()`
+# 跑 wheel install 时需要 SVG / QSS 跟 binary 一起 ship,否则 UI 启动 FileNotFoundError。
+# 显式 include 3 类资源:顶层 SVG、icons 子目录、UI QSS。
+include = [
+    "src/tgmonitor/resources/*.svg",
+    "src/tgmonitor/resources/icons/*.svg",
+    "src/tgmonitor/ui/resources/*.qss",
+]
 
 [tool.ruff]
 line-length = 100
