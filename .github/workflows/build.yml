@@ -1,0 +1,116 @@
+name: Build packages
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.13"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # Linux:Qt offscreen / AppImage 工具链 + aiotdlib native lib 编译依赖
+      # (虽然我们用 wheel,但 PyInstaller 打包时 PySide6 平台插件需要 libc++ / libGL)
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
+            libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-icccm4 libxcb-image0 libxcb-util1 \
+            libsm6 libice6 libc++-dev \
+            librsvg2-bin \
+            file
+          # appimagetool 一次性下到 /usr/local/bin
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImageCommunity/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - name: Install project + PyInstaller (via uv)
+        run: |
+          # PyInstaller 已在 pyproject.toml dev dep(D1 commit)
+          uv sync --all-extras --group dev
+
+      - name: Run PyInstaller
+        run: |
+          # 用项目 venv 跑(spec 走 collect_data_files 解析 .venv 里的 aiotdlib)
+          PYTHONPATH=src uv run pyinstaller --clean -y tgmonitor.spec
+
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: bash scripts/build_appimage.sh
+
+      - name: Zip .app (macOS, for upload)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r tgmonitor.app.zip tgmonitor.app
+          ls -lh tgmonitor.app.zip
+
+      - name: Upload .AppImage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v5
+        with:
+          name: tgmonitor-x86_64.AppImage
+          path: tgmonitor-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Upload .app.zip
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v5
+        with:
+          name: tgmonitor.app.zip
+          path: dist/tgmonitor.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Compute SHA256SUMS
+        run: |
+          cd artifacts
+          sha256sum tgmonitor-x86_64.AppImage tgmonitor.app.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/tgmonitor-x86_64.AppImage
+            artifacts/tgmonitor.app.zip
+            artifacts/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
