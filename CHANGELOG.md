@@ -5,6 +5,45 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.0] - 2026-07-23
+
+🎉 **首个正式 release** — Stage D 打包就绪 + Stage C REVIEW M2 修复一并交付。
+
+### ✨ Added
+- **PyInstaller 打包**(`tgmonitor.spec` + `hooks/hook-aiotdlib.py`)
+  — 跨 Linux / macOS 双平台产物;`collect_data_files` 自动收集
+  aiotdlib TDLib native lib + SVG / QSS / icons
+- **Linux AppImage**(`scripts/build_appimage.sh`)— 单文件免安装,
+  rsvg-convert 转 PNG icon + .desktop entry + AppRun,AppImageKit
+  `appimagetool` 打包
+- **macOS `.app` bundle**(BUNDLE spec)— LSMinimumSystemVersion 13.0,
+  ad-hoc 签名(用户拍板不申请 Developer ID)
+- **GitHub Actions `build.yml`** — `git tag v1.0.0` 触发双平台
+  matrix build + SHA256SUMS + `softprops/action-gh-release@v2` 自动发
+  GitHub Release
+- **Hatchling wheel 资源 inclusion**(`tool.hatch.build.targets.wheel.include`)
+  — `pip install tgmonitor`(从 PyPI)能跑,SVG / QSS 跟 binary 一起 ship
+- **README「📥 下载安装」章节** — 用户下载指引 + 系统需求 +
+  macOS Gatekeeper 解锁步骤
+
+### 🐛 Fixed
+- **`__version__` drift bug** — `src/tgmonitor/__init__.py:3` 之前是
+  `"0.1.0"` vs `pyproject.toml:3` 是 `"0.2.0"`,v1.0.0 bump 一起对齐
+- **REVIEW M2.1 — FULL 模式用户之前下不到任何原文件** —
+  `MediaDownloader.download_one` 真实现随 v1.0.0 一起交付
+  (Stage C 详细 changelog 见 Unreleased)
+
+### 📦 Packaging
+- `.app` 未签名 / 未公证 — 用户 Gatekeeper 手动允许
+- `.AppImage` 自带 TDLib,无需装 system TDLib
+- **不打 Windows 版本** — upstream `aiotdlib 0.27.x` 无 Windows wheel
+- **不打 `.deb` / `.rpm` / Homebrew formula / winget** — 留 v1.0.x
+
+### 🔧 Changed
+- **`version = "0.2.0"` → `"1.0.0"`** — 首个 release tag
+- **`pyinstaller>=6.21.0`** 加到 `[dependency-groups].dev` — build workflow
+  直接 `uv sync --group dev` 就够
+
 ## [Unreleased]
 
 ### ✨ Added

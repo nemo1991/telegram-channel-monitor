@@ -11,3 +11,10 @@ build/
 *.db
 .coverage
 coverage.xml
+# PyInstaller spec 主文件进 git;`.spec.bak` 是开发者临时备份
+*.spec.bak
+# AppImage 构建临时目录(脚本生成,可重建)
+AppDir/
+# Linux AppImage / macOS .app 一次性 zip 产物(CI 也 build,本地不提交)
+*.AppImage
+tgmonitor.app.zip

@@ -245,6 +245,52 @@ CI 一致,排查问题也走同一条路径。
 
 ---
 
+## 📥 下载安装(预编译包)
+
+到 [Releases 页面](https://github.com/forcetone/tgmonitor/releases) 下载对应平台包。
+
+| 平台 | 文件 | 说明 |
+|---|---|---|
+| **Linux x86_64** | `tgmonitor-x86_64.AppImage` | 单文件,免安装,`chmod +x && ./tgmonitor-x86_64.AppImage` |
+| **macOS 13.0+**(Apple Silicon / Intel 都兼容) | `tgmonitor.app.zip` | 解压后拖进 `/Applications` |
+
+每个 release 还附 `SHA256SUMS` 校验和文件,建议下载后 `sha256sum -c SHA256SUMS` 验证。
+
+### macOS 首次启动(未签名)
+
+`.app` **未申请 Apple Developer ID 签名**(避免 $99/年的 Apple Developer Program 费用),
+首次启动 macOS Gatekeeper 会拦截:
+
+1. 双击 `tgmonitor.app`,弹出 "无法打开,因为它来自身份不明的开发者"
+2. 打开「系统设置 → 隐私与安全性」,向下滚动到 **安全** 部分
+3. 点「仍要打开」按钮,二次确认
+4. 之后双击就能直接启动
+
+如需正式签名 / 公证(notarize),需要购买 Apple Developer ID 并提供 Signing Identity
+到 CI secrets — 留给未来 v1.x release。
+
+### Linux 系统需求
+
+AppImage 自带 Python 运行时 + TDLib + PySide6 平台插件,但仍需部分系统级 Qt 依赖:
+
+```bash
+sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+    libfontconfig1 libxcb-cursor0 libxcb-keysyms1 libxcb-shape0 \
+    libxcb-xkb1 libxkbcommon-x11-0 libsm6 libice6
+```
+
+如报 `could not load Qt platform plugin "xcb"`,通常是缺 X11 / xcb 相关包,
+按报错安装即可。glibc 版本需 ≥ 2.28(manylinux_2_28 标准,
+Ubuntu 20.04 / Debian 11+ / Fedora 32+ 都满足)。
+
+### 数据目录
+
+二进制默认在**调用时 cwd** 下读写 `.env` / `data/`(跟源码运行一致)。
+如果你想数据统一在 `~/.local/share/tgmonitor` / `~/Library/Application Support/tgmonitor`,
+未来 v1.0.1 会支持。v1.0.0 沿用 cwd 语义。
+
+---
+
 ## 📤 导出
 
 工具栏 → **导出…**,选择:
