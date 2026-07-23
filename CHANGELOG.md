@@ -44,6 +44,40 @@
 - **`pyinstaller>=6.21.0`** 加到 `[dependency-groups].dev` — build workflow
   直接 `uv sync --group dev` 就够
 
+## [1.0.1] - 2026-07-23
+
+🗂️ **数据目录迁移到 platform-native path** — macOS `.app` 双击启动
+不再写到 `/data/`(root 不可写),所有数据走 OS 标准 user-data 目录。
+
+### ✨ Added
+- **数据目录走 platform-native**:
+  - macOS: `~/Library/Application Support/tgmonitor/`
+  - Linux: `$XDG_DATA_HOME/tgmonitor/`(fallback `~/.local/share/tgmonitor/`)
+  - Windows: `%APPDATA%/tgmonitor/`(为未来 Windows 平台预留)
+- **Settings 对话框「默认」按钮** — 4 个 Path 字段(`session_dir` /
+  `db_root` / `objectstore_root` / `data_root`)各加一个,点一下重置为
+  platform-native 默认路径。
+- **macOS `.app` libtdjson hotfix**(commit `6e0e64f`)— PyInstaller spec
+  改 aiotdlib data destination 从 `"aiotdlib"` 到 `"aiotdlib/tdlib"`,
+  保留 `tdlib/` 子目录让 aiotdlib loader 解析得到。
+
+### 🔧 Changed
+- 新增 dep:`platformdirs>=4.11.0`
+- `Settings` 4 个 Path field 改 `default_factory=lambda: _user_data_dir() / subdir`,
+  `model_config.env_file` 改 `str(_user_data_dir() / ".env")`
+- `app.py` 删除 4 个 `.resolve()`(已经是绝对路径);`Path(".env")` fallback
+  改 `_user_data_dir() / ".env"`
+- `MainWindow.env_path` fallback 同步改 `_user_data_dir() / ".env"`
+
+### 🐛 Fixed
+- **v1.0.0 `.app` 启动崩溃** — `cwd=/`,`Path("./data/...").resolve()`
+  写到 `/data/`(root 不可写)→ app 立刻挂;v1.0.1 走 platform-native
+  路径后,从 `/Applications` 双击启动正常工作。
+
+### 📦 迁移
+- **没有自动迁移代码** — v1.0.0 没正式发板,无存量用户。早期用户在
+  第一次跑 v1.0.1 前手动把数据复制到 platform-native 目录即可。
+
 ## [Unreleased]
 
 ### ✨ Added

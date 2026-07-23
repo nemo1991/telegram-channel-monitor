@@ -245,6 +245,36 @@ CI 一致,排查问题也走同一条路径。
 
 ---
 
+## 🗂️ 数据目录(platform-native)
+
+v1.0.1 起,所有数据 + `.env` 写到 **OS 标准 user-data 目录**,**不再** cwd-relative:
+
+| 平台 | 路径 |
+|---|---|
+| **macOS** | `~/Library/Application Support/tgmonitor/` |
+| **Linux** | `$XDG_DATA_HOME/tgmonitor/`(fallback `~/.local/share/tgmonitor/`) |
+| **Windows** | `%APPDATA%/tgmonitor/` |
+
+子目录布局(首次启动 `ensure_dirs()` 自动创建):
+
+```
+tgmonitor/
+├── .env                   # 配置(API ID / Hash / phone 等)
+├── session/               # TDLib session db
+├── messages/              # JSONL 存储(默认后端)
+└── media/                 # ObjectStore(local / folder 后端)
+```
+
+**.env 路径也走 platform-native**,所以从 `/Applications` 双击启动 `.app` 也能
+读 / 写配置,不依赖 cwd。`Settings` 对话框每条路径字段都带「默认」按钮,
+随时点一下就回到 platform-native 默认值。
+
+迁移:v1.0.0 数据写在 `cwd/data/` + `cwd/.env`(本机 `.venv/..` 项目根目录)。
+v1.0.0 没正式发板,所以**没有**自动迁移代码 — 早期用户在第一次跑 v1.0.1
+前手动把数据复制到 platform-native 目录即可。
+
+---
+
 ## 📥 下载安装(预编译包)
 
 到 [Releases 页面](https://github.com/forcetone/tgmonitor/releases) 下载对应平台包。
