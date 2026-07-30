@@ -81,6 +81,13 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **FormRow helper(`src/tgmonitor/ui/widgets/form_row.py`)**(2026-07-30,
+  commits `ca85c15` + `18ddd19`)— 集中 `text_field` / `path_field` 两个
+  高频样板:`settings_page.py` 6 处 + `export_dialog.py` 1 处切到 helper,
+  净减 47 行样板代码。`path_field` 支持 `file_mode=True` 切换
+  `getSaveFileName`(export 场景),平台默认路径(helper 不感知 Settings,
+  caller 用 `_user_data_dir()` 注入)。`settings_page._browse_dir` /
+  `export_dialog._browse` 0 caller 顺手删除。
 - **`TelegramClient.download_file` Protocol + TDLib 真实现 + Fake 双胞胎**
   (2026-07-22,commit `d6247b1`)。两步:`DownloadFile(synchronous=False)`
   触发后台下载 + `GetFile` 轮询到 `local.is_downloading_completed` 读 bytes;
@@ -109,6 +116,19 @@
   内部转发(`submit_phone` proxy)。
 
 ### 🐛 Fixed
+- **`iter_chat_history` Protocol 契约陷阱**(2026-07-30,commit `4e8aa6d`)
+  — 之前文档说 `from_msg_id > 0` 是"从该 id 之后正向拉",但 TDLib
+  `GetChatHistory.from_message_id` **只能向旧方向拉**(id 递减)。重构让
+  文档跟实现一致:参数 `from_msg_id` → `before_msg_id`,Protocol docstring
+  明确"截止这条之前的更早消息"是唯一方向;需要"最新消息"走
+  `subscribe_updates()` 实时流。零运行时破坏(Protocol 是 typing-only,
+  4 处 rename 闭环:Protocol + 实现 + fake + channel_sync 调用方)。
+- **UpdateStream 长会话内存泄漏**(2026-07-30,commit `4e8aa6d`)—
+  `TdlibTelegramClient._streams` 之前只在 `close()` 全量清空,
+  `subscribe_updates()` 后调 `stream.aclose()` 不会从列表移除,长会话
+  只增不减。修复:`_AiotdlibUpdateStream` / `FakeUpdateStream` 加
+  `on_close` callback,`aclose()` 触发时自动从 `_streams` 移除自己。
+  Protocol 文档补:`aclose()` 是契约,必须调一次。
 - **REVIEW M2.1**:FULL 模式下用户之前**下不到任何原文件** — `MediaDownloader.download_one`
   永远返 None,只是元数据 + 缩略图 + 一个空 key。现在真实现,完整下载链路打通。
 
