@@ -22,14 +22,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from typing import TypeVar
+from typing import Any, TypeVar
 
 log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-def run_coro(
+def run_coro[T](
     loop: asyncio.AbstractEventLoop,
     coro: Coroutine[Any, Any, T],
     *,

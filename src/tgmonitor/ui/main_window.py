@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import MessageDTO, SyncOptions
 from tgmonitor.core.events import AuthErrorOccurred, LoginStateChanged
+from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
@@ -357,17 +358,7 @@ class MainWindow(QMainWindow):
         self._on_sync_requested(ids)
 
     def _on_logout_clicked(self) -> None:
-        fut = asyncio.run_coroutine_threadsafe(
-            self.app.client.logout(), self.loop,
-        )
-
-        def _on_done(f) -> None:
-            try:
-                f.result()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("logout failed: %s", exc)
-
-        fut.add_done_callback(_on_done)
+        run_coro(self.loop, self.app.client.logout(), error_label="logout")
 
     def _on_search_changed(self, txt: str) -> None:
         """搜索框内容变化 → 透传给 LIVE view 的 MessageView 过滤。"""
@@ -472,7 +463,7 @@ class MainWindow(QMainWindow):
                 except (RuntimeError, TypeError):
                     pass
 
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="sync_with_progress")
         progress_dlg.exec()
 
     # ======================== 状态刷新 ========================

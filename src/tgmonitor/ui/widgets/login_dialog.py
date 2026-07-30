@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.events import LoginStateChanged
+from tgmonitor.ui._async import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -128,35 +129,23 @@ class LoginDialog(QDialog):
         code = self.in_code.text().strip()
         if not code:
             return
-        fut = asyncio.run_coroutine_threadsafe(self.app.submit_code(code), self.loop)
         self.in_code.clear()
-
-        def _on_done(f) -> None:
-            try:
-                state = f.result()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("submit_code failed: %s", exc)
-                return
-            self._render(state)
-
-        fut.add_done_callback(_on_done)
+        run_coro(
+            self.loop, self.app.submit_code(code),
+            on_success=self._render,
+            error_label="submit_code",
+        )
 
     def _submit_password(self) -> None:
         pwd = self.in_pwd.text()
         if not pwd:
             return
-        fut = asyncio.run_coroutine_threadsafe(self.app.submit_password(pwd), self.loop)
         self.in_pwd.clear()
-
-        def _on_done(f) -> None:
-            try:
-                state = f.result()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("submit_password failed: %s", exc)
-                return
-            self._render(state)
-
-        fut.add_done_callback(_on_done)
+        run_coro(
+            self.loop, self.app.submit_password(pwd),
+            on_success=self._render,
+            error_label="submit_password",
+        )
 
 
 def app_get_state(app) -> str:  # 顶层 helper,避免循环 import

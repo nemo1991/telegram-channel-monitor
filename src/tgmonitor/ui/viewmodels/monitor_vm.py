@@ -22,6 +22,7 @@ from tgmonitor.core.events import (
     MessageReceived,
     SettingsChanged,
 )
+from tgmonitor.ui._async import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -156,25 +157,25 @@ class MonitorViewModel(QObject):
             for ch in chs:
                 self.known_channels[ch.id] = ch
             self.channels_changed.emit()
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="refresh_channels")
 
     def subscribe_channel(self, ch: ChannelDTO) -> None:
-        asyncio.run_coroutine_threadsafe(self.app.subscribe_channel(ch), self.loop)
+        run_coro(self.loop, self.app.subscribe_channel(ch), error_label="subscribe_channel")
 
     def unsubscribe_channel(self, channel_id: int) -> None:
         async def _go() -> None:
             await self.app.unsubscribe_channel(channel_id)
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="unsubscribe_channel")
 
     def load_recent_messages(self) -> None:
         async def _go() -> None:
             msgs = await self.app.list_messages(limit=200)
             for m in msgs:
                 self.message_received.emit(m)
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="load_recent_messages")
 
     def start_export(self, req: ExportRequest) -> None:
         async def _go() -> None:
             async for _ in self.app.export(req):
                 pass
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="start_export")

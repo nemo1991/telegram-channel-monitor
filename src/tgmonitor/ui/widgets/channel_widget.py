@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
+from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
 
@@ -271,7 +272,7 @@ class ChannelWidget(QWidget):
             # Signal.emit 在 qasync 里跨 loop iteration 自然 queued,语义等价。
             self.joined_loaded.emit(chs)
 
-        asyncio.run_coroutine_threadsafe(_go(), self.loop)
+        run_coro(self.loop, _go(), error_label="refresh_joined")
 
     def _apply_joined(self, chs: list[ChannelDTO]) -> None:
         self.set_joined(chs)
@@ -283,33 +284,19 @@ class ChannelWidget(QWidget):
             return
         if cid in self._subscribed_ids:
             return  # 已订阅,双击无效(改在已监听栏里退订)
-        fut = asyncio.run_coroutine_threadsafe(
-            self.app.subscribe_channel(ch), self.loop
+        run_coro(
+            self.loop, self.app.subscribe_channel(ch),
+            error_label="subscribe_channel",
         )
-
-        def _on_done(f) -> None:
-            try:
-                f.result()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("subscribe_channel failed: %s", exc)
-
-        fut.add_done_callback(_on_done)
 
     def _on_subscribed_double_click(self, item: QListWidgetItem) -> None:
         cid = item.data(Qt.UserRole)
         if cid is None:
             return
-        fut = asyncio.run_coroutine_threadsafe(
-            self.app.unsubscribe_channel(int(cid)), self.loop
+        run_coro(
+            self.loop, self.app.unsubscribe_channel(int(cid)),
+            error_label="unsubscribe_channel",
         )
-
-        def _on_done(f) -> None:
-            try:
-                f.result()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("unsubscribe_channel failed: %s", exc)
-
-        fut.add_done_callback(_on_done)
 
     def _on_sync_clicked(self) -> None:
         """用户多选 + 全量同步:收集 selected channel_ids,emit sync_requested。"""

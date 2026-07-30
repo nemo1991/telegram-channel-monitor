@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
+from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.widgets.form_row import path_field, text_field
 
 if TYPE_CHECKING:
@@ -430,18 +431,11 @@ class SettingsPage(QWidget):
             return
 
         # 热重载
-        fut = asyncio.run_coroutine_threadsafe(
-            self._app.reconfigure(new_settings), self._loop,
+        run_coro(
+            self._loop, self._app.reconfigure(new_settings),
+            on_success=lambda _r: log.info("settings applied + hot-reloaded"),
+            error_label="reconfigure",
         )
-
-        def _on_done(f) -> None:
-            try:
-                f.result()
-                log.info("settings applied + hot-reloaded")
-            except Exception as exc:  # noqa: BLE001
-                log.exception("reconfigure failed: %s", exc)
-
-        fut.add_done_callback(_on_done)
         QMessageBox.information(self, "已应用", "设置已保存并热重载")
 
     def _on_test_proxy(self) -> None:
@@ -470,17 +464,18 @@ class SettingsPage(QWidget):
             except Exception as exc:
                 return f"❌ 失败: {exc}"
 
-        def _on_done(f) -> None:
-            try:
-                msg = f.result()
-            except Exception as exc:
-                msg = f"❌ 异常: {exc}"
+        def _show(msg: str) -> None:
+            """on_success / on_error 共用:恢复按钮 + 弹窗。"""
             self.btn_test_proxy.setEnabled(True)
             self.btn_test_proxy.setText("测试连接")
             QMessageBox.information(self, "测试结果", msg)
 
-        fut = asyncio.run_coroutine_threadsafe(_test(), self._loop)
-        fut.add_done_callback(_on_done)
+        run_coro(
+            self._loop, _test(),
+            on_success=_show,
+            on_error=lambda e: _show(f"❌ 异常: {e}"),
+            error_label="test_proxy",
+        )
 
     @staticmethod
     def _set_default(line_edit: QLineEdit, subdir: str) -> None:

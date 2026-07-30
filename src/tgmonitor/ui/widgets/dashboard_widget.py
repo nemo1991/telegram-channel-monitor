@@ -43,6 +43,7 @@ from tgmonitor.core.events import (
     MessageReceived,
     SettingsChanged,
 )
+from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import action_icon
 
 if TYPE_CHECKING:
@@ -387,7 +388,7 @@ class DashboardWidget(QWidget):
                 rows.append((f"#{cid}", "—", count))
             self._apply_stats_table(rows, total)
 
-        asyncio.run_coroutine_threadsafe(_go(), self._loop)
+        run_coro(self._loop, _go(), error_label="dashboard_refresh_stats")
 
     def _apply_stats_table(
         self, rows: list[tuple[str, str, int]], total: int,
