@@ -81,6 +81,16 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **`run_coro` helper(`src/tgmonitor/ui/_async.py`)**(2026-07-30,commits
+  `7c8ebfe` + `4319d6b`)— 11 处 `asyncio.run_coroutine_threadsafe(coro, loop)
+  + add_done_callback(_on_done)` 样板切到统一入口 `run_coro(loop, coro, *,
+  on_success, on_error, error_label)`,覆盖 6 个 UI 文件
+  (monitor_vm / channel_widget / dashboard_widget / main_window /
+  login_dialog / settings_page),净减 36 行。异常归一(任何 BaseException
+  走 `log.exception(error_label)` + 调 `on_error`);on_success / on_error
+  自身抛 → `log.exception` 兜底,不污染 future;helper 设计延续 #6 (`form_row.py`)
+  思路 — 抽"如何 fire + 异常归一"成本,不抽 on_success 内部业务。
+  9 个新单元测试覆盖 success / 异常 / self-throw / TypeVar 透传 4 路径。
 - **FormRow helper(`src/tgmonitor/ui/widgets/form_row.py`)**(2026-07-30,
   commits `ca85c15` + `18ddd19`)— 集中 `text_field` / `path_field` 两个
   高频样板:`settings_page.py` 6 处 + `export_dialog.py` 1 处切到 helper,
