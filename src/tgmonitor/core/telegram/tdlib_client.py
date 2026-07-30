@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 log = logging.getLogger(__name__)
 
@@ -119,19 +119,32 @@ def parse_socks5_proxy(url: str | None) -> Any:
 
 
 class _AiotdlibUpdateStream(UpdateStream):
-    """aiotdlib → asyncio.Queue → UI。"""
+    """aiotdlib → asyncio.Queue → UI。
 
-    def __init__(self) -> None:
+    `aclose()` 时除了塞 sentinel 让 async generator 退出,还会触发 caller
+    注册的 `on_close` callback — 用来把自己从 `client._streams` 拿掉,
+    避免长会话列表只增不减(契约见 `client.UpdateStream` 文档)。
+    """
+
+    def __init__(self, on_close: Callable[[_AiotdlibUpdateStream], None] | None = None) -> None:
         self._queue: asyncio.Queue[MessageDTO | None] = asyncio.Queue()
         self._closed = False
+        self._on_close = on_close
 
     async def push(self, msg: MessageDTO) -> None:
         if not self._closed:
             await self._queue.put(msg)
 
     async def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         await self._queue.put(None)
+        if self._on_close is not None:
+            try:
+                self._on_close(self)
+            except Exception:  # noqa: BLE001
+                log.exception("UpdateStream on_close callback failed")
 
     def __aiter__(self) -> AsyncIterator[MessageDTO]:
         return self
@@ -1010,14 +1023,14 @@ class TdlibTelegramClient(_AiClient):
         self,
         channel_id: int,
         *,
-        from_msg_id: int = 0,
+        before_msg_id: int = 0,
         limit: int = 100,
     ) -> AsyncIterator[MessageDTO]:
-        """分页拉取频道历史消息。
+        """分页拉取频道历史消息(向旧方向递减)。
 
-        from_msg_id=0 → 最新 N 条;>0 → 续拉 from_msg_id 之后。
-        TDLib 返回的 messages 是 reverse chronological(递减 id),所以翻页用
-        本批**最后**一条的 id 作为下次 from_msg_id(更小)。
+        before_msg_id=0 → 拉最新 N 条;>0 → 从该 id 之前(更早)开始续拉。
+        TDLib `GetChatHistory.from_message_id` 只支持向旧方向翻页,所以传
+        参语义是"截止这条之前",而非"从这条之后"。翻页游标 = 本批最小 id。
         限流:每页间不 sleep(由调用方 ChannelSyncService 控)。
         """
         from tgmonitor.core.telegram.tdlib_client import _map_message
@@ -1028,7 +1041,7 @@ class TdlibTelegramClient(_AiClient):
             self._check_alive()
             t = GetChatHistory(  # type: ignore[call-arg](
                 chat_id=channel_id,
-                from_message_id=from_msg_id,
+                from_message_id=before_msg_id,
                 offset=0,
                 limit=limit,
             )
@@ -1051,9 +1064,9 @@ class TdlibTelegramClient(_AiClient):
                 rid = getattr(raw, "id", None)
                 if rid is not None and (last_id is None or rid < last_id):
                     last_id = rid
-            if last_id is None or last_id == from_msg_id:
+            if last_id is None or last_id == before_msg_id:
                 break
-            from_msg_id = last_id
+            before_msg_id = last_id
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
         self._check_alive()
@@ -1130,9 +1143,19 @@ class TdlibTelegramClient(_AiClient):
         return None
 
     def subscribe_updates(self) -> UpdateStream:
-        s = _AiotdlibUpdateStream()
+        s = _AiotdlibUpdateStream(on_close=self._remove_stream)
         self._streams.append(s)
         return s
+
+    def _remove_stream(self, s: _AiotdlibUpdateStream) -> None:
+        """`_AiotdlibUpdateStream.aoclose()` 回调 — 拿掉自己,避免 list 只增不减。
+
+        `close()` 路径里仍然做全量清空(兜底),此回调是常规路径。
+        """
+        try:
+            self._streams.remove(s)
+        except ValueError:
+            pass  # close() 已清空,忽略
 
 
 # ============================================================

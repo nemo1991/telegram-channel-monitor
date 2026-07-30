@@ -70,12 +70,19 @@ class TelegramClient(Protocol):
 
     # ---- 消息流 ----
     def iter_chat_history(
-        self, channel_id: int, *, from_msg_id: int = 0, limit: int = 100
+        self, channel_id: int, *, before_msg_id: int = 0, limit: int = 100
     ) -> AsyncIterator[MessageDTO]:
         """分页拉取频道历史消息(ChannelSyncService 续拉用)。
 
-        from_msg_id=0 表示"最新 N 条",>0 表示"从 from_msg_id 之后正向拉"。
-        返回的迭代器分页自动推进,直到消息耗尽(返回 <limit 条时结束)。
+        **方向约束:TDLib `GetChatHistory.from_message_id` 只能向旧方向拉**(id 递减)。
+        即使想"从某条之后正向拉更新",`iter_chat_history` 也**不**支持 — 想
+        拿最新消息请调 `subscribe_updates()` 的实时流。
+
+        参数:
+          - `before_msg_id=0`:拉该频道最新 N 条(TDLib 反向翻页直到耗尽)
+          - `before_msg_id>0`:从 `before_msg_id` 之前(更早的)消息开始拉
+            —— 续拉场景把已知的最小 id 传进来,实现会把本批**最后**一条
+            (id 最小)的 id 作为下次入参,直到消息耗尽(返回 <limit 条时结束)
         """
         ...
 
@@ -91,12 +98,26 @@ class TelegramClient(Protocol):
         ...
 
     def subscribe_updates(self) -> UpdateStream:
-        """实时更新订阅,返回 AsyncIterator 形式,生命周期内持续 yield 消息 DTO。"""
+        """实时更新订阅,返回 AsyncIterator 形式,生命周期内持续 yield 消息 DTO。
+
+        **契约**:caller 必须在订阅终止时调 `stream.aclose()`(或 `aclose()` 隐式
+        触发)。未调用会:
+          - Implementation 侧:stream 持续占位 `_streams`,长会话这列表只增不减
+          - PySider6 侧:async generator 退出但 queue 未被 push `None`,`__anext__`
+            阻塞
+        """
         ...
 
 
 class UpdateStream:
-    """实时更新流的简单封装(协议方法),由实现返回。"""
+    """实时更新流的简单封装(协议方法),由实现返回。
+
+    实现必须保证:
+      - `aclose()` 是幂等的(重复调不报错)
+      - `aclose()` 后 `__anext__` 抛 `StopAsyncIteration`
+      - `aclose()` 会**自动**从 client 侧的 `_streams` 拿掉自己,避免
+        长会话该列表只增不减导致内存泄漏
+    """
 
     def __aiter__(self) -> AsyncIterator[MessageDTO]: ...
     async def aclose(self) -> None: ...

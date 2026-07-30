@@ -117,7 +117,7 @@ class ChannelSyncService:
                     batch_total = 0
                     added_in_channel = 0
                     async for m in self.client.iter_chat_history(
-                        cid, from_msg_id=from_id, limit=100,
+                        cid, before_msg_id=from_id, limit=100,
                     ):
                         if self._cancel.is_set():
                             result.cancelled = True

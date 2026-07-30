@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import UTC, datetime
 
 import pytest
 
@@ -436,3 +437,73 @@ def test_list_joined_channels_in_ready_state_still_calls_request(
     result = asyncio.run(client.list_joined_channels())
     assert result == []
     assert len(called) == 1  # 进了一步,没被早返拦下
+
+
+# ---- UpdateStream 生命周期:aclose 自动从 client._streams 移除 ----
+
+
+def test_subscribe_updates_adds_stream_and_aclose_removes_it(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init
+) -> None:
+    """长会话回归:每次 `subscribe_updates()` 把 stream 加进 client._streams,
+    caller 调 `aclose()` 必须从列表移除 — 避免 leak。
+
+    之前(commit 18ddd19 之前):只在 client.close() 一次性清空,subscribe 即使
+    立刻 aclose 仍占用,长会话该列表只增不减。
+    """
+    client = _make_stubbed_client(settings, bus)
+
+    s1 = client.subscribe_updates()
+    s2 = client.subscribe_updates()
+    assert len(client._streams) == 2
+
+    # aclose 一个,列表减 1
+    asyncio.run(s1.aclose())
+    assert len(client._streams) == 1
+    assert s2 in client._streams
+
+    # aclose 剩下的,列表空
+    asyncio.run(s2.aclose())
+    assert client._streams == []
+
+    # aclose 重复 idempotent:不抛
+    asyncio.run(s1.aclose())
+    assert client._streams == []
+
+
+def test_subscribe_updates_streams_receive_push_until_aclose(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init
+) -> None:
+    """功能回归:aclose 之前 push 仍能收到;aclose 之后 push 是 no-op(不抛)。
+    """
+    from tgmonitor.core.dto import MessageDTO
+    client = _make_stubbed_client(settings, bus)
+    stream = client.subscribe_updates()
+
+    async def _scenario() -> None:
+        msg = MessageDTO(
+            id=1, channel_id=1, telegram_msg_id=1, text="hi",
+            date=datetime.now(UTC), media=[],
+        )
+        # 订阅后 push → 收到
+        await stream.push(msg)
+        got = await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+        assert got.text == "hi"
+
+        # aclose 后:sentinel 已塞,__anext__ 立即抛 StopAsyncIteration
+        await stream.aclose()
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+
+        # 幂等:重复 aclose 不抛
+        await stream.aclose()
+
+        # 已 aclose 的 stream 二次 push 静默 no-op(stream 本身仍可调 push,
+        # 内部 _closed 守门)
+        msg2 = MessageDTO(
+            id=2, channel_id=1, telegram_msg_id=2, text="after",
+            date=datetime.now(UTC), media=[],
+        )
+        await stream.push(msg2)  # 不抛
+
+    asyncio.run(_scenario())

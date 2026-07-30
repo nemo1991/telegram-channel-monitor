@@ -11,16 +11,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
 
 
 class FakeUpdateStream(UpdateStream):
-    def __init__(self) -> None:
+    def __init__(self, on_close: Callable[[FakeUpdateStream], None] | None = None) -> None:
         self._queue: asyncio.Queue[MessageDTO] = asyncio.Queue()
         self._closed = False
+        self._on_close = on_close
 
     async def push(self, msg: MessageDTO) -> None:
         if not self._closed:
@@ -35,9 +36,16 @@ class FakeUpdateStream(UpdateStream):
         return await self._queue.get()
 
     async def aclose(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         # 唤醒等待者
         await self._queue.put(None)  # type: ignore[arg-type]
+        if self._on_close is not None:
+            try:
+                self._on_close(self)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class FakeTelegramClient(TelegramClient):
@@ -145,24 +153,26 @@ class FakeTelegramClient(TelegramClient):
         self,
         channel_id: int,
         *,
-        from_msg_id: int = 0,
+        before_msg_id: int = 0,
         limit: int = 100,
     ) -> AsyncIterator[MessageDTO]:
-        """Fake 全量同步分页历史:模拟"从 from_msg_id+1 拉到 max_id"。
+        """Fake 全量同步分页历史:模拟"从 before_msg_id 之前拉到最早"。
 
         - max_id 来自注入的 `set_history(channel_id, max_id, count)`;count 条
-          按升序 telegram_msg_id 排,from_msg_id 之后 yield。
+          按升序 telegram_msg_id 排,以"before_msg_id 之前"为起点 yield。
         - 每次 yield 后 `await asyncio.sleep(0)` 让出 loop,模拟网络。
         - 支持 inject 错误:`raise_after_n_messages` → 第 N+1 条 yield 前抛
           `TelegramRateLimitError`。
+
+        语义跟 tdlib_client 一致:**只能向旧方向拉**(id 递减),不模拟"向新拉"。
         """
         ch_state = self._history_state.get(channel_id)
         if ch_state is None:
             return  # 没注入过历史,空
         max_id, count = ch_state
-        # 起始 id:from_msg_id=0 → 拉最新 count 条(max_id-count+1 ... max_id);
-        # from_msg_id>0 → 从 from_msg_id+1 开始。
-        start = max(1, max_id - count + 1) if from_msg_id == 0 else from_msg_id + 1
+        # 起始 id:before_msg_id=0 → 拉最新 count 条(max_id-count+1 ... max_id);
+        # before_msg_id>0 → 从其前一条(before_msg_id-1 或更早)开始。
+        start = max(1, max_id - count + 1) if before_msg_id == 0 else max(1, before_msg_id - 1)
         end = max_id
         for yielded, mid in enumerate(range(start, end + 1)):
             if self._raise_after_n is not None and yielded == self._raise_after_n:
@@ -182,9 +192,15 @@ class FakeTelegramClient(TelegramClient):
             await asyncio.sleep(0)
 
     def subscribe_updates(self) -> UpdateStream:
-        s = FakeUpdateStream()
+        s = FakeUpdateStream(on_close=self._remove_stream)
         self._all_streams.append(s)
         return s
+
+    def _remove_stream(self, s: FakeUpdateStream) -> None:
+        try:
+            self._all_streams.remove(s)
+        except ValueError:
+            pass  # close() 路径已清空
 
     # ---- 测试辅助 ----
     async def simulate_incoming(self, msg: MessageDTO) -> None:
