@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -30,7 +29,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -38,7 +36,7 @@ from PySide6.QtWidgets import (
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
 from tgmonitor.ui._async import run_coro
-from tgmonitor.ui.widgets.form_row import path_field, text_field
+from tgmonitor.ui.widgets.form_row import combo_field, path_field, spin_field, text_field
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -127,10 +125,9 @@ class SettingsPage(QWidget):
         f = QFormLayout(g)
         f.setSpacing(6)
 
-        self.in_api_id = QSpinBox()
-        self.in_api_id.setRange(0, 2_000_000_000)
-        self.in_api_id.setValue(0)
-        f.addRow("API ID:", self.in_api_id)
+        self.in_api_id = spin_field(
+            f, "API ID:", min=0, max=2_000_000_000, value=0,
+        )
 
         self.in_api_hash = text_field(
             f, "API Hash:", "32 位 hash · my.telegram.org", echo_password=True,
@@ -171,10 +168,7 @@ class SettingsPage(QWidget):
         f = QFormLayout(g)
         f.setSpacing(6)
 
-        self.cmb_db = QComboBox()
-        for b in DBBackend:
-            self.cmb_db.addItem(b.value, b)
-        f.addRow("后端:", self.cmb_db)
+        self.cmb_db = combo_field(f, "后端:", DBBackend)
 
         self.in_db_dsn = text_field(f, "DSN:", "postgresql://user:pass@host/db")
 
@@ -198,10 +192,7 @@ class SettingsPage(QWidget):
         f = QFormLayout(g)
         f.setSpacing(6)
 
-        self.cmb_os = QComboBox()
-        for b in ObjectStoreBackend:
-            self.cmb_os.addItem(b.value, b)
-        f.addRow("后端:", self.cmb_os)
+        self.cmb_os = combo_field(f, "后端:", ObjectStoreBackend)
 
         # 本地
         self.in_os_root = path_field(
@@ -230,20 +221,14 @@ class SettingsPage(QWidget):
         f = QFormLayout(g)
         f.setSpacing(6)
 
-        self.cmb_media = QComboBox()
-        for p in MediaPolicy:
-            self.cmb_media.addItem(p.value, p)
-        f.addRow("媒体下载:", self.cmb_media)
+        self.cmb_media = combo_field(f, "媒体下载:", MediaPolicy)
 
-        self.in_media_max = QSpinBox()
-        self.in_media_max.setRange(0, 10240)  # 0 = 无限制,10 GB 上限
-        self.in_media_max.setSuffix(" MB")
-        self.in_media_max.setSingleStep(10)
-        # 工具提示说明 0 的含义
-        self.in_media_max.setToolTip(
-            "单文件下载上限。0 = 无限制(慎用,可能下载 GB 级视频把磁盘占满)。"
+        self.in_media_max = spin_field(
+            f, "单文件大小上限:",
+            min=0, max=10240,                  # 0 = 无限制,10 GB 上限
+            suffix=" MB", single_step=10,
+            tooltip="单文件下载上限。0 = 无限制(慎用,可能下载 GB 级视频把磁盘占满)。",
         )
-        f.addRow("单文件大小上限:", self.in_media_max)
 
         self.in_data_root = path_field(
             f,
@@ -261,17 +246,15 @@ class SettingsPage(QWidget):
         f = QFormLayout(g)
         f.setSpacing(6)
 
-        self.in_chat_delay = QSpinBox()
-        self.in_chat_delay.setRange(50, 60000)
-        self.in_chat_delay.setSuffix(" ms")
-        self.in_chat_delay.setSingleStep(50)
-        f.addRow("频道间间隔:", self.in_chat_delay)
+        self.in_chat_delay = spin_field(
+            f, "频道间间隔:",
+            min=50, max=60000, suffix=" ms", single_step=50,
+        )
 
-        self.in_page_delay = QSpinBox()
-        self.in_page_delay.setRange(100, 60000)
-        self.in_page_delay.setSuffix(" ms")
-        self.in_page_delay.setSingleStep(100)
-        f.addRow("分页间隔:", self.in_page_delay)
+        self.in_page_delay = spin_field(
+            f, "分页间隔:",
+            min=100, max=60000, suffix=" ms", single_step=100,
+        )
 
         self.chk_resume = QCheckBox("续拉(从已保存位置继续)")
         f.addRow("", self.chk_resume)

@@ -18,14 +18,17 @@ helper 只是"创建 widget 并把它绑进 form row",所以 `_find_form_row`
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QWidget,
 )
 
@@ -48,6 +51,72 @@ def text_field(
         edit.setEchoMode(QLineEdit.EchoMode.Password)
     form.addRow(label, edit)
     return edit
+
+
+def combo_field(
+    form: QFormLayout,
+    label: str,
+    options: Iterable[tuple[Any, str]] | Iterable[Any],
+) -> QComboBox:
+    """ComboBox + addItem(枚举/对) + addRow,返 QComboBox。
+
+    参数:
+      - `options`:可迭代;支持两种形态:
+        - `Iterable[Enum]` — 枚举类,自动用 `opt.value` 当显示文本
+          (DBBackend / ObjectStoreBackend / MediaPolicy 等)
+        - `Iterable[tuple[Any, str]]` — (data, display_text) 对(给自定义选项)
+      addRow(label, cmb) 由 helper 调;caller 之后仍可 `cmb.currentIndexChanged.connect(...)`
+      / `cmb.findData(...)` / `cmb.currentData()` 等。
+
+    例子:
+        combo_field(form, "后端:", DBBackend)        # 枚举
+        combo_field(form, "性别:", [("m", "男"), ("f", "女")])  # 对
+    """
+    cmb = QComboBox()
+    for opt in options:
+        if isinstance(opt, tuple):
+            data, display_text = opt
+        else:
+            data = opt
+            display_text = opt.value
+        cmb.addItem(display_text, data)
+    form.addRow(label, cmb)
+    return cmb
+
+
+def spin_field(
+    form: QFormLayout,
+    label: str,
+    *,
+    min: int = 0,
+    max: int = 100,
+    value: int = 0,
+    suffix: str = "",
+    single_step: int = 1,
+    tooltip: str = "",
+) -> QSpinBox:
+    """SpinBox + setRange/setValue/setSuffix/setSingleStep/setToolTip + addRow,
+    返 QSpinBox。
+
+    参数全是 keyword-only,避免与 `value` / `min` / `max` Python builtin 关键字
+    风格混淆。caller 之后仍可 `spin.setValue(...)` / `spin.value()` 等。
+
+    例子:
+        spin_field(form, "API ID:", min=0, max=2_000_000_000, value=0)
+        spin_field(form, "单文件大小上限:", min=0, max=10240,
+                   suffix=" MB", single_step=10,
+                   tooltip="0 = 无限制")
+    """
+    spin = QSpinBox()
+    spin.setRange(min, max)
+    spin.setValue(value)
+    if suffix:
+        spin.setSuffix(suffix)
+    spin.setSingleStep(single_step)
+    if tooltip:
+        spin.setToolTip(tooltip)
+    form.addRow(label, spin)
+    return spin
 
 
 def path_field(
