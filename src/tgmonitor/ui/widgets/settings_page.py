@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -38,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
+from tgmonitor.ui.widgets.form_row import path_field, text_field
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -131,30 +131,21 @@ class SettingsPage(QWidget):
         self.in_api_id.setValue(0)
         f.addRow("API ID:", self.in_api_id)
 
-        self.in_api_hash = QLineEdit()
-        self.in_api_hash.setEchoMode(QLineEdit.EchoMode.Password)
-        self.in_api_hash.setPlaceholderText("32 位 hash · my.telegram.org")
-        f.addRow("API Hash:", self.in_api_hash)
-
-        self.in_phone = QLineEdit()
-        self.in_phone.setPlaceholderText("+8613800000000")
-        f.addRow("手机号:", self.in_phone)
-
-        self.in_session_dir = QLineEdit()
-        self.in_session_dir.setPlaceholderText(str(_user_data_dir() / "session"))
-        # 浏览按钮 + 恢复默认按钮(v1.0.1:platform-native 默认路径)
-        sdir_row = QHBoxLayout()
-        sdir_row.addWidget(self.in_session_dir, 1)
-        btn_sdir = QPushButton("浏览…")
-        btn_sdir.clicked.connect(lambda: self._browse_dir(self.in_session_dir))
-        sdir_row.addWidget(btn_sdir)
-        btn_sdir_default = QPushButton("默认")
-        btn_sdir_default.setToolTip("恢复为 platform-native 默认目录")
-        btn_sdir_default.clicked.connect(
-            lambda: self._set_default(self.in_session_dir, "session")
+        self.in_api_hash = text_field(
+            f, "API Hash:", "32 位 hash · my.telegram.org", echo_password=True,
         )
-        sdir_row.addWidget(btn_sdir_default)
-        f.addRow("Session 目录:", sdir_row)
+
+        self.in_phone = text_field(f, "手机号:", "+8613800000000")
+
+        # Session 目录(浏览 + 恢复默认)— path_field helper
+        self.in_session_dir = path_field(
+            f,
+            "Session 目录:",
+            str(_user_data_dir() / "session"),
+            on_default=lambda: self._set_default(self.in_session_dir, "session"),
+            default_tooltip="恢复为 platform-native 默认目录",
+            parent=self,
+        )
 
         root.addWidget(g)
 
@@ -184,24 +175,16 @@ class SettingsPage(QWidget):
             self.cmb_db.addItem(b.value, b)
         f.addRow("后端:", self.cmb_db)
 
-        self.in_db_dsn = QLineEdit()
-        self.in_db_dsn.setPlaceholderText("postgresql://user:pass@host/db")
-        f.addRow("DSN:", self.in_db_dsn)
+        self.in_db_dsn = text_field(f, "DSN:", "postgresql://user:pass@host/db")
 
-        db_root_row = QHBoxLayout()
-        self.in_db_root = QLineEdit()
-        self.in_db_root.setPlaceholderText(str(_user_data_dir() / "messages"))
-        db_root_row.addWidget(self.in_db_root, 1)
-        btn_dbr = QPushButton("浏览…")
-        btn_dbr.clicked.connect(lambda: self._browse_dir(self.in_db_root))
-        db_root_row.addWidget(btn_dbr)
-        btn_dbr_default = QPushButton("默认")
-        btn_dbr_default.setToolTip("恢复为 platform-native 默认目录")
-        btn_dbr_default.clicked.connect(
-            lambda: self._set_default(self.in_db_root, "messages")
+        self.in_db_root = path_field(
+            f,
+            "JSONL 目录:",
+            str(_user_data_dir() / "messages"),
+            on_default=lambda: self._set_default(self.in_db_root, "messages"),
+            default_tooltip="恢复为 platform-native 默认目录",
+            parent=self,
         )
-        db_root_row.addWidget(btn_dbr_default)
-        f.addRow("JSONL 目录:", db_root_row)
 
         # DB 后端切换 → 显隐 DSN / 目录
         self.cmb_db.currentIndexChanged.connect(self._on_db_backend_changed)
@@ -220,41 +203,21 @@ class SettingsPage(QWidget):
         f.addRow("后端:", self.cmb_os)
 
         # 本地
-        os_root_row = QHBoxLayout()
-        self.in_os_root = QLineEdit()
-        self.in_os_root.setPlaceholderText(str(_user_data_dir() / "media"))
-        os_root_row.addWidget(self.in_os_root, 1)
-        btn_osr = QPushButton("浏览…")
-        btn_osr.clicked.connect(lambda: self._browse_dir(self.in_os_root))
-        os_root_row.addWidget(btn_osr)
-        btn_osr_default = QPushButton("默认")
-        btn_osr_default.setToolTip("恢复为 platform-native 默认目录")
-        btn_osr_default.clicked.connect(
-            lambda: self._set_default(self.in_os_root, "media")
+        self.in_os_root = path_field(
+            f,
+            "本地目录:",
+            str(_user_data_dir() / "media"),
+            on_default=lambda: self._set_default(self.in_os_root, "media"),
+            default_tooltip="恢复为 platform-native 默认目录",
+            parent=self,
         )
-        os_root_row.addWidget(btn_osr_default)
-        f.addRow("本地目录:", os_root_row)
 
         # S3
-        self.in_os_endpoint = QLineEdit()
-        self.in_os_endpoint.setPlaceholderText("https://s3.amazonaws.com")
-        f.addRow("S3 Endpoint:", self.in_os_endpoint)
-
-        self.in_os_region = QLineEdit()
-        self.in_os_region.setPlaceholderText("us-east-1")
-        f.addRow("Region:", self.in_os_region)
-
-        self.in_os_access_key = QLineEdit()
-        self.in_os_access_key.setEchoMode(QLineEdit.EchoMode.Password)
-        f.addRow("Access Key:", self.in_os_access_key)
-
-        self.in_os_secret_key = QLineEdit()
-        self.in_os_secret_key.setEchoMode(QLineEdit.EchoMode.Password)
-        f.addRow("Secret Key:", self.in_os_secret_key)
-
-        self.in_os_bucket = QLineEdit()
-        self.in_os_bucket.setPlaceholderText("tgmonitor")
-        f.addRow("Bucket:", self.in_os_bucket)
+        self.in_os_endpoint = text_field(f, "S3 Endpoint:", "https://s3.amazonaws.com")
+        self.in_os_region = text_field(f, "Region:", "us-east-1")
+        self.in_os_access_key = text_field(f, "Access Key:", "", echo_password=True)
+        self.in_os_secret_key = text_field(f, "Secret Key:", "", echo_password=True)
+        self.in_os_bucket = text_field(f, "Bucket:", "tgmonitor")
 
         self.cmb_os.currentIndexChanged.connect(self._on_os_backend_changed)
         self._on_os_backend_changed()
@@ -281,20 +244,14 @@ class SettingsPage(QWidget):
         )
         f.addRow("单文件大小上限:", self.in_media_max)
 
-        self.in_data_root = QLineEdit()
-        self.in_data_root.setPlaceholderText(str(_user_data_dir()))
-        data_root_row = QHBoxLayout()
-        data_root_row.addWidget(self.in_data_root, 1)
-        btn_dr = QPushButton("浏览…")
-        btn_dr.clicked.connect(lambda: self._browse_dir(self.in_data_root))
-        data_root_row.addWidget(btn_dr)
-        btn_dr_default = QPushButton("默认")
-        btn_dr_default.setToolTip("恢复为 platform-native 默认目录")
-        btn_dr_default.clicked.connect(
-            lambda: self._set_default(self.in_data_root, "")
+        self.in_data_root = path_field(
+            f,
+            "数据根目录:",
+            str(_user_data_dir()),
+            on_default=lambda: self._set_default(self.in_data_root, ""),
+            default_tooltip="恢复为 platform-native 默认目录",
+            parent=self,
         )
-        data_root_row.addWidget(btn_dr_default)
-        f.addRow("数据根目录:", data_root_row)
 
         root.addWidget(g)
 
@@ -524,14 +481,6 @@ class SettingsPage(QWidget):
 
         fut = asyncio.run_coroutine_threadsafe(_test(), self._loop)
         fut.add_done_callback(_on_done)
-
-    @staticmethod
-    def _browse_dir(line_edit: QLineEdit) -> None:
-        dir_path = QFileDialog.getExistingDirectory(
-            None, "选择目录", line_edit.text(),
-        )
-        if dir_path:
-            line_edit.setText(dir_path)
 
     @staticmethod
     def _set_default(line_edit: QLineEdit, subdir: str) -> None:

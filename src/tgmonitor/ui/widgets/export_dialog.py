@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import ExportFormat, ExportRequest
+from tgmonitor.ui.widgets.form_row import path_field
 
 _FORMAT_EXT = {
     ExportFormat.JSON: ".json",
@@ -82,17 +82,10 @@ class ExportDialog(QDialog):
             lambda i: self.chk_thumbs.setEnabled(self.cmb_fmt.currentData() == ExportFormat.HTML)
         )
 
-        # 输出路径
-        path_row = QWidget()
-        pl = QHBoxLayout(path_row)
-        pl.setContentsMargins(0, 0, 0, 0)
-        self.in_path = QLineEdit()
-        self.btn_browse = QLabel("[浏览…]")
-        self.btn_browse.setStyleSheet("color: #4a90e2; text-decoration: underline;")
-        self.btn_browse.mousePressEvent = lambda _e: self._browse()  # type: ignore[assignment]
-        pl.addWidget(self.in_path, 1)
-        pl.addWidget(self.btn_browse)
-        form.addRow("输出:", path_row)
+        # 输出路径(选文件而不是目录)
+        self.in_path = path_field(
+            form, "输出:", "", file_mode=True, parent=self,
+        )
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self._on_ok)
@@ -101,11 +94,6 @@ class ExportDialog(QDialog):
 
     def _set_default_filename(self) -> None:
         self.in_path.setText(f"./export-{datetime.now().strftime('%Y%m%d-%H%M%S')}{_FORMAT_EXT[ExportFormat.JSON]}")
-
-    def _browse(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "选择输出文件", self.in_path.text())
-        if path:
-            self.in_path.setText(path)
 
     def _on_ok(self) -> None:
         # 频道

@@ -58,10 +58,16 @@ def path_field(
     on_default: Callable[[], None] | None = None,
     default_tooltip: str = "恢复为 platform-native 默认目录",
     parent: QWidget | None = None,
+    file_mode: bool = False,
 ) -> QLineEdit:
     """Path field with 「浏览…」 + (可选)「默认」按钮 + addRow。
 
-    浏览按钮:打开 `QFileDialog.getExistingDirectory`,选完写回 QLineEdit。
+    浏览按钮:
+      - `file_mode=False`(默认):打开 `QFileDialog.getExistingDirectory`,
+        选目录 — 适用于 settings_page 的 4 个目录字段
+      - `file_mode=True`:打开 `QFileDialog.getSaveFileName`,选保存文件路径
+        — 适用于 export_dialog 的输出文件
+
     默认按钮:`on_default` 是无参 callable(典型用法 `lambda: edit.setText(...)`),
     None = 不显示「默认」按钮。
 
@@ -76,7 +82,10 @@ def path_field(
     row.addWidget(edit, 1)
 
     btn_browse = QPushButton("浏览…")
-    btn_browse.clicked.connect(lambda: _on_browse(edit, parent))
+    if file_mode:
+        btn_browse.clicked.connect(lambda: _on_browse_file(edit, parent))
+    else:
+        btn_browse.clicked.connect(lambda: _on_browse_dir(edit, parent))
     row.addWidget(btn_browse)
 
     if on_default is not None:
@@ -89,8 +98,15 @@ def path_field(
     return edit
 
 
-def _on_browse(edit: QLineEdit, parent: QWidget | None) -> None:
+def _on_browse_dir(edit: QLineEdit, parent: QWidget | None) -> None:
     """Internal: open directory picker;set QLineEdit text on user confirm."""
     dir_path = QFileDialog.getExistingDirectory(parent, "选择目录", edit.text())
     if dir_path:
         edit.setText(dir_path)
+
+
+def _on_browse_file(edit: QLineEdit, parent: QWidget | None) -> None:
+    """Internal: open save-file picker;set QLineEdit text on user confirm."""
+    path, _ = QFileDialog.getSaveFileName(parent, "选择输出文件", edit.text())
+    if path:
+        edit.setText(path)
