@@ -91,6 +91,15 @@
   自身抛 → `log.exception` 兜底,不污染 future;helper 设计延续 #6 (`form_row.py`)
   思路 — 抽"如何 fire + 异常归一"成本,不抽 on_success 内部业务。
   9 个新单元测试覆盖 success / 异常 / self-throw / TypeVar 透传 4 路径。
+- **form_row.py 扩展 `combo_field` + `spin_field`**(2026-07-30,commit
+  `a19a32b`)— 延续 #6 思路:`combo_field(form, label, options)` 支持
+  `Iterable[Enum]` / `Iterable[tuple[Any, str]]` 两种形态;`spin_field(
+  form, label, *, min, max, value, suffix, single_step, tooltip)` 全
+  keyword-only 参数避免与 builtin `min`/`max` 关键字混淆。settings_page.py
+  6 处切到 helper(3 QComboBox + 4 QSpinBox → 实际合并 6 块),净减 21 行,
+  QComboBox / QSpinBox import 0 caller 清理。10 个新单元测试覆盖
+  placeholder / echo / on_default / Enum / tuple / addRow / spin
+  suffix+step+tooltip。
 - **FormRow helper(`src/tgmonitor/ui/widgets/form_row.py`)**(2026-07-30,
   commits `ca85c15` + `18ddd19`)— 集中 `text_field` / `path_field` 两个
   高频样板:`settings_page.py` 6 处 + `export_dialog.py` 1 处切到 helper,
