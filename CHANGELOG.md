@@ -126,7 +126,64 @@
   file_id 缺失、known-size 拦截、`max_bytes=0` 无限制、download 失败、
   unknown-size hard cap、make_key 稳定性、ObjectMeta size 透传。
 
-### 🔧 Changed
+### 🔧 Changed (2026-07-31 refactor sweep)
+- **`TdlibTelegramClient._check_authentication_code` / `_check_authentication_password`
+  抽 `_submit_auth_step` helper**(commit `f655c19`)— 22 行
+  near-identical 方法合并成 9 行 + 25 行 helper;3 处重复的
+  `getattr(e, "message", None) or str(e) or "未知错误"` 统一进
+  `_extract_error_detail` 模块级纯函数(`tests/test_error_helpers.py`
+  8 个新 case)。
+- **启动失败用 Qt `QMessageBox.critical` 弹窗**(commit `4fa866d`)—
+  原先 bundle 启动失败只 stderr 静默退出,新用户无任何提示(Windows /
+  macOS `.app` 双击 → 一闪而过)。`app.py` module-level
+  `_show_setup_failure_dialog(err)` 含 PySide6 import / QApplication
+  instance / 内 raise 三层防御性 fallback;`tests/test_app_failure_dialog.py`
+  4 个新 case(空 message / 无 Qt app / PySide6 模拟 import 失败)。
+- **`state_labels.py` 单源映射**(commit `43ebab5`)— login state 到
+  `(dot, label, hint, badge)` 的映射从 3 处分散(`main_window` 22 行双 dict
+  + dashboard 内联 3 状态 dict + dashboard L344-353 if/elif chain,后两个
+  还互不一致)统一到 `state_labels.py` 4 张表 + 4 helper。新增状态时,
+  只改一处。dashboard `_format_*` + dispatch table(`_init_event_dispatch`)
+  把 41 行 isinstance 链拆成 7 个小方法,加新事件类型只需注册一行。
+- **`list_joined_channels` 抽 `_iter_resolved_chats` async generator**
+  (commit `85f7ed1`)— 73 行方法拆成 lifecycle guard 30 行 +
+  per-cid 迭代 20 行(mid-loop `_check_alive` + 单条解析失败 + `None`
+  跳过 + 进度日志全在 generator 里)。`tests/test_telegram_lifecycle.py`
+  加 4 个 case 覆盖 empty / all succeed / 单条 raise / mid-loop
+  `ClientClosingError` 4 路径。
+- **`start()` error-code 翻译 → `_translate_boot_error` 纯函数**
+  (commit `a6d6b9e`)— start() TimeoutError 分支内 13 行 if/elif chain
+  抽 module-level pure function(401 → encryption key 不匹配 +
+  AppService 据此 rotate key / 429 → TDLib 限流 / 其他 → DC 握手失败 /
+  空 → 启动超时)。`tests/test_error_helpers.py` 加 5 个 case 覆盖四
+  分支 + 优先级(401 over 429)。
+- **`empty_hint(icon, title, hint)` helper + 首屏引导**(commit `4691d27`)—
+  抽 MessageDetail 同款「icon + title + hint」占位为 form_row helper,
+  MessageView(LIVE tab)+ ChannelWidget.lst_joined 两处接入:首启打开
+  LIVE 看到「💬 暂无消息 — 先去「频道」页双击订阅一个频道」;
+  Channels 卡片空时显示「📋 暂无已加入频道 — 请先登录后点「刷新」」。
+  tests/test_form_row.py + test_message_view.py + test_main_window_channels.py
+  共 +9 个新 case。
+- **`channel_widget` 双栏同构 → `_ChannelListCard` 内部类**
+  (commit `f30f07f`)— `_build()` 里两张 ~30 行复制粘贴的卡(已加入 +
+  已监听)抽成可复用 widget class,只在 `__init__` keyword arg 里区分
+  title / action 按钮 / 多选 / empty_hint 存在性。`set_items` /
+  `add_item` / `remove_by_cid` / `apply_filter` / `selected_cids` 统一
+  API,filter 逻辑(原来在 ChannelWidget 内联 for loop)搬到 card 里只写
+  一遍。ChannelWidget 旧 public attribute 名(`lst_joined` 等)用引用
+  桥接保留,MainWindow + tests 不需改一行。8 个 _ChannelListCard 独立
+  case(set_items / clear / add/remove / filter / signals / 模式切 / 
+  empty_hint 切换)。
+- **`message_detail.py` 6 处 inline `setStyleSheet` → objectName + QSS**
+  (commit `34d5c6b`)— `#detailHeader` / `#detailSectionLabel` /
+  `#detailTextEdit` / `#mediaItem` / `#rawJsonEdit` / `QLabel#emptyHintIcon`
+  6 条 selector 在 `style.qss` + `style_dark.qss` 各一份,主题切换后
+  详情面板样式跟得上(原来浅色 hex `#fafbfc` / `#e2e4e9` 写死在 Python
+  里,暗色主题下样式全断)。
+  `form_row.empty_hint` 同样把 `font-size: 36px` 切到 `QLabel#emptyHintIcon`,
+  跟 message_detail 占位共用同一 selector。
+  tests/test_message_detail_theme.py 9 个新 case(objectName 命中 +
+  widget tree 无 leaked inline styleSheet + QSS 必有 selector)。
 - **删 `iter_messages` Protocol + tdlib_client stub + fake_client impl** —
   grep 0 caller,纯冗余;tdlib 真正的历史接口是 `iter_chat_history`
   (`ChannelSyncService` 在用)。
