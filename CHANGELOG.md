@@ -151,43 +151,88 @@
 - **REVIEW M2.1**:FULL 模式下用户之前**下不到任何原文件** — `MediaDownloader.download_one`
   永远返 None,只是元数据 + 缩略图 + 一个空 key。现在真实现,完整下载链路打通。
 
-### 🔧 Fixed (Stage A+B, 2026-07-22)
-- **test: 加 `tests/__init__.py`** — 把 `tests/` 标成 Python package,
-  修 `from tests.conftest import …` 风格的 fragility;`pytest` binary 入口
-  和 IDE 单文件跑现在都能正常 collect(此前 151 测试只在 `python -m pytest`
-  下能跑)。
-- **ci: `actions/upload-artifact@v4` → `@v5`** — 顺手把上次 major 升级漏掉的
-  action 也升了,Node 20 deprecation 警告全清。
-- **ci: 加 `.github/dependabot.yml`** — uv ecosystem 周一 09:00 扫 `uv.lock`
-  开自动 PR;GitHub Actions ecosystem 周一 09:30 扫 workflow 升级。
-  不自动合,人工 review。
-- **ci: 加 `.github/workflows/audit.yml`** — 周一 09:30 UTC 跑 `pip-audit --strict`,
-  基于 `uv.lock` 扫 CVE,不挡主 CI,失败即通知。
+## [0.5.0] - 2026-07-22
 
-### 📝 Docs
-- **docs: README / CONTRIBUTING / SECURITY 全切 uv 工作流** — pip 路径
-  示例全部替换为 `uv sync` / `uv run`,跟 CI 一致;README「测试覆盖」
-  表按 `pytest --collect-only` 实际跑出的 151 用例补全(从老的 4 行 +
-  错的 20 用例 → 17 行 + 正确 151);SECURITY.md 受支持版本 `0.1.x` → `0.2.x`;
-  REVIEW.md 和 `settings_page.py` docstring 残留的 `settings_dialog.py`
-  文件名引用改回新名(`settings_page.py`)。
-- **chore: batched quick wins** — `datetime.utcnow()` / `utcfromtimestamp()`
-  全切 aware UTC(`datetime.now(UTC)` / `fromtimestamp(ts, UTC)`),11 处
-  调用点 + `tests/conftest.py` 修一个 latent 排序 bug;CI actions 升 major
-  (`actions/checkout@v4`→`v5`、`astral-sh/setup-uv@v6`→`v7`)避开 Node 20
-  deprecation;`pyproject.toml` 版本 `0.1.0` → `0.2.0` 跟 README / SECURITY
-  对齐。
+🧹 **Stage A+B + post-Phase-5 UI polish + REVIEW sweep** — 一次性把测试
+collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
+(后续被 v1.0.0 取代,这里保留历史 changelog)。
 
-### 🛠 Changed
-- **CI matrix 移除 `windows-latest`** — upstream `aiotdlib 0.27.x` 在 PyPI 上不发
-  Windows wheel(只 `macosx_*` + `manylinux_2_28_*` 四个),`uv sync` 在 Windows 上
-  会触发 TDLib sdist 编译,需 MSVC + OpenSSL + gperf + PHP,`windows-latest` runner
-  默认不带这套工具链,每次必失败。源码层跨平台(全 `pathlib` / 无 POSIX-only 假设),
-  但 CI 不再验证 Windows,跟实际能力对齐。README 新增「🖥️ Platform Support」
-  章节,说明 Linux / macOS 由 CI 验证,Windows 推荐用 WSL2,原生编译需自备
-  MSVC 工具链。
+### ✨ Added
+- **SOCKS5 代理** — `Settings.proxy` + `TD_PROXY` 环境变量,`AiClient(proxy_settings=...)` 接入;
+  `EditableSettings` 校验 `socks5://[user:pass@]host:port` 格式;设置对话框里有「测试连接」按钮
+- **侧栏常驻账户面板** — `AccountWidget`:API ID / Hash / 手机号就地编辑 + 保存;
+  状态圆点(红/橙/绿);登录动作(登录 / 提交验证码 / 提交 2FA)**就地切换输入框**,不再弹模态
+- **侧栏频道双栏** — `ChannelWidget`:已加入 + 已监听,双击切换订阅;
+  实时按 `ChannelSubscribed / ChannelUnsubscribed` 事件刷新
+- **应用图标** — SVG(蓝底 + 信号波 + 频道点),`setApplicationIcon` + 窗口标题;工具栏 4 图标独立 SVG;
+  pyproject 不增依赖,资源走 `importlib.resources`
+- **QSS 主题** — `ui/resources/style.qss`:状态点颜色 / 工具栏分组 / 圆角 group box /
+  提示/警告/错误三色 role
+- **重新组织主窗口**:
+  - 工具栏只保留 `刷新频道 · 导出 · 设置`(无「登录」了,已上移侧栏)
+  - 状态栏显示「登录状态」实时事件
+- **测试** — 25 个新单测(proxy URL 解析 12 + 校验 6 + settings/store 往返 5 + TdlibClient 集成 2)
+- **REVIEW.md**(new)— 一次 sweep 的 review report,列出分层违规、dead-code、CHANGELOG 重复标题、重复 setWindowIcon、coverage 配置缺失等
+- **Stage A+B CI 基建**:
+  - `tests/__init__.py` — 把 `tests/` 标成 Python package,修 `from tests.conftest import …` 风格的 fragility
+  - `actions/upload-artifact@v4` → `@v5` — Node 20 deprecation 警告全清
+  - `.github/dependabot.yml` — uv ecosystem 周一 09:00 扫 `uv.lock` 开自动 PR
+  - `.github/workflows/audit.yml` — 周一 09:30 UTC 跑 `pip-audit --strict`,不挡主 CI
+- **覆盖率上传** — `pyproject.toml` 加 `[tool.coverage.run]` / `[tool.coverage.report]`,CI 加 coverage xml artifact 上传;**不设阈值**
+- **项目 URL 元数据** — `pyproject.toml` 加 `[project.urls]`(Homepage / Repository / Issues / Documentation)
 
-### 🔧 Fixed (post-Phase-5 UI polish, 2026-07-21)
+### 🔧 Changed
+- **tdlib_client 0.27+ 兼容** — `core/telegram/tdlib_client.py` 重写为 `aiotdlib.ClientSettings(...)` 调用,
+  同时支持老版直接 kwargs 调用;`core/telegram/factory.py`/`client.py` 等接口未变;边界未变
+- **settings 对话框重构** — `ui/widgets/settings_dialog.py` 删 Telegram 整组,加 Proxy + 测试连接按钮
+- **login_dialog 收尾** — 只剩 code + 2FA 输入(auto-show via bus event)
+- **CI matrix 移除 `windows-latest`** — upstream `aiotdlib 0.27.x` 在 PyPI 上不发 Windows wheel
+  (只 `macosx_*` + `manylinux_2_28_*` 四个),`uv sync` 在 Windows 上会触发 TDLib sdist 编译,
+  需 MSVC + OpenSSL + gperf + PHP,每次必失败。源码层跨平台(全 `pathlib` / 无 POSIX-only 假设),
+  但 CI 不再验证 Windows,跟实际能力对齐。README 新增「🖥️ Platform Support」章节。
+- **公共属性化** — `MonitorService.subscribed_ids` 公共属性,UI 不再读 `_whitelist` private 字段;
+  移除三处 `# type: ignore[attr-defined]`
+- **`_set_state` 清理** — `tdlib_client._set_state` 去除历史 dead-switch `if False else asyncio.create_task(...)`,改纯 `create_task`
+- **图标统一 Lucide** — stroke-width=1.75, currentColor, round caps;新增 3 个 kind 图标
+  (megaphone / users / user-round);删 orphan SVG;`channel_widget.py` 删 `_paint_color_block` /
+  `_kind_color` / `_ICON_*` ~30 行 QPainter 色块代码,改用 `action_icon("kind_channel|supergroup|group")`
+- **MainWindow 图标** — 不再单独 `setWindowIcon(load_app_icon())` — `QGuiApplication.setWindowIcon` 已是 process-wide
+- **uv 工作流** — README / CONTRIBUTING / SECURITY 全切 uv,`pip install` 路径示例全部替换为
+  `uv sync` / `uv run`,跟 CI 一致;README「测试覆盖」表按 `pytest --collect-only` 实际跑出
+  的 151 用例补全(从老的 4 行 + 错的 20 用例 → 17 行 + 正确 151);SECURITY.md 受支持版本
+  `0.1.x` → `0.2.x`;REVIEW.md 和 `settings_page.py` docstring 残留的 `settings_dialog.py`
+  文件名引用改回新名(`settings_page.py`)
+- **datetime UTC aware** — `datetime.utcnow()` / `utcfromtimestamp()` 全切 aware UTC
+  (`datetime.now(UTC)` / `fromtimestamp(ts, UTC)`),11 处调用点 + `tests/conftest.py` 修一个
+  latent 排序 bug;CI actions 升 major(`actions/checkout@v4`→`v5`、`astral-sh/setup-uv@v6`→`v7`)
+  避开 Node 20 deprecation;`pyproject.toml` 版本 `0.1.0` → `0.2.0` 跟 README / SECURITY 对齐
+
+### 🐛 Fixed
+- **qasync `RuntimeError: loop ... is not the running loop`** (2026-07-18 08:00 实测) —
+  `app.run()` 原本的 `loop.run_until_complete(_setup_async)` + `loop.run_forever()` 模式
+  在两步之间留一个 qasync `__is_running=False` 但 `closed=False` 的 paused 窗口;
+  aiotdlib 内部 IO thread 在这段时间 wake asyncio Task 时,`Task.__step()` 检查失败抛
+  `RuntimeError`。改成单 `run_forever()` + `asyncio.ensure_future(_setup_then_show(), loop=loop)`,
+  loop 始终 running,根因消除
+- **`list_joined_channels` 启动 race** — `bootstrap_ui` 在 `app.bootstrap()` 之前 fire-and-forget
+  拉已订阅频道列表,bridge `_state!="ready"`,撞 aiotdlib 10s `request_timeout`;新增 entry guard
+  `if self._state != "ready`: 静默返回 [],DEBUG 日志
+- **logged-in 下频道 panel 不显示** (2026-07-18 用户反馈) — 之前 `if state != "ready" → 立即 []`
+  在 aiotdlib 走 `WaitTdlibParameters → ... → Ready` 多步过渡时太激进:
+  `start()` await 的 `_state_event.wait()` 任何变化都 set,所以可能在
+  WaitTdlibParameters 就返;`bootstrap_ui` 紧接着 fire-and-forget 调
+  `list_joined_channels` 时 `_state` 还是中间态,guard 立即 [],**错过稍后才到的
+  Ready,channels 永不显示**直到用户手动 refresh。改成**最多等 8 秒**让
+  `_state` 走到 `ready` 再真请求;仍 best-effort,超时 / `_closing` / 永久
+  非 ready 时返 `[]` + DEBUG log
+- **`_wait_for_state` spin 冻 UI** (2026-07-18 17:17 用户反馈"卡住无反应") —
+  `_state_event` 是 Python `Event` 语义(set-only),之前 polling 路径
+  `wait_for(state_event.wait(), 0.5)` 在 event 已 set 时立即返回,**没真正
+  yield CPU**;qasync 的 loop 被这个子循环 peg 满,Qt 事件 8s 全没机会 pump,
+  UI 完全不响应。改成 event 已 set 时主动 `asyncio.sleep(0.05)` 让出 CPU +
+  重新 poll `self._state` —— 是等"状态变化"而非"event set",两者在 set-only
+  Event 下不相等
+- **`list_joined_channels` close race** — `close()` 标志 + 事务性方法(`submit_phone/code/password/logout/start/get_channel_metadata/join_channel`/`iter_chat_history` 分页入口)的 `_check_alive()` 公共 entry,提前抛 `ClientClosingError`,不进 10s aiotdlib request
 - **左侧 nav icon 显示不全** — `icon.py` 加 `tinted_action_icon(name, color)`,在 SVG 字节层
   把 `currentColor` 替换为 `QColor.name()`(Qt `QSvgRenderer` 不解析 `currentColor`,
   所以过去所有 nav / 频道类型图标在 painter 上都是黑团);nav / 顶栏 / ChannelWidget 全切
@@ -219,69 +264,6 @@
   频道条」:左 1/3 塔(三角顶 + 矩形杆 + 梯形基座 + 1 道信号波),右 2/3 三条频道 list
   (顶条 highlight 绿)。16×16 下塔尖 1px 三角、绿条 4×1px、白条 4×1px — 全部 ≥ 1px 物理
   像素,taskbar / 256×256 about 都清晰
-
-### ✨ Added
-
-### ✨ Added
-- **SOCKS5 代理** — `Settings.proxy` + `TD_PROXY` 环境变量,`AiClient(proxy_settings=...)` 接入;
-  `EditableSettings` 校验 `socks5://[user:pass@]host:port` 格式;设置对话框里有「测试连接」按钮
-- **侧栏常驻账户面板** — `AccountWidget`:API ID / Hash / 手机号就地编辑 + 保存;
-  状态圆点(红/橙/绿);登录动作(登录 / 提交验证码 / 提交 2FA)**就地切换输入框**,不再弹模态
-- **侧栏频道双栏** — `ChannelWidget`:已加入 + 已监听,双击切换订阅;
-  实时按 `ChannelSubscribed / ChannelUnsubscribed` 事件刷新
-- **应用图标** — SVG(蓝底 + 信号波 + 频道点),`setApplicationIcon` + 窗口标题;工具栏 4 图标独立 SVG;
-  pyproject 不增依赖,资源走 `importlib.resources`
-- **QSS 主题** — `ui/resources/style.qss`:状态点颜色 / 工具栏分组 / 圆角 group box /
-  提示/警告/错误三色 role
-- **重新组织主窗口**:
-  - 工具栏只保留 `刷新频道 · 导出 · 设置`(无「登录」了,已上移侧栏)
-  - 状态栏显示「登录状态」实时事件
-- **测试** — 25 个新单测(proxy URL 解析 12 + 校验 6 + settings/store 往返 5 + TdlibClient 集成 2)
-- **文档** — README 跑通说明改写,标签侧栏 + 代理 + 图标
-
-### 🔧 Changed
-- `core/telegram/tdlib_client.py` 重写为 `aiotdlib.ClientSettings(...)` 调用(0.27+ 兼容),
-  同时支持老版直接 kwargs 调用
-- `core/telegram/factory.py`/`client.py` 等接口未变;边界未变
-- `ui/widgets/settings_dialog.py` 删 Telegram 整组,加 Proxy + 测试连接按钮
-- `ui/widgets/login_dialog.py` 收尾只剩 code + 2FA 输入(auto-show via bus event)
-
-### 🔧 Changed
-- `REVIEW.md`(new)— 一次 sweep 的 review report,列出分层违规、dead-code、CHANGELOG 重复标题、重复 setWindowIcon、coverage 配置缺失等
-- `MonitorService.subscribed_ids` 公共属性 — UI 不再读 `_whitelist` private 字段;移除三处 `# type: ignore[attr-defined]`
-- `tdlib_client._set_state` 去除历史 dead-switch `if False else asyncio.create_task(...)`,改纯 `create_task`
-- `MainWindow` 不再单独 `setWindowIcon(load_app_icon())` — `QGuiApplication.setWindowIcon` 已是 process-wide
-- `pyproject.toml` 加 `[tool.coverage.run]` / `[tool.coverage.report]`,CI 加 coverage xml artifact 上传;**不设阈值**
-- `pyproject.toml` 加 `[project.urls]`(Homepage / Repository / Issues / Documentation)
-- 图标统一到 Lucide(stroke-width=1.75, currentColor, round caps);新增 3 个 kind 图标(megaphone / users / user-round);删 orphan SVG
-- `channel_widget.py` 删 `_paint_color_block` / `_kind_color` / `_ICON_*` ~30 行 QPainter 色块代码,改用 `action_icon("kind_channel|supergroup|group")`
-
-### 🐛 Fixed
-- **qasync `RuntimeError: loop ... is not the running loop`** (2026-07-18 08:00 实测) —
-  `app.run()` 原本的 `loop.run_until_complete(_setup_async)` + `loop.run_forever()` 模式
-  在两步之间留一个 qasync `__is_running=False` 但 `closed=False` 的 paused 窗口;
-  aiotdlib 内部 IO thread 在这段时间 wake asyncio Task 时,`Task.__step()` 检查失败抛
-  `RuntimeError`。改成单 `run_forever()` + `asyncio.ensure_future(_setup_then_show(), loop=loop)`,
-  loop 始终 running,根因消除
-- **`list_joined_channels` 启动 race** — `bootstrap_ui` 在 `app.bootstrap()` 之前 fire-and-forget
-  拉已订阅频道列表,bridge `_state!="ready"`,撞 aiotdlib 10s `request_timeout`;新增 entry guard
-  `if self._state != "ready`: 静默返回 [],DEBUG 日志
-- **logged-in 下频道 panel 不显示** (2026-07-18 用户反馈) — 之前 `if state != "ready" → 立即 []`
-  在 aiotdlib 走 `WaitTdlibParameters → ... → Ready` 多步过渡时太激进:
-  `start()` await 的 `_state_event.wait()` 任何变化都 set,所以可能在
-  WaitTdlibParameters 就返;`bootstrap_ui` 紧接着 fire-and-forget 调
-  `list_joined_channels` 时 `_state` 还是中间态,guard 立即 [],**错过稍后才到的
-  Ready,channels 永不显示**直到用户手动 refresh。改成**最多等 8 秒**让
-  `_state` 走到 `ready` 再真请求;仍 best-effort,超时 / `_closing` / 永久
-  非 ready 时返 `[]` + DEBUG log
-- **`_wait_for_state` spin 冻 UI** (2026-07-18 17:17 用户反馈"卡住无反应") —
-  `_state_event` 是 Python `Event` 语义(set-only),之前 polling 路径
-  `wait_for(state_event.wait(), 0.5)` 在 event 已 set 时立即返回,**没真正
-  yield CPU**;qasync 的 loop 被这个子循环 peg 满,Qt 事件 8s 全没机会 pump,
-  UI 完全不响应。改成 event 已 set 时主动 `asyncio.sleep(0.05)` 让出 CPU +
-  重新 poll `self._state` —— 是等"状态变化"而非"event set",两者在 set-only
-  Event 下不相等
-- **`list_joined_channels` close race** — `close()` 标志 + 事务性方法(`submit_phone/code/password/logout/start/get_channel_metadata/join_channel`/`iter_chat_history` 分页入口)的 `_check_alive()` 公共 entry,提前抛 `ClientClosingError`,不进 10s aiotdlib request
 
 ## [0.2.0] - 2026-07-13
 
