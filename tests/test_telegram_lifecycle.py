@@ -439,6 +439,106 @@ def test_list_joined_channels_in_ready_state_still_calls_request(
     assert len(called) == 1  # 进了一步,没被早返拦下
 
 
+# ============================================================
+# list_joined_channels 拆出的 _iter_resolved_chats 异步生成器
+# ============================================================
+
+
+async def _collect_iter(client, chat_ids):
+    """async helper — 跑完 _iter_resolved_chats,返回 yield 出来的 DTO 列表。"""
+    from tgmonitor.core.telegram.tdlib_client import ChannelDTO  # noqa: F401
+    out: list = []
+    async for dto in client._iter_resolved_chats(chat_ids, t0=0.0):
+        out.append(dto)
+    return out
+
+
+def test_iter_resolved_chats_yields_all_dtos(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+) -> None:
+    """正常路径:每个 cid 解析成功 → 全 yield,顺序保持。"""
+    from tgmonitor.core.dto import ChannelDTO
+
+    client = _make_stubbed_client(settings, bus)
+    # stub 解析函数 — 第 1/3/5 个返回 channel,第 2/4 返回 None(skip)
+    calls: list[int] = []
+
+    async def _fake_resolve(cid: int) -> ChannelDTO | None:
+        calls.append(cid)
+        if cid % 2 == 0:
+            return None  # private/secret
+        return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
+
+    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+
+    got = asyncio.run(_collect_iter(client, [1, 2, 3, 4, 5]))
+    # 只 yield 非 None,顺序保持
+    assert [d.id for d in got] == [1, 3, 5]
+    # 每个 cid 至少 try 一次
+    assert sorted(calls) == [1, 2, 3, 4, 5]
+
+
+def test_iter_resolved_chats_skips_failed_resolve(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+) -> None:
+    """单条 `_resolve_channel_metadata` 抛 Exception → log + skip,其他继续。"""
+    from tgmonitor.core.dto import ChannelDTO
+
+    client = _make_stubbed_client(settings, bus)
+
+    async def _fake_resolve(cid: int) -> ChannelDTO | None:
+        if cid == 2:
+            raise RuntimeError("aiotdlib exploded")
+        return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
+
+    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+
+    got = asyncio.run(_collect_iter(client, [1, 2, 3]))
+    # cid=2 抛错被 skip,1 和 3 正常 yield
+    assert [d.id for d in got] == [1, 3]
+
+
+def test_iter_resolved_chats_propagates_client_closing(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+) -> None:
+    """mid-loop `_check_alive()` 抛 ClientClosingError → 立刻被 caller 捕获,
+    不会把单条继续排进 aiotdlib bridge(原 `_check_alive` 设的边界保持)。"""
+    from tgmonitor.core.dto import ChannelDTO
+
+    client = _make_stubbed_client(settings, bus)
+    client._closing = True  # 让 _check_alive 抛 ClientClosingError
+
+    async def _fake_resolve(cid: int) -> ChannelDTO | None:
+        return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
+
+    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+
+    # mid-loop close() 抛 ClientClosingError,不再 _resolve_channel_metadata
+    with pytest.raises(tdc.ClientClosingError):
+        asyncio.run(_collect_iter(client, [1, 2, 3]))
+
+
+def test_iter_resolved_chats_empty_input_yields_nothing(
+    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+) -> None:
+    """`GetChats` 返空列表(`chat_ids=None` 走完 `or []` 是空)→ 立刻结束,
+    不进 `_check_alive()`,不调 `_resolve_channel_metadata`。"""
+    from tgmonitor.core.dto import ChannelDTO
+
+    client = _make_stubbed_client(settings, bus)
+    calls: list[int] = []
+
+    async def _fake_resolve(cid: int) -> ChannelDTO | None:
+        calls.append(cid)
+        return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
+
+    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+
+    got = asyncio.run(_collect_iter(client, []))
+    assert got == []
+    assert calls == []  # 不应调任何解析
+
+
 # ---- UpdateStream 生命周期:aclose 自动从 client._streams 移除 ----
 
 

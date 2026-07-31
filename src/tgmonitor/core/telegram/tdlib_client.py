@@ -1025,24 +1025,10 @@ class TdlibTelegramClient(_AiClient):
                      _t.monotonic() - t)
             if chats is None:
                 return result
-            n_total = len(chats.chat_ids or [])
-            for i, cid in enumerate(chats.chat_ids or []):
-                # 每个 cid 解析前再 check 一次 —— 拉 mid-loop 时已经被 close()
-                # 也不要把这条请求继续排进 aiotdlib bridge
-                self._check_alive()
-                try:
-                    dto = await self._resolve_channel_metadata(cid)
-                except ClientClosingError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    log.exception("_resolve_channel_metadata(%d) failed", cid)
-                    continue
-                if dto is None:
-                    continue
+            async for dto in self._iter_resolved_chats(
+                chats.chat_ids or [], t0,
+            ):
                 result.append(dto)
-                if n_total >= 50 and (i + 1) % 50 == 0:
-                    log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
-                             i + 1, n_total, _t.monotonic() - t0)
         except ClientClosingError:
             # mid-loop 命中 `_check_alive()` —— 用户关窗 / 重启触发了 close(),
             # 静默退出,不再打 traceback
@@ -1052,6 +1038,46 @@ class TdlibTelegramClient(_AiClient):
         log.info("[tdlib] list_joined_channels done: %d channels in %.2fs",
                  len(result), _t.monotonic() - t0)
         return result
+
+    async def _iter_resolved_chats(
+        self,
+        chat_ids: list[int],
+        t0: float,
+    ) -> AsyncIterator[ChannelDTO]:
+        """把 GetChats 拿到的 chat_id 列表逐个解析成 ChannelDTO。
+
+        抽出来是为了:
+          1. `list_joined_channels` 只剩 lifecycle guard + GetChats + 聚合,
+             单方法 30 行以里,可读;
+          2. 单条解析失败 / mid-loop close 是迭代器的事(每个 yield 一个 DTO),
+             caller 专心 aggregate。
+
+        边界:
+          - `_check_alive()` 中途命中 → 抛 ClientClosingError(让 caller 静默 catch);
+          - 单条 `_resolve_channel_metadata` 失败 → log + skip(不影响其他 cid);
+          - `_resolve_channel_metadata` 返 None(private / secret chat)→ skip;
+          - n_total >= 50 时每 50 条打一次 progress(debug 友好)。
+        """
+        import time as _t
+
+        n_total = len(chat_ids)
+        for i, cid in enumerate(chat_ids):
+            # 每个 cid 解析前再 check 一次 —— 拉 mid-loop 时已经被 close()
+            # 也不要把这条请求继续排进 aiotdlib bridge
+            self._check_alive()
+            try:
+                dto = await self._resolve_channel_metadata(cid)
+            except ClientClosingError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("_resolve_channel_metadata(%d) failed", cid)
+                continue
+            if dto is None:
+                continue
+            if n_total >= 50 and (i + 1) % 50 == 0:
+                log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
+                         i + 1, n_total, _t.monotonic() - t0)
+            yield dto
 
     # ---- 历史消息分页(全量同步用) ----
 
