@@ -68,13 +68,204 @@ def _kind_icon(kind: str) -> QIcon:
     )
 
 
+class _ChannelListCard(QWidget):
+    """频道管理页的双栏之一 — 标题 + action button + list + 底部 hint。
+
+    把"已加入"和"已监听"两张卡的同构部件抽出来(原本是 ChannelWidget._build
+    里两段各 ~30 行的复制粘贴),只在 __init__ 参数里区分:
+      - title / action 按钮标签 / action tooltip
+      - 是否多选(已监听需要,已加入 single)
+      - 是否带 empty_hint(已加入需要;已监听没"空监听白名单"歧义场景)
+      - bottom_hint(双击行为提示)
+
+    Public API 给 ChannelWidget 用:
+      - `set_items(channels, *, count_template)` — 装载频道列表 + 更新标题
+      - `clear_items()` — 清空 + 重新显示 empty_hint(如果配置了)
+      - `add_item(channel)` / `remove_by_cid(cid)` / `find_cid(cid)` —
+        增量更新(订阅/退订事件驱动)
+      - `apply_filter(text, joined_mapping)` — 按 text 过滤可见
+      - `selected_cids()` — 多选模式:取当前选中行的 id 列表
+      - 属性:`lst`(QListWidget)、`btn_action`、`count_label`
+
+    Signals:
+      - `item_double_clicked(int)` — channel_id
+      - `action_clicked()` — action 按钮被点
+    """
+
+    item_double_clicked = Signal(int)
+    action_clicked = Signal()
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        action_label: str,
+        action_tooltip: str = "",
+        extended_selection: bool = False,
+        empty_hint_spec: tuple[str, str, str] | None = None,
+        bottom_hint: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("channelCard")
+        self._title = title
+        self._empty_hint_spec = empty_hint_spec
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        # 标题行 — title label + 弹性间隔 + action button
+        head = QHBoxLayout()
+        self.count_label = QLabel(title)
+        self.count_label.setObjectName("cardSectionTitle")
+        head.addWidget(self.count_label)
+        head.addStretch(1)
+        self.btn_action = QPushButton(action_label)
+        if action_tooltip:
+            self.btn_action.setToolTip(action_tooltip)
+        head.addWidget(self.btn_action)
+        root.addLayout(head)
+
+        # 列表
+        self.lst = QListWidget()
+        self.lst.setAlternatingRowColors(True)
+        if extended_selection:
+            # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
+            self.lst.setSelectionMode(
+                QAbstractItemView.SelectionMode.ExtendedSelection
+            )
+        self.lst.itemDoubleClicked.connect(self._on_lst_double_clicked)
+        root.addWidget(self.lst)
+
+        # empty_hint(可选)
+        self._empty_hint: object = None
+        if empty_hint_spec is not None:
+            icon_e, title_e, hint_e = empty_hint_spec
+            self._empty_hint = empty_hint(icon_e, title_e, hint_e)
+            root.addWidget(self._empty_hint)
+
+        # 底部 hint label(行为提示)
+        if bottom_hint:
+            lbl = QLabel(bottom_hint)
+            lbl.setProperty("role", "hint")
+            root.addWidget(lbl)
+
+        # 信号
+        self.btn_action.clicked.connect(self.action_clicked)
+
+    # ---- 数据装载 ----
+
+    def set_items(self, channels: list[ChannelDTO], *, count_template: str) -> None:
+        """装载频道 + 设置标题右侧 count(format 用 `{n}` 占位)。
+
+        `count_template`:例如 `"已加入频道 · {n}"`、`"已监听 · {n}"`、
+        `"已监听:{n}"`。模板只接受一个整数占位。
+        """
+        self.lst.clear()
+        for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
+            item = QListWidgetItem(ch.display)
+            item.setData(Qt.UserRole, ch.id)
+            item.setIcon(_kind_icon(ch.kind))
+            self.lst.addItem(item)
+        self.count_label.setText(count_template.format(n=len(channels)))
+        self._refresh_empty_state()
+
+    def clear_items(self, *, count_template: str) -> None:
+        """清空 + 显示 empty_hint(如果配置了)。"""
+        self.lst.clear()
+        self.count_label.setText(count_template.format(n=0))
+        self._refresh_empty_state()
+
+    def add_item(self, ch: ChannelDTO) -> None:
+        """订阅事件时增量追加一条。注意:不复检是否重复(ChannelWidget 已用
+        `_subscribed_ids` set 防重)。"""
+        item = QListWidgetItem(ch.display)
+        item.setData(Qt.UserRole, ch.id)
+        item.setIcon(_kind_icon(ch.kind))
+        self.lst.addItem(item)
+        self._refresh_empty_state()
+
+    def remove_by_cid(self, channel_id: int) -> bool:
+        """按 channel_id 移除一行(退订事件)。找不到返 False。"""
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            if it is not None and it.data(Qt.UserRole) == channel_id:
+                self.lst.takeItem(i)
+                self._refresh_empty_state()
+                return True
+        return False
+
+    def find_cid(self, channel_id: int) -> int:
+        """找不到返 -1。"""
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            if it is not None and it.data(Qt.UserRole) == channel_id:
+                return i
+        return -1
+
+    def apply_filter(self, text: str, mapping: dict[int, ChannelDTO]) -> None:
+        """按 text 过滤行的可见性 — mapping 通常是 `ChannelWidget._joined`。
+        空 text = 显示全部。
+        """
+        text = text.strip().lower()
+        for i in range(self.lst.count()):
+            item = self.lst.item(i)
+            if item is None:
+                continue
+            cid = item.data(Qt.UserRole)
+            ch = mapping.get(int(cid)) if cid is not None else None
+            if not text:
+                item.setHidden(False)
+                continue
+            if ch is None:
+                item.setHidden(True)
+                continue
+            hay = (ch.title or "").lower() + " " + (ch.username or "").lower()
+            item.setHidden(text not in hay)
+
+    def selected_cids(self) -> list[int]:
+        """多选模式:取当前选中行的 channel_ids(用于全量同步)。"""
+        return [
+            int(self.lst.item(i).data(Qt.UserRole))
+            for i in range(self.lst.count())
+            if self.lst.item(i) is not None
+            and self.lst.item(i).isSelected()
+        ]
+
+    def all_cids(self) -> list[int]:
+        """所有行的 cid(无选项全量同步时 fallback)。"""
+        out: list[int] = []
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            if it is not None:
+                cid = it.data(Qt.UserRole)
+                if cid is not None:
+                    out.append(int(cid))
+        return out
+
+    # ---- helpers ----
+
+    def _refresh_empty_state(self) -> None:
+        """list count == 0 + 配置了 empty_hint → 显示;否则隐藏。"""
+        if self._empty_hint is not None:
+            self._empty_hint.setVisible(self.lst.count() == 0)
+
+    def _on_lst_double_clicked(self, item: QListWidgetItem) -> None:
+        cid = item.data(Qt.UserRole)
+        if cid is not None:
+            self.item_double_clicked.emit(int(cid))
+
+
 class ChannelWidget(QWidget):
     """频道管理面板 — 已加入 + 已监听 双栏 + 搜索过滤。
 
     已加入:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
     已监听:`AppService._subscribed` 当前白名单,**双击 = 退订;多选 + 全量同步**
 
-    搜索:实时按频道名/username 过滤两个列表。
+    内部用两张 `_ChannelListCard` 实例(`joined_card` / `subs_card`)
+    实际承载 UI,ChannelWidget 自身只负责装配 + 搜索 + EventBus 接线和
+    增量子操作。
     """
 
     # 异步拉频道后 → 主线程刷新 list
@@ -112,125 +303,65 @@ class ChannelWidget(QWidget):
         self.search_edit.textChanged.connect(self._apply_filter)
         root.addWidget(self.search_edit)
 
-        # 上栏 — 已加入
-        joined_card = QWidget()
-        joined_card.setObjectName("channelCard")
-        joined_layout = QVBoxLayout(joined_card)
-        joined_layout.setContentsMargins(12, 12, 12, 12)
-        joined_layout.setSpacing(8)
-
-        head_joined = QHBoxLayout()
-        self.lbl_joined_count = QLabel("已加入频道")
-        self.lbl_joined_count.setObjectName("cardSectionTitle")
-        head_joined.addWidget(self.lbl_joined_count)
-        head_joined.addStretch(1)
-        self.btn_refresh = QPushButton("刷新")
-        self.btn_refresh.setToolTip("从 Telegram 拉取当前账号加入的全部频道/群组")
-        self.btn_refresh.clicked.connect(self._on_refresh)
-        head_joined.addWidget(self.btn_refresh)
-        joined_layout.addLayout(head_joined)
-
-        self.lst_joined = QListWidget()
-        self.lst_joined.setAlternatingRowColors(True)
-        self.lst_joined.itemDoubleClicked.connect(self._on_joined_double_click)
-        joined_layout.addWidget(self.lst_joined, 3)
-
-        # 新用户空状态:已加入列表为空时居中显示引导。
-        # 跟 `MessageView` 同样的「first impression 不再迷茫」思路。
-        self._empty_joined = empty_hint(
-            icon="📋",
-            title="暂无已加入频道",
-            hint="请先在「设置 → 账户」登录 Telegram 账号,\n"
-                 "登录成功后点「刷新」自动拉取。",
+        # 上栏 — 已加入(`_ChannelListCard`,已接入 empty_hint #2-6)
+        self.joined_card = _ChannelListCard(
+            title="已加入频道",
+            action_label="刷新",
+            action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组",
+            extended_selection=False,
+            empty_hint_spec=(
+                "📋",
+                "暂无已加入频道",
+                "请先在「设置 → 账户」登录 Telegram 账号,\n"
+                "登录成功后点「刷新」自动拉取。",
+            ),
+            bottom_hint="💡 双击一行 → 加入监听白名单",
         )
-        joined_layout.addWidget(self._empty_joined)
-
-        joined_hint = QLabel("💡 双击一行 → 加入监听白名单")
-        joined_hint.setProperty("role", "hint")
-        joined_layout.addWidget(joined_hint)
-
-        root.addWidget(joined_card, 3)
+        self.joined_card.action_clicked.connect(self._on_refresh)
+        self.joined_card.item_double_clicked.connect(self._on_joined_double_click)
+        root.addWidget(self.joined_card, 3)
 
         # 下栏 — 已监听
-        subs_card = QWidget()
-        subs_card.setObjectName("channelCard")
-        subs_layout = QVBoxLayout(subs_card)
-        subs_layout.setContentsMargins(12, 12, 12, 12)
-        subs_layout.setSpacing(8)
-
-        head_subs = QHBoxLayout()
-        self.lbl_subs_count = QLabel("已监听")
-        self.lbl_subs_count.setObjectName("cardSectionTitle")
-        head_subs.addWidget(self.lbl_subs_count)
-        head_subs.addStretch(1)
-        self.btn_sync = QPushButton("全量同步…")
-        self.btn_sync.setToolTip("多选 + 全量拉取元数据 + 历史消息(可调频率防封号)")
-        self.btn_sync.clicked.connect(self._on_sync_clicked)
-        head_subs.addWidget(self.btn_sync)
-        subs_layout.addLayout(head_subs)
-
-        self.lst_subscribed = QListWidget()
-        self.lst_subscribed.setAlternatingRowColors(True)
-        # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
-        self.lst_subscribed.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
+        self.subs_card = _ChannelListCard(
+            title="已监听",
+            action_label="全量同步…",
+            action_tooltip="多选 + 全量拉取元数据 + 历史消息(可调频率防封号)",
+            extended_selection=True,
+            empty_hint_spec=None,  # 已监听「空」语义不明,不放 empty_hint
+            bottom_hint="💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…",
         )
-        self.lst_subscribed.itemDoubleClicked.connect(self._on_subscribed_double_click)
-        subs_layout.addWidget(self.lst_subscribed, 2)
+        self.subs_card.action_clicked.connect(self._on_sync_clicked)
+        self.subs_card.item_double_clicked.connect(self._on_subscribed_double_click)
+        root.addWidget(self.subs_card, 2)
 
-        subs_hint = QLabel("💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…")
-        subs_hint.setProperty("role", "hint")
-        subs_layout.addWidget(subs_hint)
-
-        root.addWidget(subs_card, 2)
+        # ---- 兼容老 attribute 名(测试 + MainWindow 仍走旧 API)----
+        # 旧代码依赖 `self.lst_joined` / `lst_subscribed` / `lbl_*_count` /
+        # `btn_refresh` / `btn_sync`,把桥接留在 ChannelWidget 层 —
+        # 测试 / 上层代码不再穿透到 card 层,_ChannelListCard 是私有实现细节。
+        self.lst_joined = self.joined_card.lst
+        self.lst_subscribed = self.subs_card.lst
+        self.lbl_joined_count = self.joined_card.count_label
+        self.lbl_subs_count = self.subs_card.count_label
+        self.btn_refresh = self.joined_card.btn_action
+        self.btn_sync = self.subs_card.btn_action
+        self._empty_joined = self.joined_card._empty_hint  # type: ignore[attr-defined]
 
     def _apply_filter(self, text: str) -> None:
-        """搜索过滤 — 实时按频道名/username 隐藏不匹配项。"""
-        text = text.strip().lower()
-        for lst, mapping in (
-            (self.lst_joined, self._joined),
-            (self.lst_subscribed, self._joined),  # 用 joined 字典取 title
-        ):
-            for i in range(lst.count()):
-                item = lst.item(i)
-                if item is None:
-                    continue
-                cid = item.data(Qt.UserRole)
-                ch = mapping.get(int(cid)) if cid is not None else None
-                if not text:
-                    item.setHidden(False)
-                    continue
-                if ch is None:
-                    item.setHidden(True)
-                    continue
-                hay = (ch.title or "").lower() + " " + (ch.username or "").lower()
-                item.setHidden(text not in hay)
+        """搜索过滤 — 两张卡各跑一遍 (用 self._joined 字典查 title)。"""
+        self.joined_card.apply_filter(text, self._joined)
+        self.subs_card.apply_filter(text, self._joined)
 
     # ---- 数据装载 ----
 
     def set_joined(self, channels: list[ChannelDTO]) -> None:
         self._joined = {c.id: c for c in channels}
-        self.lst_joined.clear()
-        for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
-            item = QListWidgetItem(ch.display)
-            item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_kind_icon(ch.kind))
-            self.lst_joined.addItem(item)
-        self.lbl_joined_count.setText(f"已加入频道 · {len(channels)}")
+        self.joined_card.set_items(channels, count_template="已加入频道 · {n}")
         # 触发过滤(数据变了)
         self._apply_filter(self.search_edit.text())
-        # 空状态切换:有数据就隐藏引导
-        self._empty_joined.setVisible(self.lst_joined.count() == 0)
 
     def set_subscribed(self, channels: list[ChannelDTO]) -> None:
         self._subscribed_ids = {c.id for c in channels}
-        self.lst_subscribed.clear()
-        for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
-            item = QListWidgetItem(ch.display)
-            item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_kind_icon(ch.kind))
-            self.lst_subscribed.addItem(item)
-        self.lbl_subs_count.setText(f"已监听 · {len(channels)}")
+        self.subs_card.set_items(channels, count_template="已监听 · {n}")
         # 触发过滤
         self._apply_filter(self.search_edit.text())
 
@@ -260,20 +391,17 @@ class ChannelWidget(QWidget):
         # 也写入 joined(以防 joined 还没刷新)
         self._joined[ch.id] = ch
         self._subscribed_ids.add(ch.id)
-        item = QListWidgetItem(ch.display)
-        item.setData(Qt.UserRole, ch.id)
-        item.setIcon(_kind_icon(ch.kind))
-        self.lst_subscribed.addItem(item)
-        self.lbl_subs_count.setText(f"已监听:{len(self._subscribed_ids)}")
+        self.subs_card.add_item(ch)
+        self.subs_card.count_label.setText(
+            f"已监听:{len(self._subscribed_ids)}"
+        )
 
     def _remove_from_subscribed_list(self, channel_id: int) -> None:
         self._subscribed_ids.discard(channel_id)
-        for i in range(self.lst_subscribed.count()):
-            it = self.lst_subscribed.item(i)
-            if it.data(Qt.UserRole) == channel_id:
-                self.lst_subscribed.takeItem(i)
-                break
-        self.lbl_subs_count.setText(f"已监听:{len(self._subscribed_ids)}")
+        self.subs_card.remove_by_cid(channel_id)
+        self.subs_card.count_label.setText(
+            f"已监听:{len(self._subscribed_ids)}"
+        )
 
     # ---- 槽 ----
 
@@ -290,8 +418,8 @@ class ChannelWidget(QWidget):
     def _apply_joined(self, chs: list[ChannelDTO]) -> None:
         self.set_joined(chs)
 
-    def _on_joined_double_click(self, item: QListWidgetItem) -> None:
-        cid = item.data(Qt.UserRole)
+    def _on_joined_double_click(self, cid: int) -> None:
+        """`_ChannelListCard.item_double_clicked` 直接给 channel_id。"""
         ch = self._joined.get(cid)
         if ch is None:
             return
@@ -302,8 +430,7 @@ class ChannelWidget(QWidget):
             error_label="subscribe_channel",
         )
 
-    def _on_subscribed_double_click(self, item: QListWidgetItem) -> None:
-        cid = item.data(Qt.UserRole)
+    def _on_subscribed_double_click(self, cid: int) -> None:
         if cid is None:
             return
         run_coro(
@@ -312,18 +439,14 @@ class ChannelWidget(QWidget):
         )
 
     def _on_sync_clicked(self) -> None:
-        """用户多选 + 全量同步:收集 selected channel_ids,emit sync_requested。"""
-        ids = [
-            int(self.lst_subscribed.item(i).data(Qt.UserRole))
-            for i in range(self.lst_subscribed.count())
-            if self.lst_subscribed.item(i).isSelected()
-        ]
+        """用户多选 + 全量同步:收集 selected channel_ids,emit sync_requested。
+
+        多选优先;没选则全量;都为空才弹提示框。
+        """
+        ids = self.subs_card.selected_cids()
         if not ids:
             # 没选:全部订阅
-            ids = [
-                int(self.lst_subscribed.item(i).data(Qt.UserRole))
-                for i in range(self.lst_subscribed.count())
-            ]
+            ids = self.subs_card.all_cids()
         if not ids:
             QMessageBox.information(
                 self, "全量同步", "已监听列表为空,先订阅频道"
