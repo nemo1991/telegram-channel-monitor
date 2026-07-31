@@ -50,6 +50,7 @@ from tgmonitor.core.dto import MessageDTO, SyncOptions
 from tgmonitor.core.events import AuthErrorOccurred, LoginStateChanged
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
+from tgmonitor.ui.state_labels import state_dot, state_label
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
@@ -72,28 +73,6 @@ log = logging.getLogger(__name__)
 ShutdownCb = Callable[[], Awaitable[None]]
 
 # ---- 状态映射 ----
-_STATE_DOT = {
-    "ready": "🟢",
-    "error": "🔴",
-    "phone_required": "🟡",
-    "code_required": "🟡",
-    "password_required": "🟡",
-    "closed": "⚪",
-    "logging_out": "⏳",
-    "closing": "⏳",
-    "uninit": "⚪",
-}
-_STATE_LABEL = {
-    "ready": "已登录",
-    "error": "错误",
-    "phone_required": "未登录",
-    "code_required": "需验证码",
-    "password_required": "需 2FA",
-    "closed": "会话关闭",
-    "logging_out": "登出中…",
-    "closing": "关闭中…",
-    "uninit": "启动中…",
-}
 
 
 class MainWindow(QMainWindow):
@@ -548,8 +527,8 @@ class _HeaderBar(QWidget):
         hbox.addWidget(self.btn_theme)
 
     def update_state(self, state: str, detail: str = "") -> None:
-        dot = _STATE_DOT.get(state, "⚪")
-        label = _STATE_LABEL.get(state, state)
+        dot = state_dot(state)
+        label = state_label(state)
         if state == "error" and detail:
             label = f"{label}:{detail[:40]}"
 

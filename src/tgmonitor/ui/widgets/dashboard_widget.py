@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -45,6 +45,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import action_icon
+from tgmonitor.ui.state_labels import state_badge, state_hint
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -270,47 +271,77 @@ class DashboardWidget(QWidget):
         bus.subscribe(SettingsChanged, self._on_bus_event)
         bus.subscribe(ErrorOccurred, self._on_bus_event)
 
-    async def _on_bus_event(self, e) -> None:  # noqa: C901 — 事件类型 switch
-        """从 EventBus 收到事件 → 追加到活动时间线。"""
-        icon_name = "refresh"
-        msg = ""
-        if isinstance(e, LoginStateChanged):
-            icon_name = "nav_live"
-            st = e.state
-            detail = f" ({e.detail[:40]})" if e.detail else ""
-            msg = f"登录状态切换: {st}{detail}"
-            # 同步更新连接状态卡片
-            self.card_state.set_value(
-                {"ready": "🟢 已登录", "error": "🔴 错误", "phone_required": "🟡 未登录"}.get(st, f"⚪ {st}"),
-                e.detail[:60] if e.detail else "",
-            )
-        elif isinstance(e, MessageReceived):
-            if e.message is not None:
-                icon_name = "nav_live"
-                title = e.message.author or f"#{e.message.channel_id}"
-                snippet = (e.message.text or "")[:60]
-                msg = f"[{title}] {snippet}"
-        elif isinstance(e, ChannelSubscribed):
-            icon_name = "kind_channel"
-            msg = f"已订阅频道: {e.channel.title if e.channel else '#' + str(id(e))}"
-        elif isinstance(e, ChannelUnsubscribed):
-            icon_name = "kind_group"
-            msg = f"已退订频道: #{e.channel_id}"
-        elif isinstance(e, ExportDone):
-            icon_name = "export"
-            if e.error:
-                msg = f"导出失败: {e.error[:60]}"
-            else:
-                msg = f"导出完成: {e.result.out_path if e.result else '?'}"
-        elif isinstance(e, SettingsChanged):
-            icon_name = "settings"
-            msg = f"设置已变更: {e.what}"
-        elif isinstance(e, ErrorOccurred):
-            icon_name = "refresh"
-            msg = f"⚠ [{e.source}] {e.message[:80]}"
+        # 表驱动 dispatch 加新事件类型时,只需在 _init_event_dispatch 里加一行
+        self._init_event_dispatch()
 
+    async def _on_bus_event(self, e) -> None:  # noqa: C901 — 事件类型 switch
+        """从 EventBus 收到事件 → 追加到活动时间线。
+
+        走 `self._bus_event_formatters` 表 dispatch — 加新事件类型只需注册一行
+        (在 `__init__` 末尾的 `_init_event_dispatch` 里加一行)。
+        """
+        handler = self._bus_event_formatters.get(type(e))
+        if handler is None:
+            return
+        icon_name, msg = handler(e)
         if msg:
             self._add_activity(icon_name, msg)
+
+    # ---- 表驱动: event type → (self, e) -> (icon_name, msg) ----
+
+    def _format_login_state_changed(self, e: LoginStateChanged) -> tuple[str, str]:
+        """同步更新连接状态卡片 + 追加活动条目。"""
+        st = e.state
+        detail = f" ({e.detail[:40]})" if e.detail else ""
+        msg = f"登录状态切换: {st}{detail}"
+        self.card_state.set_value(
+            state_badge(st),
+            e.detail[:60] if e.detail else "",
+        )
+        return "nav_live", msg
+
+    def _format_message_received(self, e: MessageReceived) -> tuple[str, str]:
+        if e.message is None:
+            return "refresh", ""
+        title = e.message.author or f"#{e.message.channel_id}"
+        snippet = (e.message.text or "")[:60]
+        return "nav_live", f"[{title}] {snippet}"
+
+    def _format_channel_subscribed(self, e: ChannelSubscribed) -> tuple[str, str]:
+        title = e.channel.title if e.channel else f"#{id(e)}"
+        return "kind_channel", f"已订阅频道: {title}"
+
+    def _format_channel_unsubscribed(self, e: ChannelUnsubscribed) -> tuple[str, str]:
+        return "kind_group", f"已退订频道: #{e.channel_id}"
+
+    def _format_export_done(self, e: ExportDone) -> tuple[str, str]:
+        if e.error:
+            return "export", f"导出失败: {e.error[:60]}"
+        out_path = e.result.out_path if e.result else "?"
+        return "export", f"导出完成: {out_path}"
+
+    def _format_settings_changed(self, e: SettingsChanged) -> tuple[str, str]:
+        return "settings", f"设置已变更: {e.what}"
+
+    def _format_error_occurred(self, e: ErrorOccurred) -> tuple[str, str]:
+        return "refresh", f"⚠ [{e.source}] {e.message[:80]}"
+
+    def _init_event_dispatch(self) -> None:
+        """在 __init__ 末尾调一次,建 instance-level dispatch table。
+
+        用 instance attribute 而非 class-level 是因为:
+          - handler 是 bound method,自动绑 self,避免 `handler(self, e)` 显式 self
+          - 多个 instance 各自独立,不互相污染
+        """
+        self._bus_event_formatters: dict[type, Callable[[Any], tuple[str, str]]] = {
+            LoginStateChanged: self._format_login_state_changed,
+            MessageReceived: self._format_message_received,
+            ChannelSubscribed: self._format_channel_subscribed,
+            ChannelUnsubscribed: self._format_channel_unsubscribed,
+            ExportDone: self._format_export_done,
+            SettingsChanged: self._format_settings_changed,
+            ErrorOccurred: self._format_error_occurred,
+        }
 
     def _add_activity(self, icon_name: str, text: str) -> None:
         """追加一条活动记录到列表头部(最新的在上面)。"""
@@ -339,18 +370,14 @@ class DashboardWidget(QWidget):
         self.card_channels.set_value(str(joined_count), "频道/群组")
         self.card_subscribed.set_value(str(subscribed_count), "正在监听")
 
-        # 登录状态
+        # 登录状态 — 走 state_labels 单源映射
         state = self._app.client.state
         if state == "ready":
             me = self._app.client.me
             detail = me.get("first_name", "") or me.get("username", "") if me else ""
-            self.card_state.set_value("🟢 已登录", detail)
-        elif state == "error":
-            self.card_state.set_value("🔴 错误", "连接异常")
-        elif state in ("phone_required", "uninit"):
-            self.card_state.set_value("🟡 未登录", "点击设置→账户登录")
+            self.card_state.set_value(state_badge(state), detail)
         else:
-            self.card_state.set_value(f"⚪ {state}", "")
+            self.card_state.set_value(state_badge(state), state_hint(state))
 
         # 存储后端
         settings = self._app.settings
