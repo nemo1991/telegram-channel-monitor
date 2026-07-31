@@ -12,7 +12,6 @@ import pytest
 
 from tgmonitor.core.telegram.tdlib_client import _extract_error_detail
 
-
 # ---- 1. AioTDLibError 风格 exception ----
 
 class _FakeAioTDLibError(Exception):

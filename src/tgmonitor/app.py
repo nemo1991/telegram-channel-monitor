@@ -78,6 +78,53 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     return app, monitor, settings
 
 
+def _show_setup_failure_dialog(err: BaseException) -> None:
+    """启动失败弹窗 — 替代 stderr 静默退出,让用户知道原因 + 日志位置。
+
+    显示:
+      - 异常类型 + 消息
+      - 已知常见原因(API_ID/Hash 缺失、.env 不在、platform-native 路径无写权限)
+      - 日志路径 = `_user_data_dir()`(用户打开 finder / file manager 看 log)
+
+    设计原则:
+      - **不要**主动 import QMessageBox 模块级 — qasync bundle cold-start
+        时万一这些 path 出错,弹窗本身就会抛
+      - **不要** raise:外面 try 块已经在 `qt_app.quit()` 收尾,绝不能再抛
+      - 最多 1 个 dialog,任何内层失败就 log.exception 退化为 just log
+    """
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+    except Exception:  # noqa: BLE001
+        log.exception("PySide6 import failed in setup-failure dialog")
+        return
+    app = QApplication.instance()
+    if app is None:
+        # Qt 还没初始化到能弹 modal 的状态 — 退化为 just log
+        return
+    try:
+        err_type = type(err).__name__
+        err_msg = str(err) or "(no message)"
+        box = QMessageBox(
+            QMessageBox.Icon.Critical,
+            "启动失败",
+            f"应用初始化失败:\n\n{err_type}: {err_msg}\n\n"
+            "常见原因:\n"
+            "  • .env 缺失 / TG_API_ID / TG_API_HASH / TG_PHONE 没填\n"
+            "  • TDLib 加密 key 文件损坏(删除 platform-native 目录重试)\n"
+            "  • SOCKS5 代理不可达(检查 URL + 网络)\n\n"
+            "详细日志请查看下方路径:",
+            QMessageBox.StandardButton.Ok,
+        )
+        # 日志路径 — 跟 README「数据目录」章节一致
+        from tgmonitor.core.config import _user_data_dir
+        log_dir = _user_data_dir()
+        box.setDetailedText(str(log_dir))
+        ret = box.exec()
+        del ret  # 不用返回值
+    except Exception:  # noqa: BLE001
+        log.exception("setup-failure dialog raised")
+
+
 def run() -> None:
     """启动 GUI。
 
@@ -198,6 +245,10 @@ def run() -> None:
             # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出
             setup_failed.append(e)
             log.exception("[setup] failed: %s", e)
+            # 启动失败:Qt 弹窗告诉用户原因 + 日志位置 + bundle 内置 log path;
+            # 否则 .app / .AppImage 双击启动写 stderr 用户看不到,会以为"点了没反应"。
+            # 弹窗在 qt_app.quit() 之前调,避免 quit 抢关窗口让 dialog 闪现消失。
+            _show_setup_failure_dialog(e)
             try:
                 qt_app.quit()
             except Exception:  # noqa: BLE001
