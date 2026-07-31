@@ -216,3 +216,47 @@ def test_append_with_media_dto_does_not_crash(qapp):
     assert "look at this" in text
     assert "📎" in text
     assert "photo" in text  # med.type.value 正确渲染
+
+
+# ---- 空状态覆盖:首启 / 数据到达 / 清空 ----
+
+
+def test_empty_overlay_shown_when_no_messages(qapp):
+    """新打开 LIVE tab → count() == 0 → _empty_overlay 可见。
+
+    注:offscreen 模式下顶层 widget 不会被 show(),所以走 `isHidden()`
+    取反(`setVisible(True)` 等价 `show()` 会清 hidden 标志位)— 不依赖
+    ancestor 链都 visible。
+    """
+    view = MessageView()
+    assert view.count() == 0
+    assert not view._empty_overlay.isHidden()
+
+
+def test_empty_overlay_hidden_after_first_append(qapp):
+    """第一条消息到达 → _refresh_empty_state 触发 → overlay 隐藏。"""
+    view = MessageView()
+    assert not view._empty_overlay.isHidden()  # 先确认初始显示
+
+    msg = MessageDTO(
+        id=0, channel_id=1, telegram_msg_id=1,
+        text="first!", author=None,
+        date=datetime(2026, 7, 15, 13, 50, 10),
+    )
+    view.append(msg)
+    assert view.count() == 1
+    assert view._empty_overlay.isHidden()
+
+
+def test_empty_overlay_reappears_after_clear(qapp):
+    """clear_view() 把所有 item 删了 → overlay 应再次显示。"""
+    view = MessageView()
+    view.append(MessageDTO(
+        id=0, channel_id=1, telegram_msg_id=1,
+        text="x", date=datetime(2026, 7, 15, 13, 0, 0),
+    ))
+    assert view._empty_overlay.isHidden()
+
+    view.clear_view()
+    assert view.count() == 0
+    assert not view._empty_overlay.isHidden()

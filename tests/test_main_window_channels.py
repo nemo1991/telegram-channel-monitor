@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import threading
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -25,6 +27,11 @@ from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
+
+# 跟 conftest 同步,避免每次新 test 都 inline import。
+# 这些在 `test_main_window_initial_refresh_state_is_empty` 等都曾 inline,过
+# 不了我新加的 sibling test(函数 scope 不共享)— 现在从 conftest 取一次。
+from tests.conftest import InMemoryRepository
 
 # `stub_aiotdlib_init` fixture 由 tests/conftest.py 统一提供
 
@@ -449,3 +456,104 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
         # initial state:已知频道为空,标签应是 "0"
         assert win.channel_panel.lbl_joined_count.text() == "已加入频道 · 0"
         assert win.channel_panel.lst_joined.count() == 0
+
+
+# ============================================================
+# ChannelWidget 新用户空状态:已加入列表为空时显示引导,有数据自动隐藏
+# ============================================================
+
+
+def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
+    """新用户首启:已加入列表为空 → _empty_joined 应显示(给新用户引导)。"""
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        widget = ChannelWidget(app_svc, qloop)
+        # 构造完没有数据 → _empty_joined 应显示
+        assert widget.lst_joined.count() == 0
+        assert not widget._empty_joined.isHidden()
+
+
+def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
+    """set_joined([...]) 装载数据 → _empty_joined 自动隐藏。"""
+    from tgmonitor.core.dto import ChannelDTO
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        widget = ChannelWidget(app_svc, qloop)
+        # 先确认空时显示
+        assert not widget._empty_joined.isHidden()
+
+        # 装载一条频道
+        widget.set_joined([
+            ChannelDTO(id=42, title="新闻频道", kind="channel"),
+        ])
+        assert widget.lst_joined.count() == 1
+        assert widget._empty_joined.isHidden()
+
+        # 清空回 [] → overlay 再出现
+        widget.set_joined([])
+        assert widget.lst_joined.count() == 0
+        assert not widget._empty_joined.isHidden()

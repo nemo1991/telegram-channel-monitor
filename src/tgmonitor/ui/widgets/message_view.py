@@ -8,6 +8,9 @@
   ⏱ 14:23:10  [新闻]  👤 @author  #msg_id
     消息正文(可能多行)…
     📎 photo, document
+
+空状态:首启 / 没订阅频道 / 还没消息到时居中显示「暂无消息」占位面板
+(走 `form_row.empty_hint`),第一条数据到达自动隐藏。
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
 from tgmonitor.core.dto import MessageDTO
+from tgmonitor.ui.widgets.form_row import empty_hint
 
 
 class MessageView(QListWidget):
@@ -41,6 +45,33 @@ class MessageView(QListWidget):
         self._filter_text: str = ""
 
         self.itemClicked.connect(self._on_item_clicked)
+
+        # 空状态占位(默认显示,首条消息到达自动隐藏)。
+        # QListWidget 是 QAbstractScrollArea,接受 child widget 作为
+        # overlay;setParent 后用 raise_() 把它顶到 viewport 上方。
+        self._empty_overlay = empty_hint(
+            icon="💬",
+            title="暂无消息",
+            hint="先去「频道」页双击订阅一个频道,\n"
+                 "新消息会实时显示在这里。",
+            parent=self,
+        )
+        self._empty_overlay.raise_()
+        self._refresh_empty_state()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().resizeEvent(event)
+        # 把 overlay 居中放在 list 上方 1/3 高度(视觉重心偏上,留底给 scrollbar)
+        hint_size = self._empty_overlay.sizeHint()
+        x = max(0, (self.width() - hint_size.width()) // 2)
+        y = max(0, self.height() // 3 - hint_size.height() // 2)
+        self._empty_overlay.setGeometry(x, y, hint_size.width(), hint_size.height())
+        self._empty_overlay.raise_()
+
+    def _refresh_empty_state(self) -> None:
+        """count() == 0 → 显示 overlay,else 隐藏。"""
+        self._empty_overlay.setVisible(self.count() == 0)
+        self._empty_overlay.raise_()
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
         """点击一条消息 → 透传 MessageDTO。"""
@@ -123,11 +154,13 @@ class MessageView(QListWidget):
             for k in self._seen:
                 if self._seen[k] > old_row:
                     self._seen[k] -= 1
+        self._refresh_empty_state()
 
     def clear_view(self) -> None:
         """外部调 — 清空列表 + 去重表(例如启动时)。"""
         self.clear()
         self._seen.clear()
+        self._refresh_empty_state()
 
     def _format(self, m: MessageDTO) -> str:
         # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂

@@ -140,3 +140,70 @@ def test_spin_field_adds_row(form: QFormLayout) -> None:
     """addRow 触发,关键 — settings_page._find_form_row 依赖 row index。"""
     spin_field(form, "API ID:", min=0, max=100)
     assert form.rowCount() == 1
+
+
+# ============================================================
+# empty_hint — 「暂无内容」占位面板 helper
+# ============================================================
+
+
+def _grab_labels(widget) -> list:
+    """helper — 找到 widget 子树里所有 QLabel,验证 icon/title/hint 三行。"""
+    from PySide6.QtWidgets import QLabel
+    out = []
+    for child in widget.findChildren(QLabel):
+        out.append(child)
+    return out
+
+
+def test_empty_hint_returns_widget_with_icon_title_hint(form: QFormLayout) -> None:
+    """`empty_hint(icon, title, hint)` 返回一个 QWidget,内含 3 个 QLabel:
+    icon(emoji)+title(pageTitle)+hint(role=hint)。
+    """
+    from tgmonitor.ui.widgets.form_row import empty_hint
+
+    w = empty_hint("💬", "暂无消息", "先去「频道」页双击订阅一个频道")
+    assert w is not None
+
+    labels = _grab_labels(w)
+    texts = [lbl.text() for lbl in labels]
+    assert "💬" in texts
+    assert "暂无消息" in texts
+    assert any("先去" in t for t in texts)
+
+
+def test_empty_hint_without_hint_omits_hint_label(form: QFormLayout) -> None:
+    """`hint=""` 时不创建 hint label — 简洁两行(icon + title)。"""
+    from tgmonitor.ui.widgets.form_row import empty_hint
+
+    w = empty_hint("🔍", "暂无数据")  # no hint kw
+    labels = _grab_labels(w)
+    texts = [lbl.text() for lbl in labels]
+    # 只有 icon + title,没有 hint
+    assert texts == ["🔍", "暂无数据"]
+
+
+def test_empty_hint_title_has_pagetitle_objectname(form: QFormLayout) -> None:
+    """title label 用 objectName='pageTitle' 让 QSS 主题认 — 跟现有大标题一致。"""
+    from tgmonitor.ui.widgets.form_row import empty_hint
+
+    w = empty_hint("📋", "暂无已加入频道", "登录后点「刷新」")
+    title_lbls = [
+        lbl for lbl in _grab_labels(w)
+        if lbl.objectName() == "pageTitle"
+    ]
+    assert len(title_lbls) == 1
+    assert title_lbls[0].text() == "暂无已加入频道"
+
+
+def test_empty_hint_hint_label_has_hint_role_property(form: QFormLayout) -> None:
+    """hint label setProperty(role, hint) — 走全局 QSS(role hint 样式)。"""
+    from tgmonitor.ui.widgets.form_row import empty_hint
+
+    w = empty_hint("💬", "暂无消息", "等待新消息…")
+    hint_lbls = [
+        lbl for lbl in _grab_labels(w)
+        if lbl.property("role") == "hint"
+    ]
+    assert len(hint_lbls) == 1
+    assert "等待" in hint_lbls[0].text()

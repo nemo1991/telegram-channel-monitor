@@ -21,14 +21,17 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -179,3 +182,58 @@ def _on_browse_file(edit: QLineEdit, parent: QWidget | None) -> None:
     path, _ = QFileDialog.getSaveFileName(parent, "选择输出文件", edit.text())
     if path:
         edit.setText(path)
+
+
+def empty_hint(
+    icon: str,
+    title: str,
+    hint: str = "",
+    *,
+    parent: QWidget | None = None,
+) -> QWidget:
+    """"暂无内容"占位面板 — icon + title + hint 三行居中布局。
+
+    跟 `MessageDetail._build_empty_state` 同模式,但抽成 helper 复用:
+      - `MessageView`(实时流第一次打开 / 没订频道)— 全幅面板占位
+      - `ChannelWidget.lst_joined`(还没拉频道 / 还没登录)— 双栏上半占位
+      - 任何需要"还没数据但给用户说明做什么"的 list / 视图
+
+    Args:
+      icon: emoji 或单字符(💬 / 📡 / 📋 / 🔍 …),会被 setStyleSheet 放大到 36px
+      title: 主标题("暂无消息" / "暂无已加入频道");setObjectName("pageTitle")
+      hint: 副说明(可换行 \\n),详细建议做法。空字符串 = 只显示 title。
+      parent: 父 widget(可选)。
+
+    Returns:
+      QWidget — caller 自己决定怎么布局(parent 在 setParent 后自动 reparent)。
+
+    风格:
+      - 内容居中(Qt.AlignCenter)
+      - icon 36px,title objectName "pageTitle"(跟现有大标题一致)
+      - hint setProperty("role", "hint") 走全局 QSS
+    """
+    wrap = QWidget(parent)
+    v = QVBoxLayout(wrap)
+    v.setContentsMargins(24, 24, 24, 24)
+    v.setSpacing(8)
+    v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    if icon:
+        ico = QLabel(icon)
+        ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ico.setStyleSheet("font-size: 36px;")
+        v.addWidget(ico)
+
+    title_lbl = QLabel(title)
+    title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title_lbl.setObjectName("pageTitle")
+    v.addWidget(title_lbl)
+
+    if hint:
+        hint_lbl = QLabel(hint)
+        hint_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setProperty("role", "hint")
+        v.addWidget(hint_lbl)
+
+    return wrap

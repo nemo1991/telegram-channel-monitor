@@ -33,6 +33,7 @@ from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
+from tgmonitor.ui.widgets.form_row import empty_hint
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -134,6 +135,16 @@ class ChannelWidget(QWidget):
         self.lst_joined.itemDoubleClicked.connect(self._on_joined_double_click)
         joined_layout.addWidget(self.lst_joined, 3)
 
+        # 新用户空状态:已加入列表为空时居中显示引导。
+        # 跟 `MessageView` 同样的「first impression 不再迷茫」思路。
+        self._empty_joined = empty_hint(
+            icon="📋",
+            title="暂无已加入频道",
+            hint="请先在「设置 → 账户」登录 Telegram 账号,\n"
+                 "登录成功后点「刷新」自动拉取。",
+        )
+        joined_layout.addWidget(self._empty_joined)
+
         joined_hint = QLabel("💡 双击一行 → 加入监听白名单")
         joined_hint.setProperty("role", "hint")
         joined_layout.addWidget(joined_hint)
@@ -208,6 +219,8 @@ class ChannelWidget(QWidget):
         self.lbl_joined_count.setText(f"已加入频道 · {len(channels)}")
         # 触发过滤(数据变了)
         self._apply_filter(self.search_edit.text())
+        # 空状态切换:有数据就隐藏引导
+        self._empty_joined.setVisible(self.lst_joined.count() == 0)
 
     def set_subscribed(self, channels: list[ChannelDTO]) -> None:
         self._subscribed_ids = {c.id for c in channels}
