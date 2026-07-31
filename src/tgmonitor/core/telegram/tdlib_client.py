@@ -208,6 +208,22 @@ def _load_or_create_encryption_key(td_dir, *, rotate: bool = False) -> str:
     return key_b64
 
 
+def _extract_error_detail(exc: BaseException) -> str:
+    """从 aiotdlib 异常 / 一般 Exception 抽用户可读描述。
+
+    - aiotdlib 0.27 的 `AioTDLibError` 用 `.message` 字段(原始 TDLib `error.message`)
+    - 兜底 `str(exc)`(TimeoutError 等无 `.message`)
+    - 兜底 `"未知错误"`(极端情况,字符串为空)
+
+    出现位置:
+      - `_check_authentication_code` / `_check_authentication_password`
+      - `_translate_rate_limit` 解析 "FLOOD_WAIT_NNN" 字符串
+        (注:在抽 helper 之前,这俩处都是重复 `getattr(e, "message", None) or str(e) or "未知错误"`)
+    """
+    msg = getattr(exc, "message", None) or str(exc) or "未知错误"
+    return msg
+
+
 async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:  # noqa: ASYNC109 — `timeout` 是 SOCKS5 握手本身的超时,不是 asyncio.wait_for;命名直白可用
     """真做 SOCKS5 握手 — 不光 TCP 端口可达,还要回 greeting + 响应 CONNECT。
 
@@ -453,43 +469,63 @@ class TdlibTelegramClient(_AiClient):
     # aiotdlib 钩子 override
     # ============================================================
 
+    async def _submit_auth_step(
+        self,
+        source: str,
+        queue: asyncio.Queue,
+        request_factory: Callable[[str], Any],
+        error_label: str,
+        detail_prefix: str,
+    ) -> None:
+        """`_check_authentication_code` / `_check_authentication_password` 共用骨架。
+
+        流程:
+          1. 同步从 queue 取 UI 提交的值
+          2. 调 `request_factory(value)` 跑 aiotdlib Check 函数
+          3. AioTDLibError → 转 detail,发 `AuthErrorOccurred` (不 raise)
+          4. 其它 Exception → log.exception + 发 `AuthErrorOccurred`
+
+        Args:
+          - `source`:AuthErrorOccurred.source("code" / "password")
+          - `queue`:asyncio.Queue,等 UI 提交(`_code_queue` / `_password_queue`)
+          - `request_factory`:用 value 构造 aiotdlib Request(CheckAuthenticationCode / Password)
+          - `error_label`:日志标签(e.g. "CheckAuthenticationCode")
+          - `detail_prefix`:错误文案前缀(e.g. "验证码错误: " / "2FA 密码错误: ")
+        """
+        value = await queue.get()
+        log.info("submitting %s (len=%d)", source, len(value))
+        try:
+            await self.request(request_factory(value), request_timeout=30)
+        except AioTDLibError as e:
+            log.warning("%s failed: %s", error_label, e)
+            detail = _extract_error_detail(e)
+            await self._publish_auth_error(
+                source, f"{detail_prefix}{detail}", e,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("%s unexpected failure", error_label)
+            await self._publish_auth_error(source, f"提交失败: {e}", e)
+
     async def _check_authentication_code(self) -> None:
         """从队列收 UI 提交的验证码。错误 → 发 `AuthErrorOccurred`,
         但不 raise(让 aiotdlib 自动重新发 WaitCode,用户原地重输)。"""
-        code = await self._code_queue.get()
-        log.info("submitting authentication code (len=%d)", len(code))
-        try:
-            await self.request(
-                CheckAuthenticationCode(code=code), request_timeout=30,
-            )
-        except AioTDLibError as e:
-            log.warning("CheckAuthenticationCode failed: %s", e)
-            # aiotdlib 0.27 的 AioTDLibError 用 .message,直接读;
-            # 但若 wait_for 触发 TimeoutError 被某种 wrapper 包成裸 Exception 进来,
-            # 兜底用 str(e) 而不是 e.message。
-            detail = getattr(e, "message", None) or str(e) or "未知错误"
-            await self._publish_auth_error("code", f"验证码错误: {detail}", e)
-        except Exception as e:  # noqa: BLE001
-            log.exception("CheckAuthenticationCode unexpected failure")
-            await self._publish_auth_error("code", f"提交失败: {e}", e)
+        await self._submit_auth_step(
+            source="code",
+            queue=self._code_queue,
+            request_factory=lambda code: CheckAuthenticationCode(code=code),
+            error_label="CheckAuthenticationCode",
+            detail_prefix="验证码错误: ",
+        )
 
     async def _check_authentication_password(self) -> None:
         """2FA 密码注入。"""
-        pwd = await self._password_queue.get()
-        log.info("submitting 2FA password (len=%d)", len(pwd))
-        try:
-            await self.request(
-                CheckAuthenticationPassword(password=pwd), request_timeout=30,
-            )
-        except AioTDLibError as e:
-            log.warning("CheckAuthenticationPassword failed: %s", e)
-            detail = getattr(e, "message", None) or str(e) or "未知错误"
-            await self._publish_auth_error(
-                "password", f"2FA 密码错误: {detail}", e,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("CheckAuthenticationPassword unexpected failure")
-            await self._publish_auth_error("password", f"提交失败: {e}", e)
+        await self._submit_auth_step(
+            source="password",
+            queue=self._password_queue,
+            request_factory=lambda pwd: CheckAuthenticationPassword(password=pwd),
+            error_label="CheckAuthenticationPassword",
+            detail_prefix="2FA 密码错误: ",
+        )
 
     async def _on_authorization_state_update(self, authorization_state) -> None:
         """aioTDLib 的 `_updates_loop` 自己截胡 `UpdateAuthorizationState`,直接
@@ -746,7 +782,7 @@ class TdlibTelegramClient(_AiClient):
             # 没给 retry_after 给个保守 60s
             return TelegramRateLimitError(60.0)
         # 字符串里 "FLOOD_WAIT_NNN" 也算(aiotdlib 某些版本 code 不是 429)
-        msg = getattr(exc, "message", None) or str(exc)
+        msg = _extract_error_detail(exc)
         import re as _re
         m = _re.search(r"FLOOD_WAIT[_ ](\d+)", msg)
         if m:
