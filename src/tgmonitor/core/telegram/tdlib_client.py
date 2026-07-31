@@ -224,6 +224,31 @@ def _extract_error_detail(exc: BaseException) -> str:
     return msg
 
 
+def _translate_boot_error(seen_codes: collections.deque[int]) -> str:
+    """把 start() 超时期间 aiotdlib 报的 error code 集合翻成人话给 UI。
+
+    翻译规则(2026-07-22 实测):
+      - **401** → encryption key 不匹配;AppService 据此外层 rotate key
+      - **429** → TDLib 限流,让用户稍后重试
+      - **其他已见 code** → DC 握手失败 + codes 列表(代理/网络问题高发)
+      - **0 个 code** → TDLib 启动超时,可能是代理不可达或 DC 不通
+
+    设计为 module-level pure function(跟 `_extract_error_detail` 同 pattern),
+    因为:
+      - 不依赖 `self`,只依赖参数(在 `start()` 内调,在单元测试可直接测
+        各种 deque 输入);
+      - 同样的翻译未来若其他 entry point 也用得到(reconnect 等),直接 import
+        复用,无需继承。
+    """
+    if 401 in seen_codes:
+        return "local session db encryption key 不匹配 (TDLib code 401)"
+    if 429 in seen_codes:
+        return "TDLib 限流 (code 429),稍后重试"
+    if seen_codes:
+        return f"DC 握手失败 (TDLib codes {list(seen_codes)})"
+    return "TDLib 启动超时(可能代理不可达或 DC 不通)"
+
+
 async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:  # noqa: ASYNC109 — `timeout` 是 SOCKS5 握手本身的超时,不是 asyncio.wait_for;命名直白可用
     """真做 SOCKS5 握手 — 不光 TCP 端口可达,还要回 greeting + 响应 CONNECT。
 
@@ -673,19 +698,7 @@ class TdlibTelegramClient(_AiClient):
                 "start: timed out after %.0fs; seen_error_codes=%s",
                 self._BOOT_TIMEOUT, list(self._seen_error_codes),
             )
-            # 错误码 -500 / 401 / 429 等是 TDLib 自己的错误,我们一律翻译成 error
-            # 状态。401 是 special — AppService 应据此外层 rotate key。
-            err_detail: str | None = None
-            if 401 in self._seen_error_codes:
-                err_detail = "local session db encryption key 不匹配 (TDLib code 401)"
-            elif 429 in self._seen_error_codes:
-                err_detail = "TDLib 限流 (code 429),稍后重试"
-            elif self._seen_error_codes:
-                err_detail = (
-                    f"DC 握手失败 (TDLib codes {list(self._seen_error_codes)})"
-                )
-            else:
-                err_detail = "TDLib 启动超时(可能代理不可达或 DC 不通)"
+            err_detail = _translate_boot_error(self._seen_error_codes)
             await self._kill_aiotdlib()
             self._set_state("error", detail=err_detail)
             return self._state, self._state_detail
