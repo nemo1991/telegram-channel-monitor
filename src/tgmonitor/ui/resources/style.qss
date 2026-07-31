@@ -314,3 +314,40 @@ QLabel[role="error"] {
     border: 1px solid #e2e4e9;
     border-radius: 6px;
 }
+/* 顶部 #msg_id 标头 — 小灰字 letter-spaced */
+#detailHeader {
+    font-size: 11px;
+    color: #8a8d92;
+    letter-spacing: 0.5px;
+}
+/* 小节标题(📝 正文 / 📎 媒体 / 🔍 原始 JSON) */
+#detailSectionLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #5a5d64;
+    padding-top: 4px;
+    border-bottom: 1px solid #e2e4e9;
+    padding-bottom: 4px;
+}
+/* 正文 QPlainTextEdit — 透出去贴合卡片背景 */
+#detailTextEdit {
+    background: transparent;
+}
+/* 媒体卡 — 浅灰底 + 边框 + 圆角 + 内边距 + 4px 间距 */
+#mediaItem {
+    background: #fafbfc;
+    border: 1px solid #e2e4e9;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 4px;
+}
+/* 原始 JSON — 跟媒体卡同色系但无边距(因 QPlainTextEdit 自带 padding) */
+#rawJsonEdit {
+    background: #fafbfc;
+    border: 1px solid #e2e4e9;
+    border-radius: 6px;
+}
+/* 空状态 icon(#2-6 加的 helper,跟 message_detail 占位共用) */
+QLabel#emptyHintIcon {
+    font-size: 36px;
+}

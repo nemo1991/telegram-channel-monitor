@@ -85,7 +85,10 @@ class MessageDetail(QScrollArea):
 
         icon = QLabel("💬")
         icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet("font-size: 36px;")
+        # 用 objectName 而不是 setStyleSheet:空状态 icon 走全局 QSS
+        # (`QLabel#emptyHintIcon { font-size: 36px; }`),保持主题切换一致
+        # + 也被 `form_row.empty_hint` 复用(同一 selector)。
+        icon.setObjectName("emptyHintIcon")
         v.addWidget(icon)
 
         title = QLabel("消息详情")
@@ -115,7 +118,8 @@ class MessageDetail(QScrollArea):
 
         # ---- header: 频道 + msg_id ----
         header = QLabel(f"#{m.telegram_msg_id}")
-        header.setStyleSheet("font-size: 11px; color: #8a8d92; letter-spacing: 0.5px;")
+        # 颜色 / font-size / letter-spacing 都走全局 QSS (`#detailHeader`)
+        header.setObjectName("detailHeader")
         v.addWidget(header)
 
         # ---- 元数据 ----
@@ -147,7 +151,8 @@ class MessageDetail(QScrollArea):
             text_edit.setReadOnly(True)
             text_edit.setFrameShape(QFrame.NoFrame)
             text_edit.setMaximumHeight(220)
-            text_edit.setStyleSheet("background: transparent;")
+            # `transparent` 走 `#detailTextEdit` QSS
+            text_edit.setObjectName("detailTextEdit")
             v.addWidget(text_edit)
 
         # ---- 媒体 ----
@@ -157,10 +162,8 @@ class MessageDetail(QScrollArea):
                 med_label = QLabel(self._format_media(med, i + 1))
                 med_label.setWordWrap(True)
                 med_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-                med_label.setStyleSheet(
-                    "background:#fafbfc;border:1px solid #e2e4e9;"
-                    "border-radius:6px;padding:8px;margin-bottom:4px;"
-                )
+                # 媒体卡背景 / 边框 / 圆角 / padding 都走 `#mediaItem`
+                med_label.setObjectName("mediaItem")
                 v.addWidget(med_label)
 
         # ---- 原始 JSON ----
@@ -172,7 +175,8 @@ class MessageDetail(QScrollArea):
             raw_edit.setFrameShape(QFrame.NoFrame)
             raw_edit.setFont(QFont("Menlo, Consolas, monospace", 10))
             raw_edit.setMaximumHeight(260)
-            raw_edit.setStyleSheet("background: #fafbfc; border: 1px solid #e2e4e9; border-radius: 6px;")
+            # raw JSON box 背景 / 边框 / 圆角 → `#rawJsonEdit`
+            raw_edit.setObjectName("rawJsonEdit")
             v.addWidget(raw_edit)
 
         # 关闭按钮(顶部右上角 — 不在主视图,做成行内)
@@ -187,11 +191,12 @@ class MessageDetail(QScrollArea):
         self.setWidget(wrap)
 
     def _section_label(self, text: str) -> QLabel:
+        """Section header — 正文 / 媒体 / 原始 JSON 小节标题。
+
+        走全局 QSS `#detailSectionLabel`(浅色 / 暗色 各一份)。
+        """
         lbl = QLabel(text)
-        lbl.setStyleSheet(
-            "font-size: 12px; font-weight: 600; color: #5a5d64; "
-            "padding-top: 4px; border-bottom: 1px solid #e2e4e9; padding-bottom: 4px;"
-        )
+        lbl.setObjectName("detailSectionLabel")
         return lbl
 
     @staticmethod

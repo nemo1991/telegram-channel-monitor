@@ -221,7 +221,9 @@ def empty_hint(
     if icon:
         ico = QLabel(icon)
         ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ico.setStyleSheet("font-size: 36px;")
+        # `font-size: 36px` 走全局 QSS `QLabel#emptyHintIcon`(跟 message_detail
+        # 占位 icon 同一 selector);主题切换一致、避免内联样式被覆盖的烦恼。
+        ico.setObjectName("emptyHintIcon")
         v.addWidget(ico)
 
     title_lbl = QLabel(title)

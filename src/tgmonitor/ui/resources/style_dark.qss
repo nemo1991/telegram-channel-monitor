@@ -322,6 +322,43 @@ QLabel[role="error"] {
     border: 1px solid #353550;
     border-radius: 6px;
 }
+/* 顶部 #msg_id 标头 — 小灰字 letter-spaced */
+#detailHeader {
+    font-size: 11px;
+    color: #9094a3;
+    letter-spacing: 0.5px;
+}
+/* 小节标题 */
+#detailSectionLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #b4b7c3;
+    padding-top: 4px;
+    border-bottom: 1px solid #353550;
+    padding-bottom: 4px;
+}
+/* 正文 QPlainTextEdit — 透出去贴合卡片背景 */
+#detailTextEdit {
+    background: transparent;
+}
+/* 媒体卡 — 暗色用 #2c2c40 同 metaCard 风格 */
+#mediaItem {
+    background: #2c2c40;
+    border: 1px solid #353550;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 4px;
+}
+/* 原始 JSON */
+#rawJsonEdit {
+    background: #2c2c40;
+    border: 1px solid #353550;
+    border-radius: 6px;
+}
+/* 空状态 icon(#2-6 + message_detail 占位共享) */
+QLabel#emptyHintIcon {
+    font-size: 36px;
+}
 
 /* ===== 搜索框(浅色中由 SearchBar 内联样式控制) ===== */
 #searchBar {
