@@ -702,3 +702,242 @@ def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
     card.item_double_clicked.connect(double_clicked_ids.append)
     card.lst.itemDoubleClicked.emit(card.lst.item(0))
     assert double_clicked_ids == [42]  # integer channel_id,not QListWidgetItem
+
+
+# ============================================================
+# MainWindow._on_sync_requested 拆出的 helper
+# ============================================================
+
+
+def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
+    """`_build_sync_titles(ids)` 从 VM.known_channels 拉 title,缺时回退
+    `#<id>`。"""
+    import tempfile
+
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.main_window import MainWindow
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
+        # VM 没数据,全部回退到 `#<id>`
+        titles = win._build_sync_titles([100, 200, 300])
+        assert titles == {100: "#100", 200: "#200", 300: "#300"}
+
+
+def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
+    """VM.known_channels 有 DTO 时优先用 `.title`,不回退。"""
+    import tempfile
+
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.main_window import MainWindow
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
+        # 直接 inject VM.known_channels 一个 DTO
+        win._vm.known_channels[42] = ChannelDTO(id=42, title="新闻频道")
+        titles = win._build_sync_titles([42, 100])
+        assert titles[42] == "新闻频道"
+        assert titles[100] == "#100"  # 没 DTO,回退
+
+
+def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) -> None:
+    """`_show_sync_options_dialog` 默认从 settings 拉 sync_chat_delay_ms 等。
+
+    不直接 exec()(modal 阻塞),而是把 SyncOptionsDialog 替换成 stub 验证
+    SyncOptions 默认值正确。
+
+    注:main_window 直接 `from sync_dialog import SyncOptionsDialog`,
+    binding 在 main_window namespace,patch 必须在 `main_window.SyncOptionsDialog`
+    而非 `sync_dialog.SyncOptionsDialog` 才生效。
+    """
+    import tempfile
+
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.dto import SyncOptions
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui import main_window as mw
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+            sync_chat_delay_ms=777,
+            sync_page_delay_ms=888,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
+
+        # Patch the SyncOptionsDialog class on main_window's namespace
+        captured: dict = {}
+
+        class _StubDialog:
+            def __init__(self, channel_ids, titles, defaults, parent):
+                captured["channel_ids"] = channel_ids
+                captured["titles"] = titles
+                captured["defaults"] = defaults
+
+            def exec(self) -> int:  # pretend user clicked OK
+                return 1  # QDialog.Accepted
+
+            def options(self):
+                return captured["defaults"]
+
+        original = mw.SyncOptionsDialog
+        mw.SyncOptionsDialog = _StubDialog  # type: ignore[assignment,misc]
+        try:
+            result = win._show_sync_options_dialog(
+                [1, 2, 3], {1: "c1", 2: "c2", 3: "c3"},
+            )
+        finally:
+            mw.SyncOptionsDialog = original  # type: ignore[assignment,misc]
+
+        assert isinstance(result, SyncOptions)
+        assert result.chat_delay_ms == 777
+        assert result.page_delay_ms == 888
+        # titles / channel_ids 也透传
+        assert captured["channel_ids"] == [1, 2, 3]
+        assert captured["titles"] == {1: "c1", 2: "c2", 3: "c3"}
+
+
+def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> None:
+    """用户点取消 → exec() 返 0 → helper 返 None — caller 不继续 sync。"""
+    import tempfile
+
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui import main_window as mw
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            api_id=1, api_hash="x" * 32, phone="+8612345",
+            session_dir=Path(td) / "s",
+            db_root=Path(td) / "m",
+            objectstore_root=Path(td) / "o",
+            media_policy=MediaPolicy.METADATA,
+            db_backend=DBBackend.JSONL,
+            objectstore_backend=ObjectStoreBackend.LOCAL,
+        )
+        settings.ensure_dirs()
+
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def setup_async():
+            await storage.connect()
+            from tgmonitor.core.monitor.service import MonitorService
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=5.0)
+
+        win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
+
+        class _StubCancelDialog:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def exec(self) -> int:
+                return 0  # QDialog.Rejected
+
+            def options(self):
+                return None
+
+        original = mw.SyncOptionsDialog
+        mw.SyncOptionsDialog = _StubCancelDialog  # type: ignore[assignment,misc]
+        try:
+            result = win._show_sync_options_dialog([1], {1: "c1"})
+        finally:
+            mw.SyncOptionsDialog = original  # type: ignore[assignment,misc]
+
+        assert result is None
