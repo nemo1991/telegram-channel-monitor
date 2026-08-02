@@ -7,6 +7,15 @@
 
 幂等:`save_message` 用 `(channel_id, telegram_msg_id)` upsert,
 实现方式:append 行,内存索引覆盖旧位置(下次落盘时全文件重写 — 见 `_flush`)。
+
+# 子模块切分(2026-08-02)
+
+单频道文件视图抽到 `tgmonitor.core.storage.channel_file.ChannelFile`,
+本文件只保留:
+- 文件级常量(`REGISTRY_FILE` / `MESSAGES_DIR` / `META_FILE`)
+- DTO ↔ dict 转换 helper(`_message_to_dict` / `_dict_to_message` /
+  `_channel_to_dict` / `_dict_to_channel`)
+- `JsonlFileStore` Repository 主体
 """
 from __future__ import annotations
 
@@ -17,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
+from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
 
 REGISTRY_FILE = "channels.json"
@@ -133,69 +143,6 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
     )
 
 
-class _ChannelFile:
-    """单频道 jsonl 文件的内存索引 + 锁。"""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        # telegram_msg_id -> 内存行号(0-based)
-        self.index: dict[int, int] = {}
-        # 内存行:list[dict]
-        self.rows: list[dict] = []
-        self._lock = asyncio.Lock()
-
-    async def load(self) -> None:
-        if not self.path.exists():
-            return
-        # 文件可能极大,目前一次性 load;后续可改为 mmap
-        text = self.path.read_text(encoding="utf-8")
-        for i, line in enumerate(text.splitlines()):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            self.rows.append(d)
-            mid = int(d.get("telegram_msg_id", 0))
-            if mid:
-                self.index[mid] = i
-
-    async def upsert(self, msg_dict: dict) -> int:
-        async with self._lock:
-            mid = int(msg_dict["telegram_msg_id"])
-            if mid in self.index:
-                # 原地覆盖(行号不变);行长度可能变,后续 flush 全文件重写
-                self.rows[self.index[mid]] = msg_dict
-            else:
-                self.index[mid] = len(self.rows)
-                self.rows.append(msg_dict)
-            # 同步 id(若调用方分配)
-            return int(msg_dict.get("id", mid))
-
-    async def delete(self, telegram_msg_id: int) -> None:
-        async with self._lock:
-            if telegram_msg_id not in self.index:
-                return
-            idx = self.index.pop(telegram_msg_id)
-            self.rows.pop(idx)
-            # 重建 index(行号位移)
-            for k, v in list(self.index.items()):
-                if v > idx:
-                    self.index[k] = v - 1
-
-    async def flush(self) -> None:
-        async with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(self.path.suffix + ".part")
-            with tmp.open("w", encoding="utf-8") as f:
-                for r in self.rows:
-                    f.write(json.dumps(r, ensure_ascii=False, default=str))
-                    f.write("\n")
-            tmp.replace(self.path)
-
-
 class JsonlFileStore(StorageRepository):
     """轻量文件后端,适用于单机与中小数据量。"""
 
@@ -207,7 +154,7 @@ class JsonlFileStore(StorageRepository):
         self._registry = self._root / REGISTRY_FILE
         self._meta_path = self._root / META_FILE
         self._channels: dict[int, ChannelDTO] = {}
-        self._files: dict[int, _ChannelFile] = {}
+        self._files: dict[int, ChannelFile] = {}
         # 跨 save/delete 串行化(同频道并发安全,跨频道亦有序)
         self._write_lock = asyncio.Lock()
         # 全局自增 message id
@@ -246,7 +193,7 @@ class JsonlFileStore(StorageRepository):
                 cid = int(f.stem)
             except ValueError:
                 continue
-            cf = _ChannelFile(f)
+            cf = ChannelFile(f)
             await cf.load()
             for r in cf.rows:
                 if int(r.get("id", 0)) >= self._next_msg_pk:
@@ -357,9 +304,9 @@ class JsonlFileStore(StorageRepository):
 
     # ---- 消息 ----
 
-    async def _file_for(self, channel_id: int) -> _ChannelFile:
+    async def _file_for(self, channel_id: int) -> ChannelFile:
         if channel_id not in self._files:
-            cf = _ChannelFile(self._msg_dir / f"{channel_id}.jsonl")
+            cf = ChannelFile(self._msg_dir / f"{channel_id}.jsonl")
             await cf.load()
             self._files[channel_id] = cf
         return self._files[channel_id]
