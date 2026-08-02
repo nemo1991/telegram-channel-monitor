@@ -23,14 +23,13 @@ class StorageRepository(ABC):
     # ---- 生命周期 ----
 
     @abstractmethod
-    async def connect(self) -> None: ...
+    async def connect(self) -> None:
+        """建连接 / 加载 schema;幂等。"""
+        ...
 
     @abstractmethod
-    async def close(self) -> None: ...
-
-    @abstractmethod
-    async def init_schema(self) -> None:
-        """创建表/集合 + 索引(Mongo 用 ensureIndex)。幂等。"""
+    async def close(self) -> None:
+        """刷缓存 / 关连接 / 释放资源。"""
         ...
 
     # ---- 频道 ----
@@ -58,7 +57,9 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def list_channels(self) -> list[ChannelDTO]: ...
+    async def list_channels(self) -> list[ChannelDTO]:
+        """所有频道(包含未订阅的);顺序无要求。"""
+        ...
 
     @abstractmethod
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
@@ -66,7 +67,9 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def get_channel(self, channel_id: int) -> ChannelDTO | None: ...
+    async def get_channel(self, channel_id: int) -> ChannelDTO | None:
+        """不存在返 None(不抛)。"""
+        ...
 
     @abstractmethod
     async def delete_channel(self, channel_id: int) -> None:
@@ -102,15 +105,21 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def update_message(self, message: MessageDTO) -> None: ...
+    async def update_message(self, message: MessageDTO) -> None:
+        """按 (channel_id, telegram_msg_id) 覆盖式更新;不存在等效 save。"""
+        ...
 
     @abstractmethod
-    async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None: ...
+    async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条消息;不存在不抛(idempotent)。"""
+        ...
 
     @abstractmethod
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None: ...
+    ) -> MessageDTO | None:
+        """单条消息;不存在返 None。"""
+        ...
 
     @abstractmethod
     async def list_messages(
@@ -124,7 +133,9 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def count_messages(self, channel_id: int) -> int: ...
+    async def count_messages(self, channel_id: int) -> int:
+        """该频道已落库消息数(忽略 date_from/to)。"""
+        ...
 
     # ---- 健康检查 ----
 

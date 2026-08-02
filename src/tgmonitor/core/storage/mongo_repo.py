@@ -86,6 +86,7 @@ class MongoRepository(StorageRepository):
     """`_id` 用 `ObjectId`;`id` 字段对 messages 是 ObjectId 的字符串形式。"""
 
     def __init__(self, dsn: str, database: str = "tgmonitor") -> None:
+        """`dsn` = motor DSN;`database` = 库名(默认 `tgmonitor`)。"""
         self._dsn = dsn
         self._db_name = database
         self._client: AsyncIOMotorClient | None = None
@@ -93,22 +94,27 @@ class MongoRepository(StorageRepository):
 
     @property
     def db(self) -> AsyncIOMotorDatabase:
+        """当前 DB 句柄;调用前必须 connect()。"""
         assert self._db is not None, "call connect() first"
         return self._db
 
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
+        """建 motor 客户端 + 拿 db 句柄(不立即 ping)。"""
         self._client = AsyncIOMotorClient(self._dsn)
         self._db = self._client[self._db_name]
 
     async def close(self) -> None:
+        """关 motor 客户端;幂等。"""
         if self._client is not None:
             self._client.close()
             self._client = None
             self._db = None
 
     async def init_schema(self) -> None:
+        """建 4 个索引:(channel_id, telegram_msg_id) 唯一 / (channel_id, date) /
+        (date) / media.message_id — 幂等(create_index 同名 no-op)。"""
         # 唯一索引
         await self.db.messages.create_index(
             [("channel_id", 1), ("telegram_msg_id", 1)], unique=True
@@ -118,6 +124,7 @@ class MongoRepository(StorageRepository):
         await self.db.media.create_index([("message_id", 1)])
 
     async def ping(self) -> bool:
+        """`db.command("ping")` 探活;任何异常返 False。"""
         try:
             await self.db.command("ping")
             return True
@@ -127,6 +134,7 @@ class MongoRepository(StorageRepository):
     # ---- 频道 ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
+        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。"""
         doc = {
             "_id": channel.id,
             "title": channel.title,
@@ -158,6 +166,7 @@ class MongoRepository(StorageRepository):
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:
+        """只设订阅标志;频道未建档时 upsert 一条 stub(后续会被 metadata 覆盖)。"""
         await self.db.channels.update_one(
             {"_id": channel_id},
             {"$set": {
@@ -169,23 +178,28 @@ class MongoRepository(StorageRepository):
         )
 
     async def list_channels(self) -> list[ChannelDTO]:
+        """所有频道(按 _id 升序);含未订阅的。"""
         cursor = self.db.channels.find().sort("_id", 1)
         return [_doc_to_channel(d) async for d in cursor]
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返 subscribed=True 的频道(按 _id 升序);供 MonitorService 喂白名单。"""
         cursor = self.db.channels.find({"subscribed": True}).sort("_id", 1)
         return [_doc_to_channel(d) async for d in cursor]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
+        """单频道;不存在返 None。"""
         d = await self.db.channels.find_one({"_id": channel_id})
         return _doc_to_channel(d) if d else None
 
     async def delete_channel(self, channel_id: int) -> None:
+        """删频道 + 级联删 messages(media 是 messages 的子文档,无需单独清)。"""
         await self.db.channels.delete_one({"_id": channel_id})
         # 级联删消息(messages.media 子文档内嵌,无需单独 media 集合操作)
         await self.db.messages.delete_many({"channel_id": channel_id})
 
     async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
         d = await self.db.messages.find_one(
             {"channel_id": channel_id},
             sort=[("telegram_msg_id", -1)],
@@ -194,10 +208,12 @@ class MongoRepository(StorageRepository):
         return int(d["telegram_msg_id"]) if d else None
 
     async def get_meta(self, key: str) -> str | None:
+        """全局单值元数据;不存在返 None。"""
         d = await self.db.meta.find_one({"_id": key})
         return d.get("value") if d else None
 
     async def set_meta(self, key: str, value: str) -> None:
+        """upsert 语义:`update_one` + `upsert=True` 覆盖。"""
         await self.db.meta.update_one(
             {"_id": key},
             {"$set": {"value": value}},
@@ -207,6 +223,7 @@ class MongoRepository(StorageRepository):
     # ---- 消息 ----
 
     async def save_message(self, message: MessageDTO) -> int:
+        """幂等 upsert;返回 ObjectId 字符串形式。media 作为子文档内嵌。"""
         # ObjectId 形式的 _id 仍由 Mongo 生成;此处返回 message.id 字符串
         doc = {
             "channel_id": message.channel_id,
@@ -236,9 +253,11 @@ class MongoRepository(StorageRepository):
         return message.id  # type: ignore[return-value]
 
     async def update_message(self, message: MessageDTO) -> None:
+        """代理到 save_message(upsert 语义一致)。"""
         await self.save_message(message)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条消息;media 子文档随父 doc 一同删。"""
         await self.db.messages.delete_one(
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
@@ -246,6 +265,7 @@ class MongoRepository(StorageRepository):
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
     ) -> MessageDTO | None:
+        """单条消息(media 子文档自动展开);不存在返 None。"""
         d = await self.db.messages.find_one(
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
@@ -258,6 +278,7 @@ class MongoRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
+        """按 (date ASC, _id ASC) 排序 — 与 Postgres 排序对齐;`$in` 走 channel_ids。"""
         if not channel_ids:
             return []
         q: dict[str, Any] = {"channel_id": {"$in": channel_ids}}
@@ -274,4 +295,5 @@ class MongoRepository(StorageRepository):
         return [_doc_to_message(d) async for d in cursor]
 
     async def count_messages(self, channel_id: int) -> int:
+        """该频道已落库消息数(走 count_documents,不应用 date 过滤)。"""
         return await self.db.messages.count_documents({"channel_id": channel_id})

@@ -28,6 +28,7 @@ class ChannelFile:
     """单频道 jsonl 文件的内存索引 + 锁。"""
 
     def __init__(self, path: Path) -> None:
+        """`path` = 单频道 jsonl 文件路径(由 JsonlFileStore 计算好传入)。"""
         self.path = path
         # telegram_msg_id -> 内存行号(0-based)
         self.index: dict[int, int] = {}
@@ -36,6 +37,10 @@ class ChannelFile:
         self._lock = asyncio.Lock()
 
     async def load(self) -> None:
+        """一次性读全文进内存(后续可改 mmap),构建 telegram_msg_id -> line_no 索引。
+
+        损坏行 skip(不抛);不存在文件等同空文件。
+        """
         if not self.path.exists():
             return
         # 文件可能极大,目前一次性 load;后续可改为 mmap
@@ -54,6 +59,10 @@ class ChannelFile:
                 self.index[mid] = i
 
     async def upsert(self, msg_dict: dict) -> int:
+        """幂等 upsert:`(telegram_msg_id)` 重复时原地覆盖,行号不变。
+
+        返回 DB 内部 id(若 dict 里给了 id 就用 dict 的,否则用 telegram_msg_id)。
+        """
         async with self._lock:
             mid = int(msg_dict["telegram_msg_id"])
             if mid in self.index:
@@ -66,6 +75,7 @@ class ChannelFile:
             return int(msg_dict.get("id", mid))
 
     async def delete(self, telegram_msg_id: int) -> None:
+        """删单条消息;不存在 idempotent 不抛。删后重建 index(行号位移)。"""
         async with self._lock:
             if telegram_msg_id not in self.index:
                 return
@@ -77,6 +87,7 @@ class ChannelFile:
                     self.index[k] = v - 1
 
     async def flush(self) -> None:
+        """全文件重写 + 原子 rename(.part 中转);锁内执行,保证读一致性。"""
         async with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(self.path.suffix + ".part")

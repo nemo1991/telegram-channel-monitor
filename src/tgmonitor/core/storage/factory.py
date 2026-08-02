@@ -9,6 +9,7 @@ from tgmonitor.core.storage.repository import StorageRepository
 
 
 def build_storage(settings: Settings) -> StorageRepository:
+    """根据 settings.db_backend 选 postgres / mongo / jsonl 后端(懒加载对应模块)。"""
     if settings.db_backend == DBBackend.POSTGRES:
         from tgmonitor.core.storage.postgres_repo import PostgresRepository
 

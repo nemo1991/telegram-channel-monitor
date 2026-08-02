@@ -90,27 +90,38 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
 
 
 class PostgresRepository(StorageRepository):
+    """PostgreSQL 实现 — `asyncpg` 连接池 + ON CONFLICT 幂等 upsert。
+
+    media 是独立表 + FK CASCADE;ON CONFLICT 配合 (channel_id, telegram_msg_id)
+    唯一约束实现 save_message 幂等。
+    """
+
     def __init__(self, dsn: str) -> None:
+        """`dsn` = asyncpg DSN;实际 pool 在 connect() 时建。"""
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
 
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
+        """建 asyncpg 连接池(1-10 个连接);后续 query 都从池里取。"""
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10)
 
     async def close(self) -> None:
+        """关连接池;幂等(None 时 no-op)。"""
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
 
     async def init_schema(self) -> None:
+        """执行 schema.sql(创建表 + 索引);幂等(全 IF NOT EXISTS)。"""
         assert self._pool is not None
         sql = SCHEMA_FILE.read_text(encoding="utf-8")
         async with self._pool.acquire() as conn:
             await conn.execute(sql)
 
     async def ping(self) -> bool:
+        """SELECT 1 探活;任何异常返 False。"""
         assert self._pool is not None
         try:
             async with self._pool.acquire() as conn:
@@ -122,6 +133,7 @@ class PostgresRepository(StorageRepository):
     # ---- 频道 ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
+        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -181,6 +193,7 @@ class PostgresRepository(StorageRepository):
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:
+        """只设订阅标志;频道未建档时用 id 做个 stub(后续会被 metadata 覆盖)。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             # 不存在就先建一条 stub
@@ -194,6 +207,7 @@ class PostgresRepository(StorageRepository):
             )
 
     async def list_channels(self) -> list[ChannelDTO]:
+        """所有频道(按 id 升序);含未订阅的。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -204,6 +218,7 @@ class PostgresRepository(StorageRepository):
         return [_row_to_channel(r) for r in rows]
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返 subscribed=TRUE 的频道(按 id 升序);供 MonitorService 喂白名单。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -214,6 +229,7 @@ class PostgresRepository(StorageRepository):
         return [_row_to_channel(r) for r in rows]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
+        """单频道;不存在返 None。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -225,11 +241,13 @@ class PostgresRepository(StorageRepository):
         return _row_to_channel(row) if row else None
 
     async def delete_channel(self, channel_id: int) -> None:
+        """删频道;ON DELETE CASCADE 自动带 messages / media(由 schema 定义)。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute("DELETE FROM channels WHERE id = $1", channel_id)
 
     async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
@@ -238,6 +256,7 @@ class PostgresRepository(StorageRepository):
             )
 
     async def get_meta(self, key: str) -> str | None:
+        """全局单值元数据;不存在返 None。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
@@ -245,6 +264,7 @@ class PostgresRepository(StorageRepository):
             )
 
     async def set_meta(self, key: str, value: str) -> None:
+        """upsert 语义:ON CONFLICT DO UPDATE 覆盖。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -309,9 +329,11 @@ class PostgresRepository(StorageRepository):
         return msg_pk
 
     async def update_message(self, message: MessageDTO) -> None:
+        """代理到 save_message(upsert 语义一致)。"""
         await self.save_message(message)  # upsert 语义一致
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条消息;media 行通过 FK CASCADE 自动删。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -323,6 +345,7 @@ class PostgresRepository(StorageRepository):
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
     ) -> MessageDTO | None:
+        """单条消息 + 关联 media;不存在返 None。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -344,6 +367,10 @@ class PostgresRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
+        """按时间升序 + id 升序(与 Mongo 排序对齐);media 二次查询拼回。
+
+        `channel_ids` 走 ANY($1::bigint[]);`limit` 应用在 SQL 层。
+        """
         assert self._pool is not None
         if not channel_ids:
             return []
@@ -378,6 +405,7 @@ class PostgresRepository(StorageRepository):
         return [_row_to_message(r, by_msg.get(r["id"], [])) for r in rows]
 
     async def count_messages(self, channel_id: int) -> int:
+        """该频道已落库消息数;走 COUNT(*) 聚合,不应用 date 过滤。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             return await conn.fetchval(

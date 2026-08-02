@@ -149,6 +149,7 @@ class JsonlFileStore(StorageRepository):
     backend_name = "jsonl"
 
     def __init__(self, root: Path) -> None:
+        """`root` = 仓库根目录(必须由 Settings 算好后传入)。"""
         self._root = Path(root)
         self._msg_dir = self._root / MESSAGES_DIR
         self._registry = self._root / REGISTRY_FILE
@@ -165,6 +166,10 @@ class JsonlFileStore(StorageRepository):
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
+        """建目录 + 加载 channels.json registry + meta + 预扫描 message id 起点。
+
+        损坏的 registry 行 skip(不抛);meta JSON 损坏等同空 meta。
+        """
         self._root.mkdir(parents=True, exist_ok=True)
         self._msg_dir.mkdir(parents=True, exist_ok=True)
         # 加载 registry
@@ -201,6 +206,7 @@ class JsonlFileStore(StorageRepository):
             self._files[cid] = cf
 
     async def close(self) -> None:
+        """逐个 flush 内存里的 ChannelFile(单个 flush 失败吞掉不挡 close)。"""
         # flush 所有文件
         for cf in self._files.values():
             try:
@@ -214,6 +220,7 @@ class JsonlFileStore(StorageRepository):
         return None
 
     async def ping(self) -> bool:
+        """轻量探活:仅查 root 目录是否存在。"""
         return self._root.exists()
 
     # ---- 频道 ----
@@ -227,6 +234,7 @@ class JsonlFileStore(StorageRepository):
         tmp.replace(self._registry)
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
+        """全字段覆盖(含 is_subscribed) — 兼容老调用;**新代码走 upsert_channel_metadata**。"""
         self._channels[channel.id] = channel
         self._flush_registry()
 
@@ -249,6 +257,7 @@ class JsonlFileStore(StorageRepository):
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:
+        """只设订阅标志,不动其它字段;频道未建档时用 id 做个 stub(后续会被 sync 补全)。"""
         existing = self._channels.get(channel_id)
         if existing is None:
             # 还没建档 — 用 id 做个 stub,subscribe 路径会很快 upsert 完整信息
@@ -266,24 +275,30 @@ class JsonlFileStore(StorageRepository):
         self._flush_registry()
 
     async def list_channels(self) -> list[ChannelDTO]:
+        """所有频道(含未订阅的);顺序 = 内存 dict 插入序。"""
         return list(self._channels.values())
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返 is_subscribed=True 的频道;供 MonitorService 喂白名单。"""
         return [c for c in self._channels.values() if c.is_subscribed]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
+        """单频道;不存在返 None。"""
         return self._channels.get(channel_id)
 
     async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
+        """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
         cf = self._files.get(channel_id) or await self._file_for(channel_id)
         if not cf.index:
             return None
         return max(cf.index.keys()) if cf.index else None
 
     async def get_meta(self, key: str) -> str | None:
+        """全局单值元数据(sync checkpoint / 上次同步时间等);不存在返 None。"""
         return self._meta.get(key)
 
     async def set_meta(self, key: str, value: str) -> None:
+        """upsert 语义:同步落盘(OSError 吞,内存值仍更新,下次 connect 重读会丢)。"""
         self._meta[key] = value
         # 同步落盘 — meta 量很小(几 KB),每次写都全量 flush。
         try:
@@ -294,6 +309,10 @@ class JsonlFileStore(StorageRepository):
             pass  # 内存值已更新,下次 connect() 重读会丢,不致命
 
     async def delete_channel(self, channel_id: int) -> None:
+        """删频道及其 messages/<id>.jsonl;不删对象存储里的二进制。
+
+        注:用户退订**不**应调这个 — 退订走 set_channel_subscribed(False)。
+        """
         self._channels.pop(channel_id, None)
         self._flush_registry()
         # 删消息文件
@@ -312,6 +331,10 @@ class JsonlFileStore(StorageRepository):
         return self._files[channel_id]
 
     async def save_message(self, message: MessageDTO) -> int:
+        """幂等 upsert;自动分配 message.id(若未传);返回 DB 内部 id。
+
+        跨 save 串行化(同 / 跨频道),保证 _next_msg_pk 不撞 + flush 顺序。
+        """
         async with self._write_lock:
             # 确保频道存在
             if message.channel_id not in self._channels:
@@ -330,9 +353,11 @@ class JsonlFileStore(StorageRepository):
             return message.id  # type: ignore[return-value]
 
     async def update_message(self, message: MessageDTO) -> None:
+        """按 (channel_id, telegram_msg_id) 覆盖式更新(代理到 save_message)。"""
         await self.save_message(message)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条消息;不存在不抛。"""
         async with self._write_lock:
             cf = await self._file_for(channel_id)
             await cf.delete(telegram_msg_id)
@@ -341,6 +366,7 @@ class JsonlFileStore(StorageRepository):
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
     ) -> MessageDTO | None:
+        """单条消息;不存在返 None。"""
         cf = await self._file_for(channel_id)
         idx = cf.index.get(telegram_msg_id)
         if idx is None:
@@ -354,6 +380,10 @@ class JsonlFileStore(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
+        """按时间升序;两实现必须排序一致(date asc, id asc 兜底)。
+
+        `limit` 截尾(应用在排序后);损坏行 skip 不抛。
+        """
         out: list[MessageDTO] = []
         for cid in channel_ids:
             cf = await self._file_for(cid)
@@ -371,5 +401,6 @@ class JsonlFileStore(StorageRepository):
         return out[:limit] if limit else out
 
     async def count_messages(self, channel_id: int) -> int:
+        """该频道已落库消息数;不应用 date 过滤。"""
         cf = await self._file_for(channel_id)
         return len(cf.rows)
