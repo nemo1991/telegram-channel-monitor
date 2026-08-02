@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-02
+
+🛠️ **`ChannelsApi` composition 拆分 release** — `tdlib_client.py` 余下
+1025 行再切,channels 子块(287 行)抽到独立 `ChannelsApi` composition 类。
+零功能变更,纯架构清理。
+
 ### 🛠️ Refactored
 - **`tdlib_client.py` 1025 行 → 762 行 + `tdlib_channels.py` 379 行**(2026-08-02)—
   channels 子块(287 行:6 个公开方法 + 2 个内部 helper)抽到 `ChannelsApi`
@@ -22,6 +28,10 @@
 - 子模块 reverse import 校验:`tdlib_channels.py` 通过 `TYPE_CHECKING` 块软引用
   `TdlibTelegramClient`,runtime **不**反向 import `tdlib_client`,无循环依赖
 - 236 测试通过(72 + 72 + 72 + 20),ruff 0 warning,行为零变化
+
+### 🔧 Changed
+- **`version = "1.0.3"` → `"1.0.4"`** — `pyproject.toml` +
+  `src/tgmonitor/__init__.py` 双处对齐(避免 v1.0.0 修过的 drift bug 复发)
 
 ## [1.0.3] - 2026-08-02
 
