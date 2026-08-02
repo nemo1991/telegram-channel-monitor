@@ -78,7 +78,11 @@
 - **没有自动迁移代码** — v1.0.0 没正式发板,无存量用户。早期用户在
   第一次跑 v1.0.1 前手动把数据复制到 platform-native 目录即可。
 
-## [Unreleased]
+## [1.0.2] - 2026-08-02
+
+🛠️ **稳定性 + 长函数切分 release** — `_subscribed` cache 漂移三连修复
++ 8 项 REVIEW M1/M2 refactor sweep + sync_channels 拆 4 阶段 +
+`jsonl_store` 子模块化。无功能新增,纯健壮性。
 
 ### ✨ Added
 - **`run_coro` helper(`src/tgmonitor/ui/_async.py`)**(2026-07-30,commits
@@ -152,6 +156,24 @@
   `getattr(e, "message", None) or str(e) or "未知错误"` 统一进
   `_extract_error_detail` 模块级纯函数(`tests/test_error_helpers.py`
   8 个新 case)。
+- **`ChannelSyncService.sync_channels` 142 行拆 4 阶段 helper**
+  (2026-08-02,commit `25da924`)— REVIEW M1 显式列出的高 ROI 长函数;
+  拆成 3 个职责单一的 helper(`_sync_one_channel` 组合 + 异常 /
+  `_sync_metadata` 单频道拉元数据 / `_sync_history` 单频道拉历史 +
+  分页 + throttle),`sync_channels` 退化为 ~32 行 orchestrator(只负责
+  循环 + 累加 + 顶部取消 + 末尾 done 事件)。`ChannelSyncResult` 加
+  `new_messages_added: int = 0` 字段(dataclass 默认 0,向后兼容),
+  `_sync_one_channel` 返回 `(ch_result, rate_limited_seconds)` 元组,
+  `retry_after` 透传到 outer `SyncResult.rate_limited_seconds`。`tests/
+  test_channel_sync.py` 14 个用例行为锚点全过,236 tests total green。
+- **`jsonl_store._ChannelFile` 抽到独立文件 `channel_file.py`**
+  (2026-08-02,commit `d748121`)— 单频道 jsonl 文件视图(内存索引 +
+  行级锁 + flush)从 428 行 `jsonl_store.py` 抽到 96 行 `channel_file.py`,
+  命名从 module-private `_ChannelFile` 升到 public `ChannelFile`(虽
+  当前仅 jsonl_store 用,但命名暗示复用空间)。`jsonl_store.py` 从 428 →
+  361 行(-67),职责更清晰:文件级常量 + DTO ↔ dict 转换 + Repository
+  调度。31 个相关测试全过,jsonl + map_message + reconfigure 三块零
+  回归。
 - **启动失败用 Qt `QMessageBox.critical` 弹窗**(commit `4fa866d`)—
   原先 bundle 启动失败只 stderr 静默退出,新用户无任何提示(Windows /
   macOS `.app` 双击 → 一闪而过)。`app.py` module-level
