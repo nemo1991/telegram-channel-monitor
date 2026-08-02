@@ -55,12 +55,15 @@ log = logging.getLogger(__name__)
 
 
 class ChannelSyncService:
+    """全量同步服务:对多个频道拉元数据 + 历史消息(防封号节流)。"""
+
     def __init__(
         self,
         bus: EventBus,
         client: TelegramClient,
         storage: StorageRepository,
     ) -> None:
+        """`bus` = 发 ChannelSyncProgress / ChannelSyncDone 事件。"""
         self.bus = bus
         self.client = client
         self.storage = storage

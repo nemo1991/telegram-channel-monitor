@@ -33,6 +33,8 @@ log = logging.getLogger(__name__)
 
 
 class MonitorService:
+    """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。"""
+
     def __init__(
         self,
         bus: EventBus,
@@ -42,6 +44,7 @@ class MonitorService:
         settings: Settings,
         downloader: MediaDownloader | None = None,
     ) -> None:
+        """`downloader` 可选 — FULL 媒体策略时配置(FULL = 实际下原文件)。"""
         self.bus = bus
         self.client = client
         self.storage = storage
@@ -54,12 +57,15 @@ class MonitorService:
         self._whitelist: set[int] = set()  # 被订阅的 channel_id
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
+        """替换白名单 — 由 AppService 启动 monitor 时调。"""
         self._whitelist = set(channel_ids)
 
     def add_to_whitelist(self, channel_id: int) -> None:
+        """增量加一个频道到白名单(订阅后立即生效)。"""
         self._whitelist.add(channel_id)
 
     def remove_from_whitelist(self, channel_id: int) -> None:
+        """从白名单摘掉一个频道(退订;不存在 idempotent 不抛)。"""
         self._whitelist.discard(channel_id)
 
     @property
@@ -73,6 +79,7 @@ class MonitorService:
         return frozenset(self._whitelist)
 
     async def start(self) -> None:
+        """启动主循环;幂等(已启动时 no-op)。"""
         if self._task is not None:
             return
         self._stop.clear()
@@ -84,6 +91,7 @@ class MonitorService:
         )
 
     async def stop(self) -> None:
+        """停 monitor + 关流 + 等 task 退出(2s 超时硬 cancel)。"""
         self._stop.set()
         if self._stream is not None:
             try:
@@ -171,6 +179,7 @@ class MonitorService:
         await self.bus.publish(MessageReceived(message=msg))
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条消息 + 发 MessageDeleted 事件(由 UI 删除按钮 / 撤回时调)。"""
         await self.storage.delete_message(channel_id, telegram_msg_id)
         await self.bus.publish(
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
@@ -213,6 +222,7 @@ class MediaDownloader:
         *,
         max_bytes: int = 200_000_000,
     ) -> None:
+        """`max_bytes` = 单文件硬上限(0 = 无限制,默认 200 MB)。"""
         self.client = client
         self.storage = storage
         self.objects = objects
@@ -220,6 +230,7 @@ class MediaDownloader:
 
     @staticmethod
     def make_key(media: MediaDTO, suffix: str = "") -> str:
+        """生成稳定的对象 key:`media/<sha256[:16]>.<ext><suffix>`(内容寻址)。"""
         h = hashlib.sha256((media.telegram_file_id or media.file_name or "").encode()).hexdigest()[:16]
         ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
         return f"media/{h}.{ext}{suffix}"

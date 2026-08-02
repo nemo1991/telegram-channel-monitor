@@ -15,12 +15,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DBBackend(str, Enum):
+    """消息仓储后端选择。"""
+
     POSTGRES = "postgres"
     MONGO = "mongo"
     JSONL = "jsonl"     # 文件:每频道一个 .jsonl(轻量,无需 DB 服务)
 
 
 class ObjectStoreBackend(str, Enum):
+    """对象存储后端选择。"""
+
     LOCAL = "local"     # 平铺本地(无分片)
     FOLDER = "folder"   # 本地两级分片(适合大量文件)
     S3 = "s3"
@@ -48,6 +52,8 @@ def _user_data_dir() -> Path:
 
 
 class Settings(BaseSettings):
+    """应用全局配置 — pydantic-settings 从 env / .env 读取。"""
+
     model_config = SettingsConfigDict(
         env_prefix="TG_",
         env_file=str(_user_data_dir() / ".env"),  # platform-native,不再 cwd-relative

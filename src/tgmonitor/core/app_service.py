@@ -57,6 +57,7 @@ class AppService:
         objects: ObjectStore,
         settings: Settings,
     ) -> None:
+        """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。"""
         self.bus = bus
         self.client = client
         self.storage = storage
@@ -74,6 +75,7 @@ class AppService:
     # ---------- 鉴权 ----------
 
     async def get_login_state(self) -> str:
+        """当前登录状态机值(继承自 TelegramClient.state)。"""
         return self.client.state
 
     def _check_credentials(self) -> str | None:
@@ -133,6 +135,7 @@ class AppService:
             return "error", str(e)
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
+        """UI 提交验证码。错误由 AuthErrorOccurred 事件 + catch-all ErrorOccurred 双轨。"""
         try:
             return await self.client.submit_code(code)
         except Exception as e:  # noqa: BLE001
@@ -140,6 +143,7 @@ class AppService:
             return "error", str(e)
 
     async def submit_password(self, password: str) -> tuple[str, str | None]:
+        """UI 提交 2FA 密码。错误走 ErrorOccurred;UI 通常弹窗提示。"""
         try:
             return await self.client.submit_password(password)
         except Exception as e:  # noqa: BLE001
@@ -149,22 +153,29 @@ class AppService:
     # ---------- 频道 ----------
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        """已加入 Telegram 频道(best-effort UX,不走 storage)。"""
         return await self.client.list_joined_channels()
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        # 单一真理:storage.is_subscribed=True 的频道。
+        """已订阅频道 — **单一真理**走 storage(删 `_subscribed` cache 后)。
         # 2026-07-31 删 `self._subscribed` cache 后这是 AppService 唯一
         # 「订阅列表」读取入口,被 VM / monitor / channel_widget 复用。
+        """
         return await self.storage.list_subscribed_channels()
 
     async def subscribe_channel(self, channel: ChannelDTO) -> None:
+        """订阅一个频道 — upsert 完整元数据 + 设 subscribed=True + 发事件。
+
         # 先 upsert 完整信息(标题等),再设 subscribed=True —
         # 后者用 set_channel_subscribed 不会改其他字段。
+        """
         await self.storage.upsert_channel(channel)
         await self.storage.set_channel_subscribed(channel.id, True)
         await self.bus.publish(ChannelSubscribed(channel=channel))
 
     async def unsubscribe_channel(self, channel_id: int) -> None:
+        """退订 — 关订阅标志但保留历史 + 元数据。
+
         # 退订 = 关闭订阅标志,不动元数据 / 消息。
         # 历史消息继续在 storage 里 — 用户重新订阅能看到老历史。
         # 元数据继续被 sync 刷新 — 退订后仍能反映 title/username 变化。
@@ -175,6 +186,7 @@ class AppService:
         # → 该频道被"恢复订阅",用户视角看不出退订成功未。现在让 storage
         # 异常直接 raise(不静默吞),让 VM / ChannelWidget 的 `run_coro` 走
         # 统一异常路径 → UI 看到 ErrorOccurred 而非假成功。
+        """
         await self.storage.set_channel_subscribed(channel_id, False)
         await self.bus.publish(ChannelUnsubscribed(channel_id=channel_id))
 
@@ -192,6 +204,7 @@ class AppService:
     # ---------- 消息流(实时) ----------
 
     def subscribe_updates(self) -> UpdateStream:
+        """订阅实时更新流(转给 UI;关 app 时 stop_monitor 统一 aclose)。"""
         s = self.client.subscribe_updates()
         self._update_streams.append(s)
         return s
@@ -203,6 +216,7 @@ class AppService:
         self._running = True
 
     async def stop_monitor(self) -> None:
+        """停 monitor + 关所有 update stream;幂等。"""
         self._running = False
         for s in self._update_streams:
             try:
@@ -220,9 +234,12 @@ class AppService:
         date_to: datetime | None = None,
         limit: int | None = 200,
     ) -> list[MessageDTO]:
+        """查消息 — `channel_ids=None` 时走 storage「已订」真理(修 #B 双真理问题)。
+
         # `channel_ids=None` 时从 storage 取**当前真理**(已订频道列表),
         # 不用 in-memory cache — 跟 `list_subscribed_channels()` 是同一个真理。
         # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #B。
+        """
         if channel_ids is None:
             channel_ids = [
                 c.id for c in await self.storage.list_subscribed_channels()
@@ -246,6 +263,7 @@ class AppService:
     # ---------- 关闭 ----------
 
     async def shutdown(self) -> None:
+        """app exit — 停 monitor + 关 client / storage / objects(顺序敏感)。"""
         await self.stop_monitor()
         # 关 TelegramClient (停 aiotdlib 的 updates_loop + tdjson 子进程)
         try:

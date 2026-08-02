@@ -47,6 +47,7 @@ class EnvFile:
 
 
 def parse_env_file(path: Path) -> EnvFile:
+    """解析 .env 文件 — 返回 EnvFile(可序列化回原格式,保形)。"""
     raw: list[str] = []
     pairs: dict[str, str] = {}
     indices: dict[str, int] = {}
@@ -84,6 +85,7 @@ def write_env_file(env: EnvFile, path: Path) -> None:
 # ---- 高层 API:Settings <-> EnvFile ----
 
 def settings_to_pairs(s: Settings) -> dict[str, str]:
+    """Settings → .env 字段 dict(供 UI 编辑后写回)。"""
     return {
         "TG_API_ID": str(s.api_id),
         "TG_API_HASH": s.api_hash,
@@ -158,6 +160,7 @@ class EditableSettings:
 
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
+        """Settings → EditableSettings(给 UI 编辑用)。bytes/MB 单位转换在这里做。"""
         return cls(
             api_id=s.api_id,
             api_hash=s.api_hash,
@@ -185,6 +188,7 @@ class EditableSettings:
         )
 
     def validate(self) -> list[str]:
+        """校验 UI 输入,返错误消息列表(空 = 全部合法)。"""
         errs: list[str] = []
         if self.api_id <= 0:
             errs.append("TG_API_ID 必须为正整数")
@@ -210,6 +214,7 @@ class EditableSettings:
         return errs
 
     def to_settings(self) -> Settings:
+        """UI 表单 → 完整 Settings(已 validate 过的前提)。"""
         return Settings(  # type: ignore[call-arg]
             api_id=self.api_id,
             api_hash=self.api_hash,

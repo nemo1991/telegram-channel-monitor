@@ -33,12 +33,15 @@ class ChannelDTO:
 
     @property
     def display(self) -> str:
+        """`@username`(有) 或 `#id title`(无 username)的展示串。"""
         return f"@{self.username}" if self.username else f"#{self.id} {self.title}"
 
 
 # ---------- 媒体 ----------
 
 class MediaType(str, Enum):
+    """Telegram 媒体类型枚举(与 TDLib MessageContent 类型对应)。"""
+
     PHOTO = "photo"
     VIDEO = "video"
     AUDIO = "audio"
@@ -102,12 +105,15 @@ class MessageDTO:
 
     @property
     def has_media(self) -> bool:
+        """消息是否带媒体(`media` 列表非空)。"""
         return bool(self.media)
 
 
 # ---------- 导出 ----------
 
 class ExportFormat(str, Enum):
+    """导出格式枚举 — UI 下拉框选项 + Exporter 注册 key。"""
+
     JSON = "json"
     CSV = "csv"
     MARKDOWN = "markdown"
@@ -116,6 +122,8 @@ class ExportFormat(str, Enum):
 
 @dataclass
 class ExportRequest:
+    """用户触发的导出请求(ExportService.run 接收)。"""
+
     channel_ids: list[int]
     date_from: datetime | None = None
     date_to: datetime | None = None
@@ -127,6 +135,8 @@ class ExportRequest:
 
 @dataclass
 class ExportResult:
+    """导出结果 — 用于 `ExportDone` 事件 payload。"""
+
     out_path: str
     message_count: int
     bytes_written: int

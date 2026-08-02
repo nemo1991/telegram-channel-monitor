@@ -54,6 +54,8 @@ class ChannelSubscribed(Event):
 
 @dataclass
 class ChannelUnsubscribed(Event):
+    """用户将一个频道从监听白名单移除。"""
+
     channel_id: int = 0
 
 
@@ -66,12 +68,16 @@ class MessageReceived(Event):
 
 @dataclass
 class MessageDeleted(Event):
+    """一条消息被删除(由 monitor 收到 `DeleteMessages` 更新)。"""
+
     channel_id: int = 0
     telegram_msg_id: int = 0
 
 
 @dataclass
 class ExportProgress(Event):
+    """导出进度事件 — ExportService 每拉一批 messages 发一次。"""
+
     request_id: str = ""
     written: int = 0
     total: int | None = None
@@ -79,6 +85,8 @@ class ExportProgress(Event):
 
 @dataclass
 class ExportDone(Event):
+    """导出完成(成功 / 失败都发;失败时 `error` 字段非空)。"""
+
     request_id: str = ""
     result: ExportResult | None = None
     error: str | None = None
@@ -86,6 +94,11 @@ class ExportDone(Event):
 
 @dataclass
 class ErrorOccurred(Event):
+    """通用错误事件 — UI 显示错误提示用。
+
+    鉴权错误(验证码 / 2FA)有专门子类 `AuthErrorOccurred`,它继承本类。
+    """
+
     source: str = ""
     message: str = ""
     exception: BaseException | None = None
@@ -145,17 +158,23 @@ Subscriber = Callable[[Any], Awaitable[None]]
 
 
 class EventBus:
+    """异步事件总线 — 单进程 in-memory,无第三方依赖。"""
+
     def __init__(self) -> None:
+        """空订阅表;按事件类型 + 通配订阅。"""
         self._subs: dict[type[Event], list[Subscriber]] = {}
         self._wild: list[Subscriber] = []  # 订阅所有事件
 
     def subscribe(self, event_type: type[T], fn: Subscriber) -> None:
+        """订阅指定事件类型;订阅者抛异常被吞 + 日志,不互相影响。"""
         self._subs.setdefault(event_type, []).append(fn)
 
     def subscribe_all(self, fn: Subscriber) -> None:
+        """通配订阅(收所有事件类型)。"""
         self._wild.append(fn)
 
     def unsubscribe(self, event_type: type[Event], fn: Subscriber) -> None:
+        """退订;不存在 idempotent 不抛。"""
         if event_type in self._subs:
             try:
                 self._subs[event_type].remove(fn)
@@ -163,7 +182,12 @@ class EventBus:
                 pass
 
     async def publish(self, event: Event) -> None:
+        """广播一个事件:按类型 + MRO 父类匹配订阅者 + 通知所有 wildcard 订阅者。
+
+        订阅者抛异常被吞 + 日志,不互相影响。
+
         # 基类匹配
+        """
         subs: list[Subscriber] = []
         for cls in type(event).__mro__:
             if cls is Event:
