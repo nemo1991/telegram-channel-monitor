@@ -36,6 +36,7 @@ class TelegramRateLimitError(RuntimeError):
     """
 
     def __init__(self, retry_after_seconds: float, message: str = "") -> None:
+        """`retry_after_seconds` = 等待秒数;`message` = 可选覆盖。"""
         self.retry_after_seconds = float(retry_after_seconds)
         super().__init__(message or f"Telegram rate limit: wait {retry_after_seconds:.0f}s")
 
@@ -49,4 +50,5 @@ class ClientClosingError(RuntimeError):
     """
 
     def __init__(self, message: str = "TdlibClient is closing") -> None:
+        """`message` 默认 "TdlibClient is closing";子类可覆盖。"""
         super().__init__(message)

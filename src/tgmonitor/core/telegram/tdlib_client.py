@@ -133,6 +133,11 @@ class TdlibTelegramClient(_AiClient):
     _BOOT_TIMEOUT = 30.0
 
     def __init__(self, settings: Settings, *, event_bus: Any | None = None) -> None:
+        """`settings` = Telegram / DB / 代理等配置;`event_bus` = 可选 UI 事件总线。
+
+        子类化 aiotdlib.Client,override `_on_authorization_state_update` 钩状态机;
+        末尾建 `self.channels = ChannelsApi(self)`(composition delegate)。
+        """
         if not _HAVE_AIOTDLIB:
             raise RuntimeError("aiotdlib 未安装:`pip install -U aiotdlib>=0.27`")
         self._settings = settings
@@ -457,7 +462,6 @@ class TdlibTelegramClient(_AiClient):
                  self._state, _t.monotonic() - t)
 
     async def start(self) -> tuple[str, str | None]:
-        self._check_alive()
         """主入口 — 应用启动时调一次。
 
         流程:
@@ -469,6 +473,7 @@ class TdlibTelegramClient(_AiClient):
              - 别的(0 / timeout / proxy / DC 不通)→ `("error", "...具体原因...")`
           4) 成功 → 返回 `(_state, _state_detail)`
         """
+        self._check_alive()
         if self._state == "ready":
             return self._state, self._state_detail
         ok, proxy_err = await self._run_preflight()
@@ -505,11 +510,11 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        self._check_alive()
         """用户点「登录」时调用 — 改 phone / 触发 aiotdlib 发 code。
 
         若 TDLib 没在 `phone_required` 状态,先 wait_for 至转好。
         """
+        self._check_alive()
         if not getattr(self, "_running", False):
             return self._state, self._state_detail
         if phone and phone != self._settings.phone:
@@ -533,12 +538,12 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
-        self._check_alive()
         """UI 提交验证码。
 
         把 code push 进队列(由 `_check_authentication_code` 钩子消费),然后等
         状态变更。错误经 `request()` → `AuthErrorOccurred` 事件传出。
         """
+        self._check_alive()
         await self._code_queue.put(code)
         self._state_event.clear()
         try:
@@ -548,6 +553,7 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def submit_password(self, password: str) -> tuple[str, str | None]:
+        """UI 提交 2FA 密码。push 进队列 + 等状态变更;错误经 `AuthErrorOccurred` 传出。"""
         self._check_alive()
         await self._password_queue.put(password)
         self._state_event.clear()
@@ -558,8 +564,8 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def logout(self) -> None:
-        self._check_alive()
         """登出 — aiotdlib 会自动反推状态机 Closed → PhoneNumber。"""
+        self._check_alive()
         try:
             await self.request(LogOut())
         except Exception:  # noqa: BLE001
@@ -714,10 +720,12 @@ class TdlibTelegramClient(_AiClient):
 
     @property
     def state(self) -> str:
+        """当前顶层状态(继承自 TelegramClient Protocol)。"""
         return self._state
 
     @property
     def me(self) -> dict | None:
+        """当前登录用户 {id, username, first_name};未登录 None。"""
         return self._me
 
     # ---- 频道(delegate → ChannelsApi,2026-08-02 抽出)----
@@ -725,9 +733,11 @@ class TdlibTelegramClient(_AiClient):
     # 保持 `TelegramClient` Protocol 形状不变,caller 不需要知道 composition。
 
     async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
+        """Delegate → ChannelsApi.get_channel_metadata(Protocol 形状保留)。"""
         return await self.channels.get_channel_metadata(channel_id)
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        """Delegate → ChannelsApi.list_joined_channels(Protocol 形状保留)。"""
         return await self.channels.list_joined_channels()
 
     def iter_chat_history(
@@ -737,18 +747,25 @@ class TdlibTelegramClient(_AiClient):
         before_msg_id: int = 0,
         limit: int = 100,
     ) -> AsyncIterator[MessageDTO]:
+        """Delegate → ChannelsApi.iter_chat_history(Protocol 形状保留)。
+
+        async generator 必须直接 `return`,不能包 `async def yield`(破坏 lazy)。
+        """
         # async generator 必须直接返回,不能包 `async def yield`(会破坏 lazy 语义)
         return self.channels.iter_chat_history(
             channel_id, before_msg_id=before_msg_id, limit=limit,
         )
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
+        """Delegate → ChannelsApi.join_channel(Protocol 形状保留)。"""
         return await self.channels.join_channel(identifier)
 
     async def download_file(self, file_id: str) -> bytes | None:
+        """Delegate → ChannelsApi.download_file(Protocol 形状保留)。"""
         return await self.channels.download_file(file_id)
 
     def subscribe_updates(self) -> UpdateStream:
+        """订阅实时更新流(由 aiotdlib push);`aclose` 必调一次,否则 list 只增不减。"""
         s = _AiotdlibUpdateStream(on_close=self._remove_stream)
         self._streams.append(s)
         return s

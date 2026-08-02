@@ -38,14 +38,20 @@ class TelegramClient(Protocol):
         """提交 2FA 密码。返回 (state, detail)。"""
         ...
 
-    async def logout(self) -> None: ...
+    async def logout(self) -> None:
+        """登出 — 清掉 session;caller 重建 client。"""
+        ...
 
     async def close(self) -> None:
         """关停 aiotdlib 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
         ...
 
     @property
-    def state(self) -> str: ...
+    def state(self) -> str:
+        """当前顶层状态(`uninit` / `phone_required` / `code_required` /
+        `password_required` / `ready` / `error` / `closing`)。
+        """
+        ...
 
     @property
     def me(self) -> dict | None:
@@ -53,7 +59,9 @@ class TelegramClient(Protocol):
         ...
 
     # ---- 频道 ----
-    async def list_joined_channels(self) -> list[ChannelDTO]: ...
+    async def list_joined_channels(self) -> list[ChannelDTO]:
+        """已加入频道列表(best-effort UX:close / 未 ready 时返 [],不抛)。"""
+        ...
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
         """identifier: @username 或 t.me/... 链接。"""
@@ -119,5 +127,10 @@ class UpdateStream:
         长会话该列表只增不减导致内存泄漏
     """
 
-    def __aiter__(self) -> AsyncIterator[MessageDTO]: ...
-    async def aclose(self) -> None: ...
+    def __aiter__(self) -> AsyncIterator[MessageDTO]:
+        """async iterator protocol — `async for msg in stream:` 入口。"""
+        ...
+    async def aclose(self) -> None:
+        """关闭流 — 幂等;触发后 `__anext__` 抛 `StopAsyncIteration`,
+        同时自动从 client 侧 `_streams` 拿掉自己(防长会话内存泄漏)。
+        """

@@ -18,24 +18,31 @@ from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
 
 
 class FakeUpdateStream(UpdateStream):
+    """Fake 实现:`asyncio.Queue` 后端;`aclose` 幂等 + 自动从 `_streams` 拿掉自己。"""
+
     def __init__(self, on_close: Callable[[FakeUpdateStream], None] | None = None) -> None:
+        """`on_close` = aclose 时回调(给 FakeTelegramClient 摘 list 用)。"""
         self._queue: asyncio.Queue[MessageDTO] = asyncio.Queue()
         self._closed = False
         self._on_close = on_close
 
     async def push(self, msg: MessageDTO) -> None:
+        """推一条消息给 subscriber;closed 后静默 no-op。"""
         if not self._closed:
             await self._queue.put(msg)
 
     def __aiter__(self) -> AsyncIterator[MessageDTO]:
+        """async iterator protocol — 返回 self。"""
         return self
 
     async def __anext__(self) -> MessageDTO:
+        """从 queue 拿一条;closed 后抛 StopAsyncIteration。"""
         if self._closed:
             raise StopAsyncIteration
         return await self._queue.get()
 
     async def aclose(self) -> None:
+        """幂等关闭:置 `_closed=True` + push sentinel 唤醒等待者 + 调 on_close。"""
         if self._closed:
             return
         self._closed = True
@@ -52,6 +59,7 @@ class FakeTelegramClient(TelegramClient):
     """纯内存,可注入 channel / message 触发更新。"""
 
     def __init__(self) -> None:
+        """初始 state=`phone_required`;可用 set_* / simulate_incoming 注入行为。"""
         self._state = "phone_required"
         self._me: dict | None = None
         self._channels: dict[int, ChannelDTO] = {}
@@ -66,21 +74,29 @@ class FakeTelegramClient(TelegramClient):
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
+        """旧版 Protocol 接口 — 保留向后兼容,内部转发到 `submit_phone`."""
         # 旧版 Protocol 接口 — 保留向后兼容,内部转发到 submit_phone
         return await self.submit_phone(phone)
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
+        """切到 `code_required`;Fake 不发真 SMS。"""
         self._state = "code_required"
         return self._state, None
 
     async def start(self) -> tuple[str, str | None]:
+        """Fake 已经"启动"了 — 直接返当前 state(无网络)。"""
         # Fake 已经"启动"了 — 直接返回状态
         return self._state, None
 
     async def nuke_and_rebuild(self, rotate_key: bool = False) -> None:
+        """Fake 重置:state 回到 `phone_required`(rotate_key 忽略)。"""
         self._state = "phone_required"
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
+        """`code="00000"` 走 2FA 分支;其它进 `ready`。
+
+        测试约定:00000 = 模拟触发 2FA。
+        """
         if code == "00000":
             self._state = "password_required"
         else:
@@ -89,11 +105,13 @@ class FakeTelegramClient(TelegramClient):
         return self._state, None
 
     async def submit_password(self, password: str) -> tuple[str, str | None]:
+        """Fake 2FA 永远成功 → `ready`。"""
         self._state = "ready"
         self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
         return self._state, None
 
     async def logout(self) -> None:
+        """Fake 登出:state 回到 `phone_required` + 清 me。"""
         self._state = "phone_required"
         self._me = None
 
@@ -108,20 +126,25 @@ class FakeTelegramClient(TelegramClient):
 
     @property
     def state(self) -> str:
+        """当前顶层状态(继承自 TelegramClient Protocol)。"""
         return self._state
 
     @property
     def me(self) -> dict | None:
+        """当前登录用户 dict;未登录 None。"""
         return self._me
 
     # ---- 频道 ----
     def add_channel(self, channel: ChannelDTO) -> None:
+        """直接注入一条频道到内部 `_channels`。"""
         self._channels[channel.id] = channel
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        """返所有 add_channel 注入的频道。"""
         return list(self._channels.values())
 
     async def join_channel(self, identifier: str) -> ChannelDTO:
+        """Fake join:由 identifier hash 出一个稳定 cid,直接放进 `_channels`。"""
         # 直接构造一个虚拟频道
         cid = abs(hash(identifier)) % (10**10)
         ch = ChannelDTO(id=cid, title=identifier.lstrip("@"), username=identifier.lstrip("@"))
@@ -192,6 +215,7 @@ class FakeTelegramClient(TelegramClient):
             await asyncio.sleep(0)
 
     def subscribe_updates(self) -> UpdateStream:
+        """开一个新的 FakeUpdateStream(注册到 `_all_streams` 便于 simulate_incoming)。"""
         s = FakeUpdateStream(on_close=self._remove_stream)
         self._all_streams.append(s)
         return s
@@ -204,6 +228,7 @@ class FakeTelegramClient(TelegramClient):
 
     # ---- 测试辅助 ----
     async def simulate_incoming(self, msg: MessageDTO) -> None:
+        """广播一条 message 到所有打开的 stream(测试实时更新用)。"""
         for s in list(self._all_streams):
             await s.push(msg)
 

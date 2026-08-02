@@ -87,6 +87,7 @@ class ChannelsApi:
     """
 
     def __init__(self, client: TdlibTelegramClient) -> None:  # type: ignore[name-defined]
+        """`client` = 父 lifecycle 控制器(只持引用,不构造任何资源)。"""
         self._c = client
 
     # ============================================================
@@ -151,6 +152,8 @@ class ChannelsApi:
         return dto
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
+        """列已加入频道 — best-effort UX,详见下方注释。
+
         # best-effort UX:被 VM `_go` 在三种时机 fire-and-forget 调用:
         #   1) close() 中途
         #   2) startup 时 bridge 还没 ready(VM 的 `bootstrap_ui` 在
@@ -169,6 +172,7 @@ class ChannelsApi:
         #   - guard 看到 state != "ready" → 立即 [],错过 200ms 后到的 "ready"
         #   - channels 永不显示,直到用户手动 Refresh
         # 现在改成"非 ready 时短暂等待再判"。
+        """
         if self._c._closing:
             log.info("[tdlib] list_joined_channels: client closing, returning []")
             return []
