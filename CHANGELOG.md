@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-02
+
+🛠️ **`tdlib_client.py` 长文件切分 release** — 1674 行单文件按职责拆 4 个
+内聚模块,lifecycle controller 收窄,无功能变更,纯架构清理。
+
 ### 🛠️ Refactored
 - **`tdlib_client.py` 1674 行拆 4 文件**(2026-08-02)— pure functions
   抽到独立模块,无功能变更:
@@ -28,6 +33,10 @@
 - 测试 import 同步更新:7 个测试文件 + 2 个 src 文件;
   `tdlib_client as tdc` 模块别名 6 处仍可工作(模块本身未删)
 - 236 测试通过(72 + 72 + 72 + 20),ruff 0 warning,行为零变化
+
+### 🔧 Changed
+- **`version = "1.0.2"` → `"1.0.3"`** — `pyproject.toml` +
+  `src/tgmonitor/__init__.py` 双处对齐(避免 v1.0.0 修过的 drift bug 复发)
 
 ## [1.0.0] - 2026-07-23
 
