@@ -63,7 +63,6 @@ class AppService:
         self.objects = objects
         self.settings = settings
         # 内部状态
-        self._subscribed: set[int] = set()
         self._update_streams: list[UpdateStream] = []
         self._running = False
         # 重入锁:reconfigure 期间阻止 save_message
@@ -92,14 +91,11 @@ class AppService:
         """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
 
         返回 (state, detail)。
+
+        注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
+        现在所有「订阅真理」都走 `storage.list_subscribed_channels()` —
+        详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
         """
-        # 把 storage 里 `is_subscribed=True` 的频道加载到内存 —
-        # 用 `list_subscribed_channels()` 而不是 `list_channels()`:
-        # - 老用户升级:旧 channels.json 没 is_subscribed 字段,InMemoryRepository
-        #   和 storage 三仓实现都默认 True(保留"存即订"语义),所以效果不变。
-        # - 新 sync 发现频道但用户未订阅:不进入 _subscribed,不会偷偷监听。
-        persisted = await self.storage.list_subscribed_channels()
-        self._subscribed = {c.id for c in persisted}
 
         try:
             state, detail = await self.client.start()
@@ -156,9 +152,9 @@ class AppService:
         return await self.client.list_joined_channels()
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        # 单一来源:storage.is_subscribed=True 的频道。
-        # 不再以 `self._subscribed` in-memory set 为主 — 否则与 storage 漂移
-        # 时 UI 与 monitor 不同步。
+        # 单一真理:storage.is_subscribed=True 的频道。
+        # 2026-07-31 删 `self._subscribed` cache 后这是 AppService 唯一
+        # 「订阅列表」读取入口,被 VM / monitor / channel_widget 复用。
         return await self.storage.list_subscribed_channels()
 
     async def subscribe_channel(self, channel: ChannelDTO) -> None:
@@ -166,18 +162,20 @@ class AppService:
         # 后者用 set_channel_subscribed 不会改其他字段。
         await self.storage.upsert_channel(channel)
         await self.storage.set_channel_subscribed(channel.id, True)
-        self._subscribed.add(channel.id)
         await self.bus.publish(ChannelSubscribed(channel=channel))
 
     async def unsubscribe_channel(self, channel_id: int) -> None:
         # 退订 = 关闭订阅标志,不动元数据 / 消息。
         # 历史消息继续在 storage 里 — 用户重新订阅能看到老历史。
         # 元数据继续被 sync 刷新 — 退订后仍能反映 title/username 变化。
-        try:
-            await self.storage.set_channel_subscribed(channel_id, False)
-        except Exception:  # noqa: BLE001
-            log.exception("set_channel_subscribed(%s, False) failed", channel_id)
-        self._subscribed.discard(channel_id)
+        #
+        # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #A:之前 storage 失败被
+        # `log.exception` 吞后仍 emit `ChannelUnsubscribed`,UI 移走视觉
+        # 元素,但 storage 持久化记录仍 `is_subscribed=True`,下次启动 reload
+        # → 该频道被"恢复订阅",用户视角看不出退订成功未。现在让 storage
+        # 异常直接 raise(不静默吞),让 VM / ChannelWidget 的 `run_coro` 走
+        # 统一异常路径 → UI 看到 ErrorOccurred 而非假成功。
+        await self.storage.set_channel_subscribed(channel_id, False)
         await self.bus.publish(ChannelUnsubscribed(channel_id=channel_id))
 
     async def sync_channels(
@@ -222,10 +220,18 @@ class AppService:
         date_to: datetime | None = None,
         limit: int | None = 200,
     ) -> list[MessageDTO]:
-        ids = channel_ids if channel_ids is not None else list(self._subscribed)
-        if not ids:
+        # `channel_ids=None` 时从 storage 取**当前真理**(已订频道列表),
+        # 不用 in-memory cache — 跟 `list_subscribed_channels()` 是同一个真理。
+        # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #B。
+        if channel_ids is None:
+            channel_ids = [
+                c.id for c in await self.storage.list_subscribed_channels()
+            ]
+        if not channel_ids:
             return []
-        return await self.storage.list_messages(ids, date_from, date_to, limit)
+        return await self.storage.list_messages(
+            channel_ids, date_from, date_to, limit,
+        )
 
     # ---------- 导出(由 ExportService 提供实现) ----------
 
@@ -297,11 +303,15 @@ class AppService:
                 await new_storage.connect()
                 await new_storage.init_schema()
                 self.storage = new_storage
-                # 同步已订阅频道集合 — 用 union 而不是 intersection:
-                # 用户之前的订阅应该被保留(在新存储里没有的就是缺数据,
-                # 也不能默默从内存里抹掉)。
-                new_db_ids = {c.id for c in await new_storage.list_channels()}
-                self._subscribed = (new_db_ids | self._subscribed)
+                # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #C 收尾:之前
+                # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
+                # cache 做 union,会把 unsubscribed 旧频道错误标记为"已订"。
+                # `AppService._subscribed` cache 已整体删除,真理 = storage。
+                # VM 通过 `list_subscribed_channels()` 在 init_schema 之后
+                # 重新拉一遍,自动同步到 monitor / channel_widget。
+                # 触发路径:本方法末尾 `await self.bus.publish(
+                # SettingsChanged(..., needs_relogin=False))` → VM 的
+                # `_on_settings_changed` slot 会重新走 bootstrap。
             finally:
                 self._reconfiguring = False
 
