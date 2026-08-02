@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 @exporter(ExportFormat.MARKDOWN)
 class MarkdownExporter(Exporter):
+    """Markdown Exporter — 人类可读,按频道分组(`## title` → `### msg`)。
+
+    媒体列在每条消息下:`- 📎 **type** mime file_name (size)`,可读源 ID。
+    """
+
     format = ExportFormat.MARKDOWN
 
     async def render(
@@ -26,6 +31,7 @@ class MarkdownExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
     ) -> int:
+        """渲染 Markdown → 写文件 → 返回字节数。"""
         grouped: dict[int, list[MessageDTO]] = defaultdict(list)
         for m in messages:
             grouped[m.channel_id].append(m)

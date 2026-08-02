@@ -33,6 +33,12 @@ COLUMNS = [
 
 @exporter(ExportFormat.CSV)
 class CsvExporter(Exporter):
+    """CSV Exporter — 一行一条消息,所有列平铺,无嵌套。
+
+    媒体列:`media_count` = 数量;`media_types` = `|` 分隔的类型名。
+    `include_thumbnails` / `object_store` 参数 CSV 不用,保留 Protocol 形状。
+    """
+
     format = ExportFormat.CSV
 
     async def render(
@@ -44,6 +50,7 @@ class CsvExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
     ) -> int:
+        """写 CSV → 返回字节数(便于进度回报)。"""
         with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()

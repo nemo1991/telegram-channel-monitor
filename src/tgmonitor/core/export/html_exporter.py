@@ -81,9 +81,16 @@ h2 { margin-top: 2em; }
 
 @exporter(ExportFormat.HTML)
 class HtmlExporter(Exporter):
+    """HTML Exporter — Jinja2 模板,可内嵌 base64 缩略图。
+
+    `include_thumbnails=True` 时从 `object_store` 拉缩略图 → data URI 内嵌;
+    拉失败 skip 单张,不影响整体。
+    """
+
     format = ExportFormat.HTML
 
     def __init__(self) -> None:
+        """建 Jinja2 Environment + 预编译模板(同步 init,模板一次性)。"""
         self._env = Environment(autoescape=select_autoescape(["html"]))
         self._tmpl = self._env.from_string(TEMPLATE)
 
@@ -96,6 +103,7 @@ class HtmlExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
     ) -> int:
+        """渲染 HTML;按 channel_id 分组 → 模板渲染 → 写文件 → 返回字节数。"""
         # 准备模板数据
         grouped: dict[int, list[MessageDTO]] = defaultdict(list)
         for m in messages:

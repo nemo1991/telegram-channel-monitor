@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 @exporter(ExportFormat.JSON)
 class JsonExporter(Exporter):
+    """JSON Exporter — 完整 DTO 序列化(`schema: tgmonitor.export/v1`)。
+
+    结构化、可程序消费;datetime / Enum 自动转 str(`default=str` 兜底)。
+    """
+
     format = ExportFormat.JSON
 
     async def render(
@@ -26,6 +31,7 @@ class JsonExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
     ) -> int:
+        """写 JSON → 返回字节数。`object_store` / `include_thumbnails` JSON 不用,仅保形。"""
         payload = {
             "schema": "tgmonitor.export/v1",
             "channels": [asdict(c) for c in channels.values()],

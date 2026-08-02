@@ -34,17 +34,30 @@ PAGE_SIZE = 500
 
 
 class ExportService:
+    """导出编排:拉数据 → 选 Exporter → 渲染 → 报进度 → 报完成。
+
+    `run` 是 async generator;每 `yield` 给 UI 一个让出点(取消 / 进度刷新)。
+    """
+
     def __init__(
         self,
         storage: StorageRepository,
         objects: ObjectStore,
         bus: EventBus,
     ) -> None:
+        """`storage` = 拉数据源;`objects` = 缩略图源(若 include_thumbnails);
+        `bus` = 发 `ExportProgress` / `ExportDone` 事件。
+        """
         self._storage = storage
         self._objects = objects
         self._bus = bus
 
     async def run(self, request: ExportRequest) -> AsyncIterator[None]:
+        """跑一次导出 — async generator,UI 在循环里 `break` 可即时取消。
+
+        流程:解 channels → 流式分页拉 messages → sort → 调 Exporter.render
+        → 发 `ExportDone` 事件(成功 / 失败都发,失败带 `error` 字段)。
+        """
         req_id = uuid.uuid4().hex[:8]
         out_path = Path(request.out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)

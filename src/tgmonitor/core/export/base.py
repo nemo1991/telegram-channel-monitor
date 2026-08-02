@@ -35,21 +35,27 @@ class Exporter(ABC):
 
 
 class ExporterRegistry:
+    """Exporter 注册表:format → Exporter 实例,进程内单例 (`EXPORTERS`)。"""
+
     def __init__(self) -> None:
+        """空注册;由 `@exporter(...)` 装饰器填充。"""
         self._items: dict[ExportFormat, Exporter] = {}
 
     def register(self, exporter: Exporter) -> None:
+        """注册 Exporter;format 重复抛 `ValueError`(防双注册)。"""
         if exporter.format in self._items:
             raise ValueError(f"format {exporter.format} already registered")
         self._items[exporter.format] = exporter
 
     def get(self, fmt: ExportFormat) -> Exporter:
+        """取 Exporter;无注册时抛 `KeyError`(消息含 available 列表)。"""
         try:
             return self._items[fmt]
         except KeyError as e:
             raise KeyError(f"no exporter for format {fmt}; available: {list(self._items)}") from e
 
     def available(self) -> list[ExportFormat]:
+        """所有已注册 format(供 UI 下拉框用)。"""
         return list(self._items.keys())
 
 
