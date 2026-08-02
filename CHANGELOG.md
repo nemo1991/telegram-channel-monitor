@@ -7,6 +7,22 @@
 
 ## [Unreleased]
 
+### 🛠️ Refactored
+- **`tdlib_client.py` 1025 行 → 762 行 + `tdlib_channels.py` 379 行**(2026-08-02)—
+  channels 子块(287 行:6 个公开方法 + 2 个内部 helper)抽到 `ChannelsApi`
+  composition 类,持 `client: TdlibTelegramClient` 引用访问 lifecycle 资源
+  (`request` / `send` / `_check_alive` / `_state` / `_closing` / `_wait_for_state`)。
+  `tdlib_client.py` 上 6 个同名方法改为 thin delegate,`TelegramClient` Protocol
+  形状不变,所有 caller 零改动
+- 4 个 `_iter_resolved_chats` 测试修复:`client._iter_resolved_chats` /
+  `client._resolve_channel_metadata` → `client.channels._iter_resolved_chats` /
+  `client.channels._resolve_channel_metadata`(monkey-patch 跟随迁移)
+- `core/telegram/__init__.py` 加 `ChannelsApi` re-export(便于类型注解 / 测试可见,
+  外部 caller 仍走 `client.list_joined_channels(...)`)
+- 子模块 reverse import 校验:`tdlib_channels.py` 通过 `TYPE_CHECKING` 块软引用
+  `TdlibTelegramClient`,runtime **不**反向 import `tdlib_client`,无循环依赖
+- 236 测试通过(72 + 72 + 72 + 20),ruff 0 warning,行为零变化
+
 ## [1.0.3] - 2026-08-02
 
 🛠️ **`tdlib_client.py` 长文件切分 release** — 1674 行单文件按职责拆 4 个

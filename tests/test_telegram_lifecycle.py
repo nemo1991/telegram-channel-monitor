@@ -445,10 +445,14 @@ def test_list_joined_channels_in_ready_state_still_calls_request(
 
 
 async def _collect_iter(client, chat_ids):
-    """async helper — 跑完 _iter_resolved_chats,返回 yield 出来的 DTO 列表。"""
+    """async helper — 跑完 _iter_resolved_chats,返回 yield 出来的 DTO 列表。
+
+    注(2026-08-02 composition 拆分后):`_iter_resolved_chats` 现在挂在
+    `client.channels` 上,不在 `client` 上。
+    """
     from tgmonitor.core.telegram.tdlib_client import ChannelDTO  # noqa: F401
     out: list = []
-    async for dto in client._iter_resolved_chats(chat_ids, t0=0.0):
+    async for dto in client.channels._iter_resolved_chats(chat_ids, t0=0.0):
         out.append(dto)
     return out
 
@@ -469,7 +473,7 @@ def test_iter_resolved_chats_yields_all_dtos(
             return None  # private/secret
         return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
 
-    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+    client.channels._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
 
     got = asyncio.run(_collect_iter(client, [1, 2, 3, 4, 5]))
     # 只 yield 非 None,顺序保持
@@ -491,7 +495,7 @@ def test_iter_resolved_chats_skips_failed_resolve(
             raise RuntimeError("aiotdlib exploded")
         return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
 
-    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+    client.channels._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
 
     got = asyncio.run(_collect_iter(client, [1, 2, 3]))
     # cid=2 抛错被 skip,1 和 3 正常 yield
@@ -511,7 +515,7 @@ def test_iter_resolved_chats_propagates_client_closing(
     async def _fake_resolve(cid: int) -> ChannelDTO | None:
         return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
 
-    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+    client.channels._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
 
     # mid-loop close() 抛 ClientClosingError,不再 _resolve_channel_metadata
     with pytest.raises(tdc.ClientClosingError):
@@ -532,7 +536,7 @@ def test_iter_resolved_chats_empty_input_yields_nothing(
         calls.append(cid)
         return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
 
-    client._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
+    client.channels._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
 
     got = asyncio.run(_collect_iter(client, []))
     assert got == []
