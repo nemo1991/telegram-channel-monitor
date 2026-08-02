@@ -241,7 +241,7 @@ async def test_rate_limit_during_metadata_skips_history(bus, client, storage, se
     svc = await _make_app(bus, client, storage)
 
     # 用 wrapper 替换 get_channel_metadata,只为 100 抛
-    from tgmonitor.core.telegram.tdlib_client import TelegramRateLimitError
+    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
     orig = client.get_channel_metadata
 
     async def _selective(cid: int):
@@ -292,7 +292,7 @@ async def test_sync_continues_after_one_channel_fails(
 ):
     """一频道 metadata 失败,不应阻塞下一个频道。"""
     svc = await _make_app(bus, client, storage)
-    from tgmonitor.core.telegram.tdlib_client import TelegramRateLimitError
+    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
 
     # 用 wrapper 替 client.get_channel_metadata,只为 id=1 抛
     orig = client.get_channel_metadata
@@ -349,10 +349,8 @@ async def test_metadata_sync_does_not_change_subscribed(
 
 
 def test_translate_rate_limit_429():
-    from tgmonitor.core.telegram.tdlib_client import (
-        TdlibTelegramClient,
-        TelegramRateLimitError,
-    )
+    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
+    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
 
     class _FakeError:
         code = 429
@@ -363,10 +361,8 @@ def test_translate_rate_limit_429():
 
 
 def test_translate_rate_limit_flood_wait_text():
-    from tgmonitor.core.telegram.tdlib_client import (
-        TdlibTelegramClient,
-        TelegramRateLimitError,
-    )
+    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
+    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
 
     class _FakeError:
         code = 0

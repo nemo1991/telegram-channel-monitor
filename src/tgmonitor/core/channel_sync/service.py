@@ -45,7 +45,7 @@ from tgmonitor.core.events import (
     ChannelSyncProgress,
 )
 from tgmonitor.core.telegram.client import TelegramClient
-from tgmonitor.core.telegram.tdlib_client import TelegramRateLimitError
+from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import EventBus

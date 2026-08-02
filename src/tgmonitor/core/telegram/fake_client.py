@@ -177,7 +177,7 @@ class FakeTelegramClient(TelegramClient):
         for yielded, mid in enumerate(range(start, end + 1)):
             if self._raise_after_n is not None and yielded == self._raise_after_n:
                 self._raise_after_n = None
-                from tgmonitor.core.telegram.tdlib_client import (
+                from tgmonitor.core.telegram.tdlib_errors import (
                     TelegramRateLimitError,
                 )
                 raise TelegramRateLimitError(60.0)

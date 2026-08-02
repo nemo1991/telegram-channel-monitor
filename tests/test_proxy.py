@@ -13,7 +13,7 @@ from tgmonitor.core.settings_store import (
     settings_to_pairs,
     update_env_with_settings,
 )
-from tgmonitor.core.telegram.tdlib_client import parse_socks5_proxy
+from tgmonitor.core.telegram.tdlib_proxy import parse_socks5_proxy
 
 # ---- parse_socks5_proxy 边界 ----
 
@@ -235,7 +235,7 @@ def test_aio_event_emit_login_state_changed_via_bus() -> None:
     """验证 aiotdlib 的 AuthorizationState ID → 我们字符串 映射 `_AUTH_STATE_MAP` 覆盖所有
     关键状态。真正事件桥接需要 aiotdlib 在线跑,只能依赖手动 trigger;此处覆盖字典内容。
     """
-    from tgmonitor.core.telegram.tdlib_client import _AUTH_STATE_MAP
+    from tgmonitor.core.telegram.tdlib_proxy import _AUTH_STATE_MAP
 
     expected = {
         # TDLib 已知的关键状态

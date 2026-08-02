@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 🛠️ Refactored
+- **`tdlib_client.py` 1674 行拆 4 文件**(2026-08-02)— pure functions
+  抽到独立模块,无功能变更:
+  - `tdlib_errors.py`(51 行)— `_extract_error_detail` /
+    `TelegramRateLimitError` / `ClientClosingError`
+  - `tdlib_proxy.py`(239 行)— `parse_socks5_proxy` /
+    `_load_or_create_encryption_key` / `_probe_proxy` /
+    `_translate_boot_error` / `_AUTH_STATE_MAP`
+  - `tdlib_messages.py`(433 行)— `_map_message` + 媒体 / service 派发表
+    (8 media + 32 service handlers)
+  - `tdlib_client.py` 1674 → 1025(−39%)— 保留 aiotdlib.Client 子类化 +
+    lifecycle controller + channels 子块;REVIEW 警告的"信号 rebinding"
+    集中区整块保留,本轮**不**拆
+- 子模块 reverse import 校验:3 个新模块**不**反向 import `tdlib_client`,
+  无循环依赖。`TelegramRateLimitError` / `ClientClosingError` /
+  `parse_socks5_proxy` 在 `core/telegram/__init__.py` re-export,
+  外部 caller (`channel_sync/service.py`) 改走 `tgmonitor.core.telegram`
+  顶层 import
+- 测试 import 同步更新:7 个测试文件 + 2 个 src 文件;
+  `tdlib_client as tdc` 模块别名 6 处仍可工作(模块本身未删)
+- 236 测试通过(72 + 72 + 72 + 20),ruff 0 warning,行为零变化
+
 ## [1.0.0] - 2026-07-23
 
 🎉 **首个正式 release** — Stage D 打包就绪 + Stage C REVIEW M2 修复一并交付。

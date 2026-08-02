@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from tgmonitor.core.dto import MediaType
-from tgmonitor.core.telegram.tdlib_client import _map_message
+from tgmonitor.core.telegram.tdlib_messages import _map_message
 
 # ---- helpers ----
 

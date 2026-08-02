@@ -15,10 +15,8 @@ import collections
 
 import pytest
 
-from tgmonitor.core.telegram.tdlib_client import (
-    _extract_error_detail,
-    _translate_boot_error,
-)
+from tgmonitor.core.telegram.tdlib_errors import _extract_error_detail
+from tgmonitor.core.telegram.tdlib_proxy import _translate_boot_error
 
 # ---- 1. AioTDLibError 风格 exception ----
 
