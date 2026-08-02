@@ -18,20 +18,26 @@ _VALID_KEY = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
 
 class FolderObjectStore(ObjectStore):
-    """两级分片:key 前 2 字符 + 后 2 字符做目录。"""
+    """两级分片:key 前 2 字符 + 后 2 字符做目录。
+
+    适用:大量小文件时避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
+    """
 
     backend_name = "folder"
 
     def __init__(self, root: Path, shard_size: int = 2) -> None:
+        """`root` = 根目录;`shard_size` = 分片前缀长度(0 = 不分片,等同平铺)。"""
         self._root = Path(root)
         self._shard = shard_size  # 0 = 不分片,等同平铺
 
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
+        """确保 root 目录存在(幂等)。"""
         self._root.mkdir(parents=True, exist_ok=True)
 
     async def close(self) -> None:
+        """本地 FS 无连接 — no-op。"""
         return None
 
     # ---- 路径解析 ----
@@ -64,6 +70,7 @@ class FolderObjectStore(ObjectStore):
     # ---- 操作 ----
 
     async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
+        """原子写:.part + rename;key 校验白名单字符 + 防越界。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +80,7 @@ class FolderObjectStore(ObjectStore):
         return key
 
     async def get(self, key: str) -> bytes:
+        """读全量 bytes;不存在抛 `KeyError`。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         if not path.exists():
@@ -80,17 +88,20 @@ class FolderObjectStore(ObjectStore):
         return path.read_bytes()
 
     async def exists(self, key: str) -> bool:
+        """是否存在(比 try get + 捕获 KeyError 轻)。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         return path.exists()
 
     async def delete(self, key: str) -> None:
+        """删除;不存在不抛(idempotent)。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         if path.exists():
             path.unlink()
 
     async def stat(self, key: str) -> ObjectMeta | None:
+        """拿 size;不存在返 None(不抛)。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         if not path.exists():
@@ -98,6 +109,7 @@ class FolderObjectStore(ObjectStore):
         return ObjectMeta(size=path.stat().st_size)
 
     async def open_read(self, key: str) -> BinaryIO:
+        """默认 `BytesIO(await get())`;Folder 不 override streaming。"""
         from io import BytesIO
 
         return BytesIO(await self.get(key))
