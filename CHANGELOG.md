@@ -126,6 +126,25 @@
   file_id 缺失、known-size 拦截、`max_bytes=0` 无限制、download 失败、
   unknown-size hard cap、make_key 稳定性、ObjectMeta size 透传。
 
+### 🐛 Fixed (2026-08-02)
+- **`AppService._subscribed` in-memory cache 漂移三连**(commits `8f660b3`
+  分析 + `4d42349` 修)— 详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md`:
+  - **#A unsubscribe_channel 静默失败**:之前 `set_channel_subscribed(False)`
+    抛错被 `log.exception` 吞后仍 emit `ChannelUnsubscribed`,UI 移走视觉
+    元素但 storage 持久记录还在,下次 reload 频道被「恢复订阅」。现在
+    让 storage 异常直接 raise,`run_coro` 走统一 ErrorOccurred 路径,UI
+    看到真失败。
+  - **#B list_messages(None) 真理不一致**:fallback 原本走 cache,跟
+    `list_subscribed_channels()`(走 storage)双真理并存。改为直接
+    `await self.storage.list_subscribed_channels()`。
+  - **#C reconfigure 全频道自动订阅**(隐性炸雷):切 `db_backend` 时
+    `self._subscribed = (new_db_ids | self._subscribed)` 其中
+    `new_db_ids = list_channels()`(全频道)→ 一次切 db_backend 后
+    所有持久化但未订阅的旧频道被错误标记为「已订」。
+  - **整体收尾**:删 `AppService._subscribed` 字段(5 use site + 字段定义
+    全清),真理 = storage。`test_no_subscribed_attribute_remains` 防
+    回滚 guard,任何人重新加回字段都立刻被抓。232 测试全过。
+
 ### 🔧 Changed (2026-07-31 refactor sweep)
 - **`TdlibTelegramClient._check_authentication_code` / `_check_authentication_password`
   抽 `_submit_auth_step` helper**(commit `f655c19`)— 22 行
