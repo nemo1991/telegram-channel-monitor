@@ -8,6 +8,13 @@ import sys
 
 
 def main() -> int:
+    """进程入口 — 调 `app.run()` 并把未捕获异常转退出码。
+
+    # 退出码:
+    #   0 — 正常退出
+    #   1 — 未捕获异常(已 stderr 打印)
+    #   130 — KeyboardInterrupt(SIGINT,跟 shell 约定一致)
+    """
     from tgmonitor.app import run
 
     try:
