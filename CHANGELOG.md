@@ -7,6 +7,42 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-08-03
+
+📚 **Docstring sweep release** — 给所有公开 API / 类 / `__init__` / 公开方法
+补 docstring,跨 5 层(objectstore / storage / export / telegram / core / ui)
++ `__main__`。零功能变更,纯文档补全;`ruff D102/D101/D103/D105/D107` 从
+不达标 → 全绿。
+
+### 📚 Documentation
+- **objectstore 4 文件 + 38 docstring**(`d937aa5` 2026-08-03)— `LocalObjectStore` /
+  `FolderObjectStore` / `S3ObjectStore` / `InMemoryObjectStore` 公共方法签名 +
+  写盘策略(分片 / 去重 / multipart 上传阈值)
+- **storage 6 文件 + 74 docstring**(`8fc49ec` 2026-08-03)— `Repository` Protocol +
+  Postgres / Mongo / JSONL 三个实现,upsert / 分页 / 索引策略;补 `StorageFactory`
+  + `ensure_dirs` 语义
+- **export 6 文件 + 17 docstring**(`4b422d3` 2026-08-03)— JSON / CSV / Markdown /
+  HTML 四种格式的字段映射 + base64 缩略图策略;补 `ExportService.run` 进度回调
+  协议
+- **telegram 5 文件 + 22 docstring**(`62bf408` 2026-08-03)— `TelegramClient`
+  Protocol + `TdlibTelegramClient` lifecycle + `ChannelsApi` + `tdlib_messages` /
+  `tdlib_proxy` 错误语义
+- **core 7 文件 + 49 docstring**(`1dc90f6` 2026-08-03)— `AppService` facade +
+  `EventBus` + `dto` + `settings_store` + `config` + `monitor` + `channel_sync`
+  公共方法签名
+- **UI cluster A:4 文件 + 16 docstring**(`1a04b9a` 2026-08-03)— `MainWindow` +
+  `VerticalNavBar` + `Theme` + `MonitorViewModel`(包括 `closeEvent` 同步阻塞
+  shutdown 10s 超时说明)
+- **UI cluster B:3 文件 + 11 docstring**(`c1369e9` 2026-08-03)— `LoginDialog` +
+  `ExportDialog` + `SyncOptionsDialog` / `SyncProgressDialog`(包括 `on_progress`
+  stage→icon 映射表)
+- **UI cluster C:6 文件 + 14 docstring**(`47b42ae` 2026-08-03)— `ChannelWidget` /
+  `DashboardWidget` / `MessageDetail` / `MessageView` / `SearchBar` /
+  `SettingsPage`(包括 `MessageView.append` 去重表 + row index 维护说明)
+- **__main__ 1 文件 + 1 docstring**(`99ef9ff` 2026-08-03)— `main()` 退出码
+  语义(0/1/130)
+- **236 测试通过**(0 新增 / 0 回归),ruff 0 warning,行为零变化
+
 ## [1.0.4] - 2026-08-02
 
 🛠️ **`ChannelsApi` composition 拆分 release** — `tdlib_client.py` 余下
@@ -459,6 +495,9 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/forcetone/tgmonitor/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/forcetone/tgmonitor/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/forcetone/tgmonitor/compare/v0.2.0...v1.0.3
 [0.2.0]: https://github.com/forcetone/tgmonitor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/forcetone/tgmonitor/releases/tag/v0.1.0
