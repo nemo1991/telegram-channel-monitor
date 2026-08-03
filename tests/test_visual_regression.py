@@ -21,6 +21,7 @@
   - DashboardWidget(空 KPI 卡 + 快速操作 + 空时间线)
   - ExportDialog(默认文件名 + 4 种格式 radio)
   - LoginDialog(初始 `phone_required` 状态)
+  - MainWindow(初始 dashboard 视图 — 已订 0 条 / 已加入 0 条 / 空消息区)
 
 # 已知局限
 
@@ -41,6 +42,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
+from tgmonitor.ui.main_window import MainWindow
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
@@ -245,3 +247,58 @@ def test_login_dialog_initial(qapp):
     QApplication.processEvents()
     img = dlg.grab().toImage()
     _compare("login_dialog_initial", img)
+
+
+def test_main_window_initial(qapp, tmp_path):
+    """MainWindow 启动后初始 dashboard 视图 — 已订 0 条 / 已加入 0 条 / 空消息区。
+
+    `app` Mock,但 `.settings` 给真 `Settings`(SettingsPage._load_from_settings
+    要 `api_id`/`api_hash`/... 真字段,不能是 Mock);`monitor.subscribed_ids`
+    给 `set()`(不是 Mock)— MainWindow._refresh_state 拿它当 iterable 算交集。
+    `list_joined_channels` / `list_messages` 走 AsyncMock return [],bootstrap
+    UI 调度后拿到空集,屏幕稳定。
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from tgmonitor.core.config import (
+        DBBackend,
+        MediaPolicy,
+        ObjectStoreBackend,
+        Settings,
+    )
+    mock_app = Mock()
+    mock_app.settings = Settings(
+        api_id=1, api_hash="a" * 32, phone="+1",
+        session_dir=tmp_path / "session",
+        db_backend=DBBackend.JSONL, db_dsn="", db_root=tmp_path / "m",
+        objectstore_backend=ObjectStoreBackend.FOLDER,
+        objectstore_root=tmp_path / "media",
+        media_policy=MediaPolicy.METADATA, data_root=tmp_path,
+    )
+    mock_app.client.state = "phone_required"
+    mock_app.list_joined_channels = AsyncMock(return_value=[])
+    mock_app.list_messages = AsyncMock(return_value=[])
+    mock_monitor = Mock()
+    mock_monitor.subscribed_ids = set()
+    loop = asyncio.new_event_loop()
+    try:
+        win = MainWindow(
+            app=mock_app, monitor=mock_monitor, loop=loop,
+            env_path=tmp_path / ".env",
+        )
+        QApplication.processEvents()
+        img = win.grab().toImage()
+        _compare("main_window_initial", img)
+    finally:
+        # 让 `bootstrap_ui` / `load_recent_messages` 用 run_coro 排进 loop
+        # 但还没 tick 的 coro 真跑一次 + cancel,避免 "coroutine was never
+        # awaited"。一次 0s sleep 让 call_soon 调度生效,够 cancel。
+        try:
+            loop.run_until_complete(asyncio.sleep(0))
+            for t in [x for x in asyncio.all_tasks(loop) if not x.done()]:
+                t.cancel()
+            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+        except Exception:
+            pass
+        loop.close()
