@@ -1,0 +1,160 @@
+"""Qt offscreen visual regression — 关键 widget 的 golden image 比对。
+
+# 设计
+
+- 用 `QT_QPA_PLATFORM=offscreen` 强制 offscreen 渲染(无 X server 也跑)
+- 每个 widget 调 `.grab()` → `QPixmap` → `.toImage()` → `QImage`
+- 存为 PNG 到 `tests/golden/<name>.png`
+- 测试时:重新渲染 → 跟 golden 逐像素比对(纯 `QImage.pixelColor`,无 PIL 依赖)
+- **容差**:`tolerance=0.001`(= 0.1% 像素差异),留 anti-aliasing / sub-pixel 抖动余地
+- **更新流程**:`UPDATE_GOLDENS=1 pytest tests/test_visual_regression.py`
+  重新生成 golden(故意 UI 改动后用)
+
+# 覆盖 widget
+
+只测**空状态 / 简单初始化** — 不挂真实事件总线 / 真实 Telegram 数据,
+保证测试稳定跨平台:
+  - MessageView(空,带「暂无消息」overlay)
+  - MessageView(3 条 mock MessageDTO)
+  - ChannelWidget(3 条 mock ChannelDTO)
+
+# 已知局限
+
+- Golden 在**生成机器**上跑 100% 一致;换 macOS / Linux / 不同 Qt 版本
+  会因字体 hinting / anti-aliasing 不同 → 失败。CI 需固定 OS + Qt 版本,
+  或在 goldens 上加 platform 标记(本轮不展开)
+- offscreen 渲染丢 DPI 高分屏,真机 1.25x/1.5x 缩放下可能轻微偏移
+"""
+from __future__ import annotations
+
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QApplication
+
+from tgmonitor.core.dto import ChannelDTO, MessageDTO
+from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+from tgmonitor.ui.widgets.message_view import MessageView
+
+GOLDEN_DIR = Path(__file__).parent / "golden"
+TOLERANCE = 0.001  # 0.1% 像素差异上限
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """Qt offscreen QApplication 单例 — 跟其他 UI 测试同款 pattern。"""
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+def _update_mode() -> bool:
+    """`UPDATE_GOLDENS=1` 时重新生成 golden 并 skip 比对(首跑 / 故意 UI 改动)。"""
+    return os.environ.get("UPDATE_GOLDENS") == "1"
+
+
+def _grab(widget) -> QImage:
+    """widget 渲染到 QImage(固定 240×320,跟实际 UI 列表 cell 大致一致)。"""
+    widget.resize(QSize(240, 320))
+    # 让 layout / paint event 跑完
+    QApplication.processEvents()
+    return widget.grab().toImage()
+
+
+def _compare(name: str, current: QImage) -> None:
+    """current vs golden/<name>.png — 不一致时 fail + 存 diff 图。
+
+    UPDATE_GOLDENS=1:直接覆盖 golden + skip。
+    首跑(无 golden):生成 + skip(再跑一次才真比对)。
+    """
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    golden_path = GOLDEN_DIR / f"{name}.png"
+
+    if _update_mode():
+        current.save(str(golden_path), "PNG")
+        pytest.skip(f"{name} — UPDATE_GOLDENS=1,golden 重新生成")
+
+    if not golden_path.exists():
+        current.save(str(golden_path), "PNG")
+        pytest.skip(f"{name} — 首跑,golden 已生成,再跑一次")
+
+    expected = QImage(str(golden_path))
+    if expected.size() != current.size():
+        diff_dir = GOLDEN_DIR / "_diffs"
+        diff_dir.mkdir(parents=True, exist_ok=True)
+        current.save(str(diff_dir / f"{name}_size_mismatch.png"), "PNG")
+        pytest.fail(
+            f"{name}: size mismatch {current.size().width()}×{current.size().height()}"
+            f" vs golden {expected.size().width()}×{expected.size().height()}",
+        )
+
+    # 逐像素比对(纯 QImage,无 PIL 依赖)
+    total = current.width() * current.height()
+    diff_count = 0
+    cur_fmt = current.convertToFormat(QImage.Format_RGB32)
+    exp_fmt = expected.convertToFormat(QImage.Format_RGB32)
+    for y in range(cur_fmt.height()):
+        for x in range(cur_fmt.width()):
+            if cur_fmt.pixel(x, y) != exp_fmt.pixel(x, y):
+                diff_count += 1
+
+    pct = diff_count / total
+    if pct > TOLERANCE:
+        diff_dir = GOLDEN_DIR / "_diffs"
+        diff_dir.mkdir(parents=True, exist_ok=True)
+        current.save(str(diff_dir / f"{name}_current.png"), "PNG")
+        # 也存 expected 副本方便 diff 查看
+        expected.save(str(diff_dir / f"{name}_expected.png"), "PNG")
+        pytest.fail(f"{name}: {pct:.4%} 像素差异 > {TOLERANCE:.4%}")
+
+
+# ============================================================
+# Widget 测试用例
+# ============================================================
+
+def test_message_view_empty(qapp):
+    """空 MessageView(首启 / 没订阅 / 还没消息)— 居中显示「暂无消息」overlay。"""
+    view = MessageView()
+    img = _grab(view)
+    _compare("message_view_empty", img)
+
+
+def test_message_view_with_messages(qapp):
+    """3 条 mock MessageDTO — 验证 _format 行格式 + 去重表 + row index。"""
+    view = MessageView()
+    base = datetime(2026, 8, 3, 14, 23, 10, tzinfo=UTC)
+    for i in range(3):
+        view.append(MessageDTO(
+            id=i,
+            channel_id=1001,
+            telegram_msg_id=900 + i,
+            date=base.replace(minute=base.minute + i),
+            text=f"测试消息 #{i} — 来自 fixture",
+            author=f"author_{i}",
+            media=[],
+        ))
+    img = _grab(view)
+    _compare("message_view_with_messages", img)
+
+
+def test_channel_widget_with_channels(qapp):
+    """3 条 mock ChannelDTO(已订 + 已加入)— 两张卡片同时显数据。
+
+    `ChannelWidget.__init__` 要 `app: AppService` + `loop`;本测试只验
+    视觉布局,不接 EventBus / Telegram,用 `Mock()` 占位即可。
+    """
+    from unittest.mock import Mock
+    mock_app = Mock()
+    mock_loop = Mock()
+    widget = ChannelWidget(app=mock_app, loop=mock_loop)
+    channels = [
+        ChannelDTO(id=cid, title=f"频道 {cid}", username=f"ch{cid}")
+        for cid in (1001, 1002, 1003)
+    ]
+    widget.set_joined(channels)
+    widget.set_subscribed(channels)
+    img = _grab(widget)
+    _compare("channel_widget_with_channels", img)
