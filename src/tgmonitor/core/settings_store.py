@@ -267,3 +267,56 @@ def reload_settings(env_path: Path | None = None, *, env: dict[str, str] | None 
     if env is not None:
         return Settings(_env_file=None, **env)  # type: ignore[arg-type]
     return Settings(_env_file=str(env_path) if env_path else None)  # type: ignore[arg-type]
+
+
+# ---- Settings diff(给 AppService.reconfigure 用) ----
+
+@dataclass(frozen=True)
+class SettingsDiff:
+    """两个 Settings 之间的差异 — `AppService.reconfigure` 用。
+
+    字段:
+      needs_relogin: api_id / api_hash / phone 之一变化(Telegram 凭据)
+      storage_changed: db_backend / db_dsn / db_root 之一变化
+      objects_changed: objectstore_* 字段之一变化
+    """
+    needs_relogin: bool
+    storage_changed: bool
+    objects_changed: bool
+
+    @property
+    def changed(self) -> bool:
+        """任一字段变化即 True — `reconfigure` 据此 short-circuit。"""
+        return self.needs_relogin or self.storage_changed or self.objects_changed
+
+
+def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
+    """比对两个 Settings,返回 SettingsDiff。
+
+    单纯比较字段值,不构造任何资源;`reconfigure` 据此决定是否重建
+    storage / objects / 是否需要重登。
+    """
+    needs_relogin = (
+        old.api_id != new.api_id
+        or old.api_hash != new.api_hash
+        or old.phone != new.phone
+    )
+    storage_changed = (
+        old.db_backend != new.db_backend
+        or old.db_dsn != new.db_dsn
+        or old.db_root != new.db_root
+    )
+    objects_changed = (
+        old.objectstore_backend != new.objectstore_backend
+        or old.objectstore_root != new.objectstore_root
+        or old.objectstore_endpoint != new.objectstore_endpoint
+        or old.objectstore_bucket != new.objectstore_bucket
+        or old.objectstore_access_key != new.objectstore_access_key
+        or old.objectstore_secret_key != new.objectstore_secret_key
+        or old.objectstore_region != new.objectstore_region
+    )
+    return SettingsDiff(
+        needs_relogin=needs_relogin,
+        storage_changed=storage_changed,
+        objects_changed=objects_changed,
+    )

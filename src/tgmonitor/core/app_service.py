@@ -22,6 +22,7 @@ import logging
 from datetime import datetime
 from typing import AsyncIterator
 
+from tgmonitor.core.auth_service import AuthService
 from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
@@ -39,6 +40,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.objectstore.factory import build_object_store
+from tgmonitor.core.settings_store import SettingsDiff, diff_settings
 from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
@@ -57,7 +59,11 @@ class AppService:
         objects: ObjectStore,
         settings: Settings,
     ) -> None:
-        """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。"""
+        """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。
+
+        AuthService 在此构造(2026-08-03 微切抽出),持同样的 `bus + client +
+        settings` — 不需要 storage / objects。
+        """
         self.bus = bus
         self.client = client
         self.storage = storage
@@ -71,6 +77,8 @@ class AppService:
         # 全量同步服务(用户多选触发)— 延迟初始化避免循环 import
         from tgmonitor.core.channel_sync import ChannelSyncService
         self.channel_sync = ChannelSyncService(bus, client, storage)
+        # 鉴权 façade(2026-08-03 微切抽出)— 3 个 submit_* 方法 + 凭据预检
+        self.auth = AuthService(bus, client, settings)
 
     # ---------- 鉴权 ----------
 
@@ -78,21 +86,13 @@ class AppService:
         """当前登录状态机值(继承自 TelegramClient.state)。"""
         return self.client.state
 
-    def _check_credentials(self) -> str | None:
-        """若凭据未配置,返回错误消息(供 UI 展示);否则返回 None。"""
-        s = self.settings
-        if s.api_id <= 0:
-            return "TG_API_ID 未配置:请打开 设置… 填写"
-        if not s.api_hash or len(s.api_hash) < 16:
-            return "TG_API_HASH 未配置或过短:请打开 设置… 填写"
-        if not s.phone.startswith("+"):
-            return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
-        return None
-
     async def bootstrap(self) -> tuple[str, str | None]:
         """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
 
         返回 (state, detail)。
+
+        401 加密 key 错误 → rotate + rebuild client + 再 start;client swap
+        留在此方法(影响 `AppService.client`,AuthService 不该碰)。
 
         注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
         现在所有「订阅真理」都走 `storage.list_subscribed_channels()` —
@@ -112,7 +112,7 @@ class AppService:
             from tgmonitor.core.telegram.factory import build_telegram_client
             await self.client.close()
             self.client = build_telegram_client(
-                self.settings, use_fake=False, event_bus=self._bus,
+                self.settings, use_fake=False, event_bus=self.bus,
             )
             state, detail = await self.client.start()
         # client 端已经 publish 过 LoginStateChanged,这里只 fail-safe 再发一次终态
@@ -123,32 +123,16 @@ class AppService:
         return state, detail
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """用户点「登录」按钮 — 提交手机号 + 触发 aiotdlib 发 code。"""
-        err = self._check_credentials()
-        if err:
-            await self.bus.publish(ErrorOccurred(source="submit_phone", message=err))
-            return "error", err
-        try:
-            return await self.client.submit_phone(phone)
-        except Exception as e:  # noqa: BLE001
-            await self.bus.publish(ErrorOccurred(source="submit_phone", message=str(e), exception=e))
-            return "error", str(e)
+        """委托给 `AuthService.submit_phone`(2026-08-03 微切抽出,统一失败路径)。"""
+        return await self.auth.submit_phone(phone)
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
-        """UI 提交验证码。错误由 AuthErrorOccurred 事件 + catch-all ErrorOccurred 双轨。"""
-        try:
-            return await self.client.submit_code(code)
-        except Exception as e:  # noqa: BLE001
-            await self.bus.publish(ErrorOccurred(source="submit_code", message=str(e), exception=e))
-            return "error", str(e)
+        """委托给 `AuthService.submit_code`。"""
+        return await self.auth.submit_code(code)
 
     async def submit_password(self, password: str) -> tuple[str, str | None]:
-        """UI 提交 2FA 密码。错误走 ErrorOccurred;UI 通常弹窗提示。"""
-        try:
-            return await self.client.submit_password(password)
-        except Exception as e:  # noqa: BLE001
-            await self.bus.publish(ErrorOccurred(source="submit_password", message=str(e), exception=e))
-            return "error", str(e)
+        """委托给 `AuthService.submit_password`。"""
+        return await self.auth.submit_password(password)
 
     # ---------- 频道 ----------
 
@@ -279,79 +263,79 @@ class AppService:
         """用新 settings 重建 storage / objects(不重建 TelegramClient)。
 
         Telegram 凭据(api_id/api_hash/phone)若变化,needs_relogin=True(UI 引导登出登入)。
+
+        流程(2026-08-03 微切):
+          1. `diff_settings` 算 needs_relogin / storage_changed / objects_changed
+          2. 无变化 → return
+          3. storage 优先(在 hot path)→ `_rebuild_storage`
+          4. objects → `_rebuild_objects`
+          5. publish `SettingsChanged` + 提交新 settings
         """
-        # 1) 解析需重登的字段
-        old = self.settings
-        needs_relogin = (
-            old.api_id != new_settings.api_id
-            or old.api_hash != new_settings.api_hash
-            or old.phone != new_settings.phone
-        )
-
-        # 2) 计算 storage/objects 是否需要重建
-        storage_changed = (
-            old.db_backend != new_settings.db_backend
-            or old.db_dsn != new_settings.db_dsn
-            or old.db_root != new_settings.db_root
-        )
-        objects_changed = (
-            old.objectstore_backend != new_settings.objectstore_backend
-            or old.objectstore_root != new_settings.objectstore_root
-            or old.objectstore_endpoint != new_settings.objectstore_endpoint
-            or old.objectstore_bucket != new_settings.objectstore_bucket
-            or old.objectstore_access_key != new_settings.objectstore_access_key
-            or old.objectstore_secret_key != new_settings.objectstore_secret_key
-            or old.objectstore_region != new_settings.objectstore_region
-        )
-
-        if not (storage_changed or objects_changed or needs_relogin):
+        diff = diff_settings(self.settings, new_settings)
+        if not diff.changed:
             return  # 无变化
 
         new_settings.ensure_dirs()
 
-        # 3) 关旧、起新(storage 优先:它在 hot path)
-        if storage_changed:
-            self._reconfiguring = True
-            try:
-                try:
-                    await self.storage.close()
-                except Exception as e:  # noqa: BLE001
-                    log.warning("关闭旧 storage 失败: %s", e)
-                new_storage = build_storage(new_settings)
-                await new_storage.connect()
-                await new_storage.init_schema()
-                self.storage = new_storage
-                # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #C 收尾:之前
-                # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
-                # cache 做 union,会把 unsubscribed 旧频道错误标记为"已订"。
-                # `AppService._subscribed` cache 已整体删除,真理 = storage。
-                # VM 通过 `list_subscribed_channels()` 在 init_schema 之后
-                # 重新拉一遍,自动同步到 monitor / channel_widget。
-                # 触发路径:本方法末尾 `await self.bus.publish(
-                # SettingsChanged(..., needs_relogin=False))` → VM 的
-                # `_on_settings_changed` slot 会重新走 bootstrap。
-            finally:
-                self._reconfiguring = False
-
-        if objects_changed:
-            try:
-                await self.objects.close()
-            except Exception as e:  # noqa: BLE001
-                log.warning("关闭旧 objectstore 失败: %s", e)
-            new_objects = build_object_store(new_settings)
-            await new_objects.connect()
-            self.objects = new_objects
+        if diff.storage_changed:
+            await self._rebuild_storage(new_settings)
+        if diff.objects_changed:
+            await self._rebuild_objects(new_settings)
 
         # 4) 提交新 settings + 事件
         self.settings = new_settings
-        await self.bus.publish(
-            SettingsChanged(
-                what=("storage+objectstore" if storage_changed and objects_changed
-                      else "storage" if storage_changed
-                      else "objectstore" if objects_changed
-                      else "credentials"),
-                new_settings=new_settings,
-                needs_relogin=needs_relogin,
-            )
-        )
+        await self.bus.publish(SettingsChanged(
+            what=_what_label(diff),
+            new_settings=new_settings,
+            needs_relogin=diff.needs_relogin,
+        ))
+
+    async def _rebuild_storage(self, new_settings: Settings) -> None:
+        """关旧 storage → 建新 → `init_schema`。失败时不抛(只 log)。"""
+        self._reconfiguring = True
+        try:
+            try:
+                await self.storage.close()
+            except Exception as e:  # noqa: BLE001
+                log.warning("关闭旧 storage 失败: %s", e)
+            new_storage = build_storage(new_settings)
+            await new_storage.connect()
+            await new_storage.init_schema()
+            self.storage = new_storage
+            # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #C 收尾:之前
+            # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
+            # cache 做 union,会把 unsubscribed 旧频道错误标记为"已订"。
+            # `AppService._subscribed` cache 已整体删除,真理 = storage。
+            # VM 通过 `list_subscribed_channels()` 在 init_schema 之后
+            # 重新拉一遍,自动同步到 monitor / channel_widget。
+            # 触发路径:`reconfigure` 末尾 `await self.bus.publish(
+            # SettingsChanged(..., needs_relogin=False))` → VM 的
+            # `_on_settings_changed` slot 会重新走 bootstrap。
+        finally:
+            self._reconfiguring = False
+
+    async def _rebuild_objects(self, new_settings: Settings) -> None:
+        """关旧 objectstore → 建新。失败时不抛(只 log)。"""
+        try:
+            await self.objects.close()
+        except Exception as e:  # noqa: BLE001
+            log.warning("关闭旧 objectstore 失败: %s", e)
+        new_objects = build_object_store(new_settings)
+        await new_objects.connect()
+        self.objects = new_objects
+
+
+def _what_label(diff: SettingsDiff) -> str:
+    """`SettingsChanged.what` 字段标签(给 UI 分类显示)。
+
+    优先级:storage+objectstore > storage > objectstore > credentials
+    (credentials 单独成立时是纯凭据变化,storage/objects 都没碰)。
+    """
+    if diff.storage_changed and diff.objects_changed:
+        return "storage+objectstore"
+    if diff.storage_changed:
+        return "storage"
+    if diff.objects_changed:
+        return "objectstore"
+    return "credentials"
 

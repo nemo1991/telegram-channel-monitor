@@ -6,6 +6,7 @@ from pathlib import Path
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.settings_store import (
     EditableSettings,
+    diff_settings,
     parse_env_file,
     update_env_with_settings,
     write_env_file,
@@ -121,3 +122,54 @@ def test_editable_to_settings_roundtrip():
     assert s.db_backend == DBBackend.JSONL
     assert s.objectstore_backend == ObjectStoreBackend.FOLDER
     assert s.media_policy == MediaPolicy.FULL
+
+
+# ---- diff_settings(给 AppService.reconfigure 用)----
+
+
+def _settings(**kw) -> Settings:
+    """最小可工作 Settings(default 全相同)。"""
+    base = dict(
+        api_id=1, api_hash="a" * 32, phone="+1",
+        session_dir=Path("/tmp/s"),
+        db_backend=DBBackend.JSONL, db_dsn="", db_root=Path("/tmp/m"),
+        objectstore_backend=ObjectStoreBackend.FOLDER, objectstore_root=Path("/tmp/o"),
+        media_policy=MediaPolicy.METADATA, data_root=Path("/tmp"),
+    )
+    base.update(kw)
+    return Settings(**base)  # type: ignore[arg-type]
+
+
+def test_diff_settings_noop():
+    s = _settings()
+    d = diff_settings(s, s)
+    assert d.changed is False
+    assert d.needs_relogin is False
+    assert d.storage_changed is False
+    assert d.objects_changed is False
+
+
+def test_diff_settings_credentials_trigger_relogin():
+    old = _settings()
+    new = _settings(api_id=2)
+    d = diff_settings(old, new)
+    assert d.needs_relogin is True
+    assert d.storage_changed is False
+    assert d.changed is True
+
+
+def test_diff_settings_storage_change():
+    old = _settings(db_root=Path("/tmp/m1"))
+    new = _settings(db_root=Path("/tmp/m2"))
+    d = diff_settings(old, new)
+    assert d.storage_changed is True
+    assert d.needs_relogin is False
+
+
+def test_diff_settings_objectstore_change():
+    old = _settings(objectstore_bucket="b1")
+    new = _settings(objectstore_bucket="b2")
+    d = diff_settings(old, new)
+    assert d.objects_changed is True
+    assert d.storage_changed is False
+
