@@ -129,20 +129,25 @@ jobs:
 
   mypy:
     # 2026-08-03 新增 — 配 pyproject.toml [tool.mypy] 后跟 ruff 平行跑,
-    # 守住 `core/telegram/` 模块的 aiotdlib 类型 stub 完整性(35 → 0 ignores
-    # 守住不退化)。
+    # 守住业务模块的类型完整性。
     #
-    # 范围故意收窄到 `core/telegram/`:跑 `mypy src` 会扫到 PySide6 / qasync
-    # / pydantic-settings 等无 stub 依赖,~100 个 missing-imports 噪声。后续
-    # 逐步给其它模块加 mypy 覆盖时,本 job 改成 module-by-module list 即可。
+    # 范围:core 业务子包(monitor / storage / export / objectstore / telegram)。
+    # UI 子包(`ui/`) 跟 `app.py` 在 [tool.mypy.overrides] 里走 PySide6/qasync stub,
+    # 但里面有 PySide6 widget 大量未标注 def,本期不收。
     name: mypy (${{ matrix.module }} / ${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 当前重点:`core/telegram/`(aiotdlib stub 完整性)
-        # 未来扩其它模块:在 list 里加路径,CI 自动覆盖
-        module: ["src/tgmonitor/core/telegram"]
+        # 5 个业务模块 — 加 module 时同步更新 pyproject.toml overrides。
+        # 历史:`core/telegram/` 首发(aiotdlib stub 完整性,35 → 0 ignores 守住)
+        module: [
+          "src/tgmonitor/core/monitor",
+          "src/tgmonitor/core/storage",
+          "src/tgmonitor/core/export",
+          "src/tgmonitor/core/objectstore",
+          "src/tgmonitor/core/telegram",
+        ]
         python-version: ["3.13"]
         os: [ubuntu-latest, macos-latest]
 
