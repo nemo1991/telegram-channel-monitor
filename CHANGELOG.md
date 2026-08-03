@@ -7,6 +7,61 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-03
+
+🛠️ **mypy 矩阵扩展 + 视觉回归扩 MainWindow + UPDATE_GOLDENS CI** —
+4 件套:app.py 8 处 pre-existing 类型错清零;mypy CI 矩阵从 1 模块扩到
+5 模块(monitor / storage / export / objectstore / telegram);视觉回归
+覆盖扩到 MainWindow(8 widget);CI 加 `visual-regression.yml` workflow,
+UI/测试改动自动重生成 golden + 上传 artifact 供 reviewer 比对。
+零用户可见行为变更。
+
+### 🛠️ Refactored
+- **修 `app.py` 8 处 pre-existing 类型错**(`[tool.mypy] + 协议补漏`,
+  `2026-08-03`):
+  - `StorageRepository` 协议补 `@abstractmethod init_schema()`(`core/storage/
+    repository.py`,+5 行)— 之前 3 个 repo 都实现但协议没声明,mypy
+    报 "StorageRepository has no attribute init_schema",运行时
+    `_load_from_settings` 调不到引发崩溃
+  - `app.py:32` 删 unused `# type: ignore[call-arg]`(Settings 构造已支持)
+  - `app.py:191` `state` dict 类型注解:`dict[str, object]` →
+    `dict[str, AppService | MonitorService | object]`;`_shutdown_async`
+    收 `_state.get(...)` 后用 `isinstance(x, AppService/MonitorService)` 守卫
+    代替 `# type: ignore[assignment]`,mypy 看到真类型,3 个 attr-defined 错消失
+  - `app.py:32` `Settings() # type: ignore[call-arg]` → `Settings()`
+  - `pyproject.toml [tool.mypy.overrides]` 扩 `PySide6.*` / `qasync` /
+    `asyncpg` / `motor.*` / `aioboto3.*` / `jinja2`(全视为 Any)
+
+### 🔧 Changed
+- **mypy CI 矩阵扩 5 模块**(`0a8609c` → 本轮,`.github/workflows/ci.yml`):
+  - `[tool.mypy.overrides]` module 列表扩展到 7 个外部依赖
+  - mypy job `matrix.module` 从 `["src/tgmonitor/core/telegram"]` 扩到:
+    `core/monitor` / `core/storage` / `core/export` / `core/objectstore` /
+    `core/telegram`
+  - `core/storage` 顺手清 6 个 mypy 错:`mongo_repo._doc_to_message` /
+    `save_message` `MessageDTO.id` 走 `int(str(...))`(Mongo `_id` 是
+    ObjectId str,DB 主键语义不变);`jsonl_store.py:353` + `mongo_repo.py:253`
+    删 unused `# type: ignore[return-value]`
+- **CI 加 `visual-regression.yml`**(`2026-08-03`,`.github/workflows/`):
+  - 触发:`tests/test_visual_regression.py` / `tests/golden/**` /
+    `src/tgmonitor/ui/**` 改动
+  - 跑 `UPDATE_GOLDENS=1 pytest`,把重新生成的 8 个 golden PNG 上传为
+    artifact(`goldens-regen-<os>-py<ver>`),reviewer 下载跟 PR 改动对比
+  - 只跑 `macos-latest` — goldens 对字体 hinting / anti-aliasing 敏感,
+    跨 OS golden 一致性不在本期范围
+
+### ✅ Tests
+- **视觉回归扩 MainWindow 初始状态**(`[本轮]` `tests/test_visual_regression.py`):
+  - `test_main_window_initial`:Mock `app` + `monitor` + 真 `Settings`,
+    grab MainWindow(1180×740)— dashboard 视图全空:已订 0 / 已加入 0 / 空消息区
+  - `tests/golden/main_window_initial.png` 入库(第 8 个 widget)
+  - 收尾清理:`asyncio.sleep(0)` 让 `bootstrap_ui` 排进 loop 的 task tick 一次,
+    `cancel()` + `gather(*, return_exceptions=True)` 避免
+    "coroutine was never awaited" 警告
+- **视觉回归覆盖 widget 总览**:`MessageView`(空 / 3 条) +
+  `ChannelWidget`(3 频道) + `SettingsPage`(默认) + `DashboardWidget`(空) +
+  `ExportDialog`(默认) + `LoginDialog`(初始) + `MainWindow`(初始 dashboard) — **8 widget**
+
 ## [1.0.6] - 2026-08-03
 
 🛠️ **架构清理 + 类型 stub + 测试基建 release** — 3 commits 收尾:
@@ -541,8 +596,9 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.7...HEAD
 [1.0.6]: https://github.com/forcetone/tgmonitor/compare/v1.0.5...v1.0.6
+[1.0.7]: https://github.com/forcetone/tgmonitor/compare/v1.0.6...v1.0.7
 [1.0.5]: https://github.com/forcetone/tgmonitor/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/forcetone/tgmonitor/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/forcetone/tgmonitor/compare/v0.2.0...v1.0.3
