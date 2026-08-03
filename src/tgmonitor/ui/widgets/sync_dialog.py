@@ -42,6 +42,10 @@ class SyncOptionsDialog(QDialog):
         defaults: SyncOptions,
         parent: QWidget | None = None,
     ) -> None:
+        """建 options 表单(频道列表 + metadata / history / resume 开关 + 延迟)。
+
+        `defaults` 来自 `app.settings.sync_*`(UI 可改后由 `_on_ok` 收集回
+        `SyncOptions`)。"""
         super().__init__(parent)
         self.setWindowTitle("全量同步选项")
         self.setModal(True)
@@ -126,6 +130,7 @@ class SyncOptionsDialog(QDialog):
         self.accept()
 
     def options(self) -> SyncOptions | None:
+        """取用户在 OK 时构造的 SyncOptions;用户取消返 None。"""
         return self._result_options
 
 
@@ -141,6 +146,11 @@ class SyncProgressDialog(QDialog):
         cancel_cb: callable,  # type: ignore[type-arg]
         parent: QWidget | None = None,
     ) -> None:
+        """建进度表格 + 取消 / 关闭按钮(关闭按钮初始 disabled,done 后启用)。
+
+        `cancel_cb` 由 `MainWindow._on_sync_requested` 注入,通常是
+        `app.channel_sync.cancel` — 立刻唤醒 ChannelSyncService 内部 sleep。
+        """
         super().__init__(parent)
         self.setWindowTitle("全量同步中…")
         self.setModal(True)
@@ -190,6 +200,11 @@ class SyncProgressDialog(QDialog):
     # ---- 事件回调(从 bus 调,主线程) ----
 
     def on_progress(self, e: ChannelSyncProgress) -> None:
+        """VM 信号槽:每条 ChannelSyncProgress 更新对应频道行的状态 / 图标 / 进度。
+
+        stage → icon 映射:`metadata` 🔄 / `history` 📥 / `backoff` ⏸ /
+        `done` ✅ / `failed` ❌;history 阶段 `total=None` 时只显示「N 条」。
+        """
         if e.channel_id not in self._rows:
             self._add_row(e.channel_id)
         title = self._channel_titles.get(e.channel_id, f"#{e.channel_id}")
@@ -212,6 +227,7 @@ class SyncProgressDialog(QDialog):
         )
 
     def on_done(self, e: ChannelSyncDone) -> None:
+        """VM 信号槽:ChannelSyncDone → 更新 summary(成功/失败/新增/限流) + 关闭按钮可用。"""
         result: SyncResult | None = e.result
         if result is None:
             self.lbl_summary.setText("同步已完成")

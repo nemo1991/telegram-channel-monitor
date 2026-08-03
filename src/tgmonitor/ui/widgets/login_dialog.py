@@ -35,12 +35,21 @@ log = logging.getLogger(__name__)
 
 
 class LoginDialog(QDialog):
+    """鉴权阶段的 escape hatch 对话框(仅当 Telegram 进入 code_required /
+    password_required 时弹出,供用户输入验证码 / 2FA 密码)。
+
+    # 多数情况下 `LoginWidget`(在主窗口内)就地切换输入框就够了;
+    # 本对话框是用户已离开账户面板(最小化或不在前台)时 Telegram
+    # 突然继续问问题的兜底。
+    """
+
     def __init__(
         self,
         app: AppService,
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
     ) -> None:
+        """建 modal dialog + 自动按当前 LoginState 选页(验证码 / 2FA / hide)。"""
         super().__init__(parent)
         self.app = app
         self.loop = loop

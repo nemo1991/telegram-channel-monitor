@@ -32,7 +32,14 @@ _FORMAT_EXT = {
 
 
 class ExportDialog(QDialog):
+    """导出对话框 — 选频道 / 时间 / 格式 / 输出路径,OK 时生成 ExportRequest。
+
+    用户按 OK 后调 `request()` 取 ExportRequest(若校验失败用户从未按 OK
+    则 assert 触发,正常 UI 路径下不会到)。
+    """
+
     def __init__(self, app, channel_ids: list[int], parent=None) -> None:
+        """建 form + 默认文件名(`export-YYYYMMDD-HHMMSS.json`)。"""
         super().__init__(parent)
         self.app = app
         self._channel_ids = channel_ids
@@ -138,5 +145,6 @@ class ExportDialog(QDialog):
         return None
 
     def request(self) -> ExportRequest:
+        """取用户在 OK 时构造的 ExportRequest(只在 _on_ok 成功后才非空)。"""
         assert self._req is not None
         return self._req
