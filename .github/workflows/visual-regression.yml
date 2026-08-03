@@ -1,0 +1,85 @@
+# Visual regression — golden 重新生成 + 上传 diff artifact
+#
+# 何时跑:任何修改 `tests/test_visual_regression.py` 或 `tests/golden/*.png`
+# 的 PR / push。`paths` filter 自动过滤无关改动。
+#
+# 工作流:
+#   1. checkout 源码
+#   2. 跑 `UPDATE_GOLDENS=1 pytest` — 重新生成所有 golden,但**不上交**(git diff
+#      仍指向旧 golden,后续 push 由 review/merge 流程决定)
+#   3. 上传 `tests/golden/_regen/` 作为 artifact,reviewer 下载对比
+#
+# 为什么不用 commit-and-push 自动更新:
+#   - goldens 对 OS/Qt 版本敏感(字体 hinting / anti-aliasing),runner 生成的
+#     可能跟 dev 机器视觉差几个像素 → 不能盲目 push
+#   - reviewer 视觉比对是兜底:任何"故意 UI 改动"必须配 golden 一起 review
+name: visual-regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/test_visual_regression.py"
+      - "tests/golden/**"
+      - "src/tgmonitor/ui/**"
+      - ".github/workflows/visual-regression.yml"
+  pull_request:
+    paths:
+      - "tests/test_visual_regression.py"
+      - "tests/golden/**"
+      - "src/tgmonitor/ui/**"
+      - ".github/workflows/visual-regression.yml"
+
+concurrency:
+  group: visual-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regen-goldens:
+    name: regen-goldens (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 当前只跑 macOS-latest — golden 在生成机器上 100% 一致,跨 OS 会因
+      # 字体 hinting / anti-aliasing 失败(README"测试基建"章节)。
+      # 跨平台 golden 等项目有需要再扩,目前先守住主开发平台。
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+        os: [macos-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --group dev -q
+
+      # UPDATE_GOLDENS=1 让 _compare() 走「覆盖 + skip」分支,所有 8 个
+      # widget 的 golden 重新生成到 tests/golden/*.png。注意这一步**不**
+      # commit,reviewer 需手动 cp 回源码树。
+      - name: Regenerate goldens
+        env:
+          PYTHONPATH: src
+          QT_QPA_PLATFORM: offscreen
+          QT_LOGGING_RULES: "*.warning=false"
+          UPDATE_GOLDENS: "1"
+        run: |
+          uv run python -m pytest tests/test_visual_regression.py -v --tb=short
+
+      # 把所有重新生成的 golden PNG 当 artifact 上传,reviewer 下载对比:
+      #   1) gh run download <run-id> -n goldens-regen
+      #   2) 对比每个 widget 的 current vs PR 改前的 golden
+      # 故意保留 7 天,跨 PR review 周期够用。
+      - name: Upload regenerated goldens
+        uses: actions/upload-artifact@v5
+        with:
+          name: goldens-regen-${{ matrix.os }}-${{ matrix.python-version }}
+          path: tests/golden/*.png
+          if-no-files-found: warn
+          retention-days: 7
