@@ -32,11 +32,21 @@ log = logging.getLogger(__name__)
 
 
 class MonitorViewModel(QObject):
+    """EventBus → Qt signal 适配层(VM 模式)。
+
+    # 唯一职责:把 core 内部事件转 Qt signal,在 qasync 主线程 / 同一 loop
+    # 安全更新 UI。不持有任何业务状态 — 业务状态在 `MonitorService._whitelist`
+    # 和 `AppService`。
+    #
+    # `known_channels` 是 UI 缓存(VM 唯一例外):订阅后收到 `ChannelSubscribed`
+    # 就更新,VM 用它在下栏显示频道名 — 不重新查 storage。
+    #
     # 直接 emit MessageDTO 本身(不是 asdict)。
     # 原因:dataclasses.asdict() 会把嵌套的 MediaDTO 也转成 dict,
     # MainWindow 收到后 `MessageDTO(**dto_dict)` 不递归构回 MediaDTO,
     # MessageView._format 取 `med.type` 崩溃。Signal(object) 让 Qt 承载
     # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
+    """
     message_received = Signal(object)
     login_state = Signal(str)
     channels_changed = Signal()
@@ -53,6 +63,7 @@ class MonitorViewModel(QObject):
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop,
     ) -> None:
+        """存 3 个子系统引用 + 立即订阅 EventBus 所有相关事件。"""
         super().__init__()
         self.app = app
         self.monitor = monitor
@@ -152,6 +163,11 @@ class MonitorViewModel(QObject):
         self.refresh_joined_channels()
 
     def refresh_joined_channels(self) -> None:
+        """后台拉已加入频道列表 → 填 known_channels → emit channels_changed。
+
+        # 走 `list_joined_channels` 是 best-effort UX 路径(不持久化),
+        # 跟 `MonitorService._whitelist` 是两件事 — 后者是真理。
+        """
         async def _go() -> None:
             chs = await self.app.list_joined_channels()
             for ch in chs:
@@ -160,14 +176,17 @@ class MonitorViewModel(QObject):
         run_coro(self.loop, _go(), error_label="refresh_channels")
 
     def subscribe_channel(self, ch: ChannelDTO) -> None:
+        """订阅频道 — 后台 fire `app.subscribe_channel`(同步入 storage + 发事件)。"""
         run_coro(self.loop, self.app.subscribe_channel(ch), error_label="subscribe_channel")
 
     def unsubscribe_channel(self, channel_id: int) -> None:
+        """退订频道 — 后台 fire `app.unsubscribe_channel`(关订阅标志,保留历史)。"""
         async def _go() -> None:
             await self.app.unsubscribe_channel(channel_id)
         run_coro(self.loop, _go(), error_label="unsubscribe_channel")
 
     def load_recent_messages(self) -> None:
+        """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
         async def _go() -> None:
             msgs = await self.app.list_messages(limit=200)
             for m in msgs:
@@ -175,6 +194,10 @@ class MonitorViewModel(QObject):
         run_coro(self.loop, _go(), error_label="load_recent_messages")
 
     def start_export(self, req: ExportRequest) -> None:
+        """后台 fire `app.export(req)` 异步生成器,UI 不阻塞。
+
+        `app.export` 内部 yield 心跳,这里只消耗掉(进度走 ExportProgress 事件)。
+        """
         async def _go() -> None:
             async for _ in self.app.export(req):
                 pass

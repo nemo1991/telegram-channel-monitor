@@ -76,6 +76,18 @@ ShutdownCb = Callable[[], Awaitable[None]]
 
 
 class MainWindow(QMainWindow):
+    """应用主窗口:左导航 + 4 页内容 + 紧凑头栏 + 状态栏。
+
+    # 4 个 page 由 QStackedWidget 持有:
+    #   0 LIVE      → MessageView + MessageDetail(实时流 + 详情)
+    #   1 DASHBOARD → 统计 + 活动时间线 + 快速操作
+    #   2 CHANNELS  → ChannelWidget(订阅 / 退订 / 全量同步)
+    #   3 SETTINGS  → 整页配置(凭据 / 存储 / 代理 / 媒体 / 同步)
+    #
+    # 退出:closeEvent 同步阻塞等 async shutdown 完成,保证 storage / client /
+    #       tdjson 子进程都被显式关掉。
+    """
+
     def __init__(
         self,
         app: AppService,
@@ -83,6 +95,12 @@ class MainWindow(QMainWindow):
         loop: asyncio.AbstractEventLoop,
         env_path: Path | None = None,
     ) -> None:
+        """构造主窗口 + 装配子 widget + 连信号 + 触发初始刷新。
+
+        `env_path` fallback 跟 `app.py` 同步:platform-native
+        (`~/.local/share/tgmonitor/.env` 或 `~/Library/Application Support/tgmonitor/.env`),
+        不依赖 cwd。
+        """
         super().__init__()
         self.app = app
         self.monitor = monitor
@@ -104,11 +122,19 @@ class MainWindow(QMainWindow):
         self._vm.bootstrap_ui()
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
+        """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
         self._shutdown_cb = cb
 
     # ======================== closeEvent (保持原逻辑) ========================
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        """窗口关闭 — 同步阻塞等 async shutdown(≤10s 超时)再放行。
+
+        # 阻塞主线程等协程完成,期间 processEvents() 保持 UI 响应。
+        # 10s 超时仍 fail-safe 让 Qt 关掉窗口(避免在 crash 状态下永远卡住)。
+        # 任何意外(BaseException / CancelledError)被最后 try/except 兜住,
+        # 避免「Error calling Python override」回主循环。
+        """
         if self._shutdown_cb is not None:
             try:
                 import concurrent.futures

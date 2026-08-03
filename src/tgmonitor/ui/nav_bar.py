@@ -176,6 +176,7 @@ class VerticalNavBar(QWidget):
     current_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """建 4 个 _NavButton + 默认高亮第一个(0 = LIVE)。"""
         super().__init__(parent)
         self._current = 0
         self._buttons: list[_NavButton] = []
@@ -214,6 +215,7 @@ class VerticalNavBar(QWidget):
         self.current_changed.emit(idx)
 
     def set_current(self, idx: int) -> None:
+        """外部切 tab 的入口(Ctrl+1/2/3/4 快捷键)— 越界静默忽略。"""
         if 0 <= idx < len(self._buttons):
             self._on_btn_clicked(idx)
 

@@ -15,6 +15,8 @@ from importlib import resources
 
 
 class Theme(Enum):
+    """主题枚举:`light` / `dark`。value 用小写字符串(写到 QSettings 友好)。"""
+
     LIGHT = "light"
     DARK = "dark"
 
@@ -26,10 +28,12 @@ class ThemeManager:
 
     @classmethod
     def current(cls) -> Theme:
+        """当前激活主题(进程级单例 — 由 `apply()` / `toggle()` 维护)。"""
         return cls._current
 
     @classmethod
     def load_qss(cls, theme: Theme) -> str:
+        """从 `tgmonitor.ui.resources` 加载主题 QSS(DARK→`style_dark.qss`,LIGHT→`style.qss`)。"""
         if theme == Theme.DARK:
             return resources.files("tgmonitor.ui.resources").joinpath("style_dark.qss").read_text("utf-8")
         return resources.files("tgmonitor.ui.resources").joinpath("style.qss").read_text("utf-8")
