@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 # aiotdlib request 类型 — 运行时 import,跟原 tdlib_client.py 一样的 try/except 守卫
 try:
-    from aiotdlib.api import (  # type: ignore
+    from aiotdlib.api import (
         DownloadFile,
         GetBasicGroup,
         GetChat,
@@ -56,23 +56,23 @@ try:
         SearchPublicChat,
     )
     try:
-        from aiotdlib.api import (  # type: ignore
+        from aiotdlib.api import (
             ChatTypeBasicGroup,
             ChatTypeSupergroup,
         )
     except Exception:  # noqa: BLE001
-        ChatTypeBasicGroup = None  # type: ignore[assignment,misc]
-        ChatTypeSupergroup = None  # type: ignore[assignment,misc]
+        ChatTypeBasicGroup = None
+        ChatTypeSupergroup = None
 except Exception:  # noqa: BLE001
-    DownloadFile = None  # type: ignore[assignment,misc]
-    GetBasicGroup = None  # type: ignore[assignment,misc]
-    GetChat = None  # type: ignore[assignment,misc]
-    GetChatHistory = None  # type: ignore[assignment,misc]
-    GetChats = None  # type: ignore[assignment,misc]
-    GetFile = None  # type: ignore[assignment,misc]
-    GetSupergroup = None  # type: ignore[assignment,misc]
-    JoinChat = None  # type: ignore[assignment,misc]
-    SearchPublicChat = None  # type: ignore[assignment,misc]
+    DownloadFile = None
+    GetBasicGroup = None
+    GetChat = None
+    GetChatHistory = None
+    GetChats = None
+    GetFile = None
+    GetSupergroup = None
+    JoinChat = None
+    SearchPublicChat = None
 
 
 class ChannelsApi:
@@ -86,7 +86,7 @@ class ChannelsApi:
         self.channels = ChannelsApi(self)
     """
 
-    def __init__(self, client: TdlibTelegramClient) -> None:  # type: ignore[name-defined]
+    def __init__(self, client: TdlibTelegramClient) -> None:
         """`client` = 父 lifecycle 控制器(只持引用,不构造任何资源)。"""
         self._c = client
 
@@ -194,7 +194,7 @@ class ChannelsApi:
         result: list[ChannelDTO] = []
         try:
             t = _t.monotonic()
-            chats = await self._c.request(GetChats(limit=200))  # type: ignore[arg-type]
+            chats = await self._c.request(GetChats(limit=200))
             log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
                      len(chats.chat_ids) if chats and chats.chat_ids else 0,
                      _t.monotonic() - t)
@@ -277,7 +277,7 @@ class ChannelsApi:
         # 跨 loop wakeup 噪音)
         while True:
             self._c._check_alive()
-            t = GetChatHistory(  # type: ignore[call-arg](
+            t = GetChatHistory(
                 chat_id=channel_id,
                 from_message_id=before_msg_id,
                 offset=0,

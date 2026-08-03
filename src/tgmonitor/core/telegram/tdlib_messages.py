@@ -27,9 +27,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 try:
-    from aiotdlib.api import BaseObject  # type: ignore
+    from aiotdlib.api import BaseObject
 except Exception:  # noqa: BLE001
-    BaseObject = object  # type: ignore[assignment,misc]
+    BaseObject = object
 
 from tgmonitor.core.dto import (  # noqa: E402 — aiotdlib import 上方有 try/except 守卫
     MediaDTO,
@@ -401,7 +401,7 @@ def _fallback_service(content: Any) -> str:
     return f"[service: {type(content).__name__}]"
 
 
-def _map_message(msg: BaseObject) -> MessageDTO:  # type: ignore[name-defined]
+def _map_message(msg: BaseObject) -> MessageDTO:
     """TDLib Message → MessageDTO。
 
     aiotdlib 0.27 用 pydantic v2 model,TDLib 的 messageContent union

@@ -25,15 +25,15 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 try:
-    from aiotdlib.api import API  # type: ignore
-    from aiotdlib.client_settings import (  # type: ignore
+    from aiotdlib.api import API
+    from aiotdlib.client_settings import (
         ClientProxySettings,
         ClientProxyType,
     )
 except Exception:  # noqa: BLE001
-    API = None  # type: ignore[assignment]
-    ClientProxySettings = None  # type: ignore[assignment]
-    ClientProxyType = None  # type: ignore[assignment]
+    API = None
+    ClientProxySettings = None
+    ClientProxyType = None
 
 
 # ---- aiotdlib AuthorizationState.ID → 我们的字符串 ----
@@ -86,10 +86,10 @@ def parse_socks5_proxy(url: str | None) -> Any:
     host, _, port_s = hostport.rpartition(":")
     if not host or not port_s.isdigit():
         raise ValueError(f"invalid proxy host:port: {s!r}")
-    return ClientProxySettings(  # type: ignore[call-arg]
+    return ClientProxySettings(
         host=host,
         port=int(port_s),
-        type=ClientProxyType.SOCKS5,  # type: ignore[arg-type]
+        type=ClientProxyType.SOCKS5,
         username=user,
         password=password,
     )

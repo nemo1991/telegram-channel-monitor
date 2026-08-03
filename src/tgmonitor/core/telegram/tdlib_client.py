@@ -26,8 +26,8 @@ from typing import Any, AsyncIterator, Callable
 log = logging.getLogger(__name__)
 
 try:
-    from aiotdlib import Client as _AiClient  # type: ignore
-    from aiotdlib.api import (  # type: ignore
+    from aiotdlib import Client as _AiClient
+    from aiotdlib.api import (
         API,
         BaseObject,
         CheckAuthenticationCode,
@@ -37,18 +37,18 @@ try:
         SetLogVerbosityLevel,
     )
     try:
-        from aiotdlib.api.error import AioTDLibError  # type: ignore
+        from aiotdlib.api.error import AioTDLibError
     except Exception:  # noqa: BLE001
-        AioTDLibError = Exception  # type: ignore[misc,assignment]  # fallback so the except clause still type-checks
+        AioTDLibError = Exception  # fallback so the except clause still type-checks
     try:
         # aiotdlib 0.27+:
-        from aiotdlib.client_settings import ClientSettings  # type: ignore
+        from aiotdlib.client_settings import ClientSettings
     except Exception:  # noqa: BLE001
-        ClientSettings = None  # type: ignore[assignment]
+        ClientSettings = None
     _HAVE_AIOTDLIB = True
 except Exception:  # noqa: BLE001
     _HAVE_AIOTDLIB = False
-    ClientSettings = None  # type: ignore[assignment]
+    ClientSettings = None
 
 from tgmonitor.core.config import Settings  # noqa: E402 — aiotdlib import 上方有 try/except 守卫
 from tgmonitor.core.dto import ChannelDTO, MessageDTO  # noqa: E402
@@ -200,9 +200,9 @@ class TdlibTelegramClient(_AiClient):
         # 我们没有需要覆盖的选项 → 关掉,只发 tdlib_parameters + proxy。
         settings_kwargs["options"] = None
         if ClientSettings is not None:
-            super().__init__(settings=ClientSettings(**settings_kwargs))  # type: ignore[arg-type]
+            super().__init__(settings=ClientSettings(**settings_kwargs))
         else:  # pragma: no cover
-            super().__init__(**settings_kwargs)  # type: ignore[call-overload]
+            super().__init__(**settings_kwargs)
 
         # aiotdlib 用同步事件总线的事件(updateNewMessage)走 add_event_handler;
         # updateAuthorizationState 走我们 override 的 _on_authorization_state_update
