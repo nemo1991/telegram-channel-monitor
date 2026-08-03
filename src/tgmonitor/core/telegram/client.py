@@ -127,7 +127,7 @@ class UpdateStream:
         长会话该列表只增不减导致内存泄漏
     """
 
-    def __aiter__(self) -> AsyncIterator[MessageDTO]:
+    def __aiter__(self) -> AsyncIterator[MessageDTO]:  # type: ignore[empty-body]
         """async iterator protocol — `async for msg in stream:` 入口。"""
         ...
     async def aclose(self) -> None:

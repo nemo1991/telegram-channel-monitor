@@ -74,9 +74,12 @@ class FakeTelegramClient(TelegramClient):
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
-        """旧版 Protocol 接口 — 保留向后兼容,内部转发到 `submit_phone`."""
-        # 旧版 Protocol 接口 — 保留向后兼容,内部转发到 submit_phone
-        return await self.submit_phone(phone)
+        """旧版 Protocol 接口 — 保留向后兼容,内部转发到 `submit_phone`.
+
+        返回 `submit_phone` 的 state 部分,丢掉 detail(旧接口只承诺 state)。
+        """
+        state, _detail = await self.submit_phone(phone)
+        return state
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """切到 `code_required`;Fake 不发真 SMS。"""
