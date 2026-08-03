@@ -7,6 +7,52 @@
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-03
+
+🛠️ **架构清理 + 类型 stub + 测试基建 release** — 3 commits 收尾:
+AppService facade 微切 + aiotdlib type stubs 35→0 + Qt visual regression
+基建。零用户可见行为变更,纯代码质量 / 类型 / 测试提升。
+
+### 🛠️ Refactored
+- **`AppService` facade 微切**(`989b9af` 2026-08-03)— 357 行 facade 拆 3 件套:
+  - **NEW `AuthService`** (`core/auth_service.py`,+85 行)— 持 `bus + client +
+    settings`,只管鉴权这一摊;3 个 submit_* 方法 + `_check_credentials` +
+    `_fail(source, exc_or_msg)` 统一错误路径。AppService 3 个 submit 收成 1 行
+    delegate
+  - **`SettingsDiff` dataclass**(`core/settings_store.py`,+53 行)— frozen
+    dataclass:`needs_relogin` / `storage_changed` / `objects_changed`,
+    `diff_settings(old, new) → SettingsDiff` 纯函数;给 `reconfigure` 当决策表
+  - **`_what_label(diff)` helper**(`core/app_service.py`,+15 行)— 从 `reconfigure`
+    抽出,`SettingsChanged.what` 字符串生成器
+  - **`reconfigure` 75 行 → 22 行** + `_rebuild_storage` (15 行) +
+    `_rebuild_objects` (10 行)
+  - **顺手修 bug**:`bootstrap` L115 `event_bus=self._bus` → `self.bus`
+    (latent since v1.0.4,401 retry 路径 AttributeError)
+
+### 🔧 Changed
+- **`aiotdlib type stubs 清理**(`6dc3cc8` 2026-08-03)— `pyproject.toml` 新增
+  `[tool.mypy]` section(strict 默认 + `aiotdlib` / `platformdirs` /
+  `pydantic` / `pydantic_settings` `ignore_missing_imports`)。4 个 tdlib 模块
+  35 处 `# type: ignore` 全清(plan 原估消 14-16,超额完成):3 处 import-guard
+  fallbacks + 19 处 `X = None` 兜底赋值 + 2 处 call-arg/arg-type 都成 unused
+  (aiotdlib 视作 Any 后自然消失)
+- **mypy 配置文件就位** — `warn_unused_ignores = true` / `warn_redundant_casts`
+  / `no_implicit_optional = true` 启用;严格度有意放低(`disallow_untyped_defs
+  = false`),pyright-like 全开会扫到 pydantic / Qt / 测试 fixture 几百个噪声
+
+### 🧪 Test
+- **Qt offscreen visual regression 基建**(`870869b` 2026-08-03)— REVIEW M1
+  长期候选落地:`tests/test_visual_regression.py`(~150 行)+ `tests/golden/`
+  3 个 PNG(55 KB 总)
+  - `MessageView` 空状态(「暂无消息」overlay)
+  - `MessageView` 3 条 mock 消息
+  - `ChannelWidget` 3 条 mock 频道
+  - 纯 `QImage.pixelColor` 逐像素比对(零新依赖)
+  - 容差 0.1% 像素差异(留 anti-aliasing / sub-pixel 抖动余地)
+  - `UPDATE_GOLDENS=1` env var 重新生成 golden
+  - 失败存 `_diffs/<name>_current.png` + `_expected.png` 给人眼对比
+- **243 测试通过**(240 + 3 new),ruff 0 warning,行为零变化
+
 ## [1.0.5] - 2026-08-03
 
 📚 **Docstring sweep release** — 给所有公开 API / 类 / `__init__` / 公开方法
@@ -495,7 +541,8 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/forcetone/tgmonitor/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/forcetone/tgmonitor/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/forcetone/tgmonitor/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/forcetone/tgmonitor/compare/v0.2.0...v1.0.3
