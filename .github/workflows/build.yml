@@ -72,7 +72,7 @@ jobs:
 
       - name: Upload .AppImage
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: tgmonitor-x86_64.AppImage
           path: tgmonitor-x86_64.AppImage
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload .app.zip
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: tgmonitor.app.zip
           path: dist/tgmonitor.app.zip

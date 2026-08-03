@@ -77,7 +77,7 @@ jobs:
       #   2) 对比每个 widget 的 current vs PR 改前的 golden
       # 故意保留 7 天,跨 PR review 周期够用。
       - name: Upload regenerated goldens
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: goldens-regen-${{ matrix.os }}-${{ matrix.python-version }}
           path: tests/golden/*.png
