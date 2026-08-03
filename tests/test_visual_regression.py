@@ -17,6 +17,10 @@
   - MessageView(空,带「暂无消息」overlay)
   - MessageView(3 条 mock MessageDTO)
   - ChannelWidget(3 条 mock ChannelDTO)
+  - SettingsPage(7 个分组,`app.settings` 默认值)
+  - DashboardWidget(空 KPI 卡 + 快速操作 + 空时间线)
+  - ExportDialog(默认文件名 + 4 种格式 radio)
+  - LoginDialog(初始 `phone_required` 状态)
 
 # 已知局限
 
@@ -38,7 +42,11 @@ from PySide6.QtWidgets import QApplication
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
+from tgmonitor.ui.widgets.export_dialog import ExportDialog
+from tgmonitor.ui.widgets.login_dialog import LoginDialog
 from tgmonitor.ui.widgets.message_view import MessageView
+from tgmonitor.ui.widgets.settings_page import SettingsPage
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 TOLERANCE = 0.001  # 0.1% 像素差异上限
@@ -158,3 +166,82 @@ def test_channel_widget_with_channels(qapp):
     widget.set_subscribed(channels)
     img = _grab(widget)
     _compare("channel_widget_with_channels", img)
+
+
+def test_settings_page_default(qapp, tmp_path):
+    """SettingsPage 默认加载(`app.settings` 字段进表单)— 7 个分组 + 底部按钮。
+
+    `app` 是 Mock(只读 `.settings` 字段);`env_path` 用 tmp_path(platform-native
+    真路径,避免 OS 差异下 golden 不稳)。
+    """
+    from unittest.mock import Mock
+
+    from tgmonitor.core.config import (
+        DBBackend,
+        MediaPolicy,
+        ObjectStoreBackend,
+        Settings,
+    )
+    mock_app = Mock()
+    mock_loop = Mock()
+    mock_app.settings = Settings(
+        api_id=1, api_hash="a" * 32, phone="+1",
+        session_dir=tmp_path / "session",
+        db_backend=DBBackend.JSONL, db_dsn="", db_root=tmp_path / "m",
+        objectstore_backend=ObjectStoreBackend.FOLDER,
+        objectstore_root=tmp_path / "media",
+        media_policy=MediaPolicy.METADATA, data_root=tmp_path,
+    )
+    widget = SettingsPage(app=mock_app, loop=mock_loop, env_path=tmp_path / ".env")
+    # 240 宽太窄,SettingsPage 是 scroll area,设 480 看主表单
+    widget.resize(QSize(480, 320))
+    QApplication.processEvents()
+    img = widget.grab().toImage()
+    _compare("settings_page_default", img)
+
+
+def test_dashboard_widget_empty(qapp):
+    """DashboardWidget 空状态 — 4 张 KPI 卡 + 快速操作 + 空时间线 + 空频道表。
+
+    `loop=None` 是测试路径(`__init__` docstring 明确);`app` + `monitor` 用 Mock。
+    """
+    from unittest.mock import Mock
+    mock_app = Mock()
+    mock_monitor = Mock()
+    widget = DashboardWidget(app=mock_app, monitor=mock_monitor, loop=None)
+    img = _grab(widget)
+    _compare("dashboard_widget_empty", img)
+
+
+def test_export_dialog_default(qapp, tmp_path):
+    """ExportDialog 打开默认状态 — 默认文件名 + 4 种格式 radio + OK/Cancel。
+
+    `app` Mock;`channel_ids` 给 2 个 channel。
+    文件名默认带 `datetime.now().strftime('%Y%m%d-%H%M%S')` — 直接覆盖成
+    固定串,保证 golden 稳定(否则每次跑时间戳都不一样)。
+    """
+    from unittest.mock import Mock
+    mock_app = Mock()
+    dlg = ExportDialog(app=mock_app, channel_ids=[1001, 1002])
+    # 覆盖默认时间戳文件名 → 固定串,golden 可重现
+    dlg.in_path.setText("./export-test.json")
+    dlg.resize(QSize(360, 240))
+    QApplication.processEvents()
+    img = dlg.grab().toImage()
+    _compare("export_dialog_default", img)
+
+
+def test_login_dialog_initial(qapp):
+    """LoginDialog 初始状态 — 按当前 `client.state` 选页(默认 phone)。
+
+    `client.state` 通过 Mock 返 `phone_required`;`app` Mock,`loop` Mock。
+    """
+    from unittest.mock import Mock
+    mock_app = Mock()
+    mock_loop = Mock()
+    mock_app.client.state = "phone_required"
+    dlg = LoginDialog(app=mock_app, loop=mock_loop)
+    dlg.resize(QSize(320, 280))
+    QApplication.processEvents()
+    img = dlg.grab().toImage()
+    _compare("login_dialog_initial", img)
