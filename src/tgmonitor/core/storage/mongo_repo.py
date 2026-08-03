@@ -67,7 +67,7 @@ def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
 
 def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
     return MessageDTO(
-        id=str(d["_id"]),
+        id=int(str(d["_id"])),
         channel_id=int(d["channel_id"]),
         telegram_msg_id=int(d["telegram_msg_id"]),
         author=d.get("author"),
@@ -249,8 +249,8 @@ class MongoRepository(StorageRepository):
             result = await self.db.messages.find_one(
                 {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id}
             )
-        message.id = str(result["_id"])
-        return message.id  # type: ignore[return-value]
+        message.id = int(str(result["_id"]))
+        return message.id
 
     async def update_message(self, message: MessageDTO) -> None:
         """代理到 save_message(upsert 语义一致)。"""

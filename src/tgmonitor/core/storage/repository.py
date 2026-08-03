@@ -28,6 +28,11 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
+    async def init_schema(self) -> None:
+        """建表 / 建索引 — 幂等;启动时跑一次,跟 connect 解耦以便测试 mock。"""
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """刷缓存 / 关连接 / 释放资源。"""
         ...

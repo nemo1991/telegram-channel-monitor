@@ -350,7 +350,7 @@ class JsonlFileStore(StorageRepository):
             d = _message_to_dict(message)
             await cf.upsert(d)
             await cf.flush()
-            return message.id  # type: ignore[return-value]
+            return message.id
 
     async def update_message(self, message: MessageDTO) -> None:
         """按 (channel_id, telegram_msg_id) 覆盖式更新(代理到 save_message)。"""

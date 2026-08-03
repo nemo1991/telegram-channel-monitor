@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     t0 = time.monotonic()
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()
     # v1.0.1:Settings 的 Path defaults 已经是 platform-native 绝对路径
     # (~/Library/Application Support/tgmonitor/...),不再需要 .resolve()
     # 把相对路径强制绝对 — 之前这步是 cwd-relative 的根因。
@@ -188,7 +188,7 @@ def run() -> None:
         log.warning("failed to load theme; falling back to default")
 
     # 容器:由 setup_then_show 填充,shutdown 时消费
-    state: dict[str, object] = {}
+    state: dict[str, AppService | MonitorService | object] = {}
     setup_failed: list[BaseException] = []
 
     # `.env` 解析:同步 I/O,放 loop 外,不阻塞 qasync 的事件循环。
@@ -255,14 +255,14 @@ def run() -> None:
                 log.exception("qt_app.quit() raised during setup failure")
 
     async def _shutdown_async() -> None:
-        monitor = state.get("monitor")  # type: ignore[assignment]
-        app_svc = state.get("app")      # type: ignore[assignment]
-        if monitor is not None:
+        monitor = state.get("monitor")
+        app_svc = state.get("app")
+        if isinstance(monitor, MonitorService):
             try:
                 await monitor.stop()
             except Exception:  # noqa: BLE001
                 log.exception("monitor.stop() failed")
-        if app_svc is not None:
+        if isinstance(app_svc, AppService):
             try:
                 await app_svc.shutdown()
             except Exception:  # noqa: BLE001

@@ -1,6 +1,6 @@
 [project]
 name = "tgmonitor"
-version = "1.0.6"
+version = "1.0.7"
 description = "Telegram 频道监听桌面应用 — UI 与 core 分离,监听/保存/导出 三大组件边界清晰"
 readme = "README.md"
 requires-python = "~=3.13.0"
@@ -116,6 +116,12 @@ module = [
     "platformdirs",                # user_data_dir helper
     "pydantic", "pydantic.*",      # pydantic v2 model 字段
     "pydantic_settings",           # .env 加载
+    "PySide6", "PySide6.*",         # Qt6 绑定:有 stub 但 mypy 选错版本会报 import-not-found
+    "qasync",                      # asyncio ↔ Qt 事件循环桥
+    "asyncpg",                     # Postgres async driver
+    "motor", "motor.*",            # Mongo async driver
+    "aioboto3", "aioboto3.*",       # S3 async SDK
+    "jinja2",                      # HTML export 模板
 ]
 ignore_missing_imports = true
 
