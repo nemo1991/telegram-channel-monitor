@@ -28,6 +28,7 @@ class SearchBar(QWidget):
         placeholder: str = "搜索消息、频道…",
         parent: QWidget | None = None,
     ) -> None:
+        """建 280×32 紧凑搜索条 + 内联样式(不依赖主题 QSS)。"""
         super().__init__(parent)
         self.setObjectName("searchBar")
         self.setFixedWidth(280)
@@ -69,9 +70,11 @@ class SearchBar(QWidget):
         )
 
     def text(self) -> str:
+        """当前输入文本(strip 首尾空白)— 给 caller 直接读用。"""
         return self.edit.text().strip()
 
     def clear(self) -> None:
+        """清空输入 + 隐藏清除按钮(不 emit text_changed — Qt 自己触发)。"""
         self.edit.clear()
         self.btn_clear.setVisible(False)
 

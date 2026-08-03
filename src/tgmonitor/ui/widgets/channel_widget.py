@@ -279,6 +279,7 @@ class ChannelWidget(QWidget):
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
     ) -> None:
+        """建两张 `_ChannelListCard`(joined / subscribed)+ 接 EventBus + 异步拉频道。"""
         super().__init__(parent)
         self.app = app
         self.loop = loop
@@ -354,12 +355,14 @@ class ChannelWidget(QWidget):
     # ---- 数据装载 ----
 
     def set_joined(self, channels: list[ChannelDTO]) -> None:
+        """外部装入已加入频道(DTO 列表)— 由 `MainWindow._refresh_state` 调。"""
         self._joined = {c.id: c for c in channels}
         self.joined_card.set_items(channels, count_template="已加入频道 · {n}")
         # 触发过滤(数据变了)
         self._apply_filter(self.search_edit.text())
 
     def set_subscribed(self, channels: list[ChannelDTO]) -> None:
+        """外部装入已监听频道(白名单)— 由 `MainWindow._refresh_state` 调。"""
         self._subscribed_ids = {c.id for c in channels}
         self.subs_card.set_items(channels, count_template="已监听 · {n}")
         # 触发过滤

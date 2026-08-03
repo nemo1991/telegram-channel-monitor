@@ -140,6 +140,10 @@ class DashboardWidget(QWidget):
         loop: asyncio.AbstractEventLoop | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """建 4 张统计卡 + 快速操作 + 时间线 + 频道表 + 接 EventBus + 起 30s 定时心跳。
+
+        `loop=None` 用于无 loop 的测试环境,会跳过 per-channel 统计拉取。
+        """
         super().__init__(parent)
         self._app = app
         self._monitor = monitor

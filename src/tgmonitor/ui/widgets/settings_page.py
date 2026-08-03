@@ -60,6 +60,10 @@ class SettingsPage(QWidget):
         env_path: Path,
         parent: QWidget | None = None,
     ) -> None:
+        """建 7 个分组(账户 / 代理 / DB / OS / 策略 / 同步)+ 底部存盘按钮 + 加载当前设置。
+
+        `env_path` 是「保存到 .env」按钮的写入路径(platform-native 由 app.py 注入)。
+        """
         super().__init__(parent)
         self._app = app
         self._loop = loop

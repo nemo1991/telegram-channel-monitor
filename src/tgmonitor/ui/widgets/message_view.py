@@ -25,6 +25,8 @@ from tgmonitor.ui.widgets.form_row import empty_hint
 
 
 class MessageView(QListWidget):
+    """实时消息流 QListWidget 子类 — 去重 + 过滤 + 富格式 + 空状态 overlay。"""
+
     MAX_ITEMS = 1000
     _ROLE_MSG_ID = Qt.UserRole
     _ROLE_DTO = Qt.UserRole + 1
@@ -33,6 +35,7 @@ class MessageView(QListWidget):
     message_selected = Signal(object)
 
     def __init__(self) -> None:
+        """初始化去重表 + channel_titles 缓存 + 过滤状态 + 空状态 overlay。"""
         super().__init__()
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(False)
@@ -60,6 +63,7 @@ class MessageView(QListWidget):
         self._refresh_empty_state()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """窗口尺寸变 → overlay 重新居中(视觉重心偏上 1/3 高度)。"""
         super().resizeEvent(event)
         # 把 overlay 居中放在 list 上方 1/3 高度(视觉重心偏上,留底给 scrollbar)
         hint_size = self._empty_overlay.sizeHint()
@@ -80,6 +84,7 @@ class MessageView(QListWidget):
             self.message_selected.emit(dto)
 
     def set_channel_titles(self, titles: dict[int, str]) -> None:
+        """外部注入频道 id → title 映射(由 `MainWindow` 在 channels_changed 时同步)。"""
         self._channel_titles = dict(titles)
 
     def set_filter(self, text: str) -> None:
@@ -114,6 +119,12 @@ class MessageView(QListWidget):
         )
 
     def append(self, m: MessageDTO) -> None:
+        """实时追加一条消息 — 已存在则替换并保留 row index,否则插入头部。
+
+        # 同时维护 `_seen` 去重表 + 行 index 同步(Messages 接收时 `_seen`
+        # 全部 +1,删除底部时按 row index 偏移修复)+ 应用当前过滤 +
+        # 触发空状态刷新。`MAX_ITEMS` 限制总条数。
+        """
         key = (m.channel_id, m.telegram_msg_id)
         if key in self._seen:
             # 已存在 — 文本可能更新(edit),替换那一行

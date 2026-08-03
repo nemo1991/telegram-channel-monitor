@@ -65,6 +65,7 @@ class MessageDetail(QScrollArea):
     """详情面板 — 嵌入 LIVE 页的右侧。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """建空状态占位面板(无选中消息时显示)。"""
         super().__init__(parent)
         self.setObjectName("messageDetail")
         self.setFrameShape(QFrame.NoFrame)
