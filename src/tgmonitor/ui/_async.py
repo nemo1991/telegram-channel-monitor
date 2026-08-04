@@ -29,6 +29,13 @@ log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# 未观察 future 的强引用集合 — `run_coro` 返回的 Future 一旦被 GC,copro
+# coro 的内部 Task 会因没人引用 → "coroutine was never awaited"
+# RuntimeWarning。模块级 set hold 住,callback 完成后 `discard`。
+# 生产 loop 长寿,set 体积约等于瞬时并发;测试 closeEvent 时窗口窄,
+# 但任务 tick 完会回调 _on_done → discard,set 不漏。
+_PENDING_FUTS: set[asyncio.Future[Any]] = set()
+
 
 def run_coro[T](
     loop: asyncio.AbstractEventLoop,
@@ -55,8 +62,10 @@ def run_coro[T](
       - `on_error` 自身抛:再 `log.exception` 一次,不让异常进未观察 future
     """
     fut = cast(asyncio.Future[T], asyncio.run_coroutine_threadsafe(coro, loop))
+    _PENDING_FUTS.add(fut)
 
     def _on_done(f: asyncio.Future[T]) -> None:
+        _PENDING_FUTS.discard(f)
         try:
             result = f.result()
         except BaseException as exc:  # noqa: BLE001  # asyncio.CancelledError 也是 BaseException

@@ -8,6 +8,12 @@
 ## [Unreleased]
 
 ### 🛠️ Refactored
+- **清 `run_coro` `coroutine-never-awaited` RuntimeWarning**(`[本轮]` `ui/_async.py`):
+  - `test_main_window_close.py` 跑时 2 处 warning — `_go` coro 在 loop close 时未 tick 完
+    GC 被收。`_async.py` 加 module-level `_PENDING_FUTS: set[asyncio.Future]` hold
+    future 强引用,`_on_done` 回调时 `discard`,业务 / 接口都不变
+  - pytest `tests/test_main_window_close.py` 7 个 case 干净跑过,0 warning
+- **mypy 修 `ui/` + `app.py` 107 错清零**(`f7aec72` 2026-08-04):
 - **mypy 修 `ui/` + `app.py` 107 错清零**(`f7aec72` 2026-08-04):
   - 之前 107 错 / 22 文件:
     - `attr-defined` × 63(PySide6 stub 不全:`Qt.AlignCenter/UserRole/PointingHandCursor`、
