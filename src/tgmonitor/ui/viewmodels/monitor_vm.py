@@ -26,6 +26,7 @@ from tgmonitor.ui._async import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)
@@ -125,9 +126,11 @@ class MonitorViewModel(QObject):
     async def _on_settings_changed(self, e: Event) -> None:
         if not isinstance(e, SettingsChanged):
             return
-        new = e.new_settings
-        if new is None:
+        # events.py 里 SettingsChanged.new_settings: object | None(避免循环 import),
+        # 这里 isinstance 窄化到 Settings,再用真字段拼 status 行。
+        if not isinstance(e.new_settings, Settings):
             return
+        new = e.new_settings
         backend_label = (
             f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
         )

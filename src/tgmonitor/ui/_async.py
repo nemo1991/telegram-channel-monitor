@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """_async.py — UI 跨线程调 async coroutine 的统一样板。
 
 `qasync` 把 Qt 主线程当 asyncio loop 跑,但有些路径(signal handler / 第三方
@@ -22,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def run_coro[T](
       - 调用 `f.result()` 抛:`log.exception(error_label)` + 调 `on_error(exc)`
       - `on_error` 自身抛:再 `log.exception` 一次,不让异常进未观察 future
     """
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    fut = cast(asyncio.Future[T], asyncio.run_coroutine_threadsafe(coro, loop))
 
     def _on_done(f: asyncio.Future[T]) -> None:
         try:

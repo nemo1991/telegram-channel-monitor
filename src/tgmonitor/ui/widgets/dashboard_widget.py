@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """DashboardWidget — 大盘页:统计卡片 + 快速操作 + 活动时间线。
 
 Phase 1 版本:
@@ -158,9 +159,9 @@ class DashboardWidget(QWidget):
         self._refresh_timer.start()
 
         # 快速操作 callbacks — 由 MainWindow 注入(避免循环 import)
-        self.on_refresh: callable | None = None
-        self.on_export: callable | None = None
-        self.on_sync_all: callable | None = None
+        self.on_refresh: Callable[[], None] | None = None
+        self.on_export: Callable[[], None] | None = None
+        self.on_sync_all: Callable[[], None] | None = None
 
     _EVENT_ICONS = {
         LoginStateChanged: "nav_live",
@@ -211,17 +212,17 @@ class DashboardWidget(QWidget):
 
         self.btn_refresh = QPushButton(action_icon("refresh"), " 刷新频道")
         self.btn_refresh.setObjectName("actionBtn")
-        self.btn_refresh.clicked.connect(lambda: self.on_refresh and self.on_refresh())
+        self.btn_refresh.clicked.connect(lambda: self.on_refresh is not None and self.on_refresh())
         actions.addWidget(self.btn_refresh)
 
         self.btn_export = QPushButton(action_icon("export"), " 导出…")
         self.btn_export.setObjectName("actionBtn")
-        self.btn_export.clicked.connect(lambda: self.on_export and self.on_export())
+        self.btn_export.clicked.connect(lambda: self.on_export is not None and self.on_export())
         actions.addWidget(self.btn_export)
 
         self.btn_sync = QPushButton(action_icon("nav_channels"), " 全量同步")
         self.btn_sync.setObjectName("actionBtn")
-        self.btn_sync.clicked.connect(lambda: self.on_sync_all and self.on_sync_all())
+        self.btn_sync.clicked.connect(lambda: self.on_sync_all is not None and self.on_sync_all())
         actions.addWidget(self.btn_sync)
 
         actions.addStretch()

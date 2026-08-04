@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """SettingsPage — 整页设置(不再是模态对话框)。
 
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
@@ -320,15 +321,20 @@ class SettingsPage(QWidget):
                 continue
             for role in (QFormLayout.LabelRole, QFormLayout.FieldRole):
                 item = fl.itemAt(row, role)
-                if item and item.widget():
-                    item.widget().setVisible(visible)
+                # mypy 看到 `item.widget() -> QWidget | None`,虽然 item 已 truthy,
+                # 但 widget() 自身仍返 None。显式 None 守卫清掉 union-attr。
+                if item is None:
+                    continue
+                w = item.widget()
+                if w is not None:
+                    w.setVisible(visible)
 
     # ------ 存/取 ------
 
     def _collect(self) -> EditableSettings:
         """收集当前表单值 → EditableSettings。"""
         ud = _user_data_dir()
-        return EditableSettings(  # type: ignore[call-arg]
+        return EditableSettings(
             api_id=self.in_api_id.value(),
             api_hash=self.in_api_hash.text().strip(),
             phone=self.in_phone.text().strip(),

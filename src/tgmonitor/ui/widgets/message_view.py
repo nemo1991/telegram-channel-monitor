@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """MessageView — 实时消息流,带过滤 + 富格式。
 
 存储:

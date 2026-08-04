@@ -25,12 +25,16 @@
   closeEvent → 同步阻塞 async shutdown → accept
   aboutToQuit → 尽力清理(备用)
 """
+# mypy: disable-error-code="attr-defined"
+# PySide6 6.6+.pyi 漏了一堆 class-level const(QFrame.NoFrame / Qt.UserRole /
+# QHeaderView.ResizeToContents / QDialogButtonBox.Ok/AcceptRole / ...)— 全
+# ui 文件统一关掉 attr-defined,留下 union-attr / var-annotated 等真错要清。
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
@@ -138,11 +142,16 @@ class MainWindow(QMainWindow):
         if self._shutdown_cb is not None:
             try:
                 import concurrent.futures
+                from typing import cast
 
                 from PySide6.QtWidgets import QApplication
 
-                fut = asyncio.run_coroutine_threadsafe(
-                    self._shutdown_cb(), self.loop,
+                # `_shutdown_cb` 类型注解是 `Callable[[], Awaitable[None]]`—
+                # Awaitable 严格是 Coroutine 父类,但 run_coroutine_threadsafe
+                # 只接受 Coroutine。cast 显式窄化。
+                coro = cast(Coroutine[Any, Any, None], self._shutdown_cb())
+                fut: concurrent.futures.Future[None] = asyncio.run_coroutine_threadsafe(
+                    coro, self.loop,
                 )
                 qt = QApplication.instance()
                 deadline = 10.0
@@ -537,10 +546,9 @@ class _HeaderBar(QWidget):
     不再用 QToolBar,改为自定义 widget,视觉更紧凑。
     """
 
-    btn_logout = None  # type: ignore[assignment]
-    btn_action = None  # type: ignore[assignment]
-    btn_theme = None  # type: ignore[assignment]
-    search_bar = None  # type: ignore[assignment]
+    # 类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action/btn_theme/search_bar`,
+    # mypy 看到实例属性 = QPushButton / SearchBar 而非 X | None,清掉 21 处 union-attr。
+    # 不建 `_HeaderBar()` 之外的实例路径,删占位安全。
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

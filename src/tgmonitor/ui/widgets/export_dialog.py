@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """ExportDialog — 选择频道/时间/格式/输出路径,生成 ExportRequest。"""
 from __future__ import annotations
 

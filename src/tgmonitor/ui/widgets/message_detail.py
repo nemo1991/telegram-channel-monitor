@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """MessageDetail — 单条消息详情面板。
 
 点击 LIVE 视图里的某条消息 → 在右侧显示详情:

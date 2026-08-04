@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """state_labels.py — login state → (dot, label) 单源映射。
 
 之前 3 处各自维护:

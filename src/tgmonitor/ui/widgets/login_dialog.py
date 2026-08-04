@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """LoginDialog — 仅当账户凭据已填、但 TDLib 要求验证码或 2FA 时弹出。
 
 凭据表单已经搬到主窗口 AccountWidget;这个对话框**只剩 escape hatch**:
@@ -108,7 +109,7 @@ class LoginDialog(QDialog):
         self.app.bus.subscribe(LoginStateChanged, _on)
         # 初次拉当前状态
         try:
-            state = app_get_state(self.app)  # type: ignore[name-defined]
+            state = app_get_state(self.app)
             self._render(state, "")
         except Exception:  # noqa: BLE001
             log.exception("init LoginDialog state")
@@ -139,9 +140,11 @@ class LoginDialog(QDialog):
         if not code:
             return
         self.in_code.clear()
+        # submit_code 返 (state, detail) tuple,_render 接 (state, detail)—
+        # run_coro 的 on_success 是 `Callable[[T], None]`,把 tuple 展开传两个位置参。
         run_coro(
             self.loop, self.app.submit_code(code),
-            on_success=self._render,
+            on_success=lambda res: self._render(res[0], res[1] or ""),
             error_label="submit_code",
         )
 
@@ -152,7 +155,7 @@ class LoginDialog(QDialog):
         self.in_pwd.clear()
         run_coro(
             self.loop, self.app.submit_password(pwd),
-            on_success=self._render,
+            on_success=lambda res: self._render(res[0], res[1] or ""),
             error_label="submit_password",
         )
 

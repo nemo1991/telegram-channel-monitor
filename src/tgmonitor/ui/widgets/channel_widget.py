@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """ChannelWidget — 主窗口侧栏下半部。
 
 把"监听谁"这事最简化:
@@ -138,8 +139,9 @@ class _ChannelListCard(QWidget):
         self.lst.itemDoubleClicked.connect(self._on_lst_double_clicked)
         root.addWidget(self.lst)
 
-        # empty_hint(可选)
-        self._empty_hint: object = None
+        # empty_hint(可选)— 类型 `QWidget | None`,mypy 在 `_refresh_empty_state`
+        # 内调 `setVisible` 不再报 object 没 attr;默认 None 表示不显示 hint。
+        self._empty_hint: QWidget | None = None
         if empty_hint_spec is not None:
             icon_e, title_e, hint_e = empty_hint_spec
             self._empty_hint = empty_hint(icon_e, title_e, hint_e)
@@ -345,7 +347,7 @@ class ChannelWidget(QWidget):
         self.lbl_subs_count = self.subs_card.count_label
         self.btn_refresh = self.joined_card.btn_action
         self.btn_sync = self.subs_card.btn_action
-        self._empty_joined = self.joined_card._empty_hint  # type: ignore[attr-defined]
+        self._empty_joined: QWidget | None = self.joined_card._empty_hint
 
     def _apply_filter(self, text: str) -> None:
         """搜索过滤 — 两张卡各跑一遍 (用 self._joined 字典查 title)。"""

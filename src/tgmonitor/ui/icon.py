@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """图标加载 — 从 SVG 资源生成 QIcon。
 
 资源路径用 `importlib.resources.files()` 解析,源码期与 wheel 装包后都能找到。

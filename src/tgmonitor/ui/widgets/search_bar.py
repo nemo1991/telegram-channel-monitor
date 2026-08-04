@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """SearchBar — 全局搜索输入框,跨内容页过滤。
 
 行为:

@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """form_row.py — settings_page / export_dialog 用的 form row 工厂。
 
 集中 QFormLayout 的两种高频样板:

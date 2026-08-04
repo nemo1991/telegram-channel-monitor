@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """主题管理 — 浅色 / 暗色切换。
 
 通过 QApplication.setStyleSheet(QApplication.instance(), qss) 应用。

@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """VerticalNavBar — 左侧竖向导航(深色底,跨主题)。
 
 4 个 Tab:

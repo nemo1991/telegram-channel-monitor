@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """全量同步对话框 — 用户多选频道 → 选 options → 实时进度。
 
 两个组件:
@@ -8,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -143,7 +145,7 @@ class SyncProgressDialog(QDialog):
     def __init__(
         self,
         channel_titles: dict[int, str],
-        cancel_cb: callable,  # type: ignore[type-arg]
+        cancel_cb: Callable[[], None],
         parent: QWidget | None = None,
     ) -> None:
         """建进度表格 + 取消 / 关闭按钮(关闭按钮初始 disabled,done 后启用)。
@@ -228,7 +230,9 @@ class SyncProgressDialog(QDialog):
 
     def on_done(self, e: ChannelSyncDone) -> None:
         """VM 信号槽:ChannelSyncDone → 更新 summary(成功/失败/新增/限流) + 关闭按钮可用。"""
-        result: SyncResult | None = e.result
+        # ChannelSyncDone.result 在 events.py 里有意标 `object`(避免 ui→core 循环 import),
+        # 这里用 isinstance 窄化到 SyncResult;非 SyncResult 当成「无结果」处理。
+        result = e.result if isinstance(e.result, SyncResult) else None
         if result is None:
             self.lbl_summary.setText("同步已完成")
         else:
