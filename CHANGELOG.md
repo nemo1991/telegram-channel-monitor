@@ -7,6 +7,43 @@
 
 ## [Unreleased]
 
+### 🛠️ Refactored
+- **mypy 修 `ui/` + `app.py` 107 错清零**(`f7aec72` 2026-08-04):
+  - 之前 107 错 / 22 文件:
+    - `attr-defined` × 63(PySide6 stub 不全:`Qt.AlignCenter/UserRole/PointingHandCursor`、
+      `QFrame.NoFrame`、`QSizePolicy.Expanding/Fixed`、`QHeaderView.Stretch`、
+      `QDialogButtonBox.Ok/AcceptRole` 等)
+    - `union-attr` × 21(`_HeaderBar` 类变量 `None` 占位 + `.btn_logout.clicked` 等
+      实例属性调用)
+    - `unused-ignore` × 8 / `valid-type` × 4(`callable` 当 type annotation)/
+      `misc` × 4 / `arg-type` × 4 / `return-value`/`var-annotated`/`assignment` 各 1
+  - 分层修法:
+    - 11 个 ui 文件顶部加 `# mypy: disable-error-code="attr-defined"` —
+      PySide6 stub 不全是已知上游问题,源码层无业务含义,源头一次性关
+    - `_HeaderBar` 删 4 个 `btn_X = None  # type: ignore[assignment]` 占位
+      类变量 — `_HeaderBar()` 永远走 `__init__`,占位是历史遗留,清 21 union-attr
+    - `Callable[[], None]` 替换 `callable`(sync_dialog + dashboard 共 4 处)
+    - `_async.py` `cast(asyncio.Future[T], ...)` 修 `run_coroutine_threadsafe`
+      返 concurrent.futures.Future 不匹配 stub 的问题
+    - `main_window.py:closeEvent` `fut` 显式标 `concurrent.futures.Future[None]` +
+      cast `Coroutine[Any, Any, None]` 修 `Awaitable`/`Coroutine` 类型不兼容
+    - `login_dialog.py:submit_code/password` lambda 展开 `(state, detail)` tuple
+    - `sync_dialog.on_done` 用 isinstance 窄化 `ChannelSyncDone.result` (`object`)
+      → `SyncResult`,保留 events.py 的 `object` 占位(避免 ui→core 循环 import)
+    - `monitor_vm._on_settings_changed` isinstance 窄化 `SettingsChanged.new_settings`
+      → `Settings`,`Settings` 走 `TYPE_CHECKING` import 不引入新依赖
+    - `channel_widget._empty_hint` 类型 `object` → `QWidget | None`
+    - `settings_page._set_form_row_visible` `item.widget()` 显式 None 守卫
+    - 删 3 处 unused-ignore(`app_get_state` name-defined / `EditableSettings` /
+      `channel_widget._empty_hint`)
+  - 结果:**107 → 0 错 / 22 文件**,pytest 全过,ruff 0 warning
+
+### 🔧 Changed
+- **mypy CI 矩阵 5 → 7 entry**(`.github/workflows/ci.yml`):
+  - `module` 列表加 `src/tgmonitor/ui` + `src/tgmonitor/app.py`(上一轮 fix 后
+    已 0 错,纳入 CI 守住)
+  - entry 数:5 × 2 OS = 10 → 7 × 2 OS = 14 job
+
 ## [1.0.7] - 2026-08-03
 
 🛠️ **mypy 矩阵扩展 + 视觉回归扩 MainWindow + UPDATE_GOLDENS CI** —

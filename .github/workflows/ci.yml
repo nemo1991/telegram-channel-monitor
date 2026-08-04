@@ -131,22 +131,25 @@ jobs:
     # 2026-08-03 新增 — 配 pyproject.toml [tool.mypy] 后跟 ruff 平行跑,
     # 守住业务模块的类型完整性。
     #
-    # 范围:core 业务子包(monitor / storage / export / objectstore / telegram)。
-    # UI 子包(`ui/`) 跟 `app.py` 在 [tool.mypy.overrides] 里走 PySide6/qasync stub,
-    # 但里面有 PySide6 widget 大量未标注 def,本期不收。
+    # 范围:7 个入口 — 5 个 core 业务子包 + ui 子包 + app.py 顶层入口。
+    # ui/ + app.py 走 per-file `# mypy: disable-error-code="attr-defined"`
+    # 屏蔽 PySide6 stub 不全噪声,留下 union-attr / var-annotated 等真错。
     name: mypy (${{ matrix.module }} / ${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 5 个业务模块 — 加 module 时同步更新 pyproject.toml overrides。
-        # 历史:`core/telegram/` 首发(aiotdlib stub 完整性,35 → 0 ignores 守住)
+        # 5 个 core 业务子包 + 1 UI 子包 + app.py 顶层入口。
+        # 历史:`core/telegram/` 首发(aiotdlib stub 完整性,35 → 0 ignores 守住),
+        # 2026-08-04 加 ui/ + app.py(per-file attr-defined 关掉,107 → 0 错)。
         module: [
           "src/tgmonitor/core/monitor",
           "src/tgmonitor/core/storage",
           "src/tgmonitor/core/export",
           "src/tgmonitor/core/objectstore",
           "src/tgmonitor/core/telegram",
+          "src/tgmonitor/ui",
+          "src/tgmonitor/app.py",
         ]
         python-version: ["3.13"]
         os: [ubuntu-latest, macos-latest]
