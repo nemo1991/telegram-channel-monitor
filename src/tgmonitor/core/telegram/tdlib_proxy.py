@@ -1,3 +1,4 @@
+# mypy: disable-error-code="misc,assignment"
 """TDLib 启动期 IO + 错误归一 — proxy 解析 / SOCKS5 握手 / 加密 key / boot 错误。
 
 模块拆分(2026-08-02):从 `tdlib_client.py` 抽出,定位是"启动 / 鉴权握手"

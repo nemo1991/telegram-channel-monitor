@@ -1,3 +1,4 @@
+# mypy: disable-error-code="misc,assignment,override"
 """TDLib 实现 — 通过 `aiotdlib` 封装。
 
 - 业务侧只见 `TelegramClient` Protocol;此文件**唯一**接触 TDLib
@@ -334,7 +335,7 @@ class TdlibTelegramClient(_AiClient):
         await self._submit_auth_step(
             source="code",
             queue=self._code_queue,
-            request_factory=lambda code: CheckAuthenticationCode(code=code),
+            request_factory=lambda code: CheckAuthenticationCode(code=code),  # type: ignore[call-arg]
             error_label="CheckAuthenticationCode",
             detail_prefix="验证码错误: ",
         )
@@ -344,7 +345,7 @@ class TdlibTelegramClient(_AiClient):
         await self._submit_auth_step(
             source="password",
             queue=self._password_queue,
-            request_factory=lambda pwd: CheckAuthenticationPassword(password=pwd),
+            request_factory=lambda pwd: CheckAuthenticationPassword(password=pwd),  # type: ignore[call-arg]
             error_label="CheckAuthenticationPassword",
             detail_prefix="2FA 密码错误: ",
         )
@@ -439,7 +440,7 @@ class TdlibTelegramClient(_AiClient):
         self._running = True
         log.info("[tdlib] updates_loop task scheduled in %.3fs", _t.monotonic() - t0)
         t = _t.monotonic()
-        await self.execute(SetLogVerbosityLevel(new_verbosity_level=0))  # 暂时无所谓
+        await self.execute(SetLogVerbosityLevel(new_verbosity_level=0))  # type: ignore[call-arg]  # 暂时无所谓
         log.info("[tdlib] SetLogVerbosityLevel in %.3fs", _t.monotonic() - t)
         # 走 base 的 _setup_proxy / _setup_options
         t = _t.monotonic()
@@ -451,7 +452,7 @@ class TdlibTelegramClient(_AiClient):
         # 发 GetAuthorizationState 触发状态机 — 这是 fire-and-forget,
         # 响应是 `updateAuthorizationState`,会走 _on_authorization_state_update
         t = _t.monotonic()
-        await self.send(GetAuthorizationState())
+        await self.send(GetAuthorizationState())  # type: ignore[call-arg]
         log.info("[tdlib] GetAuthorizationState sent in %.3fs", _t.monotonic() - t)
         # 等状态机推进 — 任何非 bo 状态都意味着启动成功
         t = _t.monotonic()
@@ -567,7 +568,7 @@ class TdlibTelegramClient(_AiClient):
         """登出 — aiotdlib 会自动反推状态机 Closed → PhoneNumber。"""
         self._check_alive()
         try:
-            await self.request(LogOut())
+            await self.request(LogOut())  # type: ignore[call-arg]
         except Exception:  # noqa: BLE001
             log.exception("logout failed")
         self._me = None

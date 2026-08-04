@@ -1,3 +1,4 @@
+# mypy: disable-error-code="misc,assignment"
 """TDLib Message → MessageDTO 映射 + 媒体 / service 派发表。
 
 模块拆分(2026-08-02):从 `tdlib_client.py` 抽出。

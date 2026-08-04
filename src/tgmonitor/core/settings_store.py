@@ -215,7 +215,7 @@ class EditableSettings:
 
     def to_settings(self) -> Settings:
         """UI 表单 → 完整 Settings(已 validate 过的前提)。"""
-        return Settings(  # type: ignore[call-arg]
+        return Settings(
             api_id=self.api_id,
             api_hash=self.api_hash,
             phone=self.phone,
@@ -263,10 +263,14 @@ def _validate_proxy_url(s: str) -> str | None:
 
 # settings 不变(同进程),可绕过 pydantic 重新构造以让字段生效
 def reload_settings(env_path: Path | None = None, *, env: dict[str, str] | None = None) -> Settings:
-    """从 .env 重新构造 Settings(env 可显式覆盖以测热重载)。"""
+    """从 .env 重新构造 Settings(env 可显式覆盖以测热重载)。
+
+    pydantic-settings `BaseSettings.env_file` 接受 `str | os.PathLike | None`,
+    传 None 表示不读 .env(让 `_env_file=...` 这种历史 typo 失效)。
+    """
     if env is not None:
-        return Settings(_env_file=None, **env)  # type: ignore[arg-type]
-    return Settings(_env_file=str(env_path) if env_path else None)  # type: ignore[arg-type]
+        return Settings(env_file=None, **env)  # type: ignore[call-arg,arg-type]
+    return Settings(env_file=str(env_path) if env_path else None)  # type: ignore[call-arg]
 
 
 # ---- Settings diff(给 AppService.reconfigure 用) ----

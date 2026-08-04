@@ -131,17 +131,23 @@ jobs:
     # 2026-08-03 新增 — 配 pyproject.toml [tool.mypy] 后跟 ruff 平行跑,
     # 守住业务模块的类型完整性。
     #
-    # 范围:7 个入口 — 5 个 core 业务子包 + ui 子包 + app.py 顶层入口。
+    # 范围:8 个入口 — 5 个 core 业务子包 + ui 子包 + app.py 顶层入口 +
+    # **整 `src` 包全局 sanity check**(守住 `__main__.py` / `core/settings_store.py` /
+    # `core/telegram/tdlib_{channels,proxy,messages}.py` 这些没在 entry 矩阵里的文件)。
     # ui/ + app.py 走 per-file `# mypy: disable-error-code="attr-defined"`
     # 屏蔽 PySide6 stub 不全噪声,留下 union-attr / var-annotated 等真错。
+    # telegram 子包走 `# mypy: disable-error-code="misc,assignment"`
+    # 屏蔽 aiotdlib `None` 占位与 pydantic stub 不全噪声。
     name: mypy (${{ matrix.module }} / ${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 5 个 core 业务子包 + 1 UI 子包 + app.py 顶层入口。
+        # 5 个 core 业务子包 + 1 UI 子包 + app.py 顶层入口 + 整 src 全局 sanity check。
         # 历史:`core/telegram/` 首发(aiotdlib stub 完整性,35 → 0 ignores 守住),
-        # 2026-08-04 加 ui/ + app.py(per-file attr-defined 关掉,107 → 0 错)。
+        # 2026-08-04 加 ui/ + app.py(per-file attr-defined 关掉,107 → 0 错),
+        # 加 `src` 整包守住 `settings_store.py` + `tdlib_channels.py` +
+        # `tdlib_proxy.py` + `tdlib_messages.py`(71 → 0 错)。
         module: [
           "src/tgmonitor/core/monitor",
           "src/tgmonitor/core/storage",
@@ -150,6 +156,7 @@ jobs:
           "src/tgmonitor/core/telegram",
           "src/tgmonitor/ui",
           "src/tgmonitor/app.py",
+          "src",
         ]
         python-version: ["3.13"]
         os: [ubuntu-latest, macos-latest]

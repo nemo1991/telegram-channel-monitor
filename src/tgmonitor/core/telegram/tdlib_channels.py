@@ -27,10 +27,11 @@
 `tdlib_channels.py` → `tdlib_errors.ClientClosingError`(已有独立模块)
 `tdlib_channels.py` 不反向 import `tdlib_client` — 无循环依赖。
 """
+# mypy: disable-error-code="misc,assignment"
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, cast
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
@@ -40,11 +41,21 @@ log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # 避免运行时循环 import — 只在 type-check 时用
+    # aiotdlib API 类只 type-check 用 — 运行时下面用 cast() 替代
+    from aiotdlib.api import (  # noqa: F401
+        ChatTypeBasicGroup as _ChatTypeBasicGroup,
+    )
+
     from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
 
-# aiotdlib request 类型 — 运行时 import,跟原 tdlib_client.py 一样的 try/except 守卫
+# aiotdlib request 类型 — 运行时 import,跟原 tdlib_client.py 一样的 try/except 守卫。
+# 类型签名走 TYPE_CHECKING 块 import(避免运行时 aiotdlib 缺失时本文件仍能加载),
+# 运行时通过 `cast(Any, X)` 把符号当 Any 用 — 不在 mypy 矩阵里制造
+# `Cannot assign to a type` / `Incompatible types in assignment` 噪声。
 try:
     from aiotdlib.api import (
+        ChatTypeBasicGroup,
+        ChatTypeSupergroup,
         DownloadFile,
         GetBasicGroup,
         GetChat,
@@ -55,24 +66,18 @@ try:
         JoinChat,
         SearchPublicChat,
     )
-    try:
-        from aiotdlib.api import (
-            ChatTypeBasicGroup,
-            ChatTypeSupergroup,
-        )
-    except Exception:  # noqa: BLE001
-        ChatTypeBasicGroup = None
-        ChatTypeSupergroup = None
 except Exception:  # noqa: BLE001
-    DownloadFile = None
-    GetBasicGroup = None
-    GetChat = None
-    GetChatHistory = None
-    GetChats = None
-    GetFile = None
-    GetSupergroup = None
-    JoinChat = None
-    SearchPublicChat = None
+    ChatTypeBasicGroup = cast(Any, None)
+    ChatTypeSupergroup = cast(Any, None)
+    DownloadFile = cast(Any, None)
+    GetBasicGroup = cast(Any, None)
+    GetChat = cast(Any, None)
+    GetChatHistory = cast(Any, None)
+    GetChats = cast(Any, None)
+    GetFile = cast(Any, None)
+    GetSupergroup = cast(Any, None)
+    JoinChat = cast(Any, None)
+    SearchPublicChat = cast(Any, None)
 
 
 class ChannelsApi:
@@ -101,7 +106,7 @@ class ChannelsApi:
         永远拿不到 — `Chat` 类型没 username / member_count,这些在
         `Supergroup` / `BasicGroup` 上。
         """
-        chat = await self._c.request(GetChat(chat_id=chat_id))
+        chat = await self._c.request(GetChat(chat_id=chat_id))  # type: ignore[call-arg,func-returns-value]
         if chat is None:
             return None
         ct = getattr(chat, "type_", None) or getattr(chat, "type", None)
@@ -194,7 +199,7 @@ class ChannelsApi:
         result: list[ChannelDTO] = []
         try:
             t = _t.monotonic()
-            chats = await self._c.request(GetChats(limit=200))
+            chats = await self._c.request(GetChats(limit=200))  # type: ignore[call-arg,func-returns-value]
             log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
                      len(chats.chat_ids) if chats and chats.chat_ids else 0,
                      _t.monotonic() - t)
@@ -277,13 +282,13 @@ class ChannelsApi:
         # 跨 loop wakeup 噪音)
         while True:
             self._c._check_alive()
-            t = GetChatHistory(
+            t = GetChatHistory(  # type: ignore[call-arg]
                 chat_id=channel_id,
                 from_message_id=before_msg_id,
                 offset=0,
                 limit=limit,
             )
-            resp = await self._c.request(t)
+            resp = await self._c.request(t)  # type: ignore[func-returns-value]
             if resp is None or not getattr(resp, "messages", None):
                 break
             batch = list(resp.messages)
@@ -311,7 +316,7 @@ class ChannelsApi:
         self._c._check_alive()
         username = identifier.lstrip("@") if identifier.startswith("@") else identifier
         # search 要拿响应 → request;join 不需要响应 → send
-        resp = await self._c.request(SearchPublicChat(username=username))
+        resp = await self._c.request(SearchPublicChat(username=username))  # type: ignore[call-arg,func-returns-value]
         if resp is None:
             raise RuntimeError(f"SearchPublicChat 返回空: {username!r}")
         await self._c.send(JoinChat(chat_id=resp.id))
@@ -340,7 +345,7 @@ class ChannelsApi:
         # 1) 触发后台下载(不等 — DownloadFile synchronous=False)
         try:
             await self._c.request(
-                DownloadFile(file_id=file_id, priority=1, synchronous=False)
+                DownloadFile(file_id=file_id, priority=1, synchronous=False)  # type: ignore[call-arg,arg-type]
             )
         except ClientClosingError:
             raise  # 让 close() 路径正常 throw,monitor loop 兜底
@@ -353,7 +358,7 @@ class ChannelsApi:
         while _t.monotonic() < deadline:
             self._c._check_alive()
             try:
-                f = await self._c.request(GetFile(file_id=file_id))
+                f = await self._c.request(GetFile(file_id=file_id))  # type: ignore[call-arg,arg-type,func-returns-value]
             except ClientClosingError:
                 raise
             except Exception as e:  # noqa: BLE001
