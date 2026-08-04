@@ -14,7 +14,6 @@
     future 强引用,`_on_done` 回调时 `discard`,业务 / 接口都不变
   - pytest `tests/test_main_window_close.py` 7 个 case 干净跑过,0 warning
 - **mypy 修 `ui/` + `app.py` 107 错清零**(`f7aec72` 2026-08-04):
-- **mypy 修 `ui/` + `app.py` 107 错清零**(`f7aec72` 2026-08-04):
   - 之前 107 错 / 22 文件:
     - `attr-defined` × 63(PySide6 stub 不全:`Qt.AlignCenter/UserRole/PointingHandCursor`、
       `QFrame.NoFrame`、`QSizePolicy.Expanding/Fixed`、`QHeaderView.Stretch`、
@@ -45,6 +44,13 @@
   - 结果:**107 → 0 错 / 22 文件**,pytest 全过,ruff 0 warning
 
 ### 🔧 Changed
+- **CI 依赖与平台边界修复**(2026-08-04):
+  - `mypy>=2.3.0` 补进 `[dependency-groups].dev` + `uv.lock` — 之前本地环境有
+    mypy,但 CI `uv sync --group dev` 后没有可执行文件,导致 16 个 mypy matrix job
+    全部报 `Failed to spawn: mypy`
+  - `tests/test_visual_regression.py` 在非 macOS 平台整模块 skip — golden 来自 macOS,
+    Ubuntu 因字体 hinting / widget size 不同会稳定失败(8/8),与独立
+    `visual-regression.yml` 只跑 `macos-latest` 的既有边界对齐
 - **mypy `src` 整包 0 错**(2026-08-04):
   - 之前 71 错 / 5 文件:
     - `tdlib_channels.py` × 28(2026-08-02 composition 拆出来的新文件,从没过 mypy):
@@ -73,7 +79,7 @@
       mypy 推断为 `None`),针对性加 `# type: ignore[func-returns-value]`
     - `arg-type str→int` 同根因(DownloadFile/GetFile stub 误报 file_id
       必须是 int,实际接受 str)— `# type: ignore[arg-type]`
-  - 结果:**71 → 0 错 / 65 文件**,pytest 全过(248 passed + 1 框架侧 warning),
+  - 结果:**71 → 0 错 / 65 文件**,pytest 全过(248 passed + 2 个已知 warning),
     ruff 0 warning
 - **mypy CI 矩阵 7 → 8 entry**(`.github/workflows/ci.yml`):
   - `module` 列表加 `src`(整包全局 sanity check),守住 `__main__.py` /

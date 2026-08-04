@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -49,6 +50,11 @@ from tgmonitor.ui.widgets.export_dialog import ExportDialog
 from tgmonitor.ui.widgets.login_dialog import LoginDialog
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.settings_page import SettingsPage
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="visual goldens are macOS-specific",
+)
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 TOLERANCE = 0.001  # 0.1% 像素差异上限
