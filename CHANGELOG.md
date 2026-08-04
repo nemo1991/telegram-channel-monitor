@@ -51,6 +51,9 @@
   - `tests/test_visual_regression.py` 在非 macOS 平台整模块 skip — golden 来自 macOS,
     Ubuntu 因字体 hinting / widget size 不同会稳定失败(8/8),与独立
     `visual-regression.yml` 只跑 `macos-latest` 的既有边界对齐
+  - CI `Verify CLI entry` 从 `uv run tgmonitor --help || true` 改为仅加载
+    `console_scripts` entry point — 本应用没有 argparse `--help` 路径,旧命令会实际
+    启动 Qt event loop,macOS runner 永久卡在该步骤
 - **mypy `src` 整包 0 错**(2026-08-04):
   - 之前 71 错 / 5 文件:
     - `tdlib_channels.py` × 28(2026-08-02 composition 拆出来的新文件,从没过 mypy):

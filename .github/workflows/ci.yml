@@ -65,11 +65,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
 
-      # 仅 sanity check 入口注册;fake client 缺凭据时启动会卡在 QR,
-      # `|| true` 让 CI 不因 fake 模式失败(exit 124 / KeyboardInterrupt 都吞)
+      # 只加载已安装的 console_scripts entry point,不调用 `main()`。
+      # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,
+      # 在 macOS runner 上永久卡住;entry.load() 足够验证注册目标可导入。
       - name: Verify CLI entry
-        run: uv run tgmonitor --help || true
-        shell: bash
+        run: |
+          uv run python - <<'PY'
+          from importlib.metadata import entry_points
+
+          matches = entry_points(group="console_scripts", name="tgmonitor")
+          assert len(matches) == 1, matches
+          entry = next(iter(matches))
+          assert callable(entry.load())
+          print(f"{entry.name} -> {entry.value}")
+          PY
 
       - name: Run pytest
         env:
