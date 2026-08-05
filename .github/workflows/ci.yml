@@ -92,7 +92,39 @@ jobs:
           # -v 看每个 case 名;--tb=short 失败时压栈长度可控;
           # `uv run` 自动激活 venv(PYTHONPATH 也透传),装好的 editable 项目
           # 在 .venv 里直接可用,无需 python -m pip install -e 再来一次
-          uv run python -m pytest -v --tb=short
+          #
+          # **视觉回归文件隔离 + 重试**(2026-08-05):
+          # macOS-26-arm64 runner 上 `tests/test_visual_regression.py` 间歇
+          # segfault(Qt/Cocoa native race,无进程内 fix)— 把这部分单独
+          # 跑,失败(无论 pytest fail 还是进程 SIGSEGV)重试最多 3 次。
+          # 其他 17 个测试文件**不**进重试,失败立即报错,避免 retry 掩盖
+          # 真 bug。
+          set +e
+          uv run python -m pytest -v --tb=short \
+            --ignore=tests/test_visual_regression.py
+          main_rc=$?
+          set -e
+
+          # 视觉回归 retry(覆盖 segfault + 真 fail)
+          visual_attempt=1
+          visual_rc=1
+          while [ $visual_attempt -le 3 ] && [ $visual_rc -ne 0 ]; do
+            echo "::group::visual-regression attempt $visual_attempt/3"
+            set +e
+            uv run python -m pytest tests/test_visual_regression.py -v --tb=short
+            visual_rc=$?
+            set -e
+            echo "::endgroup::"
+            if [ $visual_rc -ne 0 ]; then
+              echo "visual-regression attempt $visual_attempt failed (exit $visual_rc), retrying..."
+            fi
+            visual_attempt=$((visual_attempt + 1))
+          done
+
+          if [ $main_rc -ne 0 ] || [ $visual_rc -ne 0 ]; then
+            echo "::error::pytest main_rc=$main_rc visual_rc=$visual_rc"
+            exit 1
+          fi
 
       # 再跑一次只为收集 branch coverage + 产 xml 报告(不设阈值门控)
       - name: Run pytest with coverage

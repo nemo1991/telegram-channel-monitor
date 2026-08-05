@@ -76,6 +76,19 @@
     `widget.grab()` 自己内部同步触发 paintEvent + 等待渲染线程完成
     (offscreen 是 immediate-mode 无渲染线程),processEvents 冗余且危险,
     删后 golden 字节级不变 + macOS-26 间歇 crash 消除
+- **CI 视觉回归 retry 3 次**(2026-08-05,`.github/workflows/ci.yml`):
+  - 上一轮 `_grab` 删 processEvents 验证无效:run #30973804475 +
+    #30978655894 macOS pytest 都 segfault,但**崩溃在不同 case**
+    (test #1 vs test #4),`_grab` 改不改 processEvents 都是间歇触发 →
+    根因不在 `_grab`,是 `widget.grab()` 本身在 macOS-26 VM + offscreen
+    QPA 上的 Qt/Cocoa native race,无进程内 fix
+  - 解决:CI `Run pytest` step 把 `tests/test_visual_regression.py` 单独
+    拎出来,失败(SIGSEGV / pytest fail / exit code 139 都算)重试最多
+    3 次,过 1 次即可;其余 17 个测试文件**不**进 retry loop,失败立即
+    报错。retry 用 `set +e` 拿 exit code,失败用 `::error::` 标红,3 次
+    全挂则整体 exit 1
+  - 回归测试:`/tmp/test_retry{,_fail}.sh` 模拟 1 次失败 + 2 次过 / 全
+    失败,确认 exit code + GitHub Actions 输出格式正确
 - **`closeEvent` 同步等 shutdown 协程:busy-poll → 嵌套 `QEventLoop`**(`[本轮]`, `ui/main_window.py`):
   - 之前:`while not fut.done(): qt.processEvents(); fut.result(timeout=0.05)` 高频循环
   - 现在:`QEventLoop.exec()` + `QTimer.singleShot(deadline_ms, subloop.quit)`
