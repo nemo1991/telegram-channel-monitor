@@ -140,7 +140,8 @@ class MainWindow(QMainWindow):
           - `fut.add_done_callback`:`run_coroutine_threadsafe` 完成后在
             loop 线程通过 `QMetaObject.invokeMethod(..., QueuedConnection)`
             把 quit 派到 main thread(Qt 子对象只能从 owner thread 改状态)
-          - `QTimer.singleShot(deadline_ms)`:hard upper bound 兜底
+          - 可 stop 的 `QTimer`:hard upper bound 兜底(exec 返回后 `stop()`,
+            避免 pending timeout 在 subloop 被 GC 后触发 use-after-free)
 
         为什么不原版 busy-poll?
           - macOS 26.x arm64 CI runner(`macos-26-arm64` 20260728 镜像)
@@ -149,6 +150,10 @@ class MainWindow(QMainWindow):
             race;改用 `subloop.exec()` 让 Qt 一次性 batched pump 事件可绕开。
           - 嵌套 `QEventLoop.exec()` 是 Qt 标准同步等待模式,不依赖
             `processEvents()` 频率,UI 响应性由 Qt 自己的 pump 保证。
+
+        跨线程生命周期安全:`subloop_holder` 在 exec 期间持有 subloop,结束后
+        置 None — 之后 loop 线程的 done_callback 只读 holder,不再 invoke 已
+        拆毁的 QEventLoop。closeEvent 结束即释放全部指向 subloop 的延迟引用。
 
         任何意外(`RuntimeError` / `BaseException` 含 `CancelledError`)由
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回
@@ -170,26 +175,41 @@ class MainWindow(QMainWindow):
                 )
                 deadline_ms = 10_000
                 subloop = QEventLoop()
+                # holder 在 exec 期间持有 subloop;结束后置 None,让后续
+                # done_callback 不再碰已拆毁的 subloop(防 use-after-free)。
+                subloop_holder: list[QEventLoop | None] = [subloop]
 
                 def _quit_on_done(_f: concurrent.futures.Future[None]) -> None:
                     # add_done_callback 在 future 完成的线程上跑 — 即
                     # `self.loop` 所在的 asyncio 线程。`subloop` 是绑定
                     # main thread 的本地 QObject,跨线程 quit 必须用
                     # invokeMethod(QueuedConnection) 派到 main thread。
-                    QMetaObject.invokeMethod(
-                        subloop, "quit", Qt.ConnectionType.QueuedConnection
-                    )
+                    sl = subloop_holder[0]
+                    if sl is not None:
+                        QMetaObject.invokeMethod(
+                            sl, "quit", Qt.ConnectionType.QueuedConnection
+                        )
 
                 fut.add_done_callback(_quit_on_done)
-                # hard upper bound,QTimer 在 subloop pump 时触发;它和
-                # fut callback 都调 quit(),去重是幂等的(QEventLoop.quit
+                # hard upper bound:用**可 stop 的 QTimer**,exec 返回后
+                # `stop()` 掉 — `QTimer.singleShot` 静态版在 subloop 被 GC
+                # 后到期会调已销毁 QObject 的 quit,是 use-after-free。
+                # 它和 fut callback 都调 quit(),去重幂等(QEventLoop.quit
                 # 可多次调,只置一次 flag)。
-                QTimer.singleShot(deadline_ms, subloop.quit)
+                deadline = QTimer()
+                deadline.setSingleShot(True)
+                deadline.timeout.connect(subloop.quit)
+                deadline.start(deadline_ms)
                 subloop.exec()
-                # subloop 已退出。三种退出路径:
+                # subloop 已退出(正常完成 / cancel / 超时三路)。立刻 stop
+                # pending deadline 并释放 holder,关掉所有指向 subloop 的
+                # 延迟引用。
+                deadline.stop()
+                subloop_holder[0] = None
+                # 三种退出路径:
                 #   1. fut 正常完成 → fut.done() True
                 #   2. fut 被 cancel  → fut.cancelled() True
-                #   3. QTimer 到期   → fut 仍 pending
+                #   3. deadline 到期 → fut 仍 pending
                 if fut.done():
                     try:
                         fut.result(timeout=0)

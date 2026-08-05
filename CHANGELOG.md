@@ -73,8 +73,13 @@
     subloop, "quit", Qt.ConnectionType.QueuedConnection)` 派到 main thread
   - 行为不变:`super().closeEvent(event)` 在 timeout / done / cancelled 三路径都正常放行,
     BaseException 兜底不变(`Error calling Python override` 仍然吃)
+  - 追加加固(`[本轮]`):macos-26-arm64 runner 上该 case 仍偶发 segfault(嵌套
+    QEventLoop 下同测试 2 跑 1 挂,确认是 native race 而非 busy-poll 专属) →
+    deadline 改用**可 stop 的 QTimer**(exec 返回后 `stop()`,防 pending timeout
+    在 subloop 被 GC 后触发 use-after-free);`subloop_holder` 在 exec 结束后
+    置 None,done_callback 不再 invoke 已拆毁的 QEventLoop
   - 验证:本地 macOS(darwin 25.5.0) `tests/test_main_window_close.py` 7 个 case 全过;
-    pytest 全量 248 passed(2 个已知 `MonitorViewModel.load_recent_messages.<locals>._go`
+    pytest 全量 exit 0(2 个已知 `MonitorViewModel.load_recent_messages.<locals>._go`
     warning 跟本改动无关 — 是上一轮 `_PENDING_FUTS` 还没解决的另一处 unawaited coro)
 - **CI 依赖与平台边界修复**(2026-08-04):
   - `mypy>=2.3.0` 补进 `[dependency-groups].dev` + `uv.lock` — 之前本地环境有
