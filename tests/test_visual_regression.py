@@ -109,10 +109,17 @@ def _update_mode() -> bool:
 
 
 def _grab(widget) -> QImage:
-    """widget 渲染到 QImage(固定 240×320,跟实际 UI 列表 cell 大致一致)。"""
+    """widget 渲染到 QImage(固定 240×320,跟实际 UI 列表 cell 大致一致)。
+
+    `QApplication.processEvents()` 是 2026-08-05 之前的写法,目的是让
+    layout / paint event 跑完。`widget.grab()` 自己内部同步触发 paintEvent
+    + 等待渲染线程完成(offscreen QPA 是 immediate-mode,无渲染线程),
+    所以 processEvents() **冗余且危险** — `macos-26-arm64` runner
+    (offscreen QPA + Cocoa native race)上高频 processEvents() 间歇 segfault,
+    与 closeEvent busy-poll 同一根因。删 processEvents(),grab 自带事件 flush,
+    golden 内容字节级不变。
+    """
     widget.resize(QSize(240, 320))
-    # 让 layout / paint event 跑完
-    QApplication.processEvents()
     return widget.grab().toImage()
 
 

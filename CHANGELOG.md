@@ -68,6 +68,14 @@
     等结构差异仍被严格抓(那些的 diff 是百分比级,不会因容差放宽而漏)
   - 验收:CI run #30971179661 macOS pytest 247→248 全过(0 段错误,
     `test_main_window_close` 7/7 + visual regression 8/8)
+  - 修复 `_grab` 的 processEvents 间歇 segfault(`[本轮]`,
+    `tests/test_visual_regression.py`):run #30973804475 macOS pytest 在
+    `test_message_view_empty` 第一个 golden case 就 segfault,栈顶在
+    `_grab:115`(`processEvents` + `widget.grab`)— 跟 closeEvent 同一根因
+    (offscreen QPA + macOS-26 VM + 高频 processEvents 触发 native race)。
+    `widget.grab()` 自己内部同步触发 paintEvent + 等待渲染线程完成
+    (offscreen 是 immediate-mode 无渲染线程),processEvents 冗余且危险,
+    删后 golden 字节级不变 + macOS-26 间歇 crash 消除
 - **`closeEvent` 同步等 shutdown 协程:busy-poll → 嵌套 `QEventLoop`**(`[本轮]`, `ui/main_window.py`):
   - 之前:`while not fut.done(): qt.processEvents(); fut.result(timeout=0.05)` 高频循环
   - 现在:`QEventLoop.exec()` + `QTimer.singleShot(deadline_ms, subloop.quit)`
