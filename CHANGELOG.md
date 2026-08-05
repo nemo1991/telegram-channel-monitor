@@ -44,6 +44,24 @@
   - 结果:**107 → 0 错 / 22 文件**,pytest 全过,ruff 0 warning
 
 ### 🔧 Changed
+- **`closeEvent` 同步等 shutdown 协程:busy-poll → 嵌套 `QEventLoop`**(`[本轮]`, `ui/main_window.py`):
+  - 之前:`while not fut.done(): qt.processEvents(); fut.result(timeout=0.05)` 高频循环
+  - 现在:`QEventLoop.exec()` + `QTimer.singleShot(deadline_ms, subloop.quit)`
+    + `fut.add_done_callback` → `QMetaObject.invokeMethod(subloop, "quit", QueuedConnection)`
+  - 触发原因:`macos-26-arm64` GitHub runner(`2026-07-28` 镜像,Apple Silicon +
+    macOS 26.5.2)在 `qt.processEvents()` 高频调用下偶发 segfault(`tests/test_main_window_close.py`
+    第 2 个 case 稳定崩 — Cocoa runloop + Qt offscreen QPA 在 processEvents 高速循环时
+    存在 native-side race)。改用 subloop 让 Qt 一次性 batched pump 事件可绕开
+  - 超时路径:`QTimer` 触发 subloop 退出后,future 仍未 done → `fut.cancel()`
+    兜底,避免 task 在 loop 线程残留
+  - 跨线程 quit:`add_done_callback` 跑在 asyncio loop 线程,`subloop` 是绑定 main
+    thread 的本地 QObject,直接调 `subloop.quit()` 不安全 — 必须 `QMetaObject.invokeMethod(
+    subloop, "quit", Qt.ConnectionType.QueuedConnection)` 派到 main thread
+  - 行为不变:`super().closeEvent(event)` 在 timeout / done / cancelled 三路径都正常放行,
+    BaseException 兜底不变(`Error calling Python override` 仍然吃)
+  - 验证:本地 macOS(darwin 25.5.0) `tests/test_main_window_close.py` 7 个 case 全过;
+    pytest 全量 248 passed(2 个已知 `MonitorViewModel.load_recent_messages.<locals>._go`
+    warning 跟本改动无关 — 是上一轮 `_PENDING_FUTS` 还没解决的另一处 unawaited coro)
 - **CI 依赖与平台边界修复**(2026-08-04):
   - `mypy>=2.3.0` 补进 `[dependency-groups].dev` + `uv.lock` — 之前本地环境有
     mypy,但 CI `uv sync --group dev` 后没有可执行文件,导致 16 个 mypy matrix job
