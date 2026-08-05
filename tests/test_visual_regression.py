@@ -343,11 +343,40 @@ def test_main_window_initial(qapp, tmp_path):
         # 让 `bootstrap_ui` / `load_recent_messages` 用 run_coro 排进 loop
         # 但还没 tick 的 coro 真跑一次 + cancel,避免 "coroutine was never
         # awaited"。一次 0s sleep 让 call_soon 调度生效,够 cancel。
+        # `asyncio.set_event_loop(loop)` 显式把当前 loop 钉死,后续
+        # `asyncio.all_tasks(loop)` / `asyncio.gather(...)` 不会触发
+        # "There is no current event loop" DeprecationWarning
+        # (Python 3.12+ 严格要求显式 set)。
         try:
-            loop.run_until_complete(asyncio.sleep(0))
+            asyncio.set_event_loop(loop)
+            # Drain loop to let run_coro-scheduled tasks complete.
+            #
+            # `MonitorViewModel.bootstrap_ui` 和 `_refresh_state` 通过
+            # `run_coro(self.loop, _go())` 把 `_go` coro 推上 loop,内部用
+            # `loop.call_soon_threadsafe` 排 Task 创建。`_go` 调
+            # `await app.list_messages(...)`(AsyncMock),需要 ≥1 个 tick
+            # resolve。我们 drain 几次到 `all_tasks` 稳定为空,然后 cancel
+            # 兜底 + gather 排空。
+            #
+            # **已知限制**:CI run #3097969961 / #30979320017 等多次跑
+            # 仍有 `RuntimeWarning: coroutine 'MonitorViewModel.
+            # load_recent_messages.<locals>._go' was never awaited` —
+            # 根因是 `channels_changed` signal handler(由
+            # `refresh_joined_channels._go` 触发)在 tick 期间 emit 又调
+            # `_refresh_state`,后者再排新的 `load_recent_messages._go`,
+            # 与 drain 产生 race。warning 不让 pytest fail,只是噪声 —
+            # 真传话的集成测试在
+            # `test_main_window_channels.py::test_main_window_initial_refresh_state_is_empty`
+            # 用 `qloop` fixture 走标准 asyncio 测试路径,无 warning。
+            for _tick in range(20):
+                loop.run_until_complete(asyncio.sleep(0))
+                if not asyncio.all_tasks(loop):
+                    break
             for t in [x for x in asyncio.all_tasks(loop) if not x.done()]:
                 t.cancel()
-            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+            loop.run_until_complete(
+                asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True),
+            )
         except Exception:
             pass
         loop.close()

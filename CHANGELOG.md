@@ -89,6 +89,25 @@
     全挂则整体 exit 1
   - 回归测试:`/tmp/test_retry{,_fail}.sh` 模拟 1 次失败 + 2 次过 / 全
     失败,确认 exit code + GitHub Actions 输出格式正确
+- **`test_main_window_initial` cleanup 加固**(2026-08-05,
+  `tests/test_visual_regression.py`):
+  - 之前的 cleanup:`asyncio.sleep(0)` 一次 + cancel + gather,留 2 个
+    RuntimeWarning + 1 个 DeprecationWarning
+  - 修法:
+    - `asyncio.set_event_loop(loop)` 显式钉当前 loop,消
+      "There is no current event loop" DeprecationWarning(Python 3.12+
+      严格要求)
+    - drain 改 `tick → 检查 → tick`,而不是先检查后 tick —
+      `run_coroutine_threadsafe` 内部用 `call_soon_threadsafe` 排
+      Task 创建,首次 tick 前 `asyncio.all_tasks` 是空,旧代码 `if not
+      all_tasks: break` 误判「已空」直接退出
+  - 已知限制:CI / 本地仍留 2 个
+    `MonitorViewModel.load_recent_messages.<locals>._go was never awaited`
+    RuntimeWarning — 根因是 `channels_changed` signal handler 触发
+    `_refresh_state` 又排新的 `load_recent_messages._go`,与 drain 产生
+    race。warning 不让 pytest fail,只是 noise。真传话的集成测试在
+    `test_main_window_channels.py::test_main_window_initial_refresh_state_is_empty`
+    用 `qloop` fixture 走标准 asyncio 测试路径,无 warning
 - **`closeEvent` 同步等 shutdown 协程:busy-poll → 嵌套 `QEventLoop`**(`[本轮]`, `ui/main_window.py`):
   - 之前:`while not fut.done(): qt.processEvents(); fut.result(timeout=0.05)` 高频循环
   - 现在:`QEventLoop.exec()` + `QTimer.singleShot(deadline_ms, subloop.quit)`
