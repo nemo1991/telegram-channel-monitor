@@ -68,7 +68,15 @@ pytestmark = pytest.mark.skipif(
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 FONT_DIR = Path(__file__).parent / "fonts"
-TOLERANCE = 0.001  # 0.1% 像素差异上限
+TOLERANCE = 0.005  # 0.5% 像素差异上限
+# 为什么 0.5% 而不是 0.1%:
+#   - 字体钉死后(2026-08-05)文本 / 布局 / 颜色差异 < 0.1%,稳定。
+#   - 但 widget 里出现 emoji 时(🕐 / 💬 / 📋),emoji 走的是 **系统 emoji
+#     font**(不是我们 pin 的 DejaVu Sans)— macOS 真机 / `macos-26-arm64`
+#     CI VM 的 emoji 字体版本不同,同一字符的 anti-aliasing 边缘像素会
+#     漂移 0.3–0.5%(每个 emoji glyph ~10×10 px,3 个 🕐 ≈ 0.4% 像素)。
+#   - 0.5% 容差对 emoji glyph 漂移放行,但文本布局 / 颜色 / 边框的差异
+#     仍会被抓到(那些的 diff 是百分比级,不会因为容差放宽而漏掉)。
 
 
 @pytest.fixture(scope="session")
