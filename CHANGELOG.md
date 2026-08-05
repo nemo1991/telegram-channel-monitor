@@ -44,6 +44,20 @@
   - 结果:**107 → 0 错 / 22 文件**,pytest 全过,ruff 0 warning
 
 ### 🔧 Changed
+- **视觉 golden 字体钉死:内置 DejaVu Sans,跨机渲染一致**(`[本轮]`, `tests/`):
+  - 根因:GitHub `macos-latest` 滚到 `macos-26-arm64`(macOS 26.5.2 / 25F84)后,
+    CI VM 与真机对 Qt 默认字体 "Sans Serif" 的解析不同 → 相同 OS / arch / Qt
+    (6.11.1)下 widget sizeHint 与字形 metrics 漂移,8/8 visual golden 全挂
+    (尺寸差几 px / 像素差异 1–18%),且**没有任何一套 golden 能同时绿两个环境**
+  - 修法:`tests/test_visual_regression.py` 的 `qapp` fixture 加载仓库内置
+    `tests/fonts/DejaVuSans.ttf`(自由可再分发,Bitstream Vera + 增量,见
+    `LICENSE-DejaVu.txt`),`app.setFont` 固定 `pixelSize(12)` — 同一个字体
+    文件 + 固定像素尺寸,metrics 完全由字体二进制决定,与系统字体数据库 /
+    DPI 无关,本地与 CI 字节级一致
+  - 8 个 golden 重新生成(`channel_widget` 325×395→323×386 等,text 驱动的
+    widget 尺寸变化;固定尺寸 widget 不变);`UPDATE_GOLDENS=1` 重跑即可
+  - 无 `font-family` 的 QSS 覆盖 + 视觉测试不 apply theme QSS → 全 widget
+    走 app default font,钉死有效;后续若 UI 加硬编码 `QFont` 需同步钉死
 - **`closeEvent` 同步等 shutdown 协程:busy-poll → 嵌套 `QEventLoop`**(`[本轮]`, `ui/main_window.py`):
   - 之前:`while not fut.done(): qt.processEvents(); fut.result(timeout=0.05)` 高频循环
   - 现在:`QEventLoop.exec()` + `QTimer.singleShot(deadline_ms, subloop.quit)`

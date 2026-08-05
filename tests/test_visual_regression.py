@@ -29,6 +29,16 @@
   会因字体 hinting / anti-aliasing 不同 → 失败。CI 需固定 OS + Qt 版本,
   或在 goldens 上加 platform 标记(本轮不展开)
 - offscreen 渲染丢 DPI 高分屏,真机 1.25x/1.5x 缩放下可能轻微偏移
+
+# 字体钉死(2026-08-05)
+
+GitHub `macos-latest` 从 Intel 镜像滚到 `macos-26-arm64` 后,CI 与真机对
+Qt 默认字体 "Sans Serif" 的解析不同 → 相同 OS/arch/Qt 下 widget sizeHint
+与字形 metrics 漂移(8/8 golden 全挂:尺寸差几 px / 像素差异 1–18%)。
+修复:fixture 里加载仓库内置的 DejaVu Sans(自由可再分发,见
+`tests/fonts/LICENSE-DejaVu.txt`),并 `app.setFont` 固定 pixelSize——
+同一个字体文件 + 固定像素尺寸,metrics 完全由字体二进制决定,与系统
+字体数据库 / DPI 无关,本地与 CI 字节级一致。
 """
 from __future__ import annotations
 
@@ -57,13 +67,31 @@ pytestmark = pytest.mark.skipif(
 )
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
+FONT_DIR = Path(__file__).parent / "fonts"
 TOLERANCE = 0.001  # 0.1% 像素差异上限
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    """Qt offscreen QApplication 单例 — 跟其他 UI 测试同款 pattern。"""
+    """Qt offscreen QApplication 单例 — 跟其他 UI 测试同款 pattern。
+
+    额外做两件事,让 golden 渲染在生成机与 CI 上字节级一致:
+    1. 加载仓库内置的 DejaVu Sans(不用系统默认 "Sans Serif")— CI VM
+       与真机对 "Sans Serif" 的解析不同,是 golden 跨机漂移的根因
+    2. `app.setFont` 用固定 **pixelSize**(不用 pointSize)— pixelSize 忽略
+       DPI,尺寸完全由字体二进制决定,本地 / CI 一致
+    """
+    from PySide6.QtGui import QFont, QFontDatabase
+
     app = QApplication.instance() or QApplication([])
+    font_path = str(FONT_DIR / "DejaVuSans.ttf")
+    fid = QFontDatabase.addApplicationFont(font_path)
+    assert fid != -1, f"bundled font failed to load: {font_path}"
+    families = QFontDatabase.applicationFontFamilies(fid)
+    assert families, f"bundled font registered no families: {font_path}"
+    f = QFont(families[0])
+    f.setPixelSize(12)
+    app.setFont(f)
     yield app
 
 
