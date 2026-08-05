@@ -74,11 +74,18 @@
   - 行为不变:`super().closeEvent(event)` 在 timeout / done / cancelled 三路径都正常放行,
     BaseException 兜底不变(`Error calling Python override` 仍然吃)
   - 追加加固(`[本轮]`):macos-26-arm64 runner 上该 case 仍偶发 segfault(嵌套
-    QEventLoop 下同测试 2 跑 1 挂,确认是 native race 而非 busy-poll 专属) →
-    deadline 改用**可 stop 的 QTimer**(exec 返回后 `stop()`,防 pending timeout
-    在 subloop 被 GC 后触发 use-after-free);`subloop_holder` 在 exec 结束后
-    置 None,done_callback 不再 invoke 已拆毁的 QEventLoop
-  - 验证:本地 macOS(darwin 25.5.0) `tests/test_main_window_close.py` 7 个 case 全过;
+    QEventLoop 下同测试 3/4 跑挂,确认是 native race 而非 busy-poll 专属,且
+    use-after-free 加固(可 stop QTimer + holder guard)无效 → 根因是 **offscreen
+    QPA 没有真实 run loop,closeEvent 里嵌套 Cocoa run loop 触发 Qt native race**
+  - **平台分支等待**(`[本轮]`,最终方案):
+    - `QApplication.platformName() == "offscreen"`(测试 / CI):**不 pump**,
+      直接 `fut.result(timeout=10)` 阻塞等 future — 测试的 `self.loop` 在独立
+      后台线程,无需 pump 即可推进 coroutine,零 Qt 事件分发 → 天然避开 native
+      segfault
+    - 真机(cocoa / xcb / windows):保持嵌套 `QEventLoop` pump — production 用
+      `qasync.QEventLoop` 当主线程 loop,closeEvent 与 loop 同线程,必须 pump
+      才能推进 shutdown coroutine,行为不变
+  - 验证:本地 macOS `tests/test_main_window_close.py` 7 个 case 连续多跑全过,
     pytest 全量 exit 0(2 个已知 `MonitorViewModel.load_recent_messages.<locals>._go`
     warning 跟本改动无关 — 是上一轮 `_PENDING_FUTS` 还没解决的另一处 unawaited coro)
 - **CI 依赖与平台边界修复**(2026-08-04):

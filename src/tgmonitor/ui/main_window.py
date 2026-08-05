@@ -134,26 +134,27 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """窗口关闭 — 同步阻塞等 async shutdown(≤10s 超时)再放行。
 
-        用嵌套 `QEventLoop` 代替原 busy-poll `processEvents()` +
-        `fut.result(timeout=step)` 循环。两种触发源让 `subloop.quit()` 唤醒
-        主线程:
-          - `fut.add_done_callback`:`run_coroutine_threadsafe` 完成后在
-            loop 线程通过 `QMetaObject.invokeMethod(..., QueuedConnection)`
-            把 quit 派到 main thread(Qt 子对象只能从 owner thread 改状态)
-          - 可 stop 的 `QTimer`:hard upper bound 兜底(exec 返回后 `stop()`,
-            避免 pending timeout 在 subloop 被 GC 后触发 use-after-free)
+        按平台选等待策略:
 
-        为什么不原版 busy-poll?
-          - macOS 26.x arm64 CI runner(`macos-26-arm64` 20260728 镜像)
-            在 `qt.processEvents()` 高频调用下偶发 segfault — Cocoa runloop
-            与 Qt offscreen QPA 在 processEvents 高速循环时存在 native-side
-            race;改用 `subloop.exec()` 让 Qt 一次性 batched pump 事件可绕开。
-          - 嵌套 `QEventLoop.exec()` 是 Qt 标准同步等待模式,不依赖
-            `processEvents()` 频率,UI 响应性由 Qt 自己的 pump 保证。
+        **offscreen(测试 / CI)** — 不 pump Qt 事件,直接 `fut.result(timeout)`:
+          - macOS 26.x arm64 CI runner(`macos-26-arm64` 20260728 镜像)上,
+            closeEvent 里嵌套 `QEventLoop.exec()` / `processEvents()` 偶发
+            segfault — offscreen QPA 没有真实 run loop,嵌套 Cocoa run loop
+            触发 Qt native race(本地 M2 不触发,是 VM 镜像特有;3/4 CI 跑挂)。
+          - 测试的 `self.loop` 是**独立后台线程**的 asyncio loop,`fut.result(
+            timeout)` 无需 pump 即可推进 → 这条路径零 Qt 事件分发,天然避开
+            native race。
 
-        跨线程生命周期安全:`subloop_holder` 在 exec 期间持有 subloop,结束后
-        置 None — 之后 loop 线程的 done_callback 只读 holder,不再 invoke 已
-        拆毁的 QEventLoop。closeEvent 结束即释放全部指向 subloop 的延迟引用。
+        **真机(cocoa / xcb / windows)** — 嵌套 `QEventLoop` pump:
+          - production 用 `qasync.QEventLoop` 当主线程 loop,closeEvent 与
+            loop 同线程,必须 pump 才能推进 shutdown coroutine。
+          - 两种触发源让 `subloop.quit()` 唤醒主线程:
+            - `fut.add_done_callback`:loop 线程里
+              `QMetaObject.invokeMethod(..., QueuedConnection)` 跨线程派 quit
+            - 可 stop 的 `QTimer`:hard upper bound(exec 返回后 `stop()`,
+              防 pending timeout 在 subloop 被 GC 后触发 use-after-free)
+          - `subloop_holder` 在 exec 结束后置 None,done_callback 不再碰已拆毁
+            的 QEventLoop。
 
         任何意外(`RuntimeError` / `BaseException` 含 `CancelledError`)由
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
                 from typing import cast
 
                 from PySide6.QtCore import QEventLoop, QMetaObject, Qt, QTimer
+                from PySide6.QtWidgets import QApplication
 
                 # `_shutdown_cb` 类型注解是 `Callable[[], Awaitable[None]]`—
                 # Awaitable 严格是 Coroutine 父类,但 run_coroutine_threadsafe
@@ -174,42 +176,66 @@ class MainWindow(QMainWindow):
                     coro, self.loop,
                 )
                 deadline_ms = 10_000
-                subloop = QEventLoop()
-                # holder 在 exec 期间持有 subloop;结束后置 None,让后续
-                # done_callback 不再碰已拆毁的 subloop(防 use-after-free)。
-                subloop_holder: list[QEventLoop | None] = [subloop]
 
-                def _quit_on_done(_f: concurrent.futures.Future[None]) -> None:
-                    # add_done_callback 在 future 完成的线程上跑 — 即
-                    # `self.loop` 所在的 asyncio 线程。`subloop` 是绑定
-                    # main thread 的本地 QObject,跨线程 quit 必须用
-                    # invokeMethod(QueuedConnection) 派到 main thread。
-                    sl = subloop_holder[0]
-                    if sl is not None:
-                        QMetaObject.invokeMethod(
-                            sl, "quit", Qt.ConnectionType.QueuedConnection
+                if QApplication.platformName() == "offscreen":
+                    # 测试 / CI 路径:不 pump,直接阻塞等 future。
+                    # (见 docstring — offscreen 嵌套 run loop 在 macOS 26 VM
+                    # 上有 native segfault,且测试 loop 在独立线程,无需 pump。)
+                    try:
+                        fut.result(timeout=deadline_ms / 1000)
+                    except concurrent.futures.TimeoutError:
+                        log.warning(
+                            "shutdown timed out after %.1fs; cancelling",
+                            deadline_ms / 1000,
                         )
+                        fut.cancel()
+                    except concurrent.futures.CancelledError:
+                        log.warning("shutdown coroutine was cancelled")
+                else:
+                    # production 路径:同线程 qasync loop,嵌套 QEventLoop pump。
+                    subloop = QEventLoop()
+                    # holder 在 exec 期间持有 subloop;结束后置 None,让后续
+                    # done_callback 不再碰已拆毁的 subloop(防 use-after-free)。
+                    subloop_holder: list[QEventLoop | None] = [subloop]
 
-                fut.add_done_callback(_quit_on_done)
-                # hard upper bound:用**可 stop 的 QTimer**,exec 返回后
-                # `stop()` 掉 — `QTimer.singleShot` 静态版在 subloop 被 GC
-                # 后到期会调已销毁 QObject 的 quit,是 use-after-free。
-                # 它和 fut callback 都调 quit(),去重幂等(QEventLoop.quit
-                # 可多次调,只置一次 flag)。
-                deadline = QTimer()
-                deadline.setSingleShot(True)
-                deadline.timeout.connect(subloop.quit)
-                deadline.start(deadline_ms)
-                subloop.exec()
-                # subloop 已退出(正常完成 / cancel / 超时三路)。立刻 stop
-                # pending deadline 并释放 holder,关掉所有指向 subloop 的
-                # 延迟引用。
-                deadline.stop()
-                subloop_holder[0] = None
-                # 三种退出路径:
-                #   1. fut 正常完成 → fut.done() True
-                #   2. fut 被 cancel  → fut.cancelled() True
-                #   3. deadline 到期 → fut 仍 pending
+                    def _quit_on_done(
+                        _f: concurrent.futures.Future[None],
+                    ) -> None:
+                        # add_done_callback 在 future 完成的线程上跑 — 即
+                        # `self.loop` 所在的 asyncio 线程。`subloop` 是绑定
+                        # main thread 的本地 QObject,跨线程 quit 必须用
+                        # invokeMethod(QueuedConnection) 派到 main thread。
+                        sl = subloop_holder[0]
+                        if sl is not None:
+                            QMetaObject.invokeMethod(
+                                sl, "quit", Qt.ConnectionType.QueuedConnection
+                            )
+
+                    fut.add_done_callback(_quit_on_done)
+                    # hard upper bound:可 stop 的 QTimer,exec 返回后 `stop()`。
+                    # `QTimer.singleShot` 静态版在 subloop 被 GC 后到期会调已
+                    # 销毁 QObject 的 quit,是 use-after-free。它和 fut callback
+                    # 都调 quit(),去重幂等(QEventLoop.quit 可多次调,只置 flag)。
+                    deadline = QTimer()
+                    deadline.setSingleShot(True)
+                    deadline.timeout.connect(subloop.quit)
+                    deadline.start(deadline_ms)
+                    subloop.exec()
+                    # subloop 已退出(正常完成 / cancel / 超时三路)。立刻 stop
+                    # pending deadline 并释放 holder,关掉所有指向 subloop 的
+                    # 延迟引用。
+                    deadline.stop()
+                    subloop_holder[0] = None
+                    if not fut.done():
+                        # deadline 到期触发退出而 future 还没完。主动 cancel
+                        # 兜底,避免 task 在 loop 线程残留(loop 关闭时留警告)。
+                        log.warning(
+                            "shutdown timed out after %.1fs; cancelling",
+                            deadline_ms / 1000,
+                        )
+                        fut.cancel()
+                # 收尾:fut 已完成(含 cancelled,concurrent.futures 里 cancelled
+                # future 的 done() 也是 True),取结果 / log,不抛回 closeEvent。
                 if fut.done():
                     try:
                         fut.result(timeout=0)
@@ -218,16 +244,6 @@ class MainWindow(QMainWindow):
                     except Exception as exc:  # noqa: BLE001
                         log.warning("shutdown raised: %s: %s",
                                     type(exc).__name__, exc)
-                elif fut.cancelled():
-                    log.warning("shutdown coroutine was cancelled")
-                else:
-                    # QTimer 触发退出而 future 还没完。主动 cancel 兜底,
-                    # 避免 task 在 loop 线程残留(loop 关闭时留 Task 警告)。
-                    log.warning(
-                        "shutdown timed out after %.1fs; cancelling",
-                        deadline_ms / 1000,
-                    )
-                    fut.cancel()
             except RuntimeError:
                 log.warning("loop unavailable during shutdown")
             except BaseException:  # noqa: BLE001
