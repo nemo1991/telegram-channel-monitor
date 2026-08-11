@@ -13,12 +13,15 @@
   - `state_badge(state)` — 圆点 + 标签 拼接 ("🟢 已登录"),给 dashboard card
   - `state_hint(state)` — 行动建议文字(给新用户引导)
 
-新增状态时,只需在 `STATE_DOT` / `STATE_LABEL` 各加一行,任意 caller 复用。
+新增状态时,只需在 `STATE_DOT` / `STATE_LABEL` / `STATE_HINT` 各加一行,任意 caller 复用。
 """
 from __future__ import annotations
 
-# 9 个 TDLib 登录状态 — 上游 `TgLibTelegramClient.start()` 返回值 + 状态机过渡。
-# 完整流程:uninit → phone_required → code_required → password_required → ready
+# 13 个 TDLib 登录状态 — 上游 `TdlibTelegramClient.start()` 返回值 + 状态机过渡。
+# 完整流程:uninit → tdlib_parameters → phone_required → code_required
+#           → password_required → ready
+# 稀有分支:WaitEmailAddress → email_required → email_code_required
+#           WaitRegistration → registration_required
 #           ready → logging_out → closed
 # 错误:任意状态 → error →  待手动 close
 # 关闭:任意状态 → closing → closed
@@ -27,10 +30,14 @@ STATE_DOT: dict[str, str] = {
     "error": "🔴",
     "phone_required": "🟡",
     "code_required": "🟡",
+    "email_required": "🟡",
+    "email_code_required": "🟡",
+    "registration_required": "🟡",
     "password_required": "🟡",
     "closed": "⚪",
     "logging_out": "⏳",
     "closing": "⏳",
+    "tdlib_parameters": "⚪",
     "uninit": "⚪",
 }
 
@@ -39,10 +46,14 @@ STATE_LABEL: dict[str, str] = {
     "error": "错误",
     "phone_required": "未登录",
     "code_required": "需验证码",
+    "email_required": "需邮箱地址",
+    "email_code_required": "需邮箱验证码",
+    "registration_required": "需注册",
     "password_required": "需 2FA",
     "closed": "会话关闭",
     "logging_out": "登出中…",
     "closing": "关闭中…",
+    "tdlib_parameters": "初始化中…",
     "uninit": "启动中…",
 }
 
@@ -52,10 +63,14 @@ STATE_HINT: dict[str, str] = {
     "error": "点击设置 → 账户 检查凭据 / 重启",
     "phone_required": "点击设置 → 账户 填写 API ID / Hash / 手机号",
     "code_required": "弹窗已出 — 输入 Telegram 验证码",
+    "email_required": "弹窗已出 — 输入绑定的邮箱地址",
+    "email_code_required": "弹窗已出 — 输入邮箱收到的验证码",
+    "registration_required": "弹窗已出 — 完成注册",
     "password_required": "弹窗已出 — 输入 2FA 密码",
     "closed": "已登出;打开设置 → 账户 重新登录",
     "logging_out": "正在登出…",
     "closing": "正在关闭…",
+    "tdlib_parameters": "正在初始化 TDLib — 若长时间停留请检查 API ID / Hash 后重启",
     "uninit": "未启动 — 正常情况会在 1-2 秒内到 ready",
 }
 

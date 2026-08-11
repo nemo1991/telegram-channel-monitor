@@ -117,6 +117,13 @@ class TdlibTelegramClient(_AiClient):
     # SOCKS5 代理冷启动通常 15-25s 才连上 DC,留 30s 余量。
     _BOOT_TIMEOUT = 30.0
 
+    # 启动期"瞬态"状态 — `start()` 等首个状态推进后若仍停在这些状态,
+    # 说明 setTdlibParameters 还没生效 / 被 TDLib 拒绝(如 api_id/api_hash 无效),
+    # 给它 `_SETTLE_GRACE` 秒宽限;再不走就按 seen error codes 转可见错误,
+    # 避免 UI 永远停在 `tdlib_parameters` 裸标签。
+    _BOOT_TRANSIENT_STATES: frozenset[str] = frozenset({"uninit", "tdlib_parameters"})
+    _SETTLE_GRACE = 5.0
+
     def __init__(self, settings: Settings, *, event_bus: Any | None = None) -> None:
         """`settings` = Telegram / DB / 代理等配置;`event_bus` = 可选 UI 事件总线。
 
@@ -440,11 +447,29 @@ class TdlibTelegramClient(_AiClient):
         t = _t.monotonic()
         await self.send({"@type": "getAuthorizationState"})
         log.info("[tdlib] getAuthorizationState sent in %.3fs", _t.monotonic() - t)
-        # 等状态机推进 — 任何非 bo 状态都意味着启动成功
+        # 等状态机推进 — 首次推进常停在 `tdlib_parameters`(tdlib_json 自动发
+        # setTdlibParameters 之后才继续)。给它 `_SETTLE_GRACE` 宽限:若 TDLib
+        # 因 setTdlibParameters 被拒(api_id/api_hash 无效,code=400)而卡在
+        # WaitTdlibParameters,seen error codes 会累积 — 转成可见错误,而不是
+        # 让 UI 永远停在 `tdlib_parameters` 裸标签。
         t = _t.monotonic()
         log.info("[tdlib] waiting for state machine to advance (current=%s)…",
                  self._state)
         await self._state_event.wait()
+        while self._state in self._BOOT_TRANSIENT_STATES:
+            log.info("[tdlib] state=%s still transient, waiting to settle…",
+                     self._state)
+            self._state_event.clear()
+            try:
+                await asyncio.wait_for(
+                    self._state_event.wait(), timeout=self._SETTLE_GRACE,
+                )
+            except TimeoutError:
+                err_detail = _translate_boot_error(self._seen_error_codes)
+                log.error("[tdlib] stuck in %s: %s", self._state, err_detail)
+                await self._kill_client()
+                self._set_state("error", detail=err_detail)
+                return
         log.info("[tdlib] state machine advanced to %s in %.3fs",
                  self._state, _t.monotonic() - t)
 
