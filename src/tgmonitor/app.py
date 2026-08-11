@@ -3,7 +3,7 @@
 唯一启动入口 `run()`;装配顺序:
     Settings → EventBus → Storage(connect + init_schema)
                     → ObjectStore(connect)
-                    → TelegramClient(aiotdlib or fake)
+                    → TelegramClient(TdlibJsonClient or fake)
                     → MonitorService
                     → AppService
                     → UI(QMainWindow)
@@ -62,7 +62,10 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
     )
 
     t = time.monotonic()
-    # 默认尝试 aiotdlib;失败回退 fake(开发/CI 无凭据也能跑)
+    # 凭据未配置时,factory 返回占位 client(UnconfiguredTelegramClient)→ UI
+    # 正常启动,显示"未登录"引导,用户在 设置 → 账户 填好凭据重启即可。
+    # 真 client 构造失败(如 libtdjson 缺失)仍上抛 → 走 setup 失败弹窗;不
+    # 静默回退 fake(历史 bug #22:吞异常返 Fake 导致"无 libtdjson 也能 ready")。
     client = build_telegram_client(settings, use_fake=False, event_bus=bus)
     log.info(
         "[bootstrap] telegram client built in %.2fs kind=%s",
@@ -140,7 +143,7 @@ def run() -> None:
     **关键区别 — 取消 `loop.run_until_complete`**:
     旧版用 `loop.run_until_complete(_setup_async)` 再 `run_forever()`,中间
     qasync 的 `__is_running` 被设为 False,asyncio `_set_running_loop(None)`,
-    Tasks 处于 paused 状态。aiotdlib 内部 thread 在这段窗口发 IO wakeup 时,
+    Tasks 处于 paused 状态。tdlib_json 内部 thread 在这段窗口发 IO wakeup 时,
     `Task.__step()` 检查 "loop is the running loop" 失败,抛 `RuntimeError:
     loop ... is not the running loop`,日志刷「qasync._QEventLoop: Exception in
     callback Task.task_wakeup()」。
@@ -232,7 +235,7 @@ def run() -> None:
             from tgmonitor.ui.main_window import MainWindow
             win = MainWindow(app_svc, monitor, loop, env_path=env_path)
             # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
-            # 然后再让 Qt 进入 quit 流程 — 这样 aiotdlib client.close() / TDLib
+            # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
             # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
             # "mutex lock failed: Invalid argument" 析构崩溃。
             win.set_shutdown_callback(_shutdown_async)

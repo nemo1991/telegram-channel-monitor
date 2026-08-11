@@ -100,7 +100,7 @@ def test_close_propagates_callback_exception_but_still_quits(qapp, loop_thread):
     """shutdown 抛异常时,closeEvent 不应再弹框或阻止 Qt 退出。"""
 
     async def cb() -> None:
-        raise RuntimeError("aiotdlib close failed")
+        raise RuntimeError("tdlib_json close failed")
 
     win = _FakeMainWindow(loop_thread.asyncio_loop)
     win.set_shutdown_callback(cb)

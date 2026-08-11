@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import AsyncIterator, Iterator
 
@@ -229,28 +230,34 @@ def make_photo(channel_id: int = 100, msg_id: int = 1) -> MessageDTO:
     )
 
 
-# ---- aiotdlib stub ---------------------------------------------------
-# 背景:`aiotdlib.Client.__init__` 会调 native `td_json_client_create()`,
-# stub 仍保留:本地 pyenv/老 Python 上偶发 native 析构挂死,
-# 单元测试无需为此 surface area。任何要构造 `TdlibTelegramClient` 的测试都
-# 需要这个 stub —
-# 它把父类 __init__ 换成 no-op,只塞一些 aiotdlib 期望的内部属性。
+# ---- tdlib_json stub -------------------------------------------------
+# 背景:`tdlib_json.TdlibJsonClient.__init__` 会调 native `TDJsonClient.create()`
+# 加载 libtdjson,stub 仍保留:单元测试无需为此 surface area(也避免本机
+# 没编译 libtdjson 时无法构造 client)。任何要构造 `TdlibTelegramClient` 的
+# 测试都需要这个 stub —
+# 它把父类 __init__ 换成 no-op,只塞一些 TdlibJsonClient 期望的内部属性。
 # 之前定义在 test_telegram_lifecycle.py;提到 conftest 后
 # test_main_window_channels.py / test_live_updates.py 也能复用。
 @pytest.fixture
-def stub_aiotdlib_init() -> Iterator[None]:
-    """把 aiotdlib.Client.__init__ 换成 no-op,跳过 native 加载。"""
+def stub_tdlib_init() -> Iterator[None]:
+    """把 tdlib_json.TdlibJsonClient.__init__ 换成 no-op,跳过 native 加载。"""
     original = tdc._AiClient.__init__
 
     def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        self._update_task = None
+        # 与真实 TdlibJsonClient.__init__ 的属性集合对齐 — 注意**不**设
+        # `_state`:子类 TdlibTelegramClient 已在 super() 前设好 "uninit",
+        # 这里覆盖会丢状态机初值。
+        self.settings = kwargs.get("parameters") or (args[0] if args else None)
+        self.proxy = kwargs.get("proxy")
+        self.library_path = None
+        self.logger = logging.getLogger("stub_tdlib_json")
+        self._authorized_event = asyncio.Event()
         self._running = False
+        self._update_task = None
         self._handlers_tasks = set()
         self._pending_requests = {}
         self._pending_messages = {}
         self._updates_handlers = {}
-        self._authorized_event = asyncio.Event()
-        self._state = ""
         self._middlewares = []
         self._middlewares_handlers = []
         self.tdjson_client = type(
@@ -263,9 +270,8 @@ def stub_aiotdlib_init() -> Iterator[None]:
                 "execute": _noop_execute,
             },
         )()
-        self.settings = kwargs.get("settings") or (args[0] if args else None)
 
-    def _noop_send(*a, **k):
+    async def _noop_send(*a, **k):
         return None
 
     async def _noop_close(*a, **k):

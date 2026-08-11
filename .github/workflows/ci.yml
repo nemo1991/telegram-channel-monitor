@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-        # windows-latest 不在 matrix — upstream aiotdlib 0.27.x 不发布
-        # Windows wheel,uv sync 在 Windows 会触发 TDLib sdist 编译,
-        # 需 MSVC + OpenSSL + gperf + PHP,windows-latest runner 没装,
-        # 必失败。源码层跨平台(全 pathlib / 无 POSIX-only 假设),但
+        # windows-latest 不在 matrix — libtdjson 只提供 macOS / Linux
+        # 预编译产物(scripts/build_libtdjson.sh 只支持这两种系统),
+        # Windows 上没有现成 libtdjson,CI 无法跑通 TDLib 相关测试。
+        # 源码层跨平台(全 pathlib / 无 POSIX-only 假设),但
         # 不在 CI 验证 — 见 README"Platform Support"
         os: [ubuntu-latest, macos-latest]
 
@@ -41,7 +41,7 @@ jobs:
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
       # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好。
-      # libc++-dev 给 aiotdlib 的 bundled TDLib .so 提供 libc++.so.1
+      # libc++-dev 给 libtdjson(TDLib 原生库)提供 libc++.so.1
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -58,7 +58,7 @@ jobs:
           sudo ldconfig
 
       # uv sync 一次性装:
-      #   - [project.dependencies] (PySide6 / qasync / aiotdlib / pydantic-settings / Jinja2)
+      #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
       #   - [project.optional-dependencies] 全部 (postgres/mongo/objectstore)
       #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
       # `-q` 关 progress bar,CI 日志干净
@@ -178,14 +178,14 @@ jobs:
     # ui/ + app.py 走 per-file `# mypy: disable-error-code="attr-defined"`
     # 屏蔽 PySide6 stub 不全噪声,留下 union-attr / var-annotated 等真错。
     # telegram 子包走 `# mypy: disable-error-code="misc,assignment"`
-    # 屏蔽 aiotdlib `None` 占位与 pydantic stub 不全噪声。
+    # 屏蔽 tdlib_json / pydantic stub 不全噪声。
     name: mypy (${{ matrix.module }} / ${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # 5 个 core 业务子包 + 1 UI 子包 + app.py 顶层入口 + 整 src 全局 sanity check。
-        # 历史:`core/telegram/` 首发(aiotdlib stub 完整性,35 → 0 ignores 守住),
+        # 历史:`core/telegram/` 首发(tdlib_json stub 完整性,35 → 0 ignores 守住),
         # 2026-08-04 加 ui/ + app.py(per-file attr-defined 关掉,107 → 0 错),
         # 加 `src` 整包守住 `settings_store.py` + `tdlib_channels.py` +
         # `tdlib_proxy.py` + `tdlib_messages.py`(71 → 0 错)。
@@ -212,7 +212,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      # 装 dev + extras 让 aiotdlib / pydantic / platformdirs / pydantic_settings
+      # 装 dev + extras 让 tdlib_json / pydantic / platformdirs / pydantic_settings
       # 全可 import,否则 mypy 报 missing-imports(已被 [tool.mypy.overrides]
       # 屏蔽但 warning 仍多,污染日志)
       - name: Install dependencies

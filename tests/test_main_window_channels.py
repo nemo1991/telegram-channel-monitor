@@ -33,7 +33,7 @@ from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
-# `stub_aiotdlib_init` fixture 由 tests/conftest.py 统一提供
+# `stub_tdlib_init` fixture 由 tests/conftest.py 统一提供
 
 
 class _LoopThread:
@@ -181,7 +181,7 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
     这是 2026-07-18 用户报的"已监听 + 已加入频道在登录状态下打开应用
     的时候未显示"的疑似根因:
-      - aiotdlib 触发 updateAuthorizationState(WaitTdlibParameters / ... /
+      - TDLib 触发 updateAuthorizationState(WaitTdlibParameters / ... /
         Ready) 一系列事件后才最终到 Ready;
       - `start()` await 的 `_state_event.wait()` 任何状态变化都 set,
         所以 start() 可能在 WaitTdlibParameters 就返,state 不是 "ready";
@@ -191,7 +191,7 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
     测试:
       1. VM.bootstrap_ui 时 client._state == "tdlib_parameters"
-         (中间态,模拟 aiotdlib 还没走完)
+         (中间态,模拟 TDLib 还没走完)
       2. 200ms 后,_state 跳到 "ready"
       3. 等 ≤ 2s,known_channels 应填入 2 个频道 — 不是空
     """
@@ -237,7 +237,7 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
         vm = MonitorViewModel(app_svc, monitor, qloop)
 
-        # 200ms 后,模拟 aiotdlib 推到 ready
+        # 200ms 后,模拟 TDLib 推到 ready
         _th.Timer(0.2, lambda: setattr(client, "_state", "ready")).start()
 
         vm.bootstrap_ui()
@@ -255,11 +255,11 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
 
 def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
-    qapp, qloop, tmp_path, stub_aiotdlib_init,
+    qapp, qloop, tmp_path, stub_tdlib_init,
 ):
     """直接打 TdlibTelegramClient.list_joined_channels:生产代码确实有
     `_state != "ready"` 早返 guard,但 fire-and-forget 调用时机可能正撞
-    上 aiotdlib 的 "WaitTdlibParameters → Ready" 序列中间态。
+    上 TDLib 的 "WaitTdlibParameters → Ready" 序列中间态。
 
     如果 list_joined_channels 在 _state 不是 ready 时立即 [],bootstrap_ui
     race 时机下永远拿不到 channels。
@@ -326,7 +326,7 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
 
 
 def test_wait_for_state_does_not_spin_when_event_already_set(
-    qapp, qloop, tmp_path, stub_aiotdlib_init,
+    qapp, qloop, tmp_path, stub_tdlib_init,
 ):
     """`_state_event` 是 set-only — 一旦被前面的 `_set_state(...)` set 住,
     后续 `wait()` 立即返回,不等 CPU。如果 `_wait_for_state` 用纯

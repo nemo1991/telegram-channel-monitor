@@ -32,8 +32,7 @@ class TestParseSocks5Proxy:
         assert out is not None
         assert out.host == "127.0.0.1"
         assert out.port == 1080
-        # aiotdlib 的 ProxyTypeSocks5 是 pydantic v2 严格 str,None 会 ValidationError —
-        # 我们内部统一用空串
+        # Socks5Proxy 的 username/password 是严格 str — 无凭据时内部统一用空串
         assert out.username == ""
         assert out.password == ""
         # SOCKS5 是默认值
@@ -140,100 +139,82 @@ class TestSettingsProxyRoundTrip:
         assert any(line.startswith("#") for line in env.raw_lines)
 
 
-# ---- TdlibClient wiring:parse_socks5_proxy → ClientSettings.proxy_settings ----
-# 注:TdlibTelegramClient 现在 subclass aiotdlib.Client,真接鉴权;
-# 直接测试需要在不实例化 aiotdlib.Client 的前提下覆盖其父 __init__,
-# 比较曲折。下面是纯函数 / kwargs 形状 的单元测试 + 真实解析的端到端校验。
+# ---- TdlibClient wiring:parse_socks5_proxy → TdlibJsonClient(proxy=...) ----
+# 注:TdlibTelegramClient 现在内部持 tdlib_json.TdlibJsonClient(自编译 libtdjson
+# 的 ctypes 绑定),proxy 以 Socks5Proxy dataclass 传构造。下面是纯函数 /
+# kwargs 形状 的单元测试 + 真实解析的端到端校验。
 
-def test_parse_socks5_proxy_returns_client_proxy_settings() -> None:
-    """parse_socks5_proxy() 必须产 aiotdlib 真客户端能吃的对象。
+def test_parse_socks5_proxy_returns_socks5_proxy() -> None:
+    """parse_socks5_proxy() 必须产 TdlibJsonClient 构造能吃的 Socks5Proxy。
 
-    我们只断言 host/port/type 字段,因为只有 aiotdlib 关心 username/password 等细节。
+    Socks5Proxy 是普通 dataclass,断言 host/port/username/password 即可。
     """
     ps = parse_socks5_proxy("socks5://u:p@127.0.0.1:1080")
-    # 与 aiotdlib.ClientProxySettings 的字段一致
     assert ps.host == "127.0.0.1"
     assert ps.port == 1080
-    # type 可能是 SOCKS5 enum 或字符串
-    type_val = getattr(ps.type, "value", ps.type)
-    assert type_val == "socks5"
     assert ps.username == "u"
     assert ps.password == "p"
 
 
-def test_parse_socks5_proxy_no_creds_does_not_raise_pydantic_validation() -> None:
+def test_parse_socks5_proxy_no_creds_uses_empty_strings() -> None:
     """回归测试:无凭据 (`socks5://host:port`) 时 username/password 必须是 "" 而非 None。
 
     之前 bug: parse_socks5_proxy 把 username/password 设为 None,
-    aiotdlib 的 ProxyTypeSocks5(pydantic v2 严格 str) 触发 ValidationError,
-    跑到 aiotdlib start() 时崩溃。
+    Socks5Proxy 的严格 str 字段校验失败,跑到 start() 时崩溃。
     """
-    # 1) 解析成功
     ps = parse_socks5_proxy("socks5://127.0.0.1:1080")
     assert ps is not None
-    # 2) 字段类型必须是 str(不是 None),可被 aiotdlib 接受
+    # 字段类型必须是 str(不是 None),可被 TdlibJsonClient 接受
     assert isinstance(ps.username, str)
     assert isinstance(ps.password, str)
     assert ps.username == ""
     assert ps.password == ""
-    # 3) 若 aiotdlib 可用,真走一次 pydantic 校验,确保不会再抛 ValidationError
-    try:
-        from aiotdlib.client_settings import ClientProxySettings, ClientProxyType
-    except Exception:  # pragma: no cover
-        pytest.skip("aiotdlib not installed")
-    # 这正是 aiotdlib start() 里 _setup_proxy 干的事
-    ClientProxySettings(
-        host=ps.host,
-        port=ps.port,
-        type=ClientProxyType.SOCKS5,
-        username=ps.username,
-        password=ps.password,
-    )  # 不抛错即为通过
 
 
-def test_proxy_kwargs_passed_to_construct_via_factory() -> None:
-    """工厂在 proxy 非空时把 parsed ClientProxySettings 通过 ClientSettings 传递。
+def test_proxy_kwargs_passed_to_construct_via_factory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """工厂把 parsed Socks5Proxy 通过 `proxy=` 传给 TdlibJsonClient 构造。
 
-    这个测试不实例化真 Client —— 只验证 factory 路径上没有抛错 + 把
-    `proxy_settings` 字串解析为能进 aiotdlib 的对象。
+    用 monkeypatch 把 `tdc._AiClient.__init__` 换成探针:只记录 kwargs,
+    不触发 native libtdjson 加载 / 文件路径检查。settings 必须带 session_dir
+    (tmp_path),否则 `_load_or_create_encryption_key` 写真实 platformdirs。
     """
+    from tgmonitor.core.telegram import tdlib_client as tdc
     from tgmonitor.core.telegram.factory import build_telegram_client
 
-    # aiotdlib 不可用时 factory 会回退到 Fake,与本断言无关;
-    # 在 aiotdlib 可用环境,factory 返回 TdlibTelegramClient(继承链 — 调用 __init__ 时)
+    def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # 拦截真 client 构造,只验证 kwargs 内容;不调 super,避免 native 加载。
+        # add_event_handler 依赖 _updates_handlers(TdlibTelegramClient.__init__
+        # 在 super() 后要注册 updateNewMessage / "*" 两个 handler)。
+        self._updates_handlers = {}
+        self._captured = kwargs
+
+    monkeypatch.setattr(tdc._AiClient, "__init__", _safe_init)
     s = Settings(  # type: ignore[call-arg]
         _env_file=None,
         api_id=1,
         api_hash="x" * 16,
         phone="+100",
         proxy="socks5://u:p@127.0.0.1:1080",
+        session_dir=tmp_path / "session",
     )
-    # 不传 event_bus 时构造也该成功(只到 Client.__init__ 触发 library_path 检查会挂)
-    # 这里我们用 monkeypatch 把 aiotdlib.Client 换成 fake 以避开文件检查。
-    from tgmonitor.core.telegram import tdlib_client as tdc
-
-    original_init = tdc._AiClient.__init__
-
-    def _safe_init(self, *args, **kwargs):
-        # 拦截真 client 构造,只验证 kwargs 内容
-        self._captured = kwargs
-        # 不调 super,避免文件路径检查
-
-    tdc._AiClient.__init__ = _safe_init  # type: ignore[assignment]
-    try:
-        client = build_telegram_client(s, use_fake=False, event_bus=None)
-        # 验证 factory 返回了真 aiotdlib 实现(不是 Fake)
-        assert not hasattr(client, "fake_state") or not client.fake_state
-    except Exception:
-        # aiotdlib 真 ImportError → factory 抛 RuntimeError 或返回 Fake
-        pass
-    finally:
-        tdc._AiClient.__init__ = original_init  # type: ignore[assignment]
+    client = build_telegram_client(s, use_fake=False, event_bus=None)
+    # 工厂返回真 TdlibTelegramClient(不再 fallback fake)
+    assert isinstance(client, tdc.TdlibTelegramClient)
+    captured = client._captured  # type: ignore[attr-defined]
+    proxy = captured["proxy"]
+    assert proxy.host == "127.0.0.1"
+    assert proxy.port == 1080
+    assert proxy.username == "u"
+    assert proxy.password == "p"
+    assert captured["parameters"]["api_id"] == 1
+    assert captured["parameters"]["phone_number"] == "+100"
 
 
 def test_aio_event_emit_login_state_changed_via_bus() -> None:
-    """验证 aiotdlib 的 AuthorizationState ID → 我们字符串 映射 `_AUTH_STATE_MAP` 覆盖所有
-    关键状态。真正事件桥接需要 aiotdlib 在线跑,只能依赖手动 trigger;此处覆盖字典内容。
+    """验证 TDLib 的 authorizationState* → 我们字符串 映射 `_AUTH_STATE_MAP` 覆盖所有
+    关键状态。真正事件桥接需要真 libtdjson 在线跑,只能依赖手动 trigger;此处覆盖字典内容。
     """
     from tgmonitor.core.telegram.tdlib_proxy import _AUTH_STATE_MAP
 

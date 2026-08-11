@@ -2,14 +2,14 @@
 """TDLib 启动期 IO + 错误归一 — proxy 解析 / SOCKS5 握手 / 加密 key / boot 错误。
 
 模块拆分(2026-08-02):从 `tdlib_client.py` 抽出,定位是"启动 / 鉴权握手"
-相关的 pure helpers(无 class state,无 aiotdlib.Client 子类化)。
+相关的 pure helpers(无 class state,无 `TdlibJsonClient` 子类化)。
 
 包含:
-- `parse_socks5_proxy` (公开) — URL → `ClientProxySettings`
+- `parse_socks5_proxy` (公开) — URL → `Socks5Proxy`
 - `_load_or_create_encryption_key` — session 加密 key 持久化(rotate 支持)
 - `_probe_proxy` — 真做 SOCKS5 握手(不只是 TCP 通)
 - `_translate_boot_error` — start() 超时时把 seen codes 翻人话
-- `_AUTH_STATE_MAP` — `aiotdlib` `AuthorizationState.ID` → 字符串
+- `_AUTH_STATE_MAP` — TDLib `authorizationState*` 的 `@type` → 字符串
 
 不依赖 `TdlibTelegramClient` 类,可独立测试;`factory.py` 也复用 `parse_socks5_proxy`。
 """
@@ -21,56 +21,41 @@ import collections
 import logging
 import os
 import secrets
-from typing import Any
+
+from tdlib_json import Socks5Proxy
 
 log = logging.getLogger(__name__)
 
-try:
-    from aiotdlib.api import API
-    from aiotdlib.client_settings import (
-        ClientProxySettings,
-        ClientProxyType,
-    )
-except Exception:  # noqa: BLE001
-    API = None
-    ClientProxySettings = None
-    ClientProxyType = None
+# ---- TDLib authorizationState* 的 @type → 我们的字符串 ----
+# 注:与 TDLib 的 `authorizationState*` 常量一一对应;用裸字符串
+# 更稳,直接匹配 TDLib 返回的 `@type` 字段。
+
+_AUTH_STATE_MAP: dict[str, str] = {
+    "authorizationStateWaitTdlibParameters": "tdlib_parameters",
+    "authorizationStateWaitPhoneNumber": "phone_required",
+    "authorizationStateWaitCode": "code_required",
+    "authorizationStateWaitEmailAddress": "email_required",
+    "authorizationStateWaitEmailCode": "email_code_required",
+    "authorizationStateWaitRegistration": "registration_required",
+    "authorizationStateWaitPassword": "password_required",
+    "authorizationStateReady": "ready",
+    "authorizationStateLoggingOut": "logging_out",
+    "authorizationStateClosing": "closing",
+    "authorizationStateClosed": "closed",
+}
 
 
-# ---- aiotdlib AuthorizationState.ID → 我们的字符串 ----
-# 注:`API.Types.AUTHORIZATION_STATE_*` 是 aiotdlib 内部常量;
-# 用字符串常量更稳(aiotdlib 内部同样用字符串 key)。
+def parse_socks5_proxy(url: str | None) -> Socks5Proxy | None:
+    """`socks5://[user:pass@]host:port` → `tdlib_json.Socks5Proxy`;空/None → None。
 
-_AUTH_STATE_MAP: dict[str, str] = {}
-if API is not None:
-    _AUTH_STATE_MAP = {
-        API.Types.AUTHORIZATION_STATE_WAIT_TDLIB_PARAMETERS: "tdlib_parameters",
-        API.Types.AUTHORIZATION_STATE_WAIT_PHONE_NUMBER: "phone_required",
-        API.Types.AUTHORIZATION_STATE_WAIT_CODE: "code_required",
-        API.Types.AUTHORIZATION_STATE_WAIT_EMAIL_ADDRESS: "email_required",
-        API.Types.AUTHORIZATION_STATE_WAIT_EMAIL_CODE: "email_code_required",
-        API.Types.AUTHORIZATION_STATE_WAIT_REGISTRATION: "registration_required",
-        API.Types.AUTHORIZATION_STATE_WAIT_PASSWORD: "password_required",
-        API.Types.AUTHORIZATION_STATE_READY: "ready",
-        API.Types.AUTHORIZATION_STATE_LOGGING_OUT: "logging_out",
-        API.Types.AUTHORIZATION_STATE_CLOSING: "closing",
-        API.Types.AUTHORIZATION_STATE_CLOSED: "closed",
-    }
-
-
-def parse_socks5_proxy(url: str | None) -> Any:
-    """`socks5://[user:pass@]host:port` → aiotdlib `ClientProxySettings`;空/None → None。
-
-    注意:aiotdlib 的 `ProxyTypeSocks5` 是 pydantic v2,username/password 字段
-    类型是 `str`(严格),不能传 `None` — 必须空串 `""`。
+    注意:`Socks5Proxy` 的 username/password 字段类型是 `str`(严格),
+    不能传 `None` — 必须空串 `""`。
     """
     if not url or not url.strip():
         return None
     s = url.strip()
     if not (s.startswith("socks5://") or s.startswith("SOCKS5://")):
         raise ValueError(f"unsupported proxy scheme: {s!r}(仅支持 socks5)")
-    if ClientProxySettings is None:  # pragma: no cover
-        raise RuntimeError("aiotdlib 版本过老,不支持代理配置")
     rest = s.split("://", 1)[1]
     user: str = ""
     password: str = ""
@@ -87,10 +72,9 @@ def parse_socks5_proxy(url: str | None) -> Any:
     host, _, port_s = hostport.rpartition(":")
     if not host or not port_s.isdigit():
         raise ValueError(f"invalid proxy host:port: {s!r}")
-    return ClientProxySettings(
+    return Socks5Proxy(
         host=host,
         port=int(port_s),
-        type=ClientProxyType.SOCKS5,
         username=user,
         password=password,
     )
@@ -142,7 +126,7 @@ def _load_or_create_encryption_key(td_dir, *, rotate: bool = False) -> str:
 
 
 def _translate_boot_error(seen_codes: collections.deque[int]) -> str:
-    """把 start() 超时期间 aiotdlib 报的 error code 集合翻成人话给 UI。
+    """把 start() 超时期间 tdlib_json 报的 error code 集合翻成人话给 UI。
 
     翻译规则(2026-07-22 实测):
       - **401** → encryption key 不匹配;AppService 据此外层 rotate key

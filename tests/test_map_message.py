@@ -2,7 +2,7 @@
 
 为什么不用 `make_*` 工厂放进 conftest.py:
 - conftest.py 现有 `make_message / make_photo` 是**纯 DTO** 工厂,不调 `_map_message`。
-- 本测试的输入是 aiotdlib pydantic 对象的 SimpleNamespace 模拟,
+- 本测试的输入是 TDLib 对象的 SimpleNamespace 模拟,
   `make_*` 工厂是**构造带正确 `__name__` 的类 + content 字段**,只服务于本测试,
   放别处没意义。
 
@@ -23,7 +23,7 @@ from tgmonitor.core.telegram.tdlib_messages import _map_message
 
 
 def _c(ctype: str, **kwargs: Any) -> Any:
-    """造一个类名是 ctype 的 content 对象(SimpleNamespace 模拟 aiotdlib pydantic 字段访问)。"""
+    """造一个类名是 ctype 的 content 对象(SimpleNamespace 模拟 TDLib 对象字段访问)。"""
     cls = type(ctype, (SimpleNamespace,), {})
     return cls(**kwargs)
 

@@ -1,7 +1,7 @@
 """MediaDownloader 真下载测试 — REVIEW M2.1 接入测试。
 
 走 `FakeTelegramClient.download_file` + `LocalObjectStore(tmp_path)`,
-不依赖 aiotdlib native,纯内存 + tmpfs 可跑。
+不依赖 TDLib native,纯内存 + tmpfs 可跑。
 
 覆盖:
   1. 成功:注入 bytes → ObjectStore 真写入 → 返回的 MediaDTO 填了 object_key

@@ -9,8 +9,8 @@ TDLib 自身的类型与原始更新对象不出本包。
 - `client.py` — `TelegramClient` Protocol + `UpdateStream` 抽象
 - `factory.py` — `build_telegram_client()` 选择实现
 - `fake_client.py` — 测试用 `FakeTelegramClient`
-- `tdlib_client.py` — 唯一接触 aiotdlib 的 lifecycle controller
-  (aiotdlib.Client 子类化 + 信号绑 + state machine + channels thin delegate)
+- `tdlib_client.py` — 唯一接触 tdlib_json 的 lifecycle controller
+  (TdlibJsonClient 子类化 + 信号绑 + state machine + channels thin delegate)
 - `tdlib_channels.py` — `ChannelsApi` composition 类(持 client 引用,真实 channels
   实现;`tdlib_client.py` 上 6 个 channels 方法是 thin delegate)
 - `tdlib_errors.py` — `_extract_error_detail` / `TelegramRateLimitError` /

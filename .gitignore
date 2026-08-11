@@ -18,3 +18,8 @@ AppDir/
 # Linux AppImage / macOS .app 一次性 zip 产物(CI 也 build,本地不提交)
 *.AppImage
 tgmonitor.app.zip
+# libtdjson 编译产物(build_libtdjson.sh 生成,不提交)
+.build/
+packages/tdlib_json/src/tdlib_json/tdlib/
+# aiotdlib 参考源码备份中的二进制 dylib(与 src 下同一产物,不提交)
+packages/tdlib_json/_vendor_ref/aiotdlib/tdlib/

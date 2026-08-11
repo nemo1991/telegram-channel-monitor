@@ -16,8 +16,9 @@
   - `_fallback_service` — 不在两张表里的类 → `[service: ClassName]`
 
 任何新类型只需在表里加一行,无需改 `_map_message` 本体。
-dispatch 用 `type(content).__name__`,不是 `.get_type()`(aiotdlib 0.27
-用 pydantic v2,没那个方法)。
+dispatch 用 `content.type_name`(`tdlib_json.TDLibObject` 把 `@type`
+首字母大写:"messagePhoto" → "MessagePhoto");对非 TDLibObject 输入
+兜底回退到 `type(content).__name__`。
 """
 from __future__ import annotations
 
@@ -25,18 +26,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-log = logging.getLogger(__name__)
-
-try:
-    from aiotdlib.api import BaseObject
-except Exception:  # noqa: BLE001
-    BaseObject = object
-
-from tgmonitor.core.dto import (  # noqa: E402 — aiotdlib import 上方有 try/except 守卫
+from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _extract_caption(content: Any) -> str:
@@ -54,7 +50,7 @@ def _extract_caption(content: Any) -> str:
 def _formatted_text(content: Any, attr: str) -> str:
     """`content.<attr>` 是 FormattedText → 拿 inner `.text`;若已是 str 直接返回。
 
-    aiotdlib 0.27 的 FormattedText 是 pydantic v2 model,`.text` 字段是 str;
+    `tdlib_json` 的 FormattedText 是 TDLibObject,`.text` 字段是 str;
     但万一传进来的就是 str(legacy / fake),也要兜底。
     """
     if content is None:
@@ -399,22 +395,22 @@ _SERVICE_HANDLERS: dict[str, Any] = {
 
 def _fallback_service(content: Any) -> str:
     """不在两张表里的类 — 显示类名,后续可补。"""
-    return f"[service: {type(content).__name__}]"
+    return f"[service: {getattr(content, 'type_name', None) or type(content).__name__}]"
 
 
-def _map_message(msg: BaseObject) -> MessageDTO:
+def _map_message(msg: Any) -> MessageDTO:
     """TDLib Message → MessageDTO。
 
-    aiotdlib 0.27 用 pydantic v2 model,TDLib 的 messageContent union
-    (messageText / messagePhoto / ...) 在 Python 侧是独立类。
-    dispatch 用 `type(content).__name__`,见顶部注释。
+    `tdlib_json` 的 TDLibObject 把 messageContent union 的 `@type`
+    (messageText / messagePhoto / ...) 暴露为 `type_name` property。
+    dispatch 用 `content.type_name`,见顶部注释。
     """
     chat_id = getattr(msg, "chat_id", 0)
     content = getattr(msg, "content", None)
     media_list: list[MediaDTO] = []
     text_value: str = ""
     if content is not None:
-        ctype_name = type(content).__name__
+        ctype_name = getattr(content, "type_name", None) or type(content).__name__
         media_handler = _MEDIA_HANDLERS.get(ctype_name)
         if media_handler is not None:
             media_list, text_value = media_handler(content)

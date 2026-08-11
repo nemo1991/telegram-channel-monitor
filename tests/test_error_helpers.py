@@ -4,39 +4,31 @@
   - `_check_authentication_code` / `_check_authentication_password`
   - `_translate_rate_limit` 解析 "FLOOD_WAIT_NNN" 字符串
 
-`_translate_boot_error(seen_codes)` 在 `start()` 超时时把 aiotdlib 报的
+`_translate_boot_error(seen_codes)` 在 `start()` 超时时把 TDLib 报的
 error code 集合翻成人话,401 / 429 / 其他 / 空 各分支都要测试。
 
-测试纯函数,不需要 aiotdlib stub / Qt / event loop — 跑得最快。
+测试纯函数,不需要 TDLib stub / Qt / event loop — 跑得最快。
 """
 from __future__ import annotations
 
 import collections
 
 import pytest
+from tdlib_json import TdlibError
 
 from tgmonitor.core.telegram.tdlib_errors import _extract_error_detail
 from tgmonitor.core.telegram.tdlib_proxy import _translate_boot_error
 
-# ---- 1. AioTDLibError 风格 exception ----
+# ---- 1. TdlibError 风格 exception ----
 
-class _FakeAioTDLibError(Exception):
-    """模拟 aiotdlib 0.27 AioTDLibError — 有 `.message` 字段。"""
-
-    def __init__(self, message: str, code: int | None = None) -> None:
-        super().__init__(f"{{code={code}, message={message}}}")
-        self.message = message
-        self.code = code
-
-
-def test_extracts_message_from_aiotdlib_error() -> None:
-    err = _FakeAioTDLibError("PHONE_NUMBER_INVALID", code=400)
+def test_extracts_message_from_tdlib_error() -> None:
+    err = TdlibError(code=400, message="PHONE_NUMBER_INVALID")
     assert _extract_error_detail(err) == "PHONE_NUMBER_INVALID"
 
 
-def test_extracts_message_when_aio_tdlib_error_message_is_empty() -> None:
+def test_extracts_message_when_tdlib_error_message_is_empty() -> None:
     """`.message` 是空串时,fallback str(e)。"""
-    err = _FakeAioTDLibError(message="", code=400)
+    err = TdlibError(message="", code=400)
     assert _extract_error_detail(err) == str(err)
 
 
@@ -73,7 +65,7 @@ def test_falls_back_to_unknown_when_all_empty() -> None:
 
 @pytest.mark.parametrize("exc_class,attr_value,expected", [
     # 有 .message 优先
-    (_FakeAioTDLibError, "MSG", "MSG"),
+    (TdlibError, "MSG", "MSG"),
     # 没 .message → str(e)
     (ValueError, None, "boom"),
     # 极端 fallback
@@ -83,8 +75,8 @@ def test_extract_error_detail_truthiness_chain(
     exc_class: type, attr_value: str | None, expected: str,
 ) -> None:
     """`getattr(...) or str(...) or "未知错误"` 链式判断逐项验证。"""
-    if exc_class is _FakeAioTDLibError:
-        exc = _FakeAioTDLibError(message=attr_value)
+    if exc_class is TdlibError:
+        exc = TdlibError(message=attr_value)
     elif exc_class is ValueError:
         exc = ValueError("boom")
     else:

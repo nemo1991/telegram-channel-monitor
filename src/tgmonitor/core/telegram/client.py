@@ -22,7 +22,7 @@ class TelegramClient(Protocol):
         ...
 
     async def nuke_and_rebuild(self, *, rotate_key: bool = False) -> None:
-        """清掉 session db(可选旋转加密 key),杀掉内部 aiotdlib。调用方负责重建。"""
+        """清掉 session db(可选旋转加密 key),杀掉内部 TDLib。调用方负责重建。"""
         ...
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
@@ -43,7 +43,7 @@ class TelegramClient(Protocol):
         ...
 
     async def close(self) -> None:
-        """关停 aiotdlib 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
+        """关停 tdlib_json 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
         ...
 
     @property

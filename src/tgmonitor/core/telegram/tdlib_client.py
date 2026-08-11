@@ -1,21 +1,21 @@
 # mypy: disable-error-code="misc,assignment,override"
-"""TDLib 实现 — 通过 `aiotdlib` 封装。
+"""TDLib 实现 — 通过 `tdlib_json`(自编译 libtdjson 的 ctypes 绑定)封装。
 
 - 业务侧只见 `TelegramClient` Protocol;此文件**唯一**接触 TDLib
-- 鉴权:实际接 `aiotdlib` 的内部状态机(不假装 ready)
-  - 用 `asyncio.Queue` 把 UI 提交的 code / 2FA 密码注入 aiotdlib 的钩子
+- 鉴权:实际接 `tdlib_json` 的内部状态机(不假装 ready)
+  - 用 `asyncio.Queue` 把 UI 提交的 code / 2FA 密码注入 tdlib_json 的钩子
   - 通过 `updateAuthorizationState` 事件把 TDLib 真实状态转 `LoginStateChanged` 推给 UI
 - 实时更新:`updateNewMessage` → DTO → UI
 
-模块拆分(2026-08-02):本文件保留 **lifecycle controller**(aiotdlib.Client 子类化
-+ 信号绑 + state machine + channels 子块);下列 pure helpers 抽到独立模块:
+模块拆分(2026-08-02):本文件保留 **lifecycle controller**(TdlibJsonClient
+子类化 + 信号绑 + state machine + channels 子块);下列 pure helpers 抽到独立模块:
   - `tdlib_errors.py` — `_extract_error_detail` / `TelegramRateLimitError` /
     `ClientClosingError`
   - `tdlib_proxy.py` — `parse_socks5_proxy` / `_load_or_create_encryption_key` /
     `_probe_proxy` / `_translate_boot_error` / `_AUTH_STATE_MAP`
   - `tdlib_messages.py` — `_map_message` + 媒体 / service 派发表
 
-依赖:`aiotdlib >= 0.27`(旧版直接 kwargs 调用有备选路径)。
+依赖:`tdlib-json-client`(workspace 子项目,aiotdlib 归档后的替代)。
 """
 from __future__ import annotations
 
@@ -27,37 +27,21 @@ from typing import Any, AsyncIterator, Callable
 log = logging.getLogger(__name__)
 
 try:
-    from aiotdlib import Client as _AiClient
-    from aiotdlib.api import (
-        API,
-        BaseObject,
-        CheckAuthenticationCode,
-        CheckAuthenticationPassword,
-        GetAuthorizationState,
-        LogOut,
-        SetLogVerbosityLevel,
-    )
-    try:
-        from aiotdlib.api.error import AioTDLibError
-    except Exception:  # noqa: BLE001
-        AioTDLibError = Exception  # fallback so the except clause still type-checks
-    try:
-        # aiotdlib 0.27+:
-        from aiotdlib.client_settings import ClientSettings
-    except Exception:  # noqa: BLE001
-        ClientSettings = None
-    _HAVE_AIOTDLIB = True
+    from tdlib_json import TdlibError, TDLibObject
+    from tdlib_json import TdlibJsonClient as _AiClient
+    _HAVE_TDLIB_JSON = True
 except Exception:  # noqa: BLE001
-    _HAVE_AIOTDLIB = False
-    ClientSettings = None
+    _HAVE_TDLIB_JSON = False
 
-from tgmonitor.core.config import Settings  # noqa: E402 — aiotdlib import 上方有 try/except 守卫
+from tgmonitor.core.config import Settings  # noqa: E402 — tdlib_json import 上方有 try/except 守卫
 from tgmonitor.core.dto import ChannelDTO, MessageDTO  # noqa: E402
 from tgmonitor.core.telegram.client import UpdateStream  # noqa: E402
 from tgmonitor.core.telegram.tdlib_errors import (  # noqa: E402
     ClientClosingError,
+    TelegramNotConfiguredError,
     TelegramRateLimitError,
     _extract_error_detail,
+    _missing_credentials,
 )
 from tgmonitor.core.telegram.tdlib_messages import _map_message  # noqa: E402
 from tgmonitor.core.telegram.tdlib_proxy import (  # noqa: E402
@@ -69,15 +53,15 @@ from tgmonitor.core.telegram.tdlib_proxy import (  # noqa: E402
 )
 
 
-class _AiotdlibUpdateStream(UpdateStream):
-    """aiotdlib → asyncio.Queue → UI。
+class _TdlibJsonUpdateStream(UpdateStream):
+    """tdlib_json → asyncio.Queue → UI。
 
     `aclose()` 时除了塞 sentinel 让 async generator 退出,还会触发 caller
     注册的 `on_close` callback — 用来把自己从 `client._streams` 拿掉,
     避免长会话列表只增不减(契约见 `client.UpdateStream` 文档)。
     """
 
-    def __init__(self, on_close: Callable[[_AiotdlibUpdateStream], None] | None = None) -> None:
+    def __init__(self, on_close: Callable[[_TdlibJsonUpdateStream], None] | None = None) -> None:
         self._queue: asyncio.Queue[MessageDTO | None] = asyncio.Queue()
         self._closed = False
         self._on_close = on_close
@@ -111,7 +95,7 @@ class _AiotdlibUpdateStream(UpdateStream):
 
 
 class TdlibTelegramClient(_AiClient):
-    """生产实现 — 子类 aiotdlib.Client,把鉴权输入接入我们的队列。
+    """生产实现 — 子类 TdlibJsonClient,把鉴权输入接入我们的队列。
 
     v0.3 重写后的设计原则(详见 plan /Users/forcetone/.claude/plans/...):
       - `_set_state` 是**唯一**写 `self._state` 的入口,所有路径(包括
@@ -120,10 +104,10 @@ class TdlibTelegramClient(_AiClient):
       - `_state_event: asyncio.Event` 是 `_set_state` 同步 set 的,
         `start()` / `submit_phone()` / `submit_code()` / `submit_password()`
         都 await 这个事件 — 取代旧的 polling loop。
-      - 启动不用 `aiotdlib.Client.start()`(它会 `await self.authorize()` 然后
+      - 启动不用 `TdlibJsonClient.start()`(它会 `await self.authorize()` 然后
         因为 `_authorized_event` 没人 set 而永久挂起)。改用手工复刻的
         `_do_start_inner()` 直接驱动 updates_loop。
-      - submit 错误用 `request()` 抛 `AioTDLibError`,捕获后通过
+      - submit 错误用 `request()` 抛 `TdlibError`,捕获后通过
         `AuthErrorOccurred` 事件通知 UI,**不**改顶层状态(让用户原地重试)。
       - 401 等"key 不匹配"由 boot 超时 + rotate_key=True 解决:
         调用方(`AppService`)负责在检测到超时 + 401 标记后重建 client。
@@ -136,18 +120,27 @@ class TdlibTelegramClient(_AiClient):
     def __init__(self, settings: Settings, *, event_bus: Any | None = None) -> None:
         """`settings` = Telegram / DB / 代理等配置;`event_bus` = 可选 UI 事件总线。
 
-        子类化 aiotdlib.Client,override `_on_authorization_state_update` 钩状态机;
+        子类化 TdlibJsonClient,override `_on_authorization_state_update` 钩状态机;
         末尾建 `self.channels = ChannelsApi(self)`(composition delegate)。
         """
-        if not _HAVE_AIOTDLIB:
-            raise RuntimeError("aiotdlib 未安装:`pip install -U aiotdlib>=0.27`")
+        if not _HAVE_TDLIB_JSON:
+            raise RuntimeError("tdlib-json-client 未安装:`uv sync` 后重试")
+        # 凭据预检 — 未配置时抛 TelegramNotConfiguredError,把底层 TDLib
+        # 的启动错误(如 api_id=0)换成用户可读中文消息,
+        # 由 app.py 启动失败弹窗直接展示。不静默回退 fake(历史 bug #22)。
+        missing = _missing_credentials(settings)
+        if missing:
+            raise TelegramNotConfiguredError(
+                "未配置 Telegram 凭据:" + "、".join(missing)
+                + "。请在 .env 或 设置… 中填写后再启动。"
+            )
         self._settings = settings
         self._me: dict | None = None
-        self._streams: list[_AiotdlibUpdateStream] = []
+        self._streams: list[_TdlibJsonUpdateStream] = []
         self._chat_titles: dict[int, str] = {}
         self._chat_usernames: dict[int, str] = {}
         self._bus = event_bus
-        # 鉴权输入队列(super().__init__ 之前必须建好 — aiotdlib 内部某些路径会读)
+        # 鉴权输入队列(super().__init__ 之前必须建好 — TdlibJsonClient 内部某些路径会读)
         self._code_queue: asyncio.Queue[str] = asyncio.Queue()
         self._password_queue: asyncio.Queue[str] = asyncio.Queue()
 
@@ -160,11 +153,11 @@ class TdlibTelegramClient(_AiClient):
         # 状态变化同步 set — `start()` / `submit_*` 等 await 它。
         self._state_event = asyncio.Event()
 
-        # aiotdlib 把 fire-and-forget 的 send() 结果当作 silently dropped 的
+        # tdlib_json 把 fire-and-forget 的 send() 结果当作 silently dropped 的
         # 错误处理(因为没有 request_id → _handle_pending_request 查不到对应
         # pending request)。但我们的 _updates_loop 仍会看到一个 Error 包,
         # 它会进 `_handle_update` 派发。我们用一个 add_event_handler("*")
-        # 兜底,把所有 aiotdlib 内 Error 包的 code 收集起来,这样可以在
+        # 兜底,把所有 tdlib_json 内 Error 包的 code 收集起来,这样可以在
         # `start` 超时时判断是不是 "401 wrong encryption key"。
         self._seen_error_codes: collections.deque[int] = collections.deque(maxlen=20)
 
@@ -172,15 +165,15 @@ class TdlibTelegramClient(_AiClient):
         # 通过 `_check_alive()` 拦截后续 entry。`best-effort` 方法
         # (如 `list_joined_channels`)自己 catch;事务性方法让它冒到调用方。
         # 同时阻断启动后 race:`start()` 还没 ready 时 VM 已 fire-and-forget
-        # 调 `list_joined_channels`,aiotdlib bridge 还没绑到当前 loop 上,
+        # 调 `list_joined_channels`,tdlib_json bridge 还没绑到当前 loop 上,
         # `request()` 会撞 10s 超时 + qasync 跨 loop wakeup 噪音。
         self._closing: bool = False
 
         proxy = parse_socks5_proxy(settings.proxy)
-        # tdlib_verbosity 决定 aiotdlib 把多少 TDLib 内部日志转发到 Python logging。
+        # tdlib_verbosity 决定 tdlib_json 把多少 TDLib 内部日志转发到 Python logging。
         # 默认 FATAL;调试时调到 INFO 可见 401 等线索。
         verbosity = int(getattr(settings, "tdlib_verbosity", 0) or 0)
-        settings_kwargs: dict[str, Any] = dict(
+        parameters: dict[str, Any] = dict(
             api_id=settings.api_id,
             api_hash=settings.api_hash,
             phone_number=settings.phone,
@@ -188,46 +181,34 @@ class TdlibTelegramClient(_AiClient):
                 self._settings.session_dir / "tdlib"
             ),
             files_directory=str(settings.session_dir / "tdlib"),
-            library_path=None,
             tdlib_verbosity=verbosity,
+            # tdlib_json 默认不批量下发 ClientOptions;部分选项受 TDLib
+            # "can be set only if can_<X> is true" 规则约束,user account 下发
+            # 会被拒(code=400 "Option can't be set")。没有需要覆盖的选项 →
+            # options=None,只发 setTdlibParameters + proxy。
+            options=None,
         )
-        if proxy is not None:
-            settings_kwargs["proxy_settings"] = proxy
-        # aiotdlib 默认 ClientOptions 会批量下发 disable_top_chats /
-        # ignore_inline_thumbnails / ignore_background_updates 等开关,
-        # 但部分选项受 TDLib "can be set only if can_<X> is true" 规则约束,
-        # 在 user account + 默认安全设置下会被 TDLib 拒(返回 code=400
-        # "Option can't be set"),日志里冒两条 WARNING。
-        # 我们没有需要覆盖的选项 → 关掉,只发 tdlib_parameters + proxy。
-        settings_kwargs["options"] = None
-        if ClientSettings is not None:
-            super().__init__(settings=ClientSettings(**settings_kwargs))
-        else:  # pragma: no cover
-            super().__init__(**settings_kwargs)
+        super().__init__(parameters=parameters, proxy=proxy)
 
-        # aiotdlib 用同步事件总线的事件(updateNewMessage)走 add_event_handler;
+        # tdlib_json 用字符串 update_type 分发事件(updateNewMessage)走 add_event_handler;
         # updateAuthorizationState 走我们 override 的 _on_authorization_state_update
-        # (aiotdlib 的 _updates_loop 自己截胡)。
+        # (tdlib_json 的 _updates_loop 自己截胡)。
         self.add_event_handler(
             self._on_new_message,
-            update_type=API.Types.UPDATE_NEW_MESSAGE,
+            update_type="updateNewMessage",
         )
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
-        # aiotdlib 0.27+ 用 `await handler(self, update)` 调用,所以必须 (self, update)。
+        # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
         async def _on_any_update(client_self, update) -> None:
-            try:
-                from aiotdlib.api.types import Error as _Err
-                if isinstance(update, _Err):
-                    code = getattr(update, "code", None)
-                    if isinstance(code, int):
-                        self._seen_error_codes.append(code)
-                        log.warning("aiotdlib Error observed: code=%s msg=%s",
-                                    code, getattr(update, "message", ""))
-            except Exception:  # noqa: BLE001
-                pass
+            if update.get("@type") == "error":
+                code = update.get("code")
+                if isinstance(code, int):
+                    self._seen_error_codes.append(code)
+                    log.warning("tdlib_json Error observed: code=%s msg=%s",
+                                code, update.get("message", ""))
         self.add_event_handler(
             _on_any_update,
-            update_type=API.Types.ANY,
+            update_type="*",
         )
 
         # Channels 子系统 composition 类(2026-08-02 抽出)— 持 self 引用,
@@ -244,7 +225,7 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     def _set_state(self, new_state: str, *, detail: str = "") -> None:
-        """唯一允许写 `self._state` 的入口。所有路径(aiotdlib 状态推送、
+        """唯一允许写 `self._state` 的入口。所有路径(tdlib_json 状态推送、
         我们自己的 nuke/logout 等)都过它。同时负责:
           - 唤醒 `_state_event`,让 await 在上面的 `start()` / `submit_*` 推进
           - 通过 EventBus 发 `LoginStateChanged`
@@ -289,7 +270,7 @@ class TdlibTelegramClient(_AiClient):
             log.exception("publish AuthErrorOccurred failed")
 
     # ============================================================
-    # aiotdlib 钩子 override
+    # tdlib_json 钩子 override
     # ============================================================
 
     async def _submit_auth_step(
@@ -304,14 +285,14 @@ class TdlibTelegramClient(_AiClient):
 
         流程:
           1. 同步从 queue 取 UI 提交的值
-          2. 调 `request_factory(value)` 跑 aiotdlib Check 函数
-          3. AioTDLibError → 转 detail,发 `AuthErrorOccurred` (不 raise)
+          2. 调 `request_factory(value)` 发 raw dict 请求(checkAuthentication*)
+          3. TdlibError → 转 detail,发 `AuthErrorOccurred` (不 raise)
           4. 其它 Exception → log.exception + 发 `AuthErrorOccurred`
 
         Args:
           - `source`:AuthErrorOccurred.source("code" / "password")
           - `queue`:asyncio.Queue,等 UI 提交(`_code_queue` / `_password_queue`)
-          - `request_factory`:用 value 构造 aiotdlib Request(CheckAuthenticationCode / Password)
+          - `request_factory`:用 value 构造 raw dict 请求(checkAuthenticationCode / checkAuthenticationPassword)
           - `error_label`:日志标签(e.g. "CheckAuthenticationCode")
           - `detail_prefix`:错误文案前缀(e.g. "验证码错误: " / "2FA 密码错误: ")
         """
@@ -319,7 +300,7 @@ class TdlibTelegramClient(_AiClient):
         log.info("submitting %s (len=%d)", source, len(value))
         try:
             await self.request(request_factory(value), request_timeout=30)
-        except AioTDLibError as e:
+        except TdlibError as e:
             log.warning("%s failed: %s", error_label, e)
             detail = _extract_error_detail(e)
             await self._publish_auth_error(
@@ -331,11 +312,11 @@ class TdlibTelegramClient(_AiClient):
 
     async def _check_authentication_code(self) -> None:
         """从队列收 UI 提交的验证码。错误 → 发 `AuthErrorOccurred`,
-        但不 raise(让 aiotdlib 自动重新发 WaitCode,用户原地重输)。"""
+        但不 raise(让 TDLib 自动重新发 WaitCode,用户原地重输)。"""
         await self._submit_auth_step(
             source="code",
             queue=self._code_queue,
-            request_factory=lambda code: CheckAuthenticationCode(code=code),  # type: ignore[call-arg]
+            request_factory=lambda code: {"@type": "checkAuthenticationCode", "code": code},
             error_label="CheckAuthenticationCode",
             detail_prefix="验证码错误: ",
         )
@@ -345,26 +326,31 @@ class TdlibTelegramClient(_AiClient):
         await self._submit_auth_step(
             source="password",
             queue=self._password_queue,
-            request_factory=lambda pwd: CheckAuthenticationPassword(password=pwd),  # type: ignore[call-arg]
+            request_factory=lambda pwd: {"@type": "checkAuthenticationPassword", "password": pwd},
             error_label="CheckAuthenticationPassword",
             detail_prefix="2FA 密码错误: ",
         )
 
+    async def _ask_for_code(self) -> None:
+        """TDLib 进入 authorizationStateWaitCode 时由基类分发调用 — 接到队列消费链路上。"""
+        await self._check_authentication_code()
+
+    async def _ask_for_password(self) -> None:
+        """TDLib 进入 authorizationStateWaitPassword 时由基类分发调用 — 接到队列消费链路上。"""
+        await self._check_authentication_password()
+
     async def _on_authorization_state_update(self, authorization_state) -> None:
-        """aioTDLib 的 `_updates_loop` 自己截胡 `UpdateAuthorizationState`,直接
+        """tdlib_json 的 `_updates_loop` 自己截胡 `updateAuthorizationState`,直接
         调我们这个方法(不走 add_event_handler)。所以唯一写法是 override。
 
-        aioTDLib 鉴权状态机的两个已知缺陷:
-        - 用 `send()`(fire-and-forget)发 SetTdlibParameters / Check* — 错误
+        tdlib_json 鉴权状态机的两个已知缺陷:
+        - 用 `send()`(fire-and-forget)发 setTdlibParameters / check* — 错误
           (例如 `Error code=401`)响应被静默丢,因为没有 request_id。
-        - 我们 override 后**必须** `await super()`,否则 aiotdlib 自己不会调
+        - 我们 override 后**必须** `await super()`,否则 tdlib_json 自己不会调
           `_check_authentication_code` 等后续钩子。
         """
         try:
-            state_id = (
-                getattr(authorization_state, "ID", None)
-                or type(authorization_state).__name__
-            )
+            state_id = authorization_state.get("@type")
             new_state = _AUTH_STATE_MAP.get(state_id, "unknown")
         except Exception:  # noqa: BLE001
             log.exception("auth state mapping failed")
@@ -375,13 +361,13 @@ class TdlibTelegramClient(_AiClient):
             await super()._on_authorization_state_update(authorization_state)
         except Exception:  # noqa: BLE001
             # 不 raise — `_updates_loop` 会把异常 raise 给自己并终止所有
-            # 后续 update 派发。这只是兜底 log,aioTDLib 自己的 send() 错误
-            # 因为没有 request_id 不会进到这里;真到这里说明 aiotdlib 内部
+            # 后续 update 派发。这只是兜底 log,tdlib_json 自己的 send() 错误
+            # 因为没有 request_id 不会进到这里;真到这里说明 tdlib_json 内部
             # 出问题,例如 _set_authentication_phone_number 异常。
             log.exception("super _on_authorization_state_update failed (suppressed)")
 
-    async def _on_new_message(self, client_self, update: BaseObject) -> None:
-        """aiotdlib 0.27 用 `await handler(self, update)` 调用 handler,所以签名
+    async def _on_new_message(self, client_self, update: TDLibObject) -> None:
+        """tdlib_json 用 `await handler(self, update)` 调用 handler,所以签名
         必须是 `(client, update)`,这里 `client_self` 其实是 client 实例本身
         (我们就是它),所以丢弃。"""
         try:
@@ -428,19 +414,19 @@ class TdlibTelegramClient(_AiClient):
         return True, None
 
     async def _do_start_inner(self) -> None:
-        """不动 aiotdlib.Client.start()(它会 await authorize 然后 hang);
+        """不动 TdlibJsonClient.start()(它会 await authorize 然后 hang);
         手工复刻启动顺序,等我们自己的 _state_event 来推进。
 
         每一步都有耗时日志,启动卡在哪一步一眼能看出(4:30-5:00 排查场景)。
         """
         import time as _t
         t0 = _t.monotonic()
-        # 启动 updates_loop + aiotdlib 内部 task
+        # 启动 updates_loop + tdlib_json 内部 task
         self._update_task = asyncio.create_task(self._updates_loop())
         self._running = True
         log.info("[tdlib] updates_loop task scheduled in %.3fs", _t.monotonic() - t0)
         t = _t.monotonic()
-        await self.execute(SetLogVerbosityLevel(new_verbosity_level=0))  # type: ignore[call-arg]  # 暂时无所谓
+        await self.execute({"@type": "setLogVerbosityLevel", "new_verbosity_level": 0})
         log.info("[tdlib] SetLogVerbosityLevel in %.3fs", _t.monotonic() - t)
         # 走 base 的 _setup_proxy / _setup_options
         t = _t.monotonic()
@@ -449,11 +435,11 @@ class TdlibTelegramClient(_AiClient):
         t = _t.monotonic()
         await self._setup_options()
         log.info("[tdlib] _setup_options in %.3fs (options=None → no-op)", _t.monotonic() - t)
-        # 发 GetAuthorizationState 触发状态机 — 这是 fire-and-forget,
+        # 发 getAuthorizationState 触发状态机 — 这是 fire-and-forget,
         # 响应是 `updateAuthorizationState`,会走 _on_authorization_state_update
         t = _t.monotonic()
-        await self.send(GetAuthorizationState())  # type: ignore[call-arg]
-        log.info("[tdlib] GetAuthorizationState sent in %.3fs", _t.monotonic() - t)
+        await self.send({"@type": "getAuthorizationState"})
+        log.info("[tdlib] getAuthorizationState sent in %.3fs", _t.monotonic() - t)
         # 等状态机推进 — 任何非 bo 状态都意味着启动成功
         t = _t.monotonic()
         log.info("[tdlib] waiting for state machine to advance (current=%s)…",
@@ -468,7 +454,7 @@ class TdlibTelegramClient(_AiClient):
         流程:
           1) preflight (stale 文件 + SOCKS5 探测,失败立即给 UI)
           2) 跑 `_do_start_inner()`,超时 `_BOOT_TIMEOUT`
-          3) 超时的话取最末的 aiotdlib 错误码:
+          3) 超时的话取最末的 tdlib_json 错误码:
              - 401 → 说明加密 key 错;返回 `("error", "encryption key 不匹配")`,
                把这个信息抛给 AppService,它负责 rotate key + 重建 client。
              - 别的(0 / timeout / proxy / DC 不通)→ `("error", "...具体原因...")`
@@ -497,12 +483,12 @@ class TdlibTelegramClient(_AiClient):
                 self._BOOT_TIMEOUT, list(self._seen_error_codes),
             )
             err_detail = _translate_boot_error(self._seen_error_codes)
-            await self._kill_aiotdlib()
+            await self._kill_client()
             self._set_state("error", detail=err_detail)
             return self._state, self._state_detail
         except Exception as e:  # noqa: BLE001
             log.exception("start: unexpected")
-            await self._kill_aiotdlib()
+            await self._kill_client()
             self._set_state("error", detail=f"unexpected: {e}")
             return self._state, self._state_detail
 
@@ -511,7 +497,7 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """用户点「登录」时调用 — 改 phone / 触发 aiotdlib 发 code。
+        """用户点「登录」时调用 — 改 phone / 触发 TDLib 发 code。
 
         若 TDLib 没在 `phone_required` 状态,先 wait_for 至转好。
         """
@@ -523,10 +509,10 @@ class TdlibTelegramClient(_AiClient):
                 "phone changed (%s → %s); restart to take effect",
                 self._settings.phone, phone,
             )
-        # 等进 phone_required 后 aiotdlib 会自动处理 — 这里不强发请求。
-        # 已存在的 phone 在 init 时已传给 ClientSettings,aioTDLib 会发。
-        # 我们的钩子 _set_authentication_phone_number_or_check_bot_token
-        # 会自动 SetAuthenticationPhoneNumber。
+        # 等进 phone_required 后 tdlib_json 会自动处理 — 这里不强发请求。
+        # 已存在的 phone 在 init 时已传给 setTdlibParameters,
+        # tdlib_json 在 authorizationStateWaitPhoneNumber 时会自动调
+        # setAuthenticationPhoneNumber。
         if self._state != "phone_required":
             # 等状态变成 phone_required(最多 5s)
             self._state_event.clear()
@@ -565,10 +551,10 @@ class TdlibTelegramClient(_AiClient):
         return self._state, self._state_detail
 
     async def logout(self) -> None:
-        """登出 — aiotdlib 会自动反推状态机 Closed → PhoneNumber。"""
+        """登出 — TDLib 会自动反推状态机 Closed → PhoneNumber。"""
         self._check_alive()
         try:
-            await self.request(LogOut())  # type: ignore[call-arg]
+            await self.request({"@type": "logOut"})
         except Exception:  # noqa: BLE001
             log.exception("logout failed")
         self._me = None
@@ -579,7 +565,7 @@ class TdlibTelegramClient(_AiClient):
 
     @staticmethod
     def _translate_rate_limit(exc: BaseException) -> TelegramRateLimitError | None:
-        """把 aiotdlib 抛的 AioTDLibError / 含 FLOOD_WAIT 的 Error 归一。
+        """把 tdlib_json 抛的 TdlibError / 含 FLOOD_WAIT 的 Error 归一。
 
         返回:
           - TelegramRateLimitError(retry_after=...) 如果识别为限流
@@ -593,7 +579,7 @@ class TdlibTelegramClient(_AiClient):
                 return TelegramRateLimitError(float(ra))
             # 没给 retry_after 给个保守 60s
             return TelegramRateLimitError(60.0)
-        # 字符串里 "FLOOD_WAIT_NNN" 也算(aiotdlib 某些版本 code 不是 429)
+        # 字符串里 "FLOOD_WAIT_NNN" 也算(TdlibError 某些场景 code 不是 429)
         msg = _extract_error_detail(exc)
         import re as _re
         m = _re.search(r"FLOOD_WAIT[_ ](\d+)", msg)
@@ -605,8 +591,8 @@ class TdlibTelegramClient(_AiClient):
     # 清理
     # ============================================================
 
-    async def _kill_aiotdlib(self) -> None:
-        """完整杀掉内部的 aiotdlib 状态机 — 给 start 超时 / 出错用。
+    async def _kill_client(self) -> None:
+        """完整杀掉内部的 tdlib_json 客户端状态机 — 给 start 超时 / 出错用。
         之后想再启动需要重建整个 Client 实例(由 AppService 负责)。
         """
         if not getattr(self, "_running", False):
@@ -614,7 +600,7 @@ class TdlibTelegramClient(_AiClient):
         try:
             await self.stop()
         except Exception:  # noqa: BLE001
-            log.exception("aiotdlib stop() failed")
+            log.exception("stop() failed")
         update_task = getattr(self, "_update_task", None)
         if update_task is not None and not update_task.done():
             update_task.cancel()
@@ -636,10 +622,10 @@ class TdlibTelegramClient(_AiClient):
                 break
 
     async def nuke_and_rebuild(self, rotate_key: bool = False) -> None:
-        """清掉 session db + (可选) 旋转加密 key + 杀掉内部 aiotdlib。
+        """清掉 session db + (可选) 旋转加密 key + 杀掉内部 tdlib_json 客户端。
         调用方负责后续重新构造本对象。"""
         td_dir = self._settings.session_dir / "tdlib"
-        await self._kill_aiotdlib()
+        await self._kill_client()
         import shutil as _sh
         for sub in ("database", "files", ".aiotdlib"):
             target = td_dir / sub
@@ -661,11 +647,11 @@ class TdlibTelegramClient(_AiClient):
         )
 
     async def close(self) -> None:
-        """app exit 时调 — 内部 aiotdlib + 关掉所有订阅流。
+        """app exit 时调 — 内部 tdlib_json 客户端 + 关掉所有订阅流。
 
         第一件事就 `_closing=True`,让任何还在 in-flight 的协程
         (`list_joined_channels` / VM refresh / 等)下次 tick 看到
-        `ClientClosingError`,不再排新的 aiotdlib request 进 10s 超时。
+        `ClientClosingError`,不再排新的 request 进 10s 超时。
         """
         self._closing = True
         # 关流
@@ -675,12 +661,12 @@ class TdlibTelegramClient(_AiClient):
             except Exception:  # noqa: BLE001
                 pass
         self._streams.clear()
-        await self._kill_aiotdlib()
+        await self._kill_client()
 
     def _check_alive(self) -> None:
         """公共 async 方法的 entry guard。
 
-        顺序:在进入 aiotdlib bridge 之前 throw `ClientClosingError`,
+        顺序:在进入 tdlib_json bridge 之前 throw `ClientClosingError`,
         不让请求排进 10s 超时。**只用于事务性方法**(submit_* / logout);
         best-effort 方法(`list_joined_channels`)自己处理并 return 占位。
         """
@@ -766,13 +752,13 @@ class TdlibTelegramClient(_AiClient):
         return await self.channels.download_file(file_id)
 
     def subscribe_updates(self) -> UpdateStream:
-        """订阅实时更新流(由 aiotdlib push);`aclose` 必调一次,否则 list 只增不减。"""
-        s = _AiotdlibUpdateStream(on_close=self._remove_stream)
+        """订阅实时更新流(由 tdlib_json push);`aclose` 必调一次,否则 list 只增不减。"""
+        s = _TdlibJsonUpdateStream(on_close=self._remove_stream)
         self._streams.append(s)
         return s
 
-    def _remove_stream(self, s: _AiotdlibUpdateStream) -> None:
-        """`_AiotdlibUpdateStream.aoclose()` 回调 — 拿掉自己,避免 list 只增不减。
+    def _remove_stream(self, s: _TdlibJsonUpdateStream) -> None:
+        """`_TdlibJsonUpdateStream.close()` 回调 — 拿掉自己,避免 list 只增不减。
 
         `close()` 路径里仍然做全量清空(兜底),此回调是常规路径。
         """

@@ -61,7 +61,7 @@ class AuthService:
         return None
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """用户点「登录」按钮 — 提交手机号 + 触发 aiotdlib 发 code。"""
+        """用户点「登录」按钮 — 提交手机号 + 触发 TDLib 发 code。"""
         err = self._check_credentials()
         if err:
             return await self._fail("submit_phone", err)

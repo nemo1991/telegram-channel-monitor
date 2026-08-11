@@ -249,7 +249,7 @@ class AppService:
     async def shutdown(self) -> None:
         """app exit — 停 monitor + 关 client / storage / objects(顺序敏感)。"""
         await self.stop_monitor()
-        # 关 TelegramClient (停 aiotdlib 的 updates_loop + tdjson 子进程)
+        # 关 TelegramClient (停 tdlib_json 的 updates_loop + tdjson 子进程)
         try:
             await self.client.close()
         except Exception:  # noqa: BLE001

@@ -1,7 +1,7 @@
 """TDLib 客户端生命周期单元测试。
 
-不实际启动 TDLib — 通过 monkey-patch `aiotdlib.Client.__init__` 让 Client.__init__
-变成空操作,然后手动驱动我们的状态机。覆盖:
+不实际启动 TDLib — 通过 monkey-patch `tdlib_json.TdlibJsonClient.__init__`
+让 Client.__init__ 变成空操作,然后手动驱动我们的状态机。覆盖:
   - 状态机进展(每一跳)
   - `_set_state` 是唯写路径
   - `AuthErrorOccurred` 在验证码错时发出
@@ -17,10 +17,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-# `stub_aiotdlib_init` 由 tests/conftest.py 统一提供(全局 fixture)
+# `stub_tdlib_init` 由 tests/conftest.py 统一提供(全局 fixture)
 # — 不在 test_telegram_lifecycle.py 再 re-export,否则会 shadow conftest 版,
-#   导致 aiotdlib stub 不生效,TdlibTelegramClient 构造触发 native 析构
-#   路径,在跨版本 aiotdlib + 老 Python 上偶发 segfault。
+#   导致 tdlib_json stub 不生效,TdlibTelegramClient 构造触发 native 加载
+#   libtdjson(本机未编译时直接失败)。
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.events import AuthErrorOccurred, EventBus, LoginStateChanged
 from tgmonitor.core.telegram import tdlib_client as tdc
@@ -49,7 +49,7 @@ def bus() -> EventBus:
 
 @contextlib.asynccontextmanager
 async def make_client(settings, bus):  # type: ignore[no-untyped-def]
-    """Build a TdlibTelegramClient with stubbed aiotdlib init."""
+    """Build a TdlibTelegramClient with stubbed tdlib_json init."""
     client = tdc.TdlibTelegramClient(settings, event_bus=bus)
     # 强 stub 子类上一些父类方法以避免被真父类调用
     client._running = False  # 默认未跑
@@ -68,7 +68,7 @@ async def make_client(settings, bus):  # type: ignore[no-untyped-def]
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_set_state_emits_login_state_changed(settings, bus, stub_aiotdlib_init):
+async def test_set_state_emits_login_state_changed(settings, bus, stub_tdlib_init):
     captured: list[LoginStateChanged] = []
 
     async def _cap(e):
@@ -99,7 +99,7 @@ async def test_set_state_emits_login_state_changed(settings, bus, stub_aiotdlib_
 
 
 @pytest.mark.asyncio
-async def test_set_state_signals_event(settings, bus, stub_aiotdlib_init):
+async def test_set_state_signals_event(settings, bus, stub_tdlib_init):
     """_state_event 必须在状态变化时 set;wait_for 立刻返回。"""
     async with make_client(settings, bus) as client:
         # 初始状态 event 是 clear(因为没人 set 过)
@@ -121,14 +121,11 @@ async def test_set_state_signals_event(settings, bus, stub_aiotdlib_init):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_aiotdlib_init):
+async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_tdlib_init):
     """验证码错 → 发 AuthErrorOccurred(source="code", ...),不切换顶层状态。"""
 
-    class FakeUnauthorized(tdc.AioTDLibError):
-        def __init__(self, code: int, message: str) -> None:
-            self.code = code
-            self.message = message
-            super().__init__(message)
+    class FakeUnauthorized(tdc.TdlibError):
+        pass
 
     captured: list[AuthErrorOccurred] = []
 
@@ -155,14 +152,11 @@ async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_aiotdl
 
 
 @pytest.mark.asyncio
-async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_aiotdlib_init):
+async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_tdlib_init):
     """2FA 密码错 → AuthErrorOccurred(source="password")。"""
 
-    class FakeUnauthorized(tdc.AioTDLibError):
-        def __init__(self, code: int, message: str) -> None:
-            self.code = code
-            self.message = message
-            super().__init__(message)
+    class FakeUnauthorized(tdc.TdlibError):
+        pass
 
     captured: list[AuthErrorOccurred] = []
 
@@ -193,7 +187,7 @@ async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_ai
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_aiotdlib_init):
+async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_tdlib_init):
     """start 超时 + 我们看到 401 → 返回 ('error', '...encryption key...')。
     模拟:start 在 _do_start_inner 上挂住,我们通过 fake error 注入 401,
     然后手动让 _do_start_inner 抛 TimeoutError。
@@ -201,7 +195,7 @@ async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_a
     async with make_client(settings, bus) as client:
         client._state_event.clear()
 
-        # 替换 _do_start_inner 让它先 inject 401(模拟 aiotdlib 把 TDLib Error
+        # 替换 _do_start_inner 让它先 inject 401(模拟 tdlib_json 把 TDLib Error
         # 推给我们)再抛 TimeoutError。start() 内部会清一次 deque,
         # 所以必须在 _do_start_inner 里 inject。
         async def _hang_with_401():
@@ -218,7 +212,7 @@ async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_a
 
 
 @pytest.mark.asyncio
-async def test_start_timeout_no_error_codes_returns_generic(settings, bus, stub_aiotdlib_init):
+async def test_start_timeout_no_error_codes_returns_generic(settings, bus, stub_tdlib_init):
     """start 超时但没收到任何 error 码 → 报 'DC 不可达' 类。"""
     async with make_client(settings, bus) as client:
         client._state_event.clear()
@@ -245,7 +239,7 @@ async def _noop_preflight():
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_aiotdlib_init):
+async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_tdlib_init):
     """AuthErrorOccurred 应被 ErrorOccurred 订阅者也接收(以前若有 widget 订阅父类)。"""
     from tgmonitor.core.events import ErrorOccurred
 
@@ -268,24 +262,24 @@ async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_kill_drains_input_queues(settings, bus, stub_aiotdlib_init):
+async def test_kill_drains_input_queues(settings, bus, stub_tdlib_init):
     async with make_client(settings, bus) as client:
-        # _kill_aiotdlib 走"只有 running 才干活"分支 — 强制打开
+        # _kill_client 走"只有 running 才干活"分支 — 强制打开
         client._running = True
         await client._code_queue.put("stale1")
         await client._password_queue.put("stale2")
-        await client._kill_aiotdlib()
+        await client._kill_client()
         assert client._code_queue.empty()
         assert client._password_queue.empty()
 
 
 # ============================================================
-# _AUTH_STATE_MAP 覆盖所有 aiotdlib 关键状态
+# _AUTH_STATE_MAP 覆盖所有 tdlib_json 关键状态
 # ============================================================
 
 def test_auth_state_map_covers_lifecycle_keys():
     keys = set(tdc._AUTH_STATE_MAP.keys())
-    # 这些字符串是 aiotdlib 内部的 @type 串
+    # 这些字符串是 TDLib 的 @type 串
     expected = {
         "authorizationStateWaitTdlibParameters",
         "authorizationStateWaitPhoneNumber",
@@ -307,7 +301,7 @@ def test_auth_state_map_covers_lifecycle_keys():
 def _make_stubbed_client(settings: Settings, bus: EventBus) -> tdc.TdlibTelegramClient:
     """用空 stub 起一个真实 TdlibTelegramClient 实例。
 
-    `stub_aiotdlib_init` 把 _AiClient.__init__ 变成空操作;我们直接
+    `stub_tdlib_init` 把 _AiClient.__init__ 变成空操作;我们直接
     `TdlibTelegramClient(settings, event_bus=bus)` 即可构造(其它 ctor
     参数走 `settings`)。
     """
@@ -315,7 +309,7 @@ def _make_stubbed_client(settings: Settings, bus: EventBus) -> tdc.TdlibTelegram
 
 
 def test_list_joined_channels_returns_empty_when_closing(
-    settings, bus, stub_aiotdlib_init, caplog
+    settings, bus, stub_tdlib_init, caplog
 ):
     """VM refresh 在 client 关闭时 fire-and-forget 调 list_joined_channels
     → 应静默返回 [],不抛,不刷 traceback。这是 2026-07-17 启动 race 的
@@ -337,10 +331,10 @@ def test_list_joined_channels_returns_empty_when_closing(
 
 
 def test_submit_phone_raises_client_closing_when_closing(
-    settings, bus, stub_aiotdlib_init
+    settings, bus, stub_tdlib_init
 ):
     """事务性方法(submit_phone / submit_code / 等)在 closing 时抛
-    ClientClosingError,让调用方按自己策略处理 — 但不撞 aiotdlib bridge、
+    ClientClosingError,让调用方按自己策略处理 — 但不撞 tdlib_json bridge、
     不再等 10s request_timeout。
     """
     client = _make_stubbed_client(settings, bus)
@@ -361,7 +355,7 @@ def test_submit_phone_raises_client_closing_when_closing(
     asyncio.run(_go())
 
 
-def test_close_sets_closing_flag(settings, bus, stub_aiotdlib_init):
+def test_close_sets_closing_flag(settings, bus, stub_tdlib_init):
     """close() 是入口 contract:第一件事就是 _closing=True,
     这样任何后续 entry 都立刻 throw。
     """
@@ -377,26 +371,28 @@ def test_close_sets_closing_flag(settings, bus, stub_aiotdlib_init):
 
 @pytest.mark.parametrize("state", ["uninit", "phone_required", "code_required", "password_required", "error"])
 def test_list_joined_channels_returns_empty_when_state_not_ready(
-    settings, bus, stub_aiotdlib_init, state, caplog
+    settings, bus, stub_tdlib_init, state, caplog
 ):
     """VM 的 bootstrap_ui 在 app 启动后立刻 fire-and-forget 调 list_joined_channels,
     这时 bridge 还在 `_state in {uninit, phone_required, code_required, ...}` 中。
     现在策略:
       - 非 ready 时**等**最多 N 秒让 state 走到 ready(best-effort 救用户)
       - N 秒超时 / state 永远不到 ready,返回 `[]` + DEBUG log
-      - 不撞 aiotdlib bridge,不再 10s request_timeout
+      - 不撞 tdlib_json bridge,不再 10s request_timeout
 
     2026-07-18 早实测:`RuntimeError: loop ... is not the running loop` 后立刻跟
-    `list_joined_channels failed` 10s 超时 —— bridge 没 ready,VM 硬拉,撞 aiotdlib
+    `list_joined_channels failed` 10s 超时 —— bridge 没 ready,VM 硬拉,撞 tdlib_json
     内部排队的 cross-loop wakeup。
     """
     import logging
     client = _make_stubbed_client(settings, bus)
     client._state = state  # 不走 start(),直接拨成中间态
+    # 把 wait timeout 设小,让测试快 — 验证 "非 ready 不动 + 超时返 []"
+    # (event 未 set 时 `_wait_for_state` 单次粒度 0.5s,5 例 ≈2.5s)
+    client.channels._READY_WAIT_TIMEOUT = 0.05
     assert client._closing is False  # 确保 readiness 检查才是关键,_closing=False
 
     with caplog.at_level(logging.DEBUG):
-        # 把 wait timeout 设小,让测试快 — 验证 "非 ready 不动 + 超时返 []"
         result = asyncio.run(client.list_joined_channels())
     assert result == []
     # 应该 print 出"未到 ready"的 DEBUG 一行
@@ -414,10 +410,10 @@ def test_list_joined_channels_returns_empty_when_state_not_ready(
 
 
 def test_list_joined_channels_in_ready_state_still_calls_request(
-    settings, bus, stub_aiotdlib_init
+    settings, bus, stub_tdlib_init
 ):
     """最简回归:`_state="ready"` 时不应该被新 guard 拦截,应该真的进
-    `request(GetChats)`。stub aiotdlib 让 `request` 抛一个洞,我们只断它被调
+    `request(GetChats)`。stub tdlib_json 让 `request` 抛一个洞,我们只断它被调
     到 / 怎么到的。
     """
     client = _make_stubbed_client(settings, bus)
@@ -458,7 +454,7 @@ async def _collect_iter(client, chat_ids):
 
 
 def test_iter_resolved_chats_yields_all_dtos(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+    settings: Settings, bus: EventBus, stub_tdlib_init,
 ) -> None:
     """正常路径:每个 cid 解析成功 → 全 yield,顺序保持。"""
     from tgmonitor.core.dto import ChannelDTO
@@ -483,7 +479,7 @@ def test_iter_resolved_chats_yields_all_dtos(
 
 
 def test_iter_resolved_chats_skips_failed_resolve(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+    settings: Settings, bus: EventBus, stub_tdlib_init,
 ) -> None:
     """单条 `_resolve_channel_metadata` 抛 Exception → log + skip,其他继续。"""
     from tgmonitor.core.dto import ChannelDTO
@@ -492,7 +488,7 @@ def test_iter_resolved_chats_skips_failed_resolve(
 
     async def _fake_resolve(cid: int) -> ChannelDTO | None:
         if cid == 2:
-            raise RuntimeError("aiotdlib exploded")
+            raise RuntimeError("resolve exploded")
         return ChannelDTO(id=cid, title=f"#{cid}", kind="channel")
 
     client.channels._resolve_channel_metadata = _fake_resolve  # type: ignore[method-assign]
@@ -503,10 +499,10 @@ def test_iter_resolved_chats_skips_failed_resolve(
 
 
 def test_iter_resolved_chats_propagates_client_closing(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+    settings: Settings, bus: EventBus, stub_tdlib_init,
 ) -> None:
     """mid-loop `_check_alive()` 抛 ClientClosingError → 立刻被 caller 捕获,
-    不会把单条继续排进 aiotdlib bridge(原 `_check_alive` 设的边界保持)。"""
+    不会把单条继续排进 TDLib bridge(原 `_check_alive` 设的边界保持)。"""
     from tgmonitor.core.dto import ChannelDTO
 
     client = _make_stubbed_client(settings, bus)
@@ -523,7 +519,7 @@ def test_iter_resolved_chats_propagates_client_closing(
 
 
 def test_iter_resolved_chats_empty_input_yields_nothing(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init,
+    settings: Settings, bus: EventBus, stub_tdlib_init,
 ) -> None:
     """`GetChats` 返空列表(`chat_ids=None` 走完 `or []` 是空)→ 立刻结束,
     不进 `_check_alive()`,不调 `_resolve_channel_metadata`。"""
@@ -547,7 +543,7 @@ def test_iter_resolved_chats_empty_input_yields_nothing(
 
 
 def test_subscribe_updates_adds_stream_and_aclose_removes_it(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init
+    settings: Settings, bus: EventBus, stub_tdlib_init
 ) -> None:
     """长会话回归:每次 `subscribe_updates()` 把 stream 加进 client._streams,
     caller 调 `aclose()` 必须从列表移除 — 避免 leak。
@@ -576,7 +572,7 @@ def test_subscribe_updates_adds_stream_and_aclose_removes_it(
 
 
 def test_subscribe_updates_streams_receive_push_until_aclose(
-    settings: Settings, bus: EventBus, stub_aiotdlib_init
+    settings: Settings, bus: EventBus, stub_tdlib_init
 ) -> None:
     """功能回归:aclose 之前 push 仍能收到;aclose 之后 push 是 no-op(不抛)。
     """
@@ -611,3 +607,134 @@ def test_subscribe_updates_streams_receive_push_until_aclose(
         await stream.push(msg2)  # 不抛
 
     asyncio.run(_scenario())
+
+
+# ============================================================
+# 凭据预检 — 未配置时抛 TelegramNotConfiguredError(而非 pydantic
+# ValidationError,运行报错 api_id=0 场景的回归)
+# ============================================================
+
+@pytest.mark.parametrize(
+    "api_id, api_hash, phone, expected_fragment",
+    [
+        (0, "x" * 32, "+10000000000", "TG_API_ID"),
+        (1, "", "+10000000000", "TG_API_HASH"),
+        (1, "x" * 32, "", "TG_PHONE"),
+        (1, "x" * 32, "10000000000", "TG_PHONE"),  # 缺 + 国家区号
+    ],
+)
+def test_init_raises_not_configured_when_credentials_missing(
+    tmp_path, bus, stub_tdlib_init,
+    api_id, api_hash, phone, expected_fragment,
+) -> None:
+    """凭据未配置时构造必须抛 TelegramNotConfiguredError,消息带缺失项名。
+
+    这是「api_id=0 启动崩 ValidationError」的守卫回归:不碰
+    `TdlibJsonClient` 的 parameters 校验,直接给用户可读中文提示。
+    """
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=api_id,
+        api_hash=api_hash,
+        phone=phone,
+        session_dir=tmp_path / "session",
+    )
+    with pytest.raises(tdc.TelegramNotConfiguredError) as ei:
+        tdc.TdlibTelegramClient(s, event_bus=bus)
+    assert expected_fragment in str(ei.value)
+
+
+def test_missing_credentials_lists_all_missing_items(
+    tmp_path, stub_tdlib_init,
+) -> None:
+    """三项全缺 → 缺失项列表同时包含 api_id / api_hash / phone。"""
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=0,
+        api_hash="",
+        phone="",
+        session_dir=tmp_path / "session",
+    )
+    missing = tdc._missing_credentials(s)
+    assert "TG_API_ID" in missing
+    assert "TG_API_HASH" in missing
+    assert any(x.startswith("TG_PHONE") for x in missing)
+
+# ============================================================
+# 工厂占位 client — 凭据未配置时返回 UnconfiguredTelegramClient,
+# 应用可正常启动进 UI(显示"未登录"引导),而非启动即崩溃
+# ============================================================
+
+def test_factory_returns_placeholder_when_credentials_missing(tmp_path) -> None:
+    """凭据缺失 → factory 返回占位 client(state=phone_required,不抛)。
+
+    这是「无 .env 启动即弹窗退出」bug 的回归:应用必须能启动,让用户在
+    设置 → 账户 填好凭据。占位 client 不构造真 TdlibTelegramClient,也
+    不需要 TDLib stub。
+    """
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=0,
+        api_hash="",
+        phone="",
+        session_dir=tmp_path / "session",
+        db_root=tmp_path / "m",
+        objectstore_root=tmp_path / "o",
+        media_policy=MediaPolicy.METADATA,
+        db_backend=DBBackend.JSONL,
+        objectstore_backend=ObjectStoreBackend.LOCAL,
+    )
+    from tgmonitor.core.telegram.factory import build_telegram_client
+    from tgmonitor.core.telegram.unconfigured import UnconfiguredTelegramClient
+
+    client = build_telegram_client(s, use_fake=False)
+    assert isinstance(client, UnconfiguredTelegramClient)
+    assert client.state == "phone_required"
+    assert client.me is None
+
+
+async def test_placeholder_start_and_channels_safe() -> None:
+    """占位 client 的 start / 频道接口给出安全默认值,不抛异常。"""
+    from tgmonitor.core.telegram.unconfigured import UnconfiguredTelegramClient
+
+    client = UnconfiguredTelegramClient()
+    state, detail = await client.start()
+    assert state == "phone_required"
+    assert detail  # 引导文案非空
+    assert await client.list_joined_channels() == []
+    assert await client.download_file("whatever") is None
+    # 防御接口:无凭据不可 join / 拉元数据 → 抛 TelegramNotConfiguredError
+    with pytest.raises(tdc.TelegramNotConfiguredError):
+        await client.join_channel("@example")
+    with pytest.raises(tdc.TelegramNotConfiguredError):
+        await client.get_channel_metadata(1)
+    # 历史为空迭代
+    assert [m async for m in client.iter_chat_history(1)] == []
+
+
+async def test_placeholder_subscribe_stream_aclose_wakes_anext() -> None:
+    """占位更新流永不结束;`aclose()` 唤醒 `__anext__` 退出 — monitor
+    stop() 的关流流程与之自洽。"""
+    from tgmonitor.core.telegram.unconfigured import UnconfiguredTelegramClient
+
+    client = UnconfiguredTelegramClient()
+    stream = client.subscribe_updates()
+    # 未 close 时 __anext__ 阻塞(永不结束)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(stream.__anext__(), timeout=0.05)
+    await stream.aclose()
+    # close 后 __anext__ 抛 StopAsyncIteration(不再挂住 loop)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(stream.__anext__(), timeout=0.05)
+    # aclose 幂等
+    await stream.aclose()
+
+
+def test_factory_builds_real_client_when_credentials_present(
+    settings, bus, stub_tdlib_init,
+) -> None:
+    """凭据齐全 → factory 仍构造真 TdlibTelegramClient(占位仅缺凭据时)。"""
+    from tgmonitor.core.telegram.factory import build_telegram_client
+
+    client = build_telegram_client(settings, use_fake=False, event_bus=bus)
+    assert isinstance(client, tdc.TdlibTelegramClient)

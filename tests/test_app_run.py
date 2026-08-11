@@ -5,7 +5,7 @@ event loop + qasync 跑起来才能验)。所以这一组做的是"源码结构"
 
   - 不能再用 `loop.run_until_complete(...)` 然后 `loop.run_forever()` —
     中间窗口里 qasync 的 `__is_running` 被 qasync 自己改 False,
-    aiotdlib thread IO 在这段时间 wake asyncio Task 就会撞
+    tdlib_json thread IO 在这段时间 wake asyncio Task 就会撞
     「RuntimeError: loop ... is not the running loop」(2026-07-18 08:00 实测)。
   - setup 必须用 `asyncio.ensure_future(..., loop=loop)` 单 loop 持续 running。
 
@@ -79,7 +79,7 @@ def test_no_run_until_complete_in_app_run() -> None:
                             "qasync pauses the loop between run_until_complete "
                             "and run_forever, causing "
                             "`RuntimeError: loop ... is not the running loop` "
-                            "from aiotdlib task wakeups. Use ensure_future(..., "
+                            "from tdlib_json task wakeups. Use ensure_future(..., "
                             "loop=loop) and a single run_forever() instead."
                         )
         # 只查顶层 run 函数,嵌套 def 不会被这个 break 提前退出
@@ -151,7 +151,7 @@ def test_run_forever_pattern_uses_with_loop(run_body: str) -> None:
         assert "run_until_complete" not in run_body, (
             "app.run() uses loop.run_until_complete(...) — qasync pauses the "
             "loop between run_until_complete and run_forever, causing "
-            "`RuntimeError: loop ... is not the running loop` from aiotdlib "
+            "`RuntimeError: loop ... is not the running loop` from tdlib_json "
             "task wakeups. Use ensure_future(..., loop=loop) and a single "
             "run_forever() instead."
         )

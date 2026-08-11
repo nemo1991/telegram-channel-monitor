@@ -12,7 +12,7 @@
   - 多继承让 ChannelsApi 跟 TdlibTelegramClient 同 MRO,等于不拆
 
 为什么不单挑出几个 pure function?
-  - 6 个方法都直接 `self.request(...)` / `self.send(...)` aiotdlib 桥
+  - 6 个方法都直接 `self.request(...)` / `self.send(...)` tdlib_json 桥
   - 把 `request` 当参数传进去也行,但调用点 6×N 处改起来不值
 
 # 公开 vs 私有
@@ -31,7 +31,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, AsyncIterator, cast
+from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
@@ -40,44 +40,7 @@ from tgmonitor.core.telegram.tdlib_messages import _map_message
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    # 避免运行时循环 import — 只在 type-check 时用
-    # aiotdlib API 类只 type-check 用 — 运行时下面用 cast() 替代
-    from aiotdlib.api import (  # noqa: F401
-        ChatTypeBasicGroup as _ChatTypeBasicGroup,
-    )
-
     from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
-
-# aiotdlib request 类型 — 运行时 import,跟原 tdlib_client.py 一样的 try/except 守卫。
-# 类型签名走 TYPE_CHECKING 块 import(避免运行时 aiotdlib 缺失时本文件仍能加载),
-# 运行时通过 `cast(Any, X)` 把符号当 Any 用 — 不在 mypy 矩阵里制造
-# `Cannot assign to a type` / `Incompatible types in assignment` 噪声。
-try:
-    from aiotdlib.api import (
-        ChatTypeBasicGroup,
-        ChatTypeSupergroup,
-        DownloadFile,
-        GetBasicGroup,
-        GetChat,
-        GetChatHistory,
-        GetChats,
-        GetFile,
-        GetSupergroup,
-        JoinChat,
-        SearchPublicChat,
-    )
-except Exception:  # noqa: BLE001
-    ChatTypeBasicGroup = cast(Any, None)
-    ChatTypeSupergroup = cast(Any, None)
-    DownloadFile = cast(Any, None)
-    GetBasicGroup = cast(Any, None)
-    GetChat = cast(Any, None)
-    GetChatHistory = cast(Any, None)
-    GetChats = cast(Any, None)
-    GetFile = cast(Any, None)
-    GetSupergroup = cast(Any, None)
-    JoinChat = cast(Any, None)
-    SearchPublicChat = cast(Any, None)
 
 
 class ChannelsApi:
@@ -95,6 +58,10 @@ class ChannelsApi:
         """`client` = 父 lifecycle 控制器(只持引用,不构造任何资源)。"""
         self._c = client
 
+    # `list_joined_channels` 非 ready 时等 ready 的最大秒数(best-effort);
+    # 独立类属性让测试可调小,免得每个 state 分支都干等 8s。
+    _READY_WAIT_TIMEOUT = 8.0
+
     # ============================================================
     # 元数据
     # ============================================================
@@ -106,16 +73,16 @@ class ChannelsApi:
         永远拿不到 — `Chat` 类型没 username / member_count,这些在
         `Supergroup` / `BasicGroup` 上。
         """
-        chat = await self._c.request(GetChat(chat_id=chat_id))  # type: ignore[call-arg,func-returns-value]
+        chat = await self._c.request({"@type": "getChat", "chat_id": chat_id})
         if chat is None:
             return None
         ct = getattr(chat, "type_", None) or getattr(chat, "type", None)
         title = chat.title
-        if isinstance(ct, ChatTypeSupergroup):
+        if ct is not None and ct.get("@type") == "chatTypeSupergroup":
             is_channel = bool(getattr(ct, "is_channel", False))
             kind = "channel" if is_channel else "supergroup"
             sg = await self._c.request(
-                GetSupergroup(supergroup_id=ct.supergroup_id)
+                {"@type": "getSupergroup", "supergroup_id": ct.supergroup_id}
             )
             username = None
             member_count = None
@@ -132,9 +99,9 @@ class ChannelsApi:
                 id=chat_id, title=title, username=username, kind=kind,
                 member_count=member_count,
             )
-        if isinstance(ct, ChatTypeBasicGroup):
+        if ct is not None and ct.get("@type") == "chatTypeBasicGroup":
             bg = await self._c.request(
-                GetBasicGroup(basic_group_id=ct.basic_group_id)
+                {"@type": "getBasicGroup", "basic_group_id": ct.basic_group_id}
             )
             member_count = None
             if bg is not None:
@@ -165,13 +132,13 @@ class ChannelsApi:
         #      `app.bootstrap()` 完成前后 fire 了 `list_*`,
         #      但 bridge/_state="ready" 还没等到 — 真打开 app 时撞这个)
         #   3) LoginStateChanged 转 ready 后 VM 再拉一次
-        # 这三种情况都"安静走",不撞 aiotdlib 10s request_timeout,
+        # 这三种情况都"安静走",不撞 tdlib_json 10s request_timeout,
         # 让 VM 自然 idle,等下次 LoginStateChanged 或用户点 Refresh 再触发。
         #
         # 关键(2026-07-18 修复):之前 `if self._state != "ready": return []`
         # 立即返回,但**bootstrap race 路径下**老版本会错过稍后才到的 "ready":
         #   - `start()` 等的是 `_state_event.wait()`,任何状态变化都 set,
-        #     所以 aiotdlib 触发 `updateAuthorizationState(WaitTdlibParameters)`
+        #     所以 tdlib_json 触发 `updateAuthorizationState(WaitTdlibParameters)`
         #     就可能让 start() 提前返(state="tdlib_parameters")
         #   - VM.bootstrap_ui 紧接着 fire list_joined_channels
         #   - guard 看到 state != "ready" → 立即 [],错过 200ms 后到的 "ready"
@@ -182,14 +149,17 @@ class ChannelsApi:
             log.info("[tdlib] list_joined_channels: client closing, returning []")
             return []
         if self._c._state != "ready":
-            # 等 ≤ N 秒让 aiotdlib 完成从 Wait* → Ready 的过渡
+            # 等 ≤ N 秒让 tdlib_json 完成从 Wait* → Ready 的过渡
             # 仍 best-effort:超过 N 秒还没 ready(网络挂了/401/...)就 []
             try:
-                await self._c._wait_for_state("ready", timeout=8.0)
+                await self._c._wait_for_state(
+                    "ready", timeout=self._READY_WAIT_TIMEOUT
+                )
             except TimeoutError:
                 log.debug(
-                    "[tdlib] list_joined_channels: state=%r (未到 ready,8s 超时)",
-                    self._c._state,
+                    "[tdlib] list_joined_channels: state=%r "
+                    "(未到 ready,%.1fs 超时)",
+                    self._c._state, self._READY_WAIT_TIMEOUT,
                 )
                 return []
             if self._c._state != "ready":
@@ -199,7 +169,9 @@ class ChannelsApi:
         result: list[ChannelDTO] = []
         try:
             t = _t.monotonic()
-            chats = await self._c.request(GetChats(limit=200))  # type: ignore[call-arg,func-returns-value]
+            chats = await self._c.request(
+                {"@type": "getChats", "chat_list": {"@type": "chatListMain"}, "limit": 200}
+            )
             log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
                      len(chats.chat_ids) if chats and chats.chat_ids else 0,
                      _t.monotonic() - t)
@@ -243,7 +215,7 @@ class ChannelsApi:
         n_total = len(chat_ids)
         for i, cid in enumerate(chat_ids):
             # 每个 cid 解析前再 check 一次 —— 拉 mid-loop 时已经被 close()
-            # 也不要把这条请求继续排进 aiotdlib bridge
+            # 也不要把这条请求继续排进 tdlib_json bridge
             self._c._check_alive()
             try:
                 dto = await self._resolve_channel_metadata(cid)
@@ -273,22 +245,22 @@ class ChannelsApi:
         """分页拉取频道历史消息(向旧方向递减)。
 
         before_msg_id=0 → 拉最新 N 条;>0 → 从该 id 之前(更早)开始续拉。
-        TDLib `GetChatHistory.from_message_id` 只支持向旧方向翻页,所以传
+        TDLib `getChatHistory.from_message_id` 只支持向旧方向翻页,所以传
         参语义是"截止这条之前",而非"从这条之后"。翻页游标 = 本批最小 id。
         限流:每页间不 sleep(由调用方 ChannelSyncService 控)。
         """
         # Async generator:`_check_alive()` 在每次分页入口 throw,中途 close() 就
-        # 立刻结束迭代(不再排下一页 GetChatHistory request,免得撞 10s 超时 +
+        # 立刻结束迭代(不再排下一页 getChatHistory request,免得撞 10s 超时 +
         # 跨 loop wakeup 噪音)
         while True:
             self._c._check_alive()
-            t = GetChatHistory(  # type: ignore[call-arg]
-                chat_id=channel_id,
-                from_message_id=before_msg_id,
-                offset=0,
-                limit=limit,
-            )
-            resp = await self._c.request(t)  # type: ignore[func-returns-value]
+            resp = await self._c.request({
+                "@type": "getChatHistory",
+                "chat_id": channel_id,
+                "from_message_id": before_msg_id,
+                "offset": 0,
+                "limit": limit,
+            })
             if resp is None or not getattr(resp, "messages", None):
                 break
             batch = list(resp.messages)
@@ -316,10 +288,10 @@ class ChannelsApi:
         self._c._check_alive()
         username = identifier.lstrip("@") if identifier.startswith("@") else identifier
         # search 要拿响应 → request;join 不需要响应 → send
-        resp = await self._c.request(SearchPublicChat(username=username))  # type: ignore[call-arg,func-returns-value]
+        resp = await self._c.request({"@type": "searchPublicChat", "username": username})
         if resp is None:
             raise RuntimeError(f"SearchPublicChat 返回空: {username!r}")
-        await self._c.send(JoinChat(chat_id=resp.id))
+        await self._c.send({"@type": "joinChat", "chat_id": resp.id})
         return ChannelDTO(id=resp.id, title=resp.title, username=resp.username or None)
 
     # ============================================================
@@ -330,23 +302,26 @@ class ChannelsApi:
         """两步下载原文件 bytes;失败 / 超时返 None,**不抛**(让 monitor 循环继续)。
 
         步骤:
-          1) DownloadFile(synchronous=False) 触发后台下载(priority=1, 不等)。
-          2) GetFile 轮询直到 `local.is_downloading_completed`;读 `local.path`。
+          1) downloadFile(synchronous=False) 触发后台下载(priority=1, 不等)。
+          2) getFile 轮询直到 `local.is_downloading_completed`;读 `local.path`。
           3) 边界:
              - 入口 _check_alive():close 中 throw ClientClosingError(已有)。
              - 30 min hard cap:超过 → 返 None + WARNING。
-             - GetFile 返 None / path 缺失 → 返 None + WARNING。
+             - getFile 返 None / path 缺失 → 返 None + WARNING。
         """
         import asyncio as _aio
         import time as _t
         from pathlib import Path as _Path
 
         self._c._check_alive()
-        # 1) 触发后台下载(不等 — DownloadFile synchronous=False)
+        # 1) 触发后台下载(不等 — downloadFile synchronous=False)
         try:
-            await self._c.request(
-                DownloadFile(file_id=file_id, priority=1, synchronous=False)  # type: ignore[call-arg,arg-type]
-            )
+            await self._c.request({
+                "@type": "downloadFile",
+                "file_id": file_id,
+                "priority": 1,
+                "synchronous": False,
+            })
         except ClientClosingError:
             raise  # 让 close() 路径正常 throw,monitor loop 兜底
         except Exception as e:  # noqa: BLE001
@@ -358,7 +333,7 @@ class ChannelsApi:
         while _t.monotonic() < deadline:
             self._c._check_alive()
             try:
-                f = await self._c.request(GetFile(file_id=file_id))  # type: ignore[call-arg,arg-type,func-returns-value]
+                f = await self._c.request({"@type": "getFile", "file_id": file_id})
             except ClientClosingError:
                 raise
             except Exception as e:  # noqa: BLE001

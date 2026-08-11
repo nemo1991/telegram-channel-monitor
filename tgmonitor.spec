@@ -6,8 +6,11 @@ Cross-platform:
   - macOS  → .app bundle(BUNDLE),含 Info.plist + 资源
 
 资源 collect 策略:
-  - aiotdlib.tdlib 内置 TDLib native lib(.so / .dylib)— PyInstaller 默认
-    不 collect,需要 `collect_data_files("aiotdlib")` + `hiddenimports=["aiotdlib.tdlib"]`
+  - tdlib_json 内置 libtdjson native lib(.so / .dylib)— 由
+    scripts/build_libtdjson.sh 从 td/td 源码编译后放入包内 `tdlib/` 目录。
+    PyInstaller 默认不 collect data,需要 `collect_data_files("tdlib_json")`。
+    加载器(tdjson.py)用 `Path(__file__).parent / "tdlib" / <binary>` 定位,
+    所以 destination 必须是 `tdlib_json/tdlib`。
   - tgmonitor.resources / tgmonitor.ui.resources(SVG / QSS / icons)
     — 走 `importlib.resources.files()`,PyInstaller 跟 pkg 走,
     `collect_data_files` 显式保险
@@ -19,31 +22,32 @@ Cross-platform:
     source data 校验,ValueError 抛错
 """
 import sys
-from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
 # ---- resource collection ----
-# aiotdlib 内置 TDLib native lib(命名:`libtdjson_<plat>_<arch>.<ext>`)
-aiotdlib_data = collect_data_files("aiotdlib")
+# tdlib_json 内置 libtdjson native lib(命名:`libtdjson_<plat>_<arch>.<ext>`,
+# 由 scripts/build_libtdjson.sh 生成;未编译时 collect 为空,属正常 dev 状态)
+tdlib_json_data = collect_data_files("tdlib_json")
 # 项目自身资源(SVG / icons / QSS)— 走 importlib.resources
 tg_resources = collect_data_files("tgmonitor.resources")
 ui_resources = collect_data_files("tgmonitor.ui.resources")
 
 datas = []
-# aiotdlib 的 native lib 在 pkg 内是 `aiotdlib/tdlib/libtdjson_*.dylib`。
-# aiotdlib.tdjson loader 走 `pathlib.Path(__file__).parent / "tdlib" / binary_name`,
-# 所以 destination 必须是 `aiotdlib/tdlib` —— PyInstaller 才把文件展到
-# `<bundle>/Contents/Resources/aiotdlib/tdlib/libtdjson_*.dylib`,loader 找得到。
-# (用 `aiotdlib` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
-datas += [(src, "aiotdlib/tdlib") for src, _ in aiotdlib_data]
+# tdlib_json 的 native lib 在 pkg 内是 `tdlib_json/tdlib/libtdjson_*.dylib`。
+# tdlib_json.tdjson loader 走 `pathlib.Path(__file__).parent / "tdlib" / binary_name`,
+# 所以 destination 必须是 `tdlib_json/tdlib` —— PyInstaller 才把文件展到
+# `<bundle>/tdlib_json/tdlib/libtdjson_*.dylib`,loader 找得到。
+# (用 `tdlib_json` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
+for src, dest in tdlib_json_data:
+    datas.append((src, f"tdlib_json/{dest}" if dest else "tdlib_json"))
 datas += [(src, "tgmonitor/resources") for src, _ in tg_resources]
 datas += [(src, "tgmonitor/ui/resources") for src, _ in ui_resources]
 
-# aiotdlib.tdlib 子包(__init__.py 负责 ctypes find_library)
-hiddenimports = ["aiotdlib.tdlib"]
+# tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports
+hiddenimports = []
 
 # App icon:macOS BUNDLE 只接受 .icns,我们目前只有 .svg(Pillow 也转不了)。
 # v1.0.0 release 不强求 app icon — 用 None 让 PyInstaller fallback 到系统默认
@@ -58,9 +62,8 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
-    # 不让 PyInstaller 默认 hookspath;我们自己用 hooks/hook-aiotdlib.py
-    # 当前 spec 里已显式 collect_data_files,不必走 hookspath(hook 是双保险,
-    # D5 build.yml 里加 hookspath=[] 也行,先不开)
+    # 旧 hooks/hook-aiotdlib.py 已随 aiotdlib 迁移删除;libtdjson 数据收集
+    # 由上面显式 collect_data_files 完成,不再需要 hookspath
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -10,10 +10,10 @@
   4. EventBus.publish() 派发了但 MessageView 没订阅
   5. MessageView 订阅了但 append() 路径有问题
 
-这个测试用 stub 的 aiotdlib init,直接调 _on_new_message() + 走完整
+这个测试用 stub 的 tdlib_json init,直接调 _on_new_message() + 走完整
 MonitorService 流,验证 1/2/3/4/5 都成立。`_on_new_message` 是用
-`add_event_handler(API.Types.UPDATE_NEW_MESSAGE, ...)` 注册的,真实
-aiotdlib 会在 receive loop 收到 packet 时按 update.ID 派发 — 我们直接
+`add_event_handler("updateNewMessage", ...)` 注册的,tdlib_json 会在
+receive loop 收到 packet 时按 update 的 `@type` 派发 — 我们直接
 调 `_on_new_message` 等价。
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ class _FakeMsg:
 
 
 class _FormattedText:
-    """模拟 aiotdlib 的 FormattedText pydantic model。"""
+    """模拟 TDLib 的 formattedText 结构。"""
 
     def __init__(self, text: str) -> None:
         self.text = text
@@ -64,7 +64,7 @@ class MessageText:  # noqa: N801 — 名字必须跟 TDLib 一致
 
 
 class _FakeUpdateNewMessage:
-    """包一层,模拟 aiotdlib 的 UpdateNewMessage(update.message = Message)。"""
+    """包一层,模拟 TDLib 的 updateNewMessage(update.message = Message)。"""
 
     def __init__(self, msg: _FakeMsg) -> None:
         self.message = msg
@@ -91,18 +91,18 @@ def bus() -> EventBus:
 
 @pytest.mark.asyncio
 async def test_on_new_message_pushes_to_subscribed_stream(
-    settings, bus, stub_aiotdlib_init,
+    settings, bus, stub_tdlib_init,
 ):
     """最小路径:`_on_new_message` 调起后,`subscribe_updates()` 拿到的 stream
     应该能 `__anext__` 到 MessageDTO。"""
     client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-    # 把 _update_task 置 None,让 aiotdlib.Client.__del__ 跳过 native 析构
-    # (stub 场景下 update_task 永远是 None,但 aiotdlib 父类会照常走析构)
+    # 把 _update_task 置 None,让 TdlibJsonClient.__del__ 跳过 native 析构
+    # (stub 场景下 update_task 永远是 None,但基类析构路径仍照常走)
     client._update_task = None
     try:
         stream = client.subscribe_updates()
 
-        # 直接调 handler(等价于 aiotdlib receive loop 收到 updateNewMessage)
+        # 直接调 handler(等价于 tdlib_json receive loop 收到 updateNewMessage)
         update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=42, text="hello world"))
         await client._on_new_message(client, update)
 
@@ -121,7 +121,7 @@ async def test_on_new_message_pushes_to_subscribed_stream(
 
 @pytest.mark.asyncio
 async def test_monitor_service_publishes_message_received(
-    settings, bus, stub_aiotdlib_init,
+    settings, bus, stub_tdlib_init,
 ):
     """完整路径:`_on_new_message` → stream → MonitorService._handle → bus.publish。
 
@@ -183,7 +183,7 @@ async def test_monitor_service_publishes_message_received(
 
 @pytest.mark.asyncio
 async def test_on_new_message_skips_non_whitelisted_channel(
-    settings, bus, stub_aiotdlib_init,
+    settings, bus, stub_tdlib_init,
 ):
     """频道不在白名单 → MonitorService 静默 drop,不发 MessageReceived。"""
     from tests.conftest import InMemoryRepository
