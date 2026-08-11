@@ -8,6 +8,17 @@
 ## [Unreleased]
 
 ### 🛠️ Refactored
+- **aiotdlib 迁移 → 自编译 libtdjson + ctypes 绑定(`tdlib_json`)**(`[本轮]`):
+  - 根因:aiotdlib(pylakey)仓库已归档、不再维护;其 tdlib 动态库由安装期下载,
+    无法锁定 TDLib 版本,且无 Windows wheel
+  - 修法:新建 workspace 子项目 `packages/tdlib_json`(包名 `tdlib-json-client`,
+    零运行时依赖),用 ctypes 绑定自编译 libtdjson;`scripts/build_libtdjson.sh`
+    编译 TDLib 1.8.46,产物进 `tdlib_json/tdlib/`(被 gitignore,首次 clone 需自跑)
+  - `core/telegram/` 改用 `TdlibJsonClient`(raw dict 请求 + `add_event_handler`),
+    删 `hooks/hook-aiotdlib.py`;`tgmonitor.spec` 与 `.github/workflows/ci.yml` /
+    `build.yml` 同步适配(先编译 libtdjson 再打包)
+  - 测试 fixture `stub_aiotdlib_init` → `stub_tdlib_init`(拦截 `TdlibJsonClient`
+    构造,不加载真实 dylib);全量 257 passed,ruff 0 warning
 - **清 `run_coro` `coroutine-never-awaited` RuntimeWarning**(`[本轮]` `ui/_async.py`):
   - `test_main_window_close.py` 跑时 2 处 warning — `_go` coro 在 loop close 时未 tick 完
     GC 被收。`_async.py` 加 module-level `_PENDING_FUTS: set[asyncio.Future]` hold
@@ -42,6 +53,22 @@
     - 删 3 处 unused-ignore(`app_get_state` name-defined / `EditableSettings` /
       `channel_widget._empty_hint`)
   - 结果:**107 → 0 错 / 22 文件**,pytest 全过,ruff 0 warning
+
+### 🐛 Fixed
+- **无凭据启动不再崩溃 — factory 返回占位 client**(`[本轮]` `core/telegram/`):
+  - 根因:上轮把凭据预检放进 `TdlibTelegramClient.__init__`,缺 `TG_API_ID` /
+    `TG_API_HASH` / `TG_PHONE` 时抛 `TelegramNotConfiguredError`,而启动流程
+    无条件构造真 client → 全新安装无 .env 直接弹「应用初始化失败」退出,与
+    config.py「凭据可选,启动不要求 .env 就绪」的设计冲突
+  - 修法:`factory.build_telegram_client` 先查 `_missing_credentials`,非空 →
+    返回新增 `UnconfiguredTelegramClient` 占位实现(state 恒 `phone_required`,
+    频道 / 历史 / 下载返安全默认值,更新流 `aclose` 可唤醒退出);真 client
+    仅在凭据齐全时构造,`__init__` 预检保留作防御(直接构造仍抛)
+  - 效果:无凭据应用正常启动进 UI,显示「未登录」+「设置 → 账户 填写」引导,
+    填好凭据保存 .env 重启即可监听;顺带消灭裸 pydantic `ValidationError`
+    (api_id=0 场景)
+  - 测试:+4(工厂占位 / 占位接口安全默认 / 占位流 aclose / 凭据齐全仍构造真
+    client),全量 257 passed,ruff 0 warning
 
 ### 🔧 Changed
 - **视觉 golden 字体钉死:内置 DejaVu Sans,跨机渲染一致**(`[本轮]`, `tests/`):
@@ -777,11 +804,11 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/forcetone/tgmonitor/compare/v1.0.7...HEAD
-[1.0.6]: https://github.com/forcetone/tgmonitor/compare/v1.0.5...v1.0.6
-[1.0.7]: https://github.com/forcetone/tgmonitor/compare/v1.0.6...v1.0.7
-[1.0.5]: https://github.com/forcetone/tgmonitor/compare/v1.0.4...v1.0.5
-[1.0.4]: https://github.com/forcetone/tgmonitor/compare/v1.0.3...v1.0.4
-[1.0.3]: https://github.com/forcetone/tgmonitor/compare/v0.2.0...v1.0.3
-[0.2.0]: https://github.com/forcetone/tgmonitor/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/forcetone/tgmonitor/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.7...HEAD
+[1.0.6]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.5...v1.0.6
+[1.0.7]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.6...v1.0.7
+[1.0.5]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/nemo1991/telegram-channel-monitor/compare/v0.2.0...v1.0.3
+[0.2.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nemo1991/telegram-channel-monitor/releases/tag/v0.1.0

@@ -37,7 +37,7 @@
 请通过以下任一方式私下联系:
 
 - 📧 Email: **security@forcetone.dev**(占位,实际使用前请替换为你自己的邮箱)
-- 或:GitHub [Security Advisories](https://github.com/forcetone/tgmonitor/security/advisories/new)
+- 或:GitHub [Security Advisories](https://github.com/nemo1991/telegram-channel-monitor/security/advisories/new)
 
 请包含:
 

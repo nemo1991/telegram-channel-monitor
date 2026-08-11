@@ -29,3 +29,12 @@ Contributors)。
 | `src/tgmonitor/resources/icons/nav_channels.svg`       | Lucide `list`(3 dot + 3 line) |
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
+
+## tdlib_json(自编译 libtdjson 的 ctypes 绑定)
+
+`packages/tdlib_json/` 子项目中的 `tdjson.py` 改编自
+[aiotdlib](https://github.com/pylakey/aiotdlib)(MIT License,Copyright (c)
+pylakey)。`_vendor_ref/aiotdlib/` 是参考源码备份,仅作对照阅读,**不随包分发**。
+
+aiotdlib 仓库已归档,本项目以自编译 libtdjson(锁定 TDLib 1.8.46)+ ctypes
+绑定替代,不再依赖 aiotdlib 及其安装期下载的 TDLib 二进制。

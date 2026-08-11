@@ -109,7 +109,7 @@ async for _ in app.export(req):
 
 **封装原则**:TDLib 的 `Update` / `Message` / `Photo` / `Document` 等类型**绝不出本目录**;`tdlib_client.py` 内部用 `mapping.py` 归一化为 `MessageDTO` / `MediaDTO`。
 
-**代理(SOCKS5)**:`Settings.proxy` + `TD_PROXY` 环境变量,由 `TgProxy` 适配进 aiotdlib 的 `proxy_settings`;见 [CONTRIBUTING.md § 代理与 aiotdlib 调试](../CONTRIBUTING.md)。
+**代理(SOCKS5)**:`Settings.proxy` + `TD_PROXY` 环境变量,由 `parse_socks5_proxy` 转成 `tdlib_json.Socks5Proxy` 传入 TDLib;见 [CONTRIBUTING.md § 代理与 TDLib 调试](../CONTRIBUTING.md)。
 
 ### 3.5 `core/storage/` — 消息持久化
 
@@ -172,7 +172,7 @@ async for msg in client.subscribe_updates():
 
 ```
 TDLib update
-  │  (aiotdlib callback)
+  │  (tdlib_json callback)
   ▼
 TdlibTelegramClient.on_update(update)
   │  mapping → MessageDTO
@@ -244,7 +244,7 @@ ExportDialog 选参数 ──► AppService.export(req)
 - **媒体嵌入 messages 文档(Mongo)**:方便一次 `find()` 拿到全部,大消息时再考虑分离
 - **HTML 缩略图 base64 内嵌**:打开文件即可看图,代价是文件变大;CSV/JSON/MD 不内嵌
 - **不做增量同步 / 游标**:`list_messages` 一次拉完,适合中小数据量;大数据需扩展分页游标
-- **aiotdlib 而不是裸 ctypes 调 td_json**:`aiotdlib` 维护成本低,接口 Pythonic;如需极致控制可换
+- **自编译 libtdjson + ctypes 绑定(`tdlib_json`)**:aiotdlib 已归档,自编译可锁定 TDLib 版本、零第三方依赖;子项目在 `packages/tdlib_json/`
 - **DB 唯一键用 `(channel_id, telegram_msg_id)`**:跨频道不冲突;删除频道用 `ON DELETE CASCADE` 级联
 
 ## 9. 测试策略
@@ -263,6 +263,6 @@ ExportDialog 选参数 ──► AppService.export(req)
 ## 10. 进一步阅读
 
 - [TDLib docs](https://core.telegram.org/tdlib)
-- [aiotdlib](https://github.com/pylakey/aiotdlib)
+- [tdlib_json — 自编译 libtdjson 的 ctypes 绑定(仓库子项目)](../packages/tdlib_json/)
 - [PySide6 docs](https://doc.qt.io/qtforpython-6/)
 - [qasync](https://github.com/CabbageDevelopment/qasync)

@@ -124,7 +124,7 @@
 
 ---
 
-## 🌐 代理与 aiotdlib 调试
+## 🌐 代理与 TDLib 调试
 
 国内 / 受限网络下,Telegram 服务器常需要经 SOCKS5 代理。本节说怎么
 **启用** 与 **调试** 这条路,不解释 Telegram 协议本身(那是 TDLib 文档的事)。
@@ -143,28 +143,51 @@
 `Settings.proxy`(pydantic 字段)会校验 URL 格式;非法值会抛 `ValueError`,
 UI 弹错误框。
 
-### 开发 aiotdlib 路径
+### 编译 libtdjson
 
-- `aiotdlib>=0.16` 是硬性要求(`pyproject.toml` dependencies)。低于 0.16
-  的版本 `ClientSettings` API 不同,会启动失败
-- 本项目在 `core/telegram/factory.py` 优先 import 真 `aiotdlib.AiClient`,
-  失败回落到 `FakeTelegramClient`(开发 / CI 无凭据时)
-- TDLib 二进制由 aiotdlib 在 install 阶段自行下载;如果网络受限,手动
-  放到 `aiotdlib/tdlib/` 下
+- TDLib 引擎 `libtdjson` 由 `scripts/build_libtdjson.sh` 自编译(锁定 TDLib
+  1.8.46),产物放进 `packages/tdlib_json/src/tdlib_json/tdlib/`。dylib 被
+  gitignore,**首次 clone 后必须先跑一次**(见「常用命令」)
+- 工具链:macOS `brew install cmake gperf openssl@3`;Linux `apt install
+  cmake gperf libssl-dev zlib1g-dev build-essential`
+- 编译完可跑 `PYTHONPATH=src uv run pytest tests/test_tdlib_client.py` 验证
+- 凭据缺失时 `core/telegram/factory.py` 返回 `UnconfiguredTelegramClient`
+  占位实现,开发 / CI 无凭据也能启动应用
 
 ### 看 TDLib 日志
 
-```bash
-# 启动时抬高 verbosity
-TD_LOG_LEVEL=DEBUG python -m tgmonitor
+`tdlib_client.py` 启动时把 TDLib verbosity 设为 0(静默)。需要调试时,临时把
+`_do_start_inner` 里的 `setLogVerbosityLevel` 调高(如 4),TDLib 会在 stderr
+吐原始 `updateAuthorizationState` / `updateNewMessage` 事件流 —— 这些是
+`core/telegram/tdlib_client.py` 订阅的源头,改它之前先确认这里的事件字段确实有变化。
 
-# 或者只读 session 文件里的事件
-TG_SESSION_DIR=./data/session   # 默认
+---
+
+## 🪟 Windows 原生编译
+
+`libtdjson` 目前由 `scripts/build_libtdjson.sh` 在 macOS / Linux 上自编译,
+脚本暂不支持 Windows 原生(TDLib 源码编译需 MSVC + OpenSSL + gperf + PHP CLI,
+及完整 CMake 工具链)。Windows 原生要跑需手动编译 libtdjson 并放到
+`packages/tdlib_json/src/tdlib_json/tdlib/`。
+
+> **为什么 Windows 不在 CI 矩阵?** 装齐上面工具链 ≈ 8-16h 工程 + 每 PR 多 ~15 分钟,
+> 而本项目测试主要是 stdlib + asyncio + Qt offscreen,Windows-only 失败极少,边际收益低。
+> 若编译脚本支持 Windows,或 Windows 安装问题 issue 累计 ≥ 3 个,再考虑加回。
+
+### Windows + WSL2(推荐)
+
+Windows 11 用户装 WSL2,体验跟 Linux 完全一致:
+
+```powershell
+wsl --install -d Ubuntu-24.04   # 一次性,需要重启
+# 在 Ubuntu 终端里:
+git clone https://github.com/nemo1991/telegram-channel-monitor.git
+cd tgmonitor
+uv sync --all-extras
+uv run python -m tgmonitor   # GUI 走 WSLg
 ```
 
-TDLib 会在 stderr 里吐原始 `updateAuthorizationState` / `updateNewMessage`
-事件流 —— 这些是 `core/telegram/tdlib_client.py` 订阅的源头,改它之前先确认
-这里的事件字段确实有变化。
+`libtdjson` 由 `scripts/build_libtdjson.sh` 编译,代理 / 路径 / shell 行为跟 CI 一致。
 
 ---
 
