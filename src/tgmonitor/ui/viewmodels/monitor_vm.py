@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
+from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import ChannelDTO, ExportRequest
 from tgmonitor.core.events import (
     ChannelSubscribed,
@@ -26,7 +27,6 @@ from tgmonitor.ui._async import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import Settings
     from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)

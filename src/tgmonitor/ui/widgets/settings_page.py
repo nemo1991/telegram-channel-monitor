@@ -271,30 +271,38 @@ class SettingsPage(QWidget):
     def _on_db_backend_changed(self) -> None:
         is_jsonl = self.cmb_db.currentData() == DBBackend.JSONL
         # DSN 行:postgres/mongo 时启用,jsonl 时禁用
-        idx_dsn = self._find_form_row(self.in_db_dsn)
-        if idx_dsn is not None:
-            self._set_form_row_visible(idx_dsn, not is_jsonl)
+        hit = self._find_form_row(self.in_db_dsn)
+        if hit is not None:
+            g, idx = hit
+            self._set_form_row_visible(g, idx, not is_jsonl)
         # 目录行:jsonl 时启用
-        idx_dir = self._find_form_row(self.in_db_root)
-        if idx_dir is not None:
-            self._set_form_row_visible(idx_dir, is_jsonl)
+        hit = self._find_form_row(self.in_db_root)
+        if hit is not None:
+            g, idx = hit
+            self._set_form_row_visible(g, idx, is_jsonl)
 
     def _on_os_backend_changed(self) -> None:
         is_local = self.cmb_os.currentData() in (ObjectStoreBackend.LOCAL, ObjectStoreBackend.FOLDER)
         is_s3 = self.cmb_os.currentData() == ObjectStoreBackend.S3
         # 本地目录:local/folder 时显示
-        idx_root = self._find_form_row(self.in_os_root)
-        if idx_root is not None:
-            self._set_form_row_visible(idx_root, is_local)
+        hit = self._find_form_row(self.in_os_root)
+        if hit is not None:
+            g, idx = hit
+            self._set_form_row_visible(g, idx, is_local)
         # S3 字段:S3 时显示
         for w in (self.in_os_endpoint, self.in_os_region, self.in_os_access_key,
                   self.in_os_secret_key, self.in_os_bucket):
-            idx = self._find_form_row(w)
-            if idx is not None:
-                self._set_form_row_visible(idx, is_s3)
+            hit = self._find_form_row(w)
+            if hit is not None:
+                g, idx = hit
+                self._set_form_row_visible(g, idx, is_s3)
 
-    def _find_form_row(self, widget: QWidget) -> int | None:
-        """在 form layout 里找到 widget 所在行。
+    def _find_form_row(self, widget: QWidget) -> tuple[QGroupBox, int] | None:
+        """在 form layout 里找到 widget 所在分组与行号,返回 `(group, row)`。
+
+        `QFormLayout` 的 row index 只在**所属分组**内有效,必须连同分组一起
+        返回,否则按裸 row index 跨分组操作会误伤其他分组的同名行(历史 bug:
+        隐藏 S3 字段时把账户分组的手机号 / Session 目录、JSONL 目录一起藏掉)。
 
         `fl.itemAt(row, role)` 返回 `QLayoutItem`(不是 tuple),
         调 `.widget()` 拿真实控件再做相等检查。
@@ -311,23 +319,23 @@ class SettingsPage(QWidget):
                 if fw is None:
                     continue
                 if fw is widget or _is_child_of(widget, fw):
-                    return i
+                    return g, i
         return None
 
-    def _set_form_row_visible(self, row: int, visible: bool) -> None:
-        for g in self.findChildren(QGroupBox):
-            fl = g.findChild(QFormLayout)
-            if fl is None or row >= fl.rowCount():
+    def _set_form_row_visible(self, group: QGroupBox, row: int, visible: bool) -> None:
+        """只操作**指定分组**内的一行(Label + Field 一起显隐)。"""
+        fl = group.findChild(QFormLayout)
+        if fl is None or row >= fl.rowCount():
+            return
+        for role in (QFormLayout.LabelRole, QFormLayout.FieldRole):
+            item = fl.itemAt(row, role)
+            # mypy 看到 `item.widget() -> QWidget | None`,虽然 item 已 truthy,
+            # 但 widget() 自身仍返 None。显式 None 守卫清掉 union-attr。
+            if item is None:
                 continue
-            for role in (QFormLayout.LabelRole, QFormLayout.FieldRole):
-                item = fl.itemAt(row, role)
-                # mypy 看到 `item.widget() -> QWidget | None`,虽然 item 已 truthy,
-                # 但 widget() 自身仍返 None。显式 None 守卫清掉 union-attr。
-                if item is None:
-                    continue
-                w = item.widget()
-                if w is not None:
-                    w.setVisible(visible)
+            w = item.widget()
+            if w is not None:
+                w.setVisible(visible)
 
     # ------ 存/取 ------
 
@@ -339,17 +347,17 @@ class SettingsPage(QWidget):
             api_hash=self.in_api_hash.text().strip(),
             phone=self.in_phone.text().strip(),
             session_dir=self.in_session_dir.text().strip() or str(ud / "session"),
-            db_backend=self.cmb_db.currentData().value,
+            db_backend=self.cmb_db.currentData(),
             db_dsn=self.in_db_dsn.text().strip(),
             db_root=self.in_db_root.text().strip() or str(ud / "messages"),
-            objectstore_backend=self.cmb_os.currentData().value,
+            objectstore_backend=self.cmb_os.currentData(),
             objectstore_root=self.in_os_root.text().strip() or str(ud / "media"),
             objectstore_endpoint=self.in_os_endpoint.text().strip(),
             objectstore_region=self.in_os_region.text().strip() or "us-east-1",
             objectstore_access_key=self.in_os_access_key.text().strip(),
             objectstore_secret_key=self.in_os_secret_key.text().strip(),
             objectstore_bucket=self.in_os_bucket.text().strip() or "tgmonitor",
-            media_policy=self.cmb_media.currentData().value,
+            media_policy=self.cmb_media.currentData(),
             media_max_mb=self.in_media_max.value(),
             data_root=self.in_data_root.text().strip() or str(ud),
             proxy=self.in_proxy.text().strip(),
@@ -398,7 +406,12 @@ class SettingsPage(QWidget):
 
     def _on_save_env(self) -> None:
         """仅写 .env,不热重载。"""
-        e = self._collect()
+        try:
+            e = self._collect()
+        except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
+            log.exception("collect settings failed")
+            QMessageBox.critical(self, "保存失败", f"读取表单失败: {exc}")
+            return
         errs = e.validate()
         if errs:
             QMessageBox.warning(self, "校验失败", "\n".join(errs))
@@ -411,7 +424,12 @@ class SettingsPage(QWidget):
 
     def _on_apply(self) -> None:
         """写 .env + 热重载 AppService。"""
-        e = self._collect()
+        try:
+            e = self._collect()
+        except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
+            log.exception("collect settings failed")
+            QMessageBox.critical(self, "保存失败", f"读取表单失败: {exc}")
+            return
         errs = e.validate()
         if errs:
             QMessageBox.warning(self, "校验失败", "\n".join(errs))
