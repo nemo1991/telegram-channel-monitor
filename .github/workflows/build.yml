@@ -71,6 +71,30 @@ jobs:
           # PyInstaller 已在 pyproject.toml dev dep(D1 commit)
           uv sync --all-extras --group dev
 
+      # C: 盘兜底清理:vcpkg 重活已挪 D: 盘(见 ps1 的 -WorkRoot),
+      # 这里再清掉预装的大目录,避免链接期 No space left on device(C1088/LNK1180)。
+      # 不动 VS 工具链 / Git / runner 自身。
+      - name: Free disk space (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $targets = @(
+            "C:\Program Files\dotnet",
+            "C:\Program Files\Microsoft SQL Server",
+            "C:\Program Files (x86)\Microsoft SQL Server",
+            "C:\vcpkg\downloads",
+            "$env:LOCALAPPDATA\Microsoft\vcpkg\archives"
+          )
+          foreach ($p in $targets) {
+            if (Test-Path $p) {
+              $size = (Get-ChildItem $p -Recurse -Force -ErrorAction SilentlyContinue |
+                       Measure-Object Length -Sum -ErrorAction SilentlyContinue).Sum
+              Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "removed $p ($([math]::Round($size / 1MB)) MB)"
+            }
+          }
+          Get-PSDrive C | Select-Object Used, Free | Format-Table -AutoSize
+
       # libtdjson(TDLib JSON 接口)编译进包内
       # packages/tdlib_json/src/tdlib_json/tdlib/ — PyInstaller collect 它
       #   Linux / macOS:从 td/td 源码编译(bash)

@@ -17,7 +17,11 @@ param(
     # vcpkg 根目录;默认读 $env:VCPKG_INSTALLATION_ROOT / $env:VCPKG_ROOT,
     # 再退到 C:\vcpkg(GitHub windows-latest 预装路径)
     [string]$VcpkgRoot = "",
-    [string]$Triplet = "x64-windows"
+    [string]$Triplet = "x64-windows",
+    # 编译工作根目录:MSVC 中间文件(%TMP%)+ vcpkg buildtrees/downloads/install/packages
+    # 全挪这里。GitHub windows-latest 的 C: 盘在链接期会爆(C1088/LNK1180),
+    # D: 盘有 ~70GB 空闲,默认 D:\a\vcpkg-work(本地跑可传别的盘符)
+    [string]$WorkRoot = "D:\a\vcpkg-work"
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +30,15 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DestDir = Join-Path $RepoRoot "packages\tdlib_json\src\tdlib_json\tdlib"
 $DestName = "libtdjson_windows_amd64.dll"
+
+# ---- 0.5 临时目录与 vcpkg 缓存根统一到 $WorkRoot ----
+# MSVC 编译器中间文件(_CL_*.tmp)写 %TMP%;vcpkg 编译中间产物写 buildtrees。
+# 两者都在 C: 的话,tdlib 全量编译(~80min)会把 C: 挤爆,挪到 D: 后 C: 只
+# 剩 checkout + venv,安全。目录先建好,子进程(cl.exe / nmake)会继承。
+$env:TMP = Join-Path $WorkRoot "tmp"
+$env:TEMP = Join-Path $WorkRoot "tmp"
+New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
+$VcpkgInstallRoot = Join-Path $WorkRoot "installed"
 
 # ---- 0. 定位 vcpkg ----
 if (-not $VcpkgRoot) {
@@ -65,17 +78,26 @@ Write-Host "==> vcpkg: $VcpkgRoot"
 $env:VCPKG_BUILD_TYPE = "release"
 $env:VCPKG_MAX_CONCURRENCY = "2"
 Write-Host "==> vcpkg install tdlib:$Triplet (build_type=$env:VCPKG_BUILD_TYPE) ..."
-& $VcpkgExe install "tdlib:$Triplet"
+Write-Host "==> work root: $WorkRoot (tmp=$env:TMP, install=$VcpkgInstallRoot)"
+# 缓存/中间目录全指到 $WorkRoot(D:),避免 C: 盘在链接期爆掉
+$VcpkgArgs = @(
+    "install", "tdlib:$Triplet",
+    "--x-buildtrees-root=$(Join-Path $WorkRoot 'buildtrees')",
+    "--x-downloads-root=$(Join-Path $WorkRoot 'downloads')",
+    "--x-install-root=$VcpkgInstallRoot",
+    "--x-packages-root=$(Join-Path $WorkRoot 'packages')"
+)
+& $VcpkgExe @VcpkgArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Error "vcpkg install tdlib 失败 (exit $LASTEXITCODE)"
     exit $LASTEXITCODE
 }
 
 # ---- 2. 拷贝产物到包内 tdlib/ ----
-$VcpkgBin = Join-Path $VcpkgRoot "installed\$Triplet\bin"
+$VcpkgBin = Join-Path $VcpkgInstallRoot "$Triplet\bin"
 if (-not (Test-Path $VcpkgBin)) {
     # VCPKG_BUILD_TYPE=release 时产物目录带 -release 后缀
-    $VcpkgBin = Join-Path $VcpkgRoot "installed\$Triplet-release\bin"
+    $VcpkgBin = Join-Path $VcpkgInstallRoot "$Triplet-release\bin"
 }
 $TdjsonDll = Join-Path $VcpkgBin "tdjson.dll"
 if (-not (Test-Path $TdjsonDll)) {
