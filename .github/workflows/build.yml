@@ -52,8 +52,10 @@ jobs:
         run: |
           brew install cmake gperf openssl@3
           # appimagetool 一次性下到 /usr/local/bin
+          # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool,
+          #  旧 continuous release 链接已 404)
           curl -fsSL -o /usr/local/bin/appimagetool \
-            https://github.com/AppImageCommunity/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /usr/local/bin/appimagetool
 
       - name: Install project + PyInstaller (via uv)

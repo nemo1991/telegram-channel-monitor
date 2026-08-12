@@ -59,7 +59,12 @@ if (-not (Test-Path $VcpkgExe)) {
 Write-Host "==> vcpkg: $VcpkgRoot"
 
 # ---- 1. vcpkg install tdlib(首次编译较久,后续增量缓存) ----
-Write-Host "==> vcpkg install tdlib:$Triplet ..."
+# GitHub windows-latest runner 内存有限:tdlib Debug 配置用 MSVC 编译
+# shareddialog.cpp 会 OOM(C1002),且 Debug PDB 超 4GB(LNK1140)。
+# 只构建 Release,并限制编译并发,压低内存峰值。
+$env:VCPKG_BUILD_TYPE = "release"
+$env:VCPKG_MAX_CONCURRENCY = "2"
+Write-Host "==> vcpkg install tdlib:$Triplet (build_type=$env:VCPKG_BUILD_TYPE) ..."
 & $VcpkgExe install "tdlib:$Triplet"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "vcpkg install tdlib 失败 (exit $LASTEXITCODE)"
@@ -68,6 +73,10 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---- 2. 拷贝产物到包内 tdlib/ ----
 $VcpkgBin = Join-Path $VcpkgRoot "installed\$Triplet\bin"
+if (-not (Test-Path $VcpkgBin)) {
+    # VCPKG_BUILD_TYPE=release 时产物目录带 -release 后缀
+    $VcpkgBin = Join-Path $VcpkgRoot "installed\$Triplet-release\bin"
+}
 $TdjsonDll = Join-Path $VcpkgBin "tdjson.dll"
 if (-not (Test-Path $TdjsonDll)) {
     Write-Error "没找到 vcpkg 编译产物 tdjson.dll: $VcpkgBin"
