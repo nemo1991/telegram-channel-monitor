@@ -96,7 +96,7 @@ class _ChannelListCard(QWidget):
     # Telegram chat_id 是 64 位带符号整数(如 -1001375475051),`Signal(int)`
     # 映射到 C++ 32 位 int,emit 会 shiboken Overflow 且 slot 派发失败;
     # 必须用 64 位 C++ 类型 `qlonglong`。
-    item_double_clicked = Signal("qlonglong")
+    item_double_clicked = Signal("qlonglong")  # type: ignore[arg-type]  # PySide6 字符串签名,stub 不认
     action_clicked = Signal()
 
     def __init__(
