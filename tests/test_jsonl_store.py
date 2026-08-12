@@ -93,6 +93,23 @@ async def test_list_messages_sorted_and_filtered(tmp_path: Path):
     assert texts == ["c1 m0", "c1 m1", "c1 m2", "c2 m0", "c2 m1", "c2 m2"]
 
 
+async def test_list_messages_limit_keeps_most_recent(tmp_path: Path):
+    """# 回归:limit 语义 = 最近 N 条(UI 启动加载「最近 200 条」),仍按升序返回。"""
+    store = JsonlFileStore(root=tmp_path)
+    await store.connect()
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for j in range(5):
+        await store.save_message(
+            MessageDTO(
+                id=0, channel_id=1, telegram_msg_id=j, text=f"m{j}",
+                date=base + timedelta(minutes=j),
+            )
+        )
+    out = await store.list_messages([1], limit=2)
+    assert [m.telegram_msg_id for m in out] == [3, 4]  # 最近 2 条,升序
+    assert [m.text for m in out] == ["m3", "m4"]
+
+
 async def test_delete_message_and_channel(tmp_path: Path):
     store = JsonlFileStore(root=tmp_path)
     await store.connect()

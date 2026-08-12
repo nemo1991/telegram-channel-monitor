@@ -134,7 +134,10 @@ class StorageRepository(ABC):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
-        """按时间升序返回。两实现必须排序一致。"""
+        """按时间升序返回。两实现必须排序一致。
+
+        `limit`:只返回**最近** N 条(取排序尾部,仍按时间升序)。
+        """
         ...
 
     @abstractmethod

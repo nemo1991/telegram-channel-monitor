@@ -135,7 +135,10 @@ class InMemoryRepository(StorageRepository):
         # 直接 < 比较会 TypeError。生产代码走的是 Postgres/Mongo/JSONL,
         # 它们各自处理 tzinfo,不在 conftest 范围。
         out.sort(key=lambda m: (m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC), m.id))
-        return out[:limit] if limit else out
+        # `limit` = 最近 N 条:取排序尾部,仍按时间升序返回(与各存储后端对齐)。
+        if limit is not None and limit > 0:
+            out = out[-limit:]
+        return out
 
     async def count_messages(self, channel_id: int) -> int:
         return sum(1 for m in self.messages.values() if m.channel_id == channel_id)

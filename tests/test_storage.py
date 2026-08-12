@@ -47,6 +47,19 @@ async def test_list_messages_sorted_and_filtered():
     assert all(m.channel_id == 1 for m in only_ch1)
 
 
+async def test_list_messages_limit_keeps_most_recent():
+    """# 回归:limit 语义 = 最近 N 条(UI 启动加载「最近 200 条」),仍按升序返回。"""
+    repo = InMemoryRepository()
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for j in range(5):
+        await repo.save_message(
+            make_message(msg_id=j, text=f"m{j}", date=base + timedelta(minutes=j))
+        )
+    out = await repo.list_messages([100], limit=2)
+    assert [m.telegram_msg_id for m in out] == [3, 4]  # 最近 2 条,升序
+    assert [m.text for m in out] == ["m3", "m4"]
+
+
 async def test_list_messages_date_range():
     repo = InMemoryRepository()
     base = datetime(2026, 1, 1)

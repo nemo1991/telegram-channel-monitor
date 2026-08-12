@@ -278,7 +278,10 @@ class MongoRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
-        """按 (date ASC, _id ASC) 排序 — 与 Postgres 排序对齐;`$in` 走 channel_ids。"""
+        """按 (date ASC, _id ASC) 排序 — 与 Postgres / JSONL 对齐;`$in` 走 channel_ids。
+
+        `limit` = 最近 N 条(倒序取前 N 后在内存反转为升序)。
+        """
         if not channel_ids:
             return []
         q: dict[str, Any] = {"channel_id": {"$in": channel_ids}}
@@ -289,9 +292,13 @@ class MongoRepository(StorageRepository):
             if date_to is not None:
                 date_q["$lte"] = date_to
             q["date"] = date_q
-        cursor = self.db.messages.find(q).sort([("date", 1), ("_id", 1)])
         if limit is not None:
-            cursor = cursor.limit(limit)
+            # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres / JSONL 对齐)。
+            cursor = self.db.messages.find(q).sort([("date", -1), ("_id", -1)]).limit(limit)
+            docs = [d async for d in cursor]
+            docs.reverse()
+            return [_doc_to_message(d) for d in docs]
+        cursor = self.db.messages.find(q).sort([("date", 1), ("_id", 1)])
         return [_doc_to_message(d) async for d in cursor]
 
     async def count_messages(self, channel_id: int) -> int:

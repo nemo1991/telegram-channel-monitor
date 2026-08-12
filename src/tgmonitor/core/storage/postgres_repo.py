@@ -367,9 +367,10 @@ class PostgresRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
     ) -> list[MessageDTO]:
-        """按时间升序 + id 升序(与 Mongo 排序对齐);media 二次查询拼回。
+        """按时间升序 + id 升序(与 Mongo / JSONL 对齐);media 二次查询拼回。
 
-        `channel_ids` 走 ANY($1::bigint[]);`limit` 应用在 SQL 层。
+        `channel_ids` 走 ANY($1::bigint[]);`limit` = 最近 N 条(倒序取前 N
+        后在内存反转为升序,LIMIT 在 SQL 层)。
         """
         assert self._pool is not None
         if not channel_ids:
@@ -382,16 +383,20 @@ class PostgresRepository(StorageRepository):
         if date_to is not None:
             params.append(date_to)
             where.append(f"date <= ${len(params)}")
+        # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 jsonl/mongo 语义一致)。
+        order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
         sql = (
             "SELECT * FROM messages WHERE "
             + " AND ".join(where)
-            + " ORDER BY date ASC, id ASC"
+            + f" ORDER BY {order_by}"
         )
         if limit is not None:
             params.append(limit)
             sql += f" LIMIT ${len(params)}"
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
+            if limit is not None:
+                rows = list(reversed(rows))
             if not rows:
                 return []
             ids = [r["id"] for r in rows]

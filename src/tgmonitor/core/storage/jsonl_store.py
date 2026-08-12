@@ -382,7 +382,7 @@ class JsonlFileStore(StorageRepository):
     ) -> list[MessageDTO]:
         """按时间升序;两实现必须排序一致(date asc, id asc 兜底)。
 
-        `limit` 截尾(应用在排序后);损坏行 skip 不抛。
+        `limit` = 只返回**最近** N 条(取排序尾部,仍按时间升序);损坏行 skip 不抛。
         """
         out: list[MessageDTO] = []
         for cid in channel_ids:
@@ -398,7 +398,10 @@ class JsonlFileStore(StorageRepository):
                     continue
                 out.append(d)
         out.sort(key=lambda m: (m.date or datetime.min, m.id or 0))
-        return out[:limit] if limit else out
+        # `limit` = 最近 N 条:取排序尾部(仍保持升序返回)。
+        if limit is not None and limit > 0:
+            out = out[-limit:]
+        return out
 
     async def count_messages(self, channel_id: int) -> int:
         """该频道已落库消息数;不应用 date 过滤。"""
