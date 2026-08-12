@@ -95,11 +95,12 @@ core(领域服务)
 |---|---|
 | **Linux**(Ubuntu 22.04+ / Debian 12+ / Fedora 39+) | ✅ CI 验证 |
 | **macOS 12+**(Intel + Apple Silicon) | ✅ CI 验证 |
-| **Windows 11 + WSL2** | ✅ 推荐(在 Ubuntu 里跑,体验同 Linux) |
-| **Windows 原生** | ⚠️ 需自编译 libtdjson,见 [CONTRIBUTING.md](CONTRIBUTING.md#windows-原生编译) |
+| **Windows 11 + WSL2** | ✅(在 Ubuntu 里跑,体验同 Linux) |
+| **Windows 原生 x64** | ✅ CI 验证(vcpkg 编译 libtdjson,见 [CONTRIBUTING.md](CONTRIBUTING.md#windows-原生编译)) |
 
-TDLib 引擎 `libtdjson` 由 `scripts/build_libtdjson.sh` 自编译(锁定 TDLib 1.8.46,
-首次 clone 后需跑一次;脚本目前支持 macOS / Linux,Windows 走 WSL2)。
+TDLib 引擎 `libtdjson` 自编译(锁定 TDLib 1.8.46,首次 clone 后需跑一次;二进制被
+gitignore):macOS / Linux 用 `scripts/build_libtdjson.sh`,Windows 用
+`scripts/build_libtdjson.ps1`(vcpkg 方式)。
 
 ---
 
@@ -129,6 +130,7 @@ tgmonitor/
 |---|---|
 | **Linux x86_64** | `tgmonitor-x86_64.AppImage`(`chmod +x` 后直接运行) |
 | **macOS 13.0+** | `tgmonitor.app.zip`(解压拖进 `/Applications`) |
+| **Windows 10/11 x64** | `tgmonitor-windows-x64.zip`(解压后运行 `tgmonitor.exe`) |
 
 - **macOS 首次启动**:`.app` 未签名会被 Gatekeeper 拦截 → 「系统设置 → 隐私与安全性 → 仍要打开」
 - **Linux**:缺 Qt 系统库报 `could not load Qt platform plugin "xcb"` 时:

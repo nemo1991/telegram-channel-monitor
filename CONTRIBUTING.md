@@ -165,14 +165,25 @@ UI 弹错误框。
 
 ## 🪟 Windows 原生编译
 
-`libtdjson` 目前由 `scripts/build_libtdjson.sh` 在 macOS / Linux 上自编译,
-脚本暂不支持 Windows 原生(TDLib 源码编译需 MSVC + OpenSSL + gperf + PHP CLI,
-及完整 CMake 工具链)。Windows 原生要跑需手动编译 libtdjson 并放到
-`packages/tdlib_json/src/tdlib_json/tdlib/`。
+Windows 用 vcpkg 编译 libtdjson(TDLib 官方推荐的 Windows 构建方式),产物按
+Linux / macOS 相同命名规则放进包内 `tdlib/` 目录,ctypes 绑定自动识别:
 
-> **为什么 Windows 不在 CI 矩阵?** 装齐上面工具链 ≈ 8-16h 工程 + 每 PR 多 ~15 分钟,
-> 而本项目测试主要是 stdlib + asyncio + Qt offscreen,Windows-only 失败极少,边际收益低。
-> 若编译脚本支持 Windows,或 Windows 安装问题 issue 累计 ≥ 3 个,再考虑加回。
+```powershell
+# 需 vcpkg + Visual Studio C++ 工具链(CI 的 windows-latest 自带)
+uv sync --all-extras
+.\scripts\build_libtdjson.ps1        # vcpkg install tdlib + 拷贝产物
+PYTHONPATH=src uv run pytest tests/test_tdlib_client.py   # 验证
+```
+
+脚本把 `vcpkg install tdlib` 的产物 `tdjson.dll`(重命名为
+`libtdjson_windows_amd64.dll`)连同依赖 dll(openssl / zlib)一并拷到
+`packages/tdlib_json/src/tdlib_json/tdlib/`;ctypes 加载时经
+`os.add_dll_directory` 解析同目录依赖。
+
+> **为什么 Windows 现在进了 CI?** 测试本身不加载真实 libtdjson(conftest 的
+> `stub_tdlib_init` 全拦截),windows-latest 无需编译引擎即可跑 pytest;打包侧
+> build.yml 已加 windows-latest,vcpkg 编译引擎 + PyInstaller 产出 onedir zip。
+> 视觉回归 golden 图是 macOS 渲染产物,Windows 上跳过。
 
 ### Windows + WSL2(推荐)
 

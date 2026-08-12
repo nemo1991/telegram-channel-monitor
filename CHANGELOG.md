@@ -5,7 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.0.7] - 2026-08-12
+
+### 🆕 Added
+- **Windows 原生构建支持**(`[本轮]`):
+  - `packages/tdlib_json` 支持加载 Windows dll(`os.add_dll_directory`,持引用防
+    GC 移除搜索目录,扩展名 `.dll`);新增 `scripts/build_libtdjson.ps1`
+    (vcpkg 编译 tdlib,产出 `libtdjson_windows_amd64.dll` + 依赖 dll,
+    含 ctypes 冒烟验证)
+  - CI 矩阵扩展至 `windows-latest`:ci.yml 测试 + build.yml 打包
+    (onedir zip 上传 release);产物 `tgmonitor-windows-x64.zip`
+  - README / AGENTS.md / CONTRIBUTING.md / tgmonitor.spec 同步更新
 
 ### 🛠️ Refactored
 - **aiotdlib 迁移 → 自编译 libtdjson + ctypes 绑定(`tdlib_json`)**(`[本轮]`):
@@ -215,9 +225,8 @@
     已 0 错,纳入 CI 守住)
   - entry 数:5 × 2 OS = 10 → 7 × 2 OS = 14 job
 
-## [1.0.7] - 2026-08-03
-
-🛠️ **mypy 矩阵扩展 + 视觉回归扩 MainWindow + UPDATE_GOLDENS CI** —
+🛠️ **mypy 矩阵扩展 + 视觉回归扩 MainWindow + UPDATE_GOLDENS CI**(规划于
+2026-08-03)—
 4 件套:app.py 8 处 pre-existing 类型错清零;mypy CI 矩阵从 1 模块扩到
 5 模块(monitor / storage / export / objectstore / telegram);视觉回归
 覆盖扩到 MainWindow(8 widget);CI 加 `visual-regression.yml` workflow,

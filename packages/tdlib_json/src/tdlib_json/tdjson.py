@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import pathlib
 import platform
 import sys
@@ -30,6 +31,7 @@ SYSTEM_LIB_EXTENSION = {
     "darwin": "dylib",
     "linux": "so",
     "freebsd": "so",
+    "windows": "dll",
 }
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,15 @@ class CoreTDJson:
 
         self.logger.info('Using "%s" TDLib binary', library_path)
         self.library_path = library_path
+
+        # Windows:ctypes CDLL 只搜 exe 所在目录 + PATH,包内同目录的依赖
+        # dll(openssl / zlib)默认找不到。把库所在目录加进 DLL 搜索路径,
+        # 让 tdjson.dll 的隐式依赖能被解析(3.8+ 的 add_dll_directory)。
+        # 返回值(_DLLDirectory)必须持引用:该对象被 GC 时会把目录从搜索
+        # 路径移除,临时对象在 __init__ 末尾回收会导致后续 CDLL 加载失败。
+        self._dll_directory: object | None = None
+        if sys.platform == "win32":
+            self._dll_directory = os.add_dll_directory(str(library_path.parent))
 
         # TDLib 函数类型签名;加载共享库
         self._tdjson: CDLL = CDLL(str(self.library_path))

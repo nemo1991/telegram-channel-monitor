@@ -6,8 +6,9 @@ Cross-platform:
   - macOS  → .app bundle(BUNDLE),含 Info.plist + 资源
 
 资源 collect 策略:
-  - tdlib_json 内置 libtdjson native lib(.so / .dylib)— 由
-    scripts/build_libtdjson.sh 从 td/td 源码编译后放入包内 `tdlib/` 目录。
+  - tdlib_json 内置 libtdjson native lib(.so / .dylib / .dll)— 由
+    scripts/build_libtdjson.sh(macOS / Linux)或
+    scripts/build_libtdjson.ps1(Windows,vcpkg)编译后放入包内 `tdlib/` 目录。
     PyInstaller 默认不 collect data,需要 `collect_data_files("tdlib_json")`。
     加载器(tdjson.py)用 `Path(__file__).parent / "tdlib" / <binary>` 定位,
     所以 destination 必须是 `tdlib_json/tdlib`。
@@ -29,17 +30,17 @@ block_cipher = None
 
 # ---- resource collection ----
 # tdlib_json 内置 libtdjson native lib(命名:`libtdjson_<plat>_<arch>.<ext>`,
-# 由 scripts/build_libtdjson.sh 生成;未编译时 collect 为空,属正常 dev 状态)
+# 由 build_libtdjson.sh / build_libtdjson.ps1 生成;未编译时 collect 为空,属正常 dev 状态)
 tdlib_json_data = collect_data_files("tdlib_json")
 # 项目自身资源(SVG / icons / QSS)— 走 importlib.resources
 tg_resources = collect_data_files("tgmonitor.resources")
 ui_resources = collect_data_files("tgmonitor.ui.resources")
 
 datas = []
-# tdlib_json 的 native lib 在 pkg 内是 `tdlib_json/tdlib/libtdjson_*.dylib`。
+# tdlib_json 的 native lib 在 pkg 内是 `tdlib_json/tdlib/libtdjson_*.<ext>`。
 # tdlib_json.tdjson loader 走 `pathlib.Path(__file__).parent / "tdlib" / binary_name`,
 # 所以 destination 必须是 `tdlib_json/tdlib` —— PyInstaller 才把文件展到
-# `<bundle>/tdlib_json/tdlib/libtdjson_*.dylib`,loader 找得到。
+# `<bundle>/tdlib_json/tdlib/libtdjson_*.<ext>`,loader 找得到。
 # (用 `tdlib_json` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
 for src, dest in tdlib_json_data:
     datas.append((src, f"tdlib_json/{dest}" if dest else "tdlib_json"))

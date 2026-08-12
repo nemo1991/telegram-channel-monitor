@@ -18,12 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-        # windows-latest 不在 matrix — libtdjson 只提供 macOS / Linux
-        # 预编译产物(scripts/build_libtdjson.sh 只支持这两种系统),
-        # Windows 上没有现成 libtdjson,CI 无法跑通 TDLib 相关测试。
-        # 源码层跨平台(全 pathlib / 无 POSIX-only 假设),但
-        # 不在 CI 验证 — 见 README"Platform Support"
-        os: [ubuntu-latest, macos-latest]
+        # Windows:测试不加载真实 libtdjson(conftest 的 stub_tdlib_init
+        # fixture 拦截 TdlibJsonClient 构造),无需编译引擎即可跑通;
+        # 视觉回归 golden 图是 macOS 渲染产物,Windows 上跳过(见 Run pytest)。
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       # 拉源码 — shallow clone 已够(测试只读 HEAD 状态)
@@ -69,6 +67,9 @@ jobs:
       # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,
       # 在 macOS runner 上永久卡住;entry.load() 足够验证注册目标可导入。
       - name: Verify CLI entry
+        # 脚本是 bash heredoc;Windows runner 默认 pwsh 不支持 <<'PY',
+        # 显式切 bash(windows-latest 自带 Git Bash)
+        shell: bash
         run: |
           uv run python - <<'PY'
           from importlib.metadata import entry_points
@@ -88,6 +89,9 @@ jobs:
           # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳
           QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
+        # 脚本用 bash 语法(set +e / while 重试),Windows runner 默认 pwsh,
+        # 显式切 bash(windows-latest 自带 Git Bash)
+        shell: bash
         run: |
           # -v 看每个 case 名;--tb=short 失败时压栈长度可控;
           # `uv run` 自动激活 venv(PYTHONPATH 也透传),装好的 editable 项目
@@ -105,21 +109,26 @@ jobs:
           main_rc=$?
           set -e
 
-          # 视觉回归 retry(覆盖 segfault + 真 fail)
-          visual_attempt=1
-          visual_rc=1
-          while [ $visual_attempt -le 3 ] && [ $visual_rc -ne 0 ]; do
-            echo "::group::visual-regression attempt $visual_attempt/3"
-            set +e
-            uv run python -m pytest tests/test_visual_regression.py -v --tb=short
-            visual_rc=$?
-            set -e
-            echo "::endgroup::"
-            if [ $visual_rc -ne 0 ]; then
-              echo "visual-regression attempt $visual_attempt failed (exit $visual_rc), retrying..."
-            fi
-            visual_attempt=$((visual_attempt + 1))
-          done
+          # 视觉回归 retry(覆盖 segfault + 真 fail)。
+          # Windows 上跳过:golden 图是 macOS 渲染产物,Windows 字体渲染
+          # 差异必然漂移,跑只会稳定失败。
+          visual_rc=0
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            visual_attempt=1
+            visual_rc=1
+            while [ $visual_attempt -le 3 ] && [ $visual_rc -ne 0 ]; do
+              echo "::group::visual-regression attempt $visual_attempt/3"
+              set +e
+              uv run python -m pytest tests/test_visual_regression.py -v --tb=short
+              visual_rc=$?
+              set -e
+              echo "::endgroup::"
+              if [ $visual_rc -ne 0 ]; then
+                echo "visual-regression attempt $visual_attempt failed (exit $visual_rc), retrying..."
+              fi
+              visual_attempt=$((visual_attempt + 1))
+            done
+          fi
 
           if [ $main_rc -ne 0 ] || [ $visual_rc -ne 0 ]; then
             echo "::error::pytest main_rc=$main_rc visual_rc=$visual_rc"
@@ -132,9 +141,15 @@ jobs:
           PYTHONPATH: src
           QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
+        shell: bash
         run: |
-          # coverage 已经在 --group dev 里装好;`uv run` 注入 PATH
-          uv run coverage run -m pytest -q
+          # coverage 已经在 --group dev 里装好;`uv run` 注入 PATH。
+          # Windows 上视觉回归 golden 图必漂移,不参与覆盖率统计
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            uv run coverage run -m pytest -q --ignore=tests/test_visual_regression.py
+          else
+            uv run coverage run -m pytest -q
+          fi
           uv run coverage xml -o coverage.xml
 
       # 以 OS + Python 版本为名,跨矩阵下不互相覆盖;若 coverage.xml

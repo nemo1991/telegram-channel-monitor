@@ -74,6 +74,7 @@ core(app_service 门面 + 领域服务)
 │   ├── golden/                 # 视觉回归黄金图(png)
 │   └── fonts/                  # 测试字体资源
 ├── scripts/build_libtdjson.sh  # 编译 libtdjson(锁定 TDLib 1.8.46,macOS / Linux)
+├── scripts/build_libtdjson.ps1 # Windows 编译 libtdjson(vcpkg 方式)
 ├── scripts/build_appimage.sh   # Linux AppImage 构建
 ├── tgmonitor.spec              # PyInstaller 打包配置
 ├── docs/ARCHITECTURE.md        # 架构详解
@@ -88,13 +89,14 @@ core(app_service 门面 + 领域服务)
 > - **uv**(必须,包管理 + 自动下载 Python;CI 同步)
 > - **git**(克隆/提交)
 > - **Python 3.13** — 由 uv 自动装(`uv python list`),不依赖系统 Python
-> - **编译 libtdjson 需**:macOS `brew install cmake gperf openssl@3`;Linux `apt install cmake gperf libssl-dev zlib1g-dev build-essential`
+> - **编译 libtdjson 需**:macOS `brew install cmake gperf openssl@3`;Linux `apt install cmake gperf libssl-dev zlib1g-dev build-essential`;Windows vcpkg + VS C++ 工具链(CI 的 windows-latest 自带)
 > - macOS 跑 PySide6 无需额外系统库(wheel 自带);Linux 打包才需要 appimagetool / rsvg-convert
 > - 可选 DB/S3 后端(extra)非运行必需;不装也能用默认 JSONL + Local 存储
 
 ```bash
-# 编译 TDLib 引擎 libtdjson(首次 clone 后必跑;dylib 被 gitignore,需自编译)
-bash scripts/build_libtdjson.sh
+# 编译 TDLib 引擎 libtdjson(首次 clone 后必跑;二进制被 gitignore,需自编译)
+bash scripts/build_libtdjson.sh                     # macOS / Linux
+powershell -File scripts/build_libtdjson.ps1        # Windows(vcpkg)
 
 # 安装依赖(dev 全量 + 可选 DB/S3 后端,与 CONTRIBUTING.md 一致)
 uv sync --all-groups --all-extras
@@ -142,8 +144,8 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS × 3.13)、ruff job、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。macOS 上装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`、`QT_LOGGING_RULES=*.warning=false`。
-- **build.yml**(tag `v*`):先 `scripts/build_libtdjson.sh` 编译 libtdjson → PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)→ macOS .app zip → GitHub Release + SHA256SUMS。
+- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`、`QT_LOGGING_RULES=*.warning=false`;Windows 跳过视觉回归(golden 图是 macOS 渲染产物)。
+- **build.yml**(tag `v*`):先编译 libtdjson(Linux/macOS 走 `build_libtdjson.sh`,Windows 走 `build_libtdjson.ps1` vcpkg)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → GitHub Release + SHA256SUMS。
 - **audit.yml**(每周一 09:30 UTC):`pip-audit --strict` 依赖漏洞扫描。
 - **visual-regression.yml**(仅 macOS):`UPDATE_GOLDENS=1` 重生成 `tests/golden/*.png` 并上传 artifact,**不自动 commit**。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。
