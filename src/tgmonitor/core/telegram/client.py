@@ -130,6 +130,13 @@ class UpdateStream:
     def __aiter__(self) -> AsyncIterator[MessageDTO]:  # type: ignore[empty-body]
         """async iterator protocol — `async for msg in stream:` 入口。"""
         ...
+    async def __anext__(self) -> MessageDTO:  # type: ignore[empty-body]
+        """取下一个更新;`aclose()` 后抛 `StopAsyncIteration`。
+
+        实现类(如 `_TdlibJsonUpdateStream`)负责;这里声明类型给 mypy
+        (调用方 `anext(stream)` 依赖该协议)。
+        """
+        ...
     async def aclose(self) -> None:
         """关闭流 — 幂等;触发后 `__anext__` 抛 `StopAsyncIteration`,
         同时自动从 client 侧 `_streams` 拿掉自己(防长会话内存泄漏)。

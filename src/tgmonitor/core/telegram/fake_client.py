@@ -36,10 +36,18 @@ class FakeUpdateStream(UpdateStream):
         return self
 
     async def __anext__(self) -> MessageDTO:
-        """从 queue 拿一条;closed 后抛 StopAsyncIteration。"""
+        """从 queue 拿一条;closed 后抛 StopAsyncIteration。
+
+        与真实流 `_TdlibJsonUpdateStream` 语义一致:`aclose()` 会 `put(None)`
+        唤醒阻塞的 `get()`,拿到 None 或已 closed 都应抛 `StopAsyncIteration`,
+        不能让 None 漏给消费方(MonitorService._run 会把 None 当流关闭处理)。
+        """
         if self._closed:
             raise StopAsyncIteration
-        return await self._queue.get()
+        item = await self._queue.get()
+        if item is None or self._closed:
+            raise StopAsyncIteration
+        return item
 
     async def aclose(self) -> None:
         """幂等关闭:置 `_closed=True` + push sentinel 唤醒等待者 + 调 on_close。"""

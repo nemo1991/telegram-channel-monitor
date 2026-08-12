@@ -292,6 +292,122 @@ def test_auth_state_map_covers_lifecycle_keys():
     assert expected.issubset(keys)
 
 
+@pytest.mark.asyncio
+async def test_wait_code_action_not_awaited_inline(stub_tdlib_init):
+    """回归:WaitCode 的 action 不能 inline await。
+
+    否则 _updates_loop(唯一消费 socket 流的任务)会冻在用户输入等待上,
+    checkAuthenticationCode 的响应永远读不到 → request 30s 超时。
+    """
+    from tdlib_json import TdlibJsonClient
+
+    class BlockingCodeClient(TdlibJsonClient):
+        def __init__(self) -> None:
+            super().__init__(parameters={})
+            self.code: asyncio.Queue[str] = asyncio.Queue()
+
+        async def _ask_for_code(self) -> None:
+            self.last_code = await self.code.get()
+
+    c = BlockingCodeClient()
+    c._running = True
+    # 修复前:这里会卡在 queue.get() 上,wait_for 超时失败
+    await asyncio.wait_for(
+        c._on_authorization_state_update({"@type": "authorizationStateWaitCode"}),
+        timeout=1.0,
+    )
+    await c.code.put("12345")
+    for _ in range(50):
+        if getattr(c, "last_code", None) == "12345":
+            break
+        await asyncio.sleep(0.02)
+    assert getattr(c, "last_code", None) == "12345"
+
+
+@pytest.mark.asyncio
+async def test_auth_state_error_does_not_kill_updates_loop(stub_tdlib_init):
+    """回归:auth-state handler 抛异常时 `_updates_loop` 必须继续派发后续事件。
+
+    修复前 `except Exception: raise` 会把唯一消费 TDLib 推送的任务杀掉,
+    之后实时消息和所有 `request()` 响应同时静默超时 — 表现为"一段时间不监听"。
+    """
+    from tdlib_json import TdlibJsonClient
+
+    class _AuthErrorClient(TdlibJsonClient):
+        def __init__(self) -> None:
+            super().__init__(parameters={})
+            self.handled: list = []
+
+    class _FakeTd:
+        async def receive(self):
+            yield {
+                "@type": "updateAuthorizationState",
+                "authorization_state": {"@type": "authorizationStateWaitPhoneNumber"},
+            }
+            yield {"@type": "updateNewMessage", "message": {"id": 1}}
+
+    c = _AuthErrorClient()
+    c._running = True
+
+    async def _boom(self, authorization_state) -> None:
+        raise RuntimeError("boom")
+
+    c._on_authorization_state_update = _boom  # type: ignore[method-assign]
+
+    done = asyncio.Event()
+
+    async def on_msg(client, update) -> None:
+        c.handled.append(update.get("message", {}).get("id"))
+        done.set()
+
+    c.add_event_handler(on_msg, "updateNewMessage")
+    c.tdjson_client = _FakeTd()
+    task = asyncio.create_task(c._updates_loop())
+    try:
+        # 修复前:auth 异常把 loop 杀死 → done 永远不 set → wait_for 超时
+        await asyncio.wait_for(done.wait(), timeout=2.0)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert c.handled == [1]
+
+
+@pytest.mark.asyncio
+async def test_updates_loop_crashes_and_restarts(stub_tdlib_init):
+    """`_updates_loop` 意外崩溃后自动重启(带 1s 最小重启间隔)。"""
+    from tdlib_json import TdlibJsonClient
+
+    calls = {"n": 0}
+
+    class _FlakyClient(TdlibJsonClient):
+        def __init__(self) -> None:
+            super().__init__(parameters={})
+
+        async def _updates_loop(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("boom")
+
+    c = _FlakyClient()
+    c._running = True
+    c._schedule_updates_loop()
+    try:
+        # 崩溃回调 + 重启(首次 delay=0)只需几个事件循环轮次
+        for _ in range(50):
+            if calls["n"] >= 2:
+                break
+            await asyncio.sleep(0.02)
+        assert calls["n"] == 2
+        assert c._update_task is not None and c._update_task.done()
+        assert c._update_task.exception() is None
+    finally:
+        if c._update_task is not None and not c._update_task.done():
+            c._update_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await c._update_task
+
+
 # ============================================================
 # 关闭流程的 entry guard(回归:close race 不再撞 10s request 超时
 #  + qasync 跨 loop wakeup RuntimeError)
@@ -306,6 +422,49 @@ def _make_stubbed_client(settings: Settings, bus: EventBus) -> tdc.TdlibTelegram
     参数走 `settings`)。
     """
     return tdc.TdlibTelegramClient(settings, event_bus=bus)
+
+
+@pytest.mark.asyncio
+async def test_resolve_channel_metadata_nested_attribute_access(
+    settings, bus, stub_tdlib_init, monkeypatch
+):
+    """回归:getChat 的 type 嵌套 dict 必须支持属性访问。
+
+    修复前 `TDLibObject.from_dict` 只包顶层、嵌套层是普通 dict,
+    `_resolve_channel_metadata` 里 `ct.supergroup_id` 直接 AttributeError
+    (日志: `_resolve_channel_metadata(-1001125107539) failed`)。
+    """
+    from tdlib_json import TDLibObject
+
+    client = _make_stubbed_client(settings, bus)
+    responses = {
+        "getChat": {
+            "@type": "chat",
+            "id": -1001,
+            "title": "测试频道",
+            "type": {
+                "@type": "chatTypeSupergroup",
+                "is_channel": True,
+                "supergroup_id": 999,
+            },
+        },
+        "getSupergroup": {
+            "@type": "supergroup",
+            "usernames": {"active_usernames": ["chn_username"]},
+            "member_count": 42,
+        },
+    }
+
+    async def fake_request(query: dict, **kwargs: object) -> TDLibObject:
+        return TDLibObject.from_dict(responses[query["@type"]])
+
+    monkeypatch.setattr(client, "request", fake_request)
+    dto = await client.channels._resolve_channel_metadata(-1001)
+    assert dto is not None
+    assert dto.kind == "channel"
+    assert dto.title == "测试频道"
+    assert dto.username == "chn_username"
+    assert dto.member_count == 42
 
 
 def test_list_joined_channels_returns_empty_when_closing(

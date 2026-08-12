@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import platform
 from typing import Any, AsyncIterator, Callable
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ try:
 except Exception:  # noqa: BLE001
     _HAVE_TDLIB_JSON = False
 
+from tgmonitor import __version__  # noqa: E402
 from tgmonitor.core.config import Settings  # noqa: E402 — tdlib_json import 上方有 try/except 守卫
 from tgmonitor.core.dto import ChannelDTO, MessageDTO  # noqa: E402
 from tgmonitor.core.telegram.client import UpdateStream  # noqa: E402
@@ -184,6 +186,9 @@ class TdlibTelegramClient(_AiClient):
             api_id=settings.api_id,
             api_hash=settings.api_hash,
             phone_number=settings.phone,
+            device_model="tgmonitor",
+            system_version=platform.platform(),
+            application_version=__version__,
             database_encryption_key=_load_or_create_encryption_key(
                 self._settings.session_dir / "tdlib"
             ),
@@ -380,7 +385,16 @@ class TdlibTelegramClient(_AiClient):
         try:
             msg = getattr(update, "message", None)
             if msg is None:
+                log.debug(
+                    "updateNewMessage received without message payload: %s",
+                    getattr(update, "@type", type(update).__name__),
+                )
                 return
+            log.debug(
+                "updateNewMessage received: chat_id=%s msg_id=%s",
+                getattr(msg, "chat_id", None),
+                getattr(msg, "id", None),
+            )
             dto = _map_message(msg)
             for s in list(self._streams):
                 await s.push(dto)
@@ -428,8 +442,8 @@ class TdlibTelegramClient(_AiClient):
         """
         import time as _t
         t0 = _t.monotonic()
-        # 启动 updates_loop + tdlib_json 内部 task
-        self._update_task = asyncio.create_task(self._updates_loop())
+        # 启动 updates_loop + tdlib_json 内部 task(带崩溃自愈)
+        self._schedule_updates_loop()
         self._running = True
         log.info("[tdlib] updates_loop task scheduled in %.3fs", _t.monotonic() - t0)
         t = _t.monotonic()

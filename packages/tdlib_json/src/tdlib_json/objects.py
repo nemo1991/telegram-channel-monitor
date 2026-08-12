@@ -31,14 +31,19 @@ class TDLibObject(dict):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TDLibObject:
-        """递归包装嵌套 dict / list 为 `TDLibObject`。"""
+        """递归包装嵌套 dict / list 为 `TDLibObject`。
+
+        嵌套 dict 也必须是 TDLibObject(而不是普通 dict),否则业务代码
+        `chat.type.supergroup_id` 这类属性访问会在嵌套层撞
+        AttributeError:`_wrap` 对 dict 一律返回 TDLibObject。
+        """
         return cls(_wrap(data))
 
 
 def _wrap(value: Any) -> Any:
-    """递归:dict → 新 dict(值递归包装),list → 新 list,其它原样返回。"""
+    """递归:dict → TDLibObject(值递归包装),list → 新 list,其它原样返回。"""
     if isinstance(value, dict):
-        return {key: _wrap(item) for key, item in value.items()}
+        return TDLibObject({key: _wrap(item) for key, item in value.items()})
     if isinstance(value, list):
         return [_wrap(item) for item in value]
     return value

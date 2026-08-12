@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+from typing import AsyncIterator
 
 import pytest
 
 from tests.conftest import make_message
+from tgmonitor.core.dto import MessageDTO
+from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
 async def test_monitor_receives_and_dedupes(monitor, storage, client, bus):
@@ -42,6 +45,107 @@ async def test_message_received_event_published(monitor, client, bus):
 
 def _noop() -> None:
     return None
+
+
+# ============================================================
+# 周期补拉(backfill)— 断线 / 重启期间 updateNewMessage 不重放的兜底
+# ============================================================
+
+
+class _BackfillClient(FakeTelegramClient):
+    """`iter_chat_history` 按真实 TDLib 语义 yield:最新在前(向旧递减)。
+
+    conftest 的 `FakeTelegramClient` 为 channel_sync 的 resume 语义测试按
+    升序 yield,与真实 TDLib 相反;补拉逻辑依赖"最新在前",这里给忠实版本。
+    """
+
+    def __init__(self, history: dict[int, list[int]]) -> None:
+        """`history`:channel_id → telegram_msg_id 列表(最新在前)。"""
+        super().__init__()
+        self._history = history
+
+    async def iter_chat_history(  # type: ignore[override]
+        self,
+        channel_id: int,
+        *,
+        before_msg_id: int = 0,
+        limit: int = 100,
+    ) -> AsyncIterator[MessageDTO]:
+        for mid in self._history.get(channel_id, []):
+            await asyncio.sleep(0)  # 让出 loop,模仿网络
+            yield make_message(channel_id=channel_id, msg_id=mid, text=f"backfill-{mid}")
+
+
+async def test_backfill_fills_gap_and_skips_known(bus, storage, objectstore, settings):
+    """库里已有 id=100;历史最新在前 [104..100] → 只补 104-101,100 不重复 emit。"""
+    from tgmonitor.core.events import MessageReceived
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [104, 103, 102, 101, 100]})
+    await storage.save_message(make_message(channel_id=100, msg_id=100, text="known"))
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon.set_whitelist([100])
+    seen: list[MessageReceived] = []
+    bus.subscribe(MessageReceived, lambda e: seen.append(e))
+    await mon._backfill_all()  # 不 start 也直接可用(不依赖实时流)
+    msgs = await storage.list_messages([100])
+    assert {m.telegram_msg_id for m in msgs} == {100, 101, 102, 103, 104}
+    # 只对"新"消息 emit,已落库的 100 不重复通知
+    assert {e.message.telegram_msg_id for e in seen} == {101, 102, 103, 104}
+
+
+async def test_backfill_loop_runs_periodically_and_stops(bus, storage, objectstore, settings):
+    """周期补拉:interval 调小后,start 后消息自动入库;stop 干净退出不再补。"""
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [5, 4, 3, 2, 1]})
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon.set_whitelist([100])
+    mon._BACKFILL_INTERVAL = 0.02  # type: ignore[assignment]
+    await mon.start()
+    try:
+        await asyncio.sleep(0.12)
+        # 首轮全补;后续轮锚点=5,第一条第 5 条 <= 5 → break,不重复
+        assert await storage.count_messages(100) == 5
+    finally:
+        await mon.stop()
+    count_after_stop = await storage.count_messages(100)
+    assert count_after_stop == 5
+
+
+async def test_backfill_silent_when_client_closing(bus, storage, objectstore, settings):
+    """close() 中补拉 → 静默返回(不抛、不落库、不打 traceback)。"""
+    from tgmonitor.core.monitor.service import MonitorService
+    from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
+
+    class _ClosingClient(_BackfillClient):
+        async def iter_chat_history(  # type: ignore[override]
+            self, channel_id: int, *, before_msg_id: int = 0, limit: int = 100
+        ) -> AsyncIterator[MessageDTO]:
+            raise ClientClosingError()
+            yield  # noqa: B018  — 让函数成为 async generator(否则 async for 拿不到异常)
+
+    mon = MonitorService(bus, _ClosingClient({100: [1]}), storage, objectstore, settings)
+    mon.set_whitelist([100])
+    await mon._backfill_all()
+    assert await storage.count_messages(100) == 0
+
+
+async def test_backfill_unanchored_capped_to_max_page(bus, storage, objectstore, settings):
+    """无锚点频道:只预热 `_BACKFILL_MAX_PAGE` 条,不把整段历史拉完。
+
+    回归:`max_id=0` 时 `<= 0` 永假,旧实现每轮把整段历史翻完,几万条会撞
+    flood wait / 制造长空窗。
+    """
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]})
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon._BACKFILL_MAX_PAGE = 3  # type: ignore[assignment]
+    mon.set_whitelist([100])
+    await mon._backfill_all()
+    msgs = await storage.list_messages([100])
+    assert {m.telegram_msg_id for m in msgs} == {10, 9, 8}
 
 
 async def test_app_login_state_machine(app, client):
@@ -195,3 +299,83 @@ async def test_no_subscribed_attribute_remains(app) -> None:
         "AppService._subscribed 字段已 2026-07-31 删除;"
         "若新增回该字段请先读 SUBSCRIBED_DRIFT_ANALYSIS.md"
     )
+
+
+# ============================================================
+# 心跳 debug 日志(排查"一段时间不监听"的诊断信号)
+# ============================================================
+
+
+async def test_monitor_heartbeat_logs_when_stream_idle(monitor, caplog) -> None:
+    """流静默超过 `_HEARTBEAT_INTERVAL` 时主循环打心跳 INFO 日志。
+
+    这是排查"空窗"的第一手信号:有 `monitor heartbeat` 就证明实时通道还
+    活着,只是没新消息;没有则说明流死了(配合自愈重启的 ERROR 看)。
+    心跳是 INFO 级别 — 不设 TG_LOG_LEVEL 也默认可见。
+    """
+    monitor._HEARTBEAT_INTERVAL = 0.02  # type: ignore[assignment]
+    with caplog.at_level("INFO", logger="tgmonitor.core.monitor.service"):
+        await monitor.start()
+        await asyncio.sleep(0.08)
+        await monitor.stop()
+    assert any(
+        "monitor heartbeat" in r.message and "stream alive" in r.message
+        for r in caplog.records
+    ), f"心跳日志缺失;records={[r.message for r in caplog.records]}"
+    assert all(
+        r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message
+    ), f"心跳应为 INFO 级别;records={[r.message for r in caplog.records]}"
+
+
+async def test_monitor_logs_update_received_and_stored(monitor, client, caplog) -> None:
+    """收到实时包打 `update received` DEBUG,落库后打 `stored message`(带计数)。
+
+    能区分「流有包进来」与「真落库成功」;handled 计数逐条递增,方便确认
+    处理在推进而不是卡在某条消息上。
+    """
+    monitor.set_whitelist([100])
+    await monitor.start()
+    try:
+        with caplog.at_level("DEBUG", logger="tgmonitor.core.monitor.service"):
+            await client.simulate_incoming(make_message(channel_id=100, msg_id=7, text="hb"))
+            await asyncio.sleep(0.05)
+    finally:
+        await monitor.stop()
+    messages = [r.message for r in caplog.records]
+    assert any("monitor update received" in m and "msg_id=7" in m for m in messages), messages
+    assert any("monitor stored message" in m and "handled=1" in m for m in messages), messages
+
+
+async def test_monitor_heartbeat_logs_when_stream_active(
+    monitor, client, caplog
+) -> None:
+    """活跃频道(消息不断)下心跳也周期打 — 不是只在静默时。
+
+    用户反馈「启动 10 分钟没看到心跳日志」:若频道 30s 内一直有新消息,
+    旧实现只在静默超时打心跳,活跃时用户永远见不到 heartbeat 行,只见
+    `update received`。这里验证有消息时同样按周期出现 heartbeat。
+    """
+    monitor._HEARTBEAT_INTERVAL = 0.03  # type: ignore[assignment]
+    monitor.set_whitelist([100])
+    await monitor.start()
+    try:
+        # DEBUG 才能捕获 update received(仍是 DEBUG);heartbeat 是 INFO,
+        # DEBUG 级别下同样捕获,且下方断言其 levelname 为 INFO。
+        with caplog.at_level("DEBUG", logger="tgmonitor.core.monitor.service"):
+            # 每隔 0.01s 推一条 → 流一直活跃,期间应出现 heartbeat(周期节流)
+            for i in range(8):
+                await client.simulate_incoming(
+                    make_message(channel_id=100, msg_id=100 + i, text=f"hb-{i}")
+                )
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
+    finally:
+        await monitor.stop()
+    messages = [r.message for r in caplog.records]
+    assert any(
+        "monitor heartbeat" in m and "stream alive" in m for m in messages
+    ), f"活跃流下心跳缺失;records={messages}"
+    assert any("monitor update received" in m for m in messages), messages
+    assert all(
+        r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message
+    ), f"心跳应为 INFO 级别;records={messages}"

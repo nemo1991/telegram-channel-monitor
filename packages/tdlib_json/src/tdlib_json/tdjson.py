@@ -209,13 +209,32 @@ class TDJson(CoreTDJson):
     async def _listen_updates(self):
         try:
             while True:
-                update = await asyncio.to_thread(self.receive)
+                try:
+                    update = await asyncio.to_thread(self.receive)
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception:
+                    # 单个 receive 失败不杀共享循环 — 它是所有 client 的
+                    # 唯一推送源,一死全部断流。记日志 + 退避重试。
+                    self.logger.exception("receive() failed; retrying in 1s")
+                    await asyncio.sleep(1.0)
+                    continue
 
-                if update:
-                    client_id = update.get("@client_id")
+                if not update:
+                    continue
 
-                    if client_id in self._subscribed_clients:
-                        await self._subscribed_clients[client_id].enqueue_update(update)
+                client_id = update.get("@client_id")
+
+                if client_id not in self._subscribed_clients:
+                    continue
+
+                try:
+                    await self._subscribed_clients[client_id].enqueue_update(update)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # 单个 client 的队列异常只丢这条 update,不影响其它 client
+                    self.logger.exception("enqueue_update failed; dropped update")
         except (asyncio.CancelledError, KeyboardInterrupt):
             self._subscribed_clients.clear()
             self._listen_task = None

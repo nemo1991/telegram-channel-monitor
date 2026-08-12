@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
@@ -25,6 +26,44 @@ from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.telegram.factory import build_telegram_client
 
 log = logging.getLogger(__name__)
+
+
+def _log_level() -> int:
+    """日志级别:`TG_LOG_LEVEL` 环境变量(DEBUG/INFO/WARNING/ERROR),默认 INFO。
+
+    排查"一段时间不监听"时设 `TG_LOG_LEVEL=DEBUG`,能看到 monitor 心跳日志。
+    """
+    name = os.environ.get("TG_LOG_LEVEL", "INFO").upper()
+    return getattr(logging, name, logging.INFO)
+
+
+def _setup_file_logging(level: int) -> None:
+    """把日志同时写入数据目录的 `logs/tgmonitor.log`(5MB × 3 轮转,UTF-8)。
+
+    终端 stderr 在 bundle(.app / AppImage 双击启动)里不可见,文件日志是
+    排查"心跳正常但收不到消息"等问题的唯一凭据 —— 用户直接把该文件发来即可。
+    """
+    try:
+        from logging.handlers import RotatingFileHandler
+
+        from tgmonitor.core.config import _user_data_dir
+
+        log_dir = _user_data_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "tgmonitor.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(level)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        )
+        logging.getLogger().addHandler(handler)
+        log.info("file logging enabled: %s", log_dir / "tgmonitor.log")
+    except Exception:  # noqa: BLE001
+        log.exception("failed to enable file logging")
 
 
 async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
@@ -154,9 +193,10 @@ def run() -> None:
     不要在协程里 `await loop.run_forever()` —— 会撞 "Event loop already running"。
     """
     logging.basicConfig(
-        level=logging.INFO,
+        level=_log_level(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    _setup_file_logging(_log_level())
 
     # qasync 让 Qt 跑在 asyncio 事件循环上
     try:

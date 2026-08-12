@@ -229,3 +229,19 @@ def test_run_forever_pattern_uses_with_loop(run_body: str) -> None:
             "'Event loop is closed' leaks."
         )
         assert "loop.run_forever()" in run_body
+
+
+def test_log_level_env(monkeypatch) -> None:
+    """`TG_LOG_LEVEL` 控制日志级别;非法值 / 缺省回退 INFO。"""
+    import logging
+
+    from tgmonitor.app import _log_level
+
+    monkeypatch.setenv("TG_LOG_LEVEL", "DEBUG")
+    assert _log_level() == logging.DEBUG
+    monkeypatch.setenv("TG_LOG_LEVEL", "warning")
+    assert _log_level() == logging.WARNING
+    monkeypatch.setenv("TG_LOG_LEVEL", "bogus")
+    assert _log_level() == logging.INFO
+    monkeypatch.delenv("TG_LOG_LEVEL")
+    assert _log_level() == logging.INFO

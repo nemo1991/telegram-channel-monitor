@@ -257,6 +257,7 @@ def stub_tdlib_init() -> Iterator[None]:
         self._authorized_event = asyncio.Event()
         self._running = False
         self._update_task = None
+        self._last_updates_loop_restart = 0.0
         self._handlers_tasks = set()
         self._pending_requests = {}
         self._pending_messages = {}

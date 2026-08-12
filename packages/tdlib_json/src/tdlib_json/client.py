@@ -15,6 +15,18 @@ from .objects import TDLibObject
 from .proxy import Socks5Proxy
 from .tdjson import TDJsonClient, TDJsonQuery
 
+# 会阻塞等待用户输入的鉴权 action,必须派成独立任务而不能 inline await
+# (原因见 _on_authorization_state_update 注释)。
+_BLOCKING_AUTH_ACTIONS = frozenset(
+    {
+        "authorizationStateWaitCode",
+        "authorizationStateWaitEmailAddress",
+        "authorizationStateWaitEmailCode",
+        "authorizationStateWaitRegistration",
+        "authorizationStateWaitPassword",
+    }
+)
+
 
 class Handler:
     """事件处理器包装:统一为 `async (client, update) -> None` 签名。"""
@@ -73,6 +85,7 @@ class TdlibJsonClient:
         self._authorized_event = asyncio.Event()
         self._running = False
         self._update_task: asyncio.Task | None = None
+        self._last_updates_loop_restart = 0.0
         self._handlers_tasks: set[asyncio.Task] = set()
         self._pending_requests: dict[str, PendingRequest] = {}
         self._pending_messages: dict[str, Any] = {}
@@ -193,8 +206,12 @@ class TdlibJsonClient:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    self.logger.exception("Failed to process authorization state update")
-                    raise
+                    # 不 raise — `_updates_loop` 是唯一消费 TDLib 推送的任务,
+                    # 它一死,实时消息流和所有 request() 响应同时静默超时
+                    # (表现为"一段时间不监听")。这里只记日志,让循环继续跑。
+                    self.logger.exception(
+                        "Failed to process authorization state update; loop keeps running"
+                    )
             else:
                 try:
                     self._handle_pending_request(update)
@@ -204,6 +221,45 @@ class TdlibJsonClient:
                     self.logger.exception("Failed to process pending request update")
 
                 self._create_handler_task(self._handle_update(update))
+
+    def _schedule_updates_loop(self) -> None:
+        """创建 `_updates_loop` 任务并挂 done callback — 崩溃后自动重启。
+
+        start() 和各处手动启动都必须走这里,而不是裸 `create_task`,
+        否则意外终止没有自愈入口。
+        """
+        task = asyncio.create_task(self._updates_loop())
+        task.add_done_callback(self._on_updates_loop_done)
+        self._update_task = task
+
+    def _on_updates_loop_done(self, task: asyncio.Task) -> None:
+        """`_updates_loop` 意外终止时排一次重启;cancel / 正常结束不动。"""
+        if task.cancelled():
+            return
+        if task is not self._update_task:
+            return  # 已被新 task 顶替,老 task 的收尾回调,忽略
+        if task.exception() is None:
+            return  # 正常结束(receive() 循环理论上不自己结束)
+        self.logger.error(
+            "updates_loop crashed with %r; scheduling restart",
+            task.exception(),
+        )
+        asyncio.create_task(self._restart_updates_loop())
+
+    async def _restart_updates_loop(self) -> None:
+        """带最小重启间隔,避免崩溃→重启死循环刷爆事件循环。"""
+        if not self._running:
+            return
+        loop = asyncio.get_running_loop()
+        delay = max(0.0, 1.0 - (loop.time() - self._last_updates_loop_restart))
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if not self._running:
+            return
+        if self._update_task is not None and not self._update_task.done():
+            return  # 等待期间已有新任务在跑
+        self._last_updates_loop_restart = loop.time()
+        self._schedule_updates_loop()
 
     def _handle_pending_request(self, update: dict) -> None:
         extra = update.get("@extra")
@@ -298,9 +354,12 @@ class TdlibJsonClient:
             "api_id": int(self.settings.get("api_id") or 0),
             "api_hash": str(self.settings.get("api_hash") or ""),
             "system_language_code": str(self.settings.get("system_language_code") or "en"),
-            "device_model": str(self.settings.get("device_model") or "aiotdlib"),
+            "device_model": str(self.settings.get("device_model") or "tgmonitor"),
             "system_version": str(self.settings.get("system_version") or ""),
-            "application_version": str(self.settings.get("application_version") or ""),
+            # TDLib 1.8.46 强制要求非空:为空直接 400 "Application version
+            # must be non-empty",setTdlibParameters 失败后状态机卡在
+            # tdlib_parameters,永远走不到验证码流程。
+            "application_version": str(self.settings.get("application_version") or "1.0.0"),
             "enable_storage_optimizer": True,
             "ignore_file_names": False,
         }
@@ -374,8 +433,28 @@ class TdlibJsonClient:
 
         action = actions.get(authorization_state_type)
 
-        if action is not None:
+        if action is None:
+            return
+
+        # 会阻塞等待用户输入的 action 不能 inline await:
+        # _updates_loop 是唯一消费 tdjson socket 流的任务,若在这里等待
+        # 用户输入,响应到达时循环冻着没人读 → 后续请求(如
+        # checkAuthenticationCode)永远等不到响应 → 30s 超时(自死锁)。
+        # 这些 action 派成独立任务,让循环立刻回到 receive() 继续消费。
+        if authorization_state_type in _BLOCKING_AUTH_ACTIONS:
+            task = asyncio.create_task(action())
+            task.add_done_callback(self._auth_action_done)
+        else:
             await action()
+
+    def _auth_action_done(self, task: asyncio.Task) -> None:
+        """防派发的 auth action 异常静默丢失。"""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            self.logger.exception("Auth action raised an exception")
 
     async def _set_tdlib_parameters_send(self):
         await self.send(self._set_tdlib_parameters())
@@ -417,7 +496,7 @@ class TdlibJsonClient:
         await self._setup_proxy()
         await self._setup_options()
 
-        self._update_task = asyncio.create_task(self._updates_loop())
+        self._schedule_updates_loop()
 
         try:
             await self.authorize()
