@@ -82,7 +82,7 @@ chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/tgmonitor"
 if ! command -v appimagetool >/dev/null 2>&1; then
     echo "❌ appimagetool 不在 PATH"
     echo "   CI 里跑:curl -fsSL -o /usr/local/bin/appimagetool \\"
-    echo "     https://github.com/AppImageCommunity/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \\"
+    echo "     https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \\"
     echo "     && chmod +x /usr/local/bin/appimagetool"
     exit 1
 fi

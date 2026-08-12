@@ -46,6 +46,11 @@ jobs:
             librsvg2-bin \
             file \
             cmake gperf libssl-dev zlib1g-dev build-essential
+          # appimagetool 一次性下到 /usr/local/bin
+          # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool)
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
