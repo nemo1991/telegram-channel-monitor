@@ -89,11 +89,14 @@ class _ChannelListCard(QWidget):
       - 属性:`lst`(QListWidget)、`btn_action`、`count_label`
 
     Signals:
-      - `item_double_clicked(int)` — channel_id
+      - `item_double_clicked(qlonglong)` — channel_id
       - `action_clicked()` — action 按钮被点
     """
 
-    item_double_clicked = Signal(int)
+    # Telegram chat_id 是 64 位带符号整数(如 -1001375475051),`Signal(int)`
+    # 映射到 C++ 32 位 int,emit 会 shiboken Overflow 且 slot 派发失败;
+    # 必须用 64 位 C++ 类型 `qlonglong`。
+    item_double_clicked = Signal("qlonglong")
     action_clicked = Signal()
 
     def __init__(
