@@ -183,7 +183,8 @@ PYTHONPATH=src uv run pytest tests/test_tdlib_client.py   # 验证
 > **为什么 Windows 现在进了 CI?** 测试本身不加载真实 libtdjson(conftest 的
 > `stub_tdlib_init` 全拦截),windows-latest 无需编译引擎即可跑 pytest;打包侧
 > build.yml 已加 windows-latest,vcpkg 编译引擎 + PyInstaller 产出 onedir zip。
-> 视觉回归 golden 图是 macOS 渲染产物,Windows 上跳过。
+> 视觉回归(`tests/test_visual_regression.py`)2026-08-12 起不进任何 CI(golden
+> 跨机渲染不稳,只在本地跑)。
 
 ### Windows + WSL2(推荐)
 

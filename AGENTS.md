@@ -79,7 +79,7 @@ core(app_service 门面 + 领域服务)
 ├── tgmonitor.spec              # PyInstaller 打包配置
 ├── docs/ARCHITECTURE.md        # 架构详解
 ├── docs/SUBSCRIBED_DRIFT_ANALYSIS.md
-├── .github/workflows/          # ci / build / audit / visual-regression
+├── .github/workflows/          # ci / build / audit
 └── pyproject.toml              # 构建 + 工具配置(ruff/mypy/pytest 全在这里)
 ```
 
@@ -139,15 +139,14 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 - pytest-asyncio 全局 `asyncio_mode="auto"`,`addopts="-ra -q"`(配置在 pyproject)。
 - `tests/conftest.py` 常用 fixtures:`settings`(stub 配置)、`storage`、`objectstore`、`bus`、`client`、`monitor`、`app`、`make_message` / `make_photo` 工厂。
 - **UI 测试必须 `QT_QPA_PLATFORM=offscreen`**(无头环境跑 Qt);测试系统库依赖见 CI workflow。
-- 视觉回归:黄金图在 `tests/golden/`,本地改动 UI 需要重生成时设 `UPDATE_GOLDENS=1`(CI 的 visual-regression workflow 只在 macOS 跑)。
+- 视觉回归(仅本地,不进 CI):黄金图在 `tests/golden/`,改动 UI 后本地 `UPDATE_GOLDENS=1 PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest tests/test_visual_regression.py` 重生成并人工比对。macOS CI runner 与开发机对系统 emoji 字体的渲染有固定差异(golden 跨机比对不稳),故 2026-08-12 起从 CI 摘除;golden 仍走 git 管理、本地维护。
 - 新增领域逻辑尽量走纯 core 单测(offline),不靠 UI 测试覆盖。
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`、`QT_LOGGING_RULES=*.warning=false`;Windows 跳过视觉回归(golden 图是 macOS 渲染产物)。
+- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`、`QT_LOGGING_RULES=*.warning=false`;视觉回归(`tests/test_visual_regression.py`)不进 CI,`pytest` 统一 `--ignore`。
 - **build.yml**(tag `v*`):先编译 libtdjson(Linux/macOS 走 `build_libtdjson.sh`,Windows 走 `build_libtdjson.ps1` vcpkg)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → GitHub Release + SHA256SUMS。
 - **audit.yml**(每周一 09:30 UTC):`pip-audit --strict` 依赖漏洞扫描。
-- **visual-regression.yml**(仅 macOS):`UPDATE_GOLDENS=1` 重生成 `tests/golden/*.png` 并上传 artifact,**不自动 commit**。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。
 - 发布流程(打 tag 前):本地过全部测试 → CI 全绿 → 打 `v<version>` tag 推远端 → build.yml 出产物。
 

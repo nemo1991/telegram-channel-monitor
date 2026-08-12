@@ -19,8 +19,7 @@ jobs:
       matrix:
         python-version: ["3.13"]
         # Windows:测试不加载真实 libtdjson(conftest 的 stub_tdlib_init
-        # fixture 拦截 TdlibJsonClient 构造),无需编译引擎即可跑通;
-        # 视觉回归 golden 图是 macOS 渲染产物,Windows 上跳过(见 Run pytest)。
+        # fixture 拦截 TdlibJsonClient 构造),无需编译引擎即可跑通。
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
@@ -97,43 +96,13 @@ jobs:
           # `uv run` 自动激活 venv(PYTHONPATH 也透传),装好的 editable 项目
           # 在 .venv 里直接可用,无需 python -m pip install -e 再来一次
           #
-          # **视觉回归文件隔离 + 重试**(2026-08-05):
-          # macOS-26-arm64 runner 上 `tests/test_visual_regression.py` 间歇
-          # segfault(Qt/Cocoa native race,无进程内 fix)— 把这部分单独
-          # 跑,失败(无论 pytest fail 还是进程 SIGSEGV)重试最多 3 次。
-          # 其他 17 个测试文件**不**进重试,失败立即报错,避免 retry 掩盖
-          # 真 bug。
-          set +e
+          # **视觉回归不进 CI**(2026-08-12):`tests/test_visual_regression.py`
+          # 只在本地跑(UPDATE_GOLDENS=1 重生成 golden 后人工比对)。macOS CI
+          # runner(macos-26-arm64)与开发机对系统 emoji 字体的渲染存在固定
+          # 差异(settings_page 1.08% > 0.5% 容差,message_view ⏱ 0.4%),golden
+          # 跨机比对无法稳定 → 从 CI 摘除,golden 仍走 git 管理、本地维护。
           uv run python -m pytest -v --tb=short \
             --ignore=tests/test_visual_regression.py
-          main_rc=$?
-          set -e
-
-          # 视觉回归 retry(覆盖 segfault + 真 fail)。
-          # Windows 上跳过:golden 图是 macOS 渲染产物,Windows 字体渲染
-          # 差异必然漂移,跑只会稳定失败。
-          visual_rc=0
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            visual_attempt=1
-            visual_rc=1
-            while [ $visual_attempt -le 3 ] && [ $visual_rc -ne 0 ]; do
-              echo "::group::visual-regression attempt $visual_attempt/3"
-              set +e
-              uv run python -m pytest tests/test_visual_regression.py -v --tb=short
-              visual_rc=$?
-              set -e
-              echo "::endgroup::"
-              if [ $visual_rc -ne 0 ]; then
-                echo "visual-regression attempt $visual_attempt failed (exit $visual_rc), retrying..."
-              fi
-              visual_attempt=$((visual_attempt + 1))
-            done
-          fi
-
-          if [ $main_rc -ne 0 ] || [ $visual_rc -ne 0 ]; then
-            echo "::error::pytest main_rc=$main_rc visual_rc=$visual_rc"
-            exit 1
-          fi
 
       # 再跑一次只为收集 branch coverage + 产 xml 报告(不设阈值门控)
       - name: Run pytest with coverage
@@ -144,12 +113,8 @@ jobs:
         shell: bash
         run: |
           # coverage 已经在 --group dev 里装好;`uv run` 注入 PATH。
-          # Windows 上视觉回归 golden 图必漂移,不参与覆盖率统计
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            uv run coverage run -m pytest -q --ignore=tests/test_visual_regression.py
-          else
-            uv run coverage run -m pytest -q
-          fi
+          # 视觉回归不进 CI(见 Run pytest),不参与覆盖率统计
+          uv run coverage run -m pytest -q --ignore=tests/test_visual_regression.py
           uv run coverage xml -o coverage.xml
 
       # 以 OS + Python 版本为名,跨矩阵下不互相覆盖;若 coverage.xml
