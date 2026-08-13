@@ -120,9 +120,11 @@ class TdlibTelegramClient(_AiClient):
     _BOOT_TIMEOUT = 30.0
 
     # 启动期"瞬态"状态 — `start()` 等首个状态推进后若仍停在这些状态,
-    # 说明 setTdlibParameters 还没生效 / 被 TDLib 拒绝(如 api_id/api_hash 无效),
-    # 给它 `_SETTLE_GRACE` 秒宽限;再不走就按 seen error codes 转可见错误,
-    # 避免 UI 永远停在 `tdlib_parameters` 裸标签。
+    # 给它 `_SETTLE_GRACE` 秒宽限;超时后按 seen error codes 分流:
+    #   - 有 codes(api_id/api_hash 无效等被 TDLib 拒绝)→ 立即转可见错误,
+    #     避免 UI 永远停在 `tdlib_parameters` 裸标签;
+    #   - 0 codes → TDLib 没拒绝,只是慢(SOCKS5 冷启动连 DC / restore 半成品
+    #     session),继续等状态推进,总预算由外层 `_BOOT_TIMEOUT` 兜底。
     _BOOT_TRANSIENT_STATES: frozenset[str] = frozenset({"uninit", "tdlib_parameters"})
     _SETTLE_GRACE = 5.0
 
@@ -169,6 +171,9 @@ class TdlibTelegramClient(_AiClient):
         # 兜底,把所有 tdlib_json 内 Error 包的 code 收集起来,这样可以在
         # `start` 超时时判断是不是 "401 wrong encryption key"。
         self._seen_error_codes: collections.deque[int] = collections.deque(maxlen=20)
+        # 最近一条无主 Error 包的 message — 翻译 boot 错误时优先用原生 msg
+        # 兜底(例如 code=400 "Can't lock file ... already in use")。
+        self._last_error_message: str = ""
 
         # 关闭流程标志位 —— `close()` 入口处立刻 True,所有公共 async 方法
         # 通过 `_check_alive()` 拦截后续 entry。`best-effort` 方法
@@ -216,8 +221,10 @@ class TdlibTelegramClient(_AiClient):
                 code = update.get("code")
                 if isinstance(code, int):
                     self._seen_error_codes.append(code)
+                    msg = str(update.get("message", ""))
+                    self._last_error_message = msg
                     log.warning("tdlib_json Error observed: code=%s msg=%s",
-                                code, update.get("message", ""))
+                                code, msg)
         self.add_event_handler(
             _on_any_update,
             update_type="*",
@@ -479,11 +486,25 @@ class TdlibTelegramClient(_AiClient):
                     self._state_event.wait(), timeout=self._SETTLE_GRACE,
                 )
             except TimeoutError:
-                err_detail = _translate_boot_error(self._seen_error_codes)
-                log.error("[tdlib] stuck in %s: %s", self._state, err_detail)
-                await self._kill_client()
-                self._set_state("error", detail=err_detail)
-                return
+                # 有 seen error codes → TDLib 明确拒绝了启动请求(如
+                # api_id/api_hash 无效,code=400),立即转可见错误。
+                if self._seen_error_codes:
+                    err_detail = _translate_boot_error(
+                        self._seen_error_codes, self._last_error_message,
+                    )
+                    log.error("[tdlib] stuck in %s: %s", self._state, err_detail)
+                    await self._kill_client()
+                    self._set_state("error", detail=err_detail)
+                    return
+                # 0 codes → TDLib 没拒绝,只是慢(冷启动连 DC / restore 半成品
+                # session)。不杀,继续等状态推进;总预算由 `start()` 外层的
+                # wait_for(_BOOT_TIMEOUT) 兜底。历史坑:这里单次 `_SETTLE_GRACE`
+                # 超时就直接杀,30s 预算形同虚设,冷启动被 5s 误杀。
+                log.info(
+                    "[tdlib] state=%s no movement in %.0fs, no error codes — "
+                    "keep waiting (boot budget %.0fs)",
+                    self._state, self._SETTLE_GRACE, self._BOOT_TIMEOUT,
+                )
         log.info("[tdlib] state machine advanced to %s in %.3fs",
                  self._state, _t.monotonic() - t)
 
@@ -510,6 +531,7 @@ class TdlibTelegramClient(_AiClient):
         # 清旧状态
         self._state_event.clear()
         self._seen_error_codes.clear()
+        self._last_error_message = ""
         try:
             await asyncio.wait_for(
                 self._do_start_inner(), timeout=self._BOOT_TIMEOUT,
@@ -521,7 +543,9 @@ class TdlibTelegramClient(_AiClient):
                 "start: timed out after %.0fs; seen_error_codes=%s",
                 self._BOOT_TIMEOUT, list(self._seen_error_codes),
             )
-            err_detail = _translate_boot_error(self._seen_error_codes)
+            err_detail = _translate_boot_error(
+                self._seen_error_codes, self._last_error_message,
+            )
             await self._kill_client()
             self._set_state("error", detail=err_detail)
             return self._state, self._state_detail

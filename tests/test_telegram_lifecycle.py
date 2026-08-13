@@ -230,6 +230,56 @@ async def test_start_timeout_no_error_codes_returns_generic(settings, bus, stub_
         assert "encryption key" not in detail
 
 
+@pytest.mark.asyncio
+async def test_settle_loop_waits_when_no_error_codes(settings, bus, stub_tdlib_init):
+    """settle 宽限超时但没收到 error codes → 不杀,继续等状态推进。
+
+    回归 2026-08-13 线上 bug:冷启动(SOCKS5 连 DC / restore 半成品 session)
+    通常远超 `_SETTLE_GRACE`(5s),旧代码单次超时就 `_kill_client()` 转 error,
+    30s `_BOOT_TIMEOUT` 预算形同虚设,用户看到「TDLib 启动超时」误报。
+    """
+    async with make_client(settings, bus) as client:
+        client._SETTLE_GRACE = 0.05  # type: ignore[assignment]
+        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
+        client.execute = _noop_async  # type: ignore[method-assign]
+        client._setup_proxy = _noop_async  # type: ignore[method-assign]
+        client._setup_options = _noop_async  # type: ignore[method-assign]
+        client.send = _noop_async  # type: ignore[method-assign]
+
+        client._set_state("tdlib_parameters")  # 停在瞬态,且不产生任何 error code
+        task = asyncio.create_task(client._do_start_inner())
+        # 熬过几个宽限周期 — 0 codes 时应继续等待,而不是立刻转 error
+        await asyncio.sleep(0.25)
+        assert not task.done(), "settle 循环不该在 0 codes 时提前杀 boot"
+        assert client._state == "tdlib_parameters"
+
+        client._set_state("ready")  # 状态推进 → 循环退出
+        await asyncio.wait_for(task, timeout=2)
+        assert client._state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_settle_loop_fails_fast_when_error_codes_seen(settings, bus, stub_tdlib_init):
+    """settle 宽限超时且已收到 error codes(被 TDLib 拒绝)→ 立即转可见错误。"""
+    async with make_client(settings, bus) as client:
+        client._SETTLE_GRACE = 0.05  # type: ignore[assignment]
+        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
+        client.execute = _noop_async  # type: ignore[method-assign]
+        client._setup_proxy = _noop_async  # type: ignore[method-assign]
+        client._setup_options = _noop_async  # type: ignore[method-assign]
+        client.send = _noop_async  # type: ignore[method-assign]
+
+        client._set_state("tdlib_parameters")
+        client._seen_error_codes.append(400)  # api_id/api_hash 无效被拒
+        await asyncio.wait_for(client._do_start_inner(), timeout=2)
+        assert client._state == "error"
+        assert "DC 握手失败" in client._state_detail
+
+
+async def _noop_async(*args, **kwargs):  # noqa: ANN002, ANN003
+    return None
+
+
 async def _noop_preflight():
     return True, None
 

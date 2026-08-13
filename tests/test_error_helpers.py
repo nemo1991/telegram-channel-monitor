@@ -133,3 +133,22 @@ def test_translate_boot_error_handles_deque_slice_view() -> None:
     assert "DC 握手失败" in _translate_boot_error(dq)
     dq.append(401)
     assert "encryption key 不匹配" in _translate_boot_error(dq)
+
+
+def test_translate_boot_error_lock_msg_preferred() -> None:
+    """code=400 + 「Can't lock file ... already in use」msg → 提示另一个实例,
+    而不是误导性的「DC 握手失败」(2026-08-13 线上:旧实例占用 td.binlog)。"""
+    msg = (
+        "Can't lock file \"/Users/me/Library/Application Support/tgmonitor"
+        "/session/tdlib/database/td.binlog\", because it is already in use; "
+        "check for another program instance running"
+    )
+    detail = _translate_boot_error(_codes(400), msg)
+    assert "另一个 tgmonitor 实例" in detail
+    assert "DC 握手失败" not in detail
+
+
+def test_translate_boot_error_plain_msg_keeps_dc_detail() -> None:
+    """有 codes 但 msg 不含 lock 关键词 → 仍回落到 DC 握手失败。"""
+    detail = _translate_boot_error(_codes(400), "Wrong parameters")
+    assert "DC 握手失败" in detail

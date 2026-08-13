@@ -125,13 +125,14 @@ def _load_or_create_encryption_key(td_dir, *, rotate: bool = False) -> str:
     return key_b64
 
 
-def _translate_boot_error(seen_codes: collections.deque[int]) -> str:
+def _translate_boot_error(seen_codes: collections.deque[int], last_msg: str = "") -> str:
     """把 start() 超时期间 tdlib_json 报的 error code 集合翻成人话给 UI。
 
-    翻译规则(2026-07-22 实测):
+    翻译规则(2026-07-22 实测 + 2026-08-13 补):
       - **401** → encryption key 不匹配;AppService 据此外层 rotate key
       - **429** → TDLib 限流,让用户稍后重试
-      - **其他已见 code** → DC 握手失败 + codes 列表(代理/网络问题高发)
+      - **其他已见 code** → 优先看原生 msg:`Can't lock file ... already in use`
+        (另一个实例占用 session)→ 直接提示;否则 DC 握手失败 + codes 列表
       - **0 个 code** → TDLib 启动超时,可能是代理不可达或 DC 不通
 
     设计为 module-level pure function(跟 `_extract_error_detail` 同 pattern),
@@ -146,6 +147,12 @@ def _translate_boot_error(seen_codes: collections.deque[int]) -> str:
     if 429 in seen_codes:
         return "TDLib 限流 (code 429),稍后重试"
     if seen_codes:
+        # 优先用 TDLib 原生 msg 兜底 — "Can't lock file" 类信息量远超
+        # "DC 握手失败",能直接告诉用户是另一个实例占用了 session。
+        if last_msg and any(
+            k in last_msg.lower() for k in ("lock", "already in use", "another program")
+        ):
+            return f"session 被占用,可能是另一个 tgmonitor 实例在运行({last_msg.strip()[:120]})"
         return f"DC 握手失败 (TDLib codes {list(seen_codes)})"
     return "TDLib 启动超时(可能代理不可达或 DC 不通)"
 
