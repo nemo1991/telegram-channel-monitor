@@ -1,7 +1,10 @@
 name: Build packages
 
 on:
+  # 打 v* tag 走完整打包;push main 只跑 warm-cache job 预热 libtdjson
+  # 编译缓存(GitHub 缓存只有默认分支写入的缓存其他 ref 才能恢复,见下)
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -12,6 +15,8 @@ concurrency:
 jobs:
   build:
     name: build (${{ matrix.os }}, py${{ matrix.python-version }})
+    # push main 只预热缓存,不打包;打包只在 tag / 手动触发时跑
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -176,6 +181,95 @@ jobs:
           path: dist/tgmonitor-windows-x64.zip
           if-no-files-found: error
           retention-days: 14
+
+  # 预热 libtdjson 编译缓存(GitHub 缓存机制:不同 tag 的 run 之间不能互相
+  # 恢复缓存,只有默认分支 main 写入的缓存任何 ref 都能命中)。因此在 main
+  # push 上跑一个只编译、不打包的 job,把三平台产物/二进制缓存写回 main
+  # scope;之后打 v* tag 发布时 build job 用同一 key 直接命中,免去每次冷
+  # 编译(Windows vcpkg 冷编译约 2h → 命中后仅几分钟)。
+  warm-cache:
+    name: warm-cache (${{ matrix.os }})
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # 只装编译 libtdjson 所需系统依赖(Qt 运行库 / appimagetool 打包时才需要)
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake gperf libssl-dev zlib1g-dev build-essential
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake gperf openssl@3
+
+      - name: Install project (via uv)
+        run: |
+          # 脚本命中缓存跳过编译时会跑 ctypes 验证,需能在 venv 里 import tdlib_json
+          uv sync --all-extras --group dev
+
+      # Windows 兜底清 C: 盘,避免 vcpkg 链接期 No space left on device
+      # (与 build job 相同;不动 VS 工具链 / Git / runner 自身)
+      - name: Free disk space (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $targets = @(
+            "C:\Program Files\dotnet",
+            "C:\Program Files\Microsoft SQL Server",
+            "C:\Program Files (x86)\Microsoft SQL Server",
+            "C:\vcpkg\downloads",
+            "$env:LOCALAPPDATA\Microsoft\vcpkg\archives"
+          )
+          foreach ($p in $targets) {
+            if (Test-Path $p) {
+              $size = (Get-ChildItem $p -Recurse -Force -ErrorAction SilentlyContinue |
+                       Measure-Object Length -Sum -ErrorAction SilentlyContinue).Sum
+              Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "removed $p ($([math]::Round($size / 1MB)) MB)"
+            }
+          }
+          Get-PSDrive C | Select-Object Used, Free | Format-Table -AutoSize
+
+      # 缓存 key 与 build job 完全一致:main push 写入 → tag 发布精确命中
+      - name: Cache libtdjson build output (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: packages/tdlib_json/src/tdlib_json/tdlib
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Cache vcpkg binary cache (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: D:\a\vcpkg-work\binary-cache
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Build libtdjson (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: bash scripts/build_libtdjson.sh
+
+      - name: Build libtdjson (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build_libtdjson.ps1
 
   release:
     name: GitHub Release
