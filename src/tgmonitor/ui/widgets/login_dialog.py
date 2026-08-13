@@ -51,6 +51,8 @@ class LoginDialog(QDialog):
         self.setWindowTitle("Telegram 登录")
         self.setModal(True)
         self._expected_state: str = ""
+        # 提交期间锁定输入/按钮,防止用户在等待响应时重复提交
+        self._busy: bool = False
         self._build()
         # 自动订阅,按当前状态展示对应页
         self._auto_show()
@@ -139,8 +141,24 @@ class LoginDialog(QDialog):
             self.status_label.setText("输入手机号(含 + 国家区号)")
             self.stack.setCurrentIndex(0)
             self.in_phone.setFocus()
+        elif state == "error":
+            # 提交失败 — 展示原因并保持当前页,让用户能重试
+            # (此前直接 hide(),用户只看到窗口消失,无失败反馈)
+            self.status_label.setText(f"登录失败:{detail or '未知错误'}")
         else:
             self.hide()
+
+    def _set_busy(self, busy: bool, msg: str = "") -> None:
+        """提交期间锁定 stack + 提交按钮,防止重复提交;解锁时不改 status_label。"""
+        self._busy = busy
+        self.stack.setEnabled(not busy)
+        self.btn_submit.setEnabled(not busy)
+        if busy and msg:
+            self.status_label.setText(msg)
+
+    def _show_submit_error(self, prefix: str, exc: BaseException) -> None:
+        """run_coro 异常路径 — 把失败原因显示在对话框内(不弹窗、不隐藏)。"""
+        self.status_label.setText(f"{prefix}:{exc}")
 
     # ---- 提交 ----
 
@@ -153,38 +171,54 @@ class LoginDialog(QDialog):
             self._submit_phone()
 
     def _submit_phone(self) -> None:
+        if self._busy:
+            return
         phone = self.in_phone.text().strip()
         if not phone:
             return
-        run_coro(
+        self._set_busy(True, "正在请求验证码…")
+        fut = run_coro(
             self.loop, self.app.submit_phone(phone),
             on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("提交手机号失败", exc),
             error_label="submit_phone",
         )
+        # 无论成功/失败/异常,响应返回后解锁输入
+        fut.add_done_callback(lambda _f: self._set_busy(False))
 
     def _submit_code(self) -> None:
+        if self._busy:
+            return
         code = self.in_code.text().strip()
         if not code:
             return
         self.in_code.clear()
+        self._set_busy(True, "正在验证…")
         # submit_code 返 (state, detail) tuple,_render 接 (state, detail)—
         # run_coro 的 on_success 是 `Callable[[T], None]`,把 tuple 展开传两个位置参。
-        run_coro(
+        fut = run_coro(
             self.loop, self.app.submit_code(code),
             on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("提交验证码失败", exc),
             error_label="submit_code",
         )
+        fut.add_done_callback(lambda _f: self._set_busy(False))
 
     def _submit_password(self) -> None:
+        if self._busy:
+            return
         pwd = self.in_pwd.text()
         if not pwd:
             return
         self.in_pwd.clear()
-        run_coro(
+        self._set_busy(True, "正在验证…")
+        fut = run_coro(
             self.loop, self.app.submit_password(pwd),
             on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("提交 2FA 密码失败", exc),
             error_label="submit_password",
         )
+        fut.add_done_callback(lambda _f: self._set_busy(False))
 
 
 def app_get_state(app) -> str:  # 顶层 helper,避免循环 import
