@@ -159,6 +159,11 @@ class CoreTDJson:
         elif verbosity_level == TDLibLogVerbosity.DEBUG:
             self.logger.debug("[TDLib DEBUG]: %s", message)
 
+        # 解释器 shutdown 时 TDLib 内部线程仍可能触发本回调;此时 flush
+        # stdout 会和 finalize 抢锁,Windows 上直接 Fatal Python error
+        # (_enter_buffered_busy)。shutdown 中不再写 stdout,跳过即可。
+        if sys.is_finalizing():
+            return
         sys.stdout.flush()
 
     def send(self, client_id: int, query: TDJsonQuery):

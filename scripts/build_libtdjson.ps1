@@ -117,13 +117,21 @@ Get-ChildItem $VcpkgBin -Filter *.dll | Where-Object { $_.Name -ne "tdjson.dll" 
 Get-ChildItem $DestDir | Select-Object Name, Length | Format-Table -AutoSize
 
 # ---- 3. 验证 ctypes 能加载 ----
+# 注意:stop() 后 TDLib 内部线程可能仍在收尾,解释器 shutdown 时若它们
+# 回调 __log_message_callback 写 stdout,会触发 Fatal Python error
+# (_enter_buffered_busy,Windows 常见)导致非零退出。冒烟测试输出已 flush,
+# 直接 os._exit(0) 跳过解释器 finalize,避免 daemon 线程抢 stdout 锁。
 $verify = @'
 import asyncio
+import os
+import sys
 import tdlib_json
 c = tdlib_json.TdlibJsonClient({'@type': 'setLogVerbosityLevel', 'new_verbosity_level': 0})
-print('OK libtdjson loaded, client id =', c.tdjson_client.client_id)
+print('OK libtdjson loaded, client id =', c.tdjson_client.client_id, flush=True)
 asyncio.run(c.stop())
-print('OK close')
+print('OK close', flush=True)
+sys.stdout.flush()
+os._exit(0)
 '@
 Push-Location $RepoRoot
 try {
