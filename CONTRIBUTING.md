@@ -203,6 +203,30 @@ uv run python -m tgmonitor   # GUI 走 WSLg
 
 ---
 
+## 📦 发布
+
+打 tag 即发布,CI 全自动:
+
+```bash
+# 1. 本地过全部测试、CI 全绿(见上方「PR 流程」)
+# 2. 打版本 tag 并推送
+git tag v1.0.8
+git push origin v1.0.8
+```
+
+- `build.yml`(tag `v*`):三平台矩阵(Linux/macOS/Windows)先编译 libtdjson →
+  PyInstaller 打包 → Linux AppImage + macOS .app zip + Windows onedir zip →
+  `release` job 自动建 GitHub Release 并附 `SHA256SUMS`。
+- **缓存预热**:GitHub 缓存规则是不同 tag 的 run 之间不能互相恢复,只有默认
+  分支(main)写入的缓存任何 ref 都能命中。因此 push main 时 `warm-cache` job
+  只编译 libtdjson、不打包,把三平台产物写回 main scope;之后打 tag 发布用
+  同一 key 直接命中,Windows vcpkg 冷编译约 2h → 命中后仅几分钟。
+- 缓存 key 为 `libtdjson-${{ runner.os }}-${{ runner.arch }}-v1`,7 天未访问会
+  被 GitHub 自动清除;需要作废时把 `v1` 改成 `v2` 即可。
+- 重复打同一个 tag / `workflow_dispatch` 手动重跑也会命中缓存,产物不变时编译一步秒过。
+
+---
+
 ## 🔐 安全
 
 **请勿**在 issue / PR / commit 中粘贴:
