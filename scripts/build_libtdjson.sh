@@ -124,13 +124,22 @@ else
 fi
 
 # ---- 4. 验证 ctypes 能加载(无论是否跳过编译)----
+# 注意:验证通过后用 os._exit(0) 硬退出,跳过解释器 teardown —— TDLib
+# 内部线程在进程退出时偶发抢 stdout 锁导致 Segfault(exit 139,CI macOS
+# job 踩过),冒烟验证已通过,没必要再走解释器收尾。必须先 flush:
+# CI 管道是块缓冲,直接 os._exit 会丢掉前面打印的输出。
+# 若中间验证抛异常,会在 os._exit 前以非 0 退出,CI 仍能拦住失败。
 cd "$REPO_ROOT"
 uv run python -c "
 import asyncio
+import os
+import sys
 import tdlib_json
 c = tdlib_json.TdlibJsonClient({'@type': 'setLogVerbosityLevel', 'new_verbosity_level': 0})
 print('✅ libtdjson 加载 OK, client id =', c.tdjson_client.client_id)
 asyncio.run(c.stop())
 print('✅ 关闭 OK')
+sys.stdout.flush()
+os._exit(0)
 "
 echo "✅ 构建完成 — $DEST"

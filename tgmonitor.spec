@@ -5,16 +5,16 @@ Cross-platform:
   - Linux  → onedir(dist/tgmonitor/),后续 scripts/build_appimage.sh 包成 AppImage
   - macOS  → .app bundle(BUNDLE),含 Info.plist + 资源
 
-资源 collect 策略:
+资源收集策略(显式写死 datas,不用 collect_data_files,详见下方 datas 段):
   - tdlib_json 内置 libtdjson native lib(.so / .dylib / .dll)— 由
     scripts/build_libtdjson.sh(macOS / Linux)或
     scripts/build_libtdjson.ps1(Windows,vcpkg)编译后放入包内 `tdlib/` 目录。
-    PyInstaller 默认不 collect data,需要 `collect_data_files("tdlib_json")`。
     加载器(tdjson.py)用 `Path(__file__).parent / "tdlib" / <binary>` 定位,
     所以 destination 必须是 `tdlib_json/tdlib`。
   - tgmonitor.resources / tgmonitor.ui.resources(SVG / QSS / icons)
-    — 走 `importlib.resources.files()`,PyInstaller 跟 pkg 走,
-    `collect_data_files` 显式保险
+    — 运行时走 `importlib.resources.files()`,destination 分别对应
+    `<bundle>/tgmonitor/resources/` 与 `<bundle>/tgmonitor/ui/resources/`,
+    `icons/` 等子目录必须原样保留(否则 Windows 启动即报 nav_live.svg 缺失)。
 
 关键 spec 写法(踩过的坑):
   - EXE 必须 `exclude_binaries=True`,只输出 bootloader + scripts
@@ -23,46 +23,38 @@ Cross-platform:
     source data 校验,ValueError 抛错
 """
 import sys
-
-from PyInstaller.utils.hooks import collect_data_files
+from pathlib import Path
 
 block_cipher = None
 
-# ---- resource collection ----
-# tdlib_json 内置 libtdjson native lib(命名:`libtdjson_<plat>_<arch>.<ext>`,
-# 由 build_libtdjson.sh / build_libtdjson.ps1 生成;未编译时 collect 为空,属正常 dev 状态)
-tdlib_json_data = collect_data_files("tdlib_json")
+# ---- resource collection:显式写死 datas,三平台统一 ----
+# SPECPATH 是 PyInstaller 注入的全局变量:spec 文件所在目录 = 仓库根。
+_SPEC_DIR = Path(SPECPATH)
 
-
-def _pkg_datas(pkg: str) -> list[tuple[str, str]]:
-    """收集 pkg 的 data 文件,dest 归一化为以包名开头的完整目标路径。
-
-    collect_data_files 在 PyInstaller 6.21 返回的 dest 已是完整包路径
-    (如 `tgmonitor/resources/icons`);早期版本可能只给相对包目录的路径
-    (如 `icons`)。统一归一化,确保 `icons/` 这类子目录不被抹平 ——
-    否则运行时按 `resources/icons/nav_live.svg` 定位会报 FileNotFoundError
-    (Windows 打包产物启动即崩的根因)。
-    """
-    prefix = pkg.replace(".", "/")
-    out = []
-    for src, dest in collect_data_files(pkg):
-        if dest == prefix or dest.startswith(prefix + "/"):
-            out.append((src, dest))
-        else:
-            out.append((src, f"{prefix}/{dest}" if dest else prefix))
-    return out
-
+# (源目录, 目标目录)。PyInstaller 对目录型 (src, dest) 会递归拷贝整棵树,
+# 子目录结构原样保留。目标目录必须与运行时定位逻辑一致:
+#   - tdjson.py:  `Path(__file__).parent / "tdlib" / <binary>` →
+#                 frozen 下 __file__ = <bundle>/tdlib_json/tdjson.pyc
+#   - icon.py:    `importlib.resources.files("tgmonitor.resources")`
+#   - theme.py:   `importlib.resources.files("tgmonitor.ui.resources")`
+#
+# 为什么不用 collect_data_files:它的 dest 由 find_spec 解析 editable workspace
+# 包决定,跨平台不一致 —— Windows CI 上 `.pth` 展开的 `packages/tdlib_json/src`
+# 在 sys.path,dest 会翻倍嵌套成 `tdlib_json/tdlib_json/tdlib`(v1.0.7 / v1.0.8
+# Windows 产物 dll 两层嵌套、启动崩的根因)。写死源目录与目标目录,三平台
+# 行为完全一致、可预期。
+_DATA_DIRS = [
+    (_SPEC_DIR / "packages/tdlib_json/src/tdlib_json/tdlib", "tdlib_json/tdlib"),
+    (_SPEC_DIR / "src/tgmonitor/resources", "tgmonitor/resources"),
+    (_SPEC_DIR / "src/tgmonitor/ui/resources", "tgmonitor/ui/resources"),
+]
 
 datas = []
-# tdlib_json 的 native lib 在 pkg 内是 `tdlib_json/tdlib/libtdjson_*.<ext>`。
-# tdlib_json.tdjson loader 走 `pathlib.Path(__file__).parent / "tdlib" / binary_name`,
-# 所以 destination 必须是 `tdlib_json/tdlib` —— PyInstaller 才把文件展到
-# `<bundle>/tdlib_json/tdlib/libtdjson_*.<ext>`,loader 找得到。
-# (用 `tdlib_json` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
-datas += _pkg_datas("tdlib_json")
-# 项目自身资源(SVG / icons / QSS)— 走 importlib.resources,保留子目录结构
-datas += _pkg_datas("tgmonitor.resources")
-datas += _pkg_datas("tgmonitor.ui.resources")
+for src_dir, dest in _DATA_DIRS:
+    if src_dir.is_dir():
+        datas.append((str(src_dir), dest))
+    else:
+        print(f"[spec] WARNING: 跳过缺失目录 {src_dir}")
 
 # tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports
 hiddenimports = []
@@ -81,7 +73,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     # 旧 hooks/hook-aiotdlib.py 已随 aiotdlib 迁移删除;libtdjson 数据收集
-    # 由上面显式 collect_data_files 完成,不再需要 hookspath
+    # 由上面显式 datas 完成,不再需要 hookspath
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
