@@ -171,6 +171,7 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Compute SHA256SUMS
         run: |
