@@ -536,31 +536,61 @@ class TdlibTelegramClient(_AiClient):
     # ============================================================
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """用户点「登录」时调用 — 改 phone / 触发 TDLib 发 code。
+        """用户点「登录」时调用 — 提交手机号给 TDLib,触发验证码下发。
 
-        若 TDLib 没在 `phone_required` 状态,先 wait_for 至转好。
+        显式发 `setAuthenticationPhoneNumber`,不再依赖 tdlib_json 构造时的
+        自动发号:那一路取的是 init 参数,用户后填 / 后改的手机号根本进不了
+        调用链,且空号也会照发(fire-and-forget),导致卡在 `phone_required`
+        而 UI 无任何反馈。错误 → `AuthErrorOccurred` 事件,不改顶层状态。
         """
         self._check_alive()
         if not getattr(self, "_running", False):
             return self._state, self._state_detail
-        if phone and phone != self._settings.phone:
-            log.warning(
-                "phone changed (%s → %s); restart to take effect",
-                self._settings.phone, phone,
+        phone = (phone or "").strip()
+        if not phone.startswith("+"):
+            await self._publish_auth_error(
+                "phone", "手机号需以 + 国家区号开头,如 +8613800000000",
             )
-        # 等进 phone_required 后 tdlib_json 会自动处理 — 这里不强发请求。
-        # 已存在的 phone 在 init 时已传给 setTdlibParameters,
-        # tdlib_json 在 authorizationStateWaitPhoneNumber 时会自动调
-        # setAuthenticationPhoneNumber。
+            return self._state, self._state_detail
+        # 等 TDLib 进入 phone_required(最多 5s)
         if self._state != "phone_required":
-            # 等状态变成 phone_required(最多 5s)
             self._state_event.clear()
             try:
-                await asyncio.wait_for(
-                    self._state_event.wait(), timeout=5.0,
-                )
+                await asyncio.wait_for(self._state_event.wait(), timeout=5.0)
             except TimeoutError:
                 pass
+        if self._state != "phone_required":
+            log.warning(
+                "submit_phone: state=%s,非 phone_required 无法发号", self._state,
+            )
+            return self._state, self._state_detail
+        log.info("submitting phone %s → setAuthenticationPhoneNumber", phone)
+        try:
+            await self.request({
+                "@type": "setAuthenticationPhoneNumber",
+                "phone_number": phone,
+                "settings": {
+                    "@type": "phoneNumberAuthenticationSettings",
+                    "allow_flash_call": False,
+                    "allow_missed_call": False,
+                    "is_current_phone_number": True,
+                    "allow_sms_retriever_api": False,
+                    "authentication_tokens": [],
+                },
+            }, request_timeout=30)
+        except TdlibError as e:
+            detail = _extract_error_detail(e)
+            log.warning("submit_phone failed: %s", e)
+            await self._publish_auth_error("phone", f"登录失败: {detail}", e)
+            return self._state, self._state_detail
+        # 等 TDLib 推进到 code_required(最多 15s)
+        self._state_event.clear()
+        try:
+            await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
+        except TimeoutError:
+            log.warning(
+                "submit_phone: 发号后 15s 未推进 (state=%s)", self._state,
+            )
         return self._state, self._state_detail
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:

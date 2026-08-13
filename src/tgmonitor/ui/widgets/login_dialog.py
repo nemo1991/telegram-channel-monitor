@@ -1,13 +1,13 @@
 # mypy: disable-error-code="attr-defined"
-"""LoginDialog — 仅当账户凭据已填、但 TDLib 要求验证码或 2FA 时弹出。
+"""LoginDialog — 鉴权交互的兜底对话框(手机号 / 验证码 / 2FA)。
 
-凭据表单已经搬到主窗口 AccountWidget;这个对话框**只剩 escape hatch**:
-- 收到 `code_required` 事件 → 自动弹,输入验证码提交
-- 收到 `password_required` 事件 → 自动弹,输入 2FA 密码提交
-- 也可工具栏菜单显式调出(未来扩展)。
+凭据主要在设置页填写(账户凭证组);此对话框是用户在主界面直接点「登录」
+时的交互入口,按当前登录状态就地切换:
+- `phone_required` / `closed` / `uninit` → 手机号页,提交后触发验证码下发
+- `code_required` → 验证码页
+- `password_required` → 2FA 密码页
 
-多数情况下 AccountWidget 就地切换输入框就够了;此对话框是当用户已离开
-账户面板时(比如最小化、或者未在主窗口时弹)Telegram 突然继续问问题的兜底。
+弹窗期间 Telegram 状态变化(LoginStateChanged)会自动切页,用户无需重开。
 """
 from __future__ import annotations
 
@@ -36,13 +36,7 @@ log = logging.getLogger(__name__)
 
 
 class LoginDialog(QDialog):
-    """鉴权阶段的 escape hatch 对话框(仅当 Telegram 进入 code_required /
-    password_required 时弹出,供用户输入验证码 / 2FA 密码)。
-
-    # 多数情况下 `LoginWidget`(在主窗口内)就地切换输入框就够了;
-    # 本对话框是用户已离开账户面板(最小化或不在前台)时 Telegram
-    # 突然继续问问题的兜底。
-    """
+    """鉴权交互对话框(手机号 → 验证码 → 2FA 按状态就地切换)。"""
 
     def __init__(
         self,
@@ -50,7 +44,7 @@ class LoginDialog(QDialog):
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
     ) -> None:
-        """建 modal dialog + 自动按当前 LoginState 选页(验证码 / 2FA / hide)。"""
+        """建 modal dialog + 自动按当前 LoginState 选页(手机号 / 验证码 / 2FA)。"""
         super().__init__(parent)
         self.app = app
         self.loop = loop
@@ -72,7 +66,24 @@ class LoginDialog(QDialog):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
 
-        # page 0: 验证码
+        # page 0: 手机号
+        p_phone = QWidget()
+        pl = QVBoxLayout(p_phone)
+        self.in_phone = QLineEdit()
+        self.in_phone.setPlaceholderText("+8613800000000")
+        self.in_phone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 预填设置里的手机号(设置页「账户凭证」里填的那个)
+        try:
+            cur = self.app.settings.phone
+            if isinstance(cur, str) and cur.strip():
+                self.in_phone.setText(cur.strip())
+        except Exception:  # noqa: BLE001
+            log.debug("prefill phone failed", exc_info=True)
+        pl.addWidget(self.in_phone)
+        self.stack.addWidget(p_phone)
+        self.in_phone.returnPressed.connect(self._submit_phone)
+
+        # page 1: 验证码
         p_code = QWidget()
         cl = QVBoxLayout(p_code)
         self.in_code = QLineEdit()
@@ -82,14 +93,14 @@ class LoginDialog(QDialog):
         self.stack.addWidget(p_code)
         self.in_code.returnPressed.connect(self._submit_code)
 
-        # page 1: 2FA 密码
+        # page 2: 2FA 密码
         p_pwd = QWidget()
-        pl = QVBoxLayout(p_pwd)
+        pwl = QVBoxLayout(p_pwd)
         self.in_pwd = QLineEdit()
         self.in_pwd.setEchoMode(QLineEdit.Password)
         self.in_pwd.setPlaceholderText("二步验证 2FA 密码")
         self.in_pwd.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pl.addWidget(self.in_pwd)
+        pwl.addWidget(self.in_pwd)
         self.stack.addWidget(p_pwd)
         self.in_pwd.returnPressed.connect(self._submit_password)
 
@@ -118,12 +129,16 @@ class LoginDialog(QDialog):
         self._expected_state = state
         if state == "code_required":
             self.status_label.setText("Telegram 验证码")
-            self.stack.setCurrentIndex(0)
+            self.stack.setCurrentIndex(1)
             self.in_code.setFocus()
         elif state == "password_required":
             self.status_label.setText("二步验证 2FA 密码")
-            self.stack.setCurrentIndex(1)
+            self.stack.setCurrentIndex(2)
             self.in_pwd.setFocus()
+        elif state in ("phone_required", "closed", "uninit", "tdlib_parameters"):
+            self.status_label.setText("输入手机号(含 + 国家区号)")
+            self.stack.setCurrentIndex(0)
+            self.in_phone.setFocus()
         else:
             self.hide()
 
@@ -134,6 +149,18 @@ class LoginDialog(QDialog):
             self._submit_code()
         elif self._expected_state == "password_required":
             self._submit_password()
+        else:
+            self._submit_phone()
+
+    def _submit_phone(self) -> None:
+        phone = self.in_phone.text().strip()
+        if not phone:
+            return
+        run_coro(
+            self.loop, self.app.submit_phone(phone),
+            on_success=lambda res: self._render(res[0], res[1] or ""),
+            error_label="submit_phone",
+        )
 
     def _submit_code(self) -> None:
         code = self.in_code.text().strip()

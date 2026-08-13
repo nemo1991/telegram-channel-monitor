@@ -370,6 +370,14 @@ class TdlibJsonClient:
         phone_number = str(self.settings.get("phone_number") or "")
         phone_number = "".join(ch for ch in phone_number if ch.isdigit())
 
+        # 空号直接不发:自动发空号会被 TDLib 以 400 拒绝,且会抢在
+        # 调用方显式 `setAuthenticationPhoneNumber` 之前造成竞态。
+        if not phone_number:
+            self.logger.warning(
+                "skip auto setAuthenticationPhoneNumber: phone_number is empty"
+            )
+            return
+
         await self.send(
             {
                 "@type": "setAuthenticationPhoneNumber",
