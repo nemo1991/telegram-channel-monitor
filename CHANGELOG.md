@@ -5,6 +5,19 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.10] - 2026-08-13
+
+### ✨ Added
+- **登录提交 loading 锁定**:提交手机号/验证码/2FA 密码等待响应期间锁定输入
+  与按钮,防止重复提交;失败原因直接显示在对话框内,不再窗口消失无反馈
+
+### 🐛 Fixed
+- **backfill [400] Chat not found 刷屏**:`iter_chat_history` 分页前先
+  `getChat` 预热,频道不可访问转 `ChatUnavailableError`,补拉降级为每频道
+  一次 warning 并跳过,不再每 30s 刷 error traceback
+- **未登录不补拉**:state 非 ready 时跳过周期补拉,消除
+  "Client not started" 错误刷屏(登录成功自动恢复)
+
 ## [1.0.9] - 2026-08-13
 
 ### 🐛 Fixed
