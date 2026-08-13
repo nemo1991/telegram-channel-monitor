@@ -60,8 +60,12 @@ class _BackfillClient(FakeTelegramClient):
     """
 
     def __init__(self, history: dict[int, list[int]]) -> None:
-        """`history`:channel_id → telegram_msg_id 列表(最新在前)。"""
+        """`history`:channel_id → telegram_msg_id 列表(最新在前)。
+
+        补拉只应在登录成功(ready)后执行,故默认置 ready。
+        """
         super().__init__()
+        self._state = "ready"
         self._history = history
 
     async def iter_chat_history(  # type: ignore[override]
@@ -146,6 +150,139 @@ async def test_backfill_unanchored_capped_to_max_page(bus, storage, objectstore,
     await mon._backfill_all()
     msgs = await storage.list_messages([100])
     assert {m.telegram_msg_id for m in msgs} == {10, 9, 8}
+
+
+async def test_backfill_skipped_when_not_ready(bus, storage, objectstore, settings):
+    """未登录(非 ready)时补拉直接跳过:不拉取频道信息、不落库、不打 traceback。
+
+    回归:app 启动时 monitor 先于登录完成启动,旧实现每轮都调 getChatHistory
+    → TDLib 抛 "Client not started" → 每 30s 刷一轮 ERROR。登录成功后
+    state 变 ready,下一轮补拉自动恢复。
+    """
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [10, 9, 8]})
+    client._state = "phone_required"  # 未登录
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon.set_whitelist([100])
+    await mon._backfill_all()
+    assert await storage.count_messages(100) == 0
+
+
+# ============================================================
+# iter_chat_history 预热(getChat)— [400] Chat not found 修复
+# ============================================================
+
+
+class _ChatHistoryClient:
+    """ChannelsApi 的假父 client:记录请求、按 @type 分发。
+
+    只实现 `iter_chat_history` 用到的两个入口(`getChat` / `getChatHistory`)
+    与 `_check_alive()`;其它请求直接 AssertionError。
+    """
+
+    def __init__(self, *, chat_available: bool = True, history: list | None = None) -> None:
+        """`chat_available=False` 模拟 getChat 返回 Chat not found。"""
+        self.chat_available = chat_available
+        self.history = history or []
+        self.calls: list[str] = []
+
+    def _check_alive(self) -> None:
+        return None
+
+    async def request(self, payload: dict) -> object:
+        self.calls.append(payload["@type"])
+        if payload["@type"] == "getChat":
+            if not self.chat_available:
+                from tdlib_json.errors import TdlibError
+
+                raise TdlibError(400, "Chat not found")
+            return type("Chat", (), {"id": payload["chat_id"], "title": "t"})()
+        if payload["@type"] == "getChatHistory":
+            return type("History", (), {"messages": self.history})()
+        raise AssertionError(f"unexpected request: {payload}")
+
+
+async def test_iter_chat_history_unavailable_chat_raises():
+    """getChat 预热失败(Chat not found)→ 抛 ChatUnavailableError,不再每页 400。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi, ChatUnavailableError
+
+    client = _ChatHistoryClient(chat_available=False)
+    api = ChannelsApi(client)
+    with pytest.raises(ChatUnavailableError) as ei:
+        [m async for m in api.iter_chat_history(100)]
+    assert ei.value.channel_id == 100
+    assert client.calls == ["getChat"]  # 预热先行,没发 getChatHistory
+
+
+async def test_iter_chat_history_warms_up_chat_then_yields():
+    """预热 getChat 成功后照常分页 yield MessageDTO(旧行为不回归)。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
+
+    raw = type("Message", (), {
+        "id": 5, "chat_id": 100, "date": 0, "author_signature": None,
+        "content": type("MessageText", (), {"text": "hi"})(),
+        "views": None, "forwards": None, "edit_date": 0,
+    })()
+    client = _ChatHistoryClient(history=[raw])
+    api = ChannelsApi(client)
+    msgs = [m async for m in api.iter_chat_history(100)]
+    assert client.calls[0] == "getChat"
+    assert "getChatHistory" in client.calls
+    assert len(msgs) == 1
+    assert msgs[0].channel_id == 100 and msgs[0].telegram_msg_id == 5
+
+
+async def test_backfill_unavailable_channel_warns_once_and_continues(
+    bus, storage, objectstore, settings, caplog
+):
+    """频道不可访问(ChatUnavailableError)→ 只 warning 一次、跳过、不刷 traceback;
+    同轮其它频道照常补拉;恢复可用后下一轮自动继续。
+    """
+    import logging
+
+    from tgmonitor.core.monitor.service import MonitorService
+    from tgmonitor.core.telegram.tdlib_channels import ChatUnavailableError
+
+    class _UnavailableClient(_BackfillClient):
+        """history 里标记为 unavailable 的频道抛 ChatUnavailableError。"""
+
+        def __init__(self, history: dict[int, list[int]]) -> None:
+            super().__init__(history)
+            self.unavailable: set[int] = set()
+
+        async def iter_chat_history(  # type: ignore[override]
+            self, channel_id: int, *, before_msg_id: int = 0, limit: int = 100
+        ) -> AsyncIterator[MessageDTO]:
+            if channel_id in self.unavailable:
+                raise ChatUnavailableError(channel_id, reason="Chat not found")
+            async for m in super().iter_chat_history(
+                channel_id, before_msg_id=before_msg_id, limit=limit
+            ):
+                yield m
+
+    client = _UnavailableClient({100: [5, 4], 101: [3, 2, 1]})
+    client.unavailable = {100}
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon.set_whitelist([100, 101])
+
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.service"):
+        await mon._backfill_all()
+    assert await storage.count_messages(100) == 0  # 不可用频道不落库
+    assert "unavailable" in caplog.text  # warning 而非 traceback
+    assert "Traceback" not in caplog.text
+    assert await storage.count_messages(101) == 3  # 同轮其它频道照常补
+
+    # 再跑一轮:warning 只打一次,不重复刷
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.service"):
+        await mon._backfill_all()
+    assert "unavailable" not in caplog.text
+
+    # 恢复可用后:下一轮照常补,并清掉 suppression 标记
+    client.unavailable = set()
+    await mon._backfill_all()
+    assert await storage.count_messages(100) == 2
 
 
 async def test_app_login_state_machine(app, client):

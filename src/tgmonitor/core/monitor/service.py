@@ -29,6 +29,7 @@ from tgmonitor.core.events import (
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
+from tgmonitor.core.telegram.tdlib_channels import ChatUnavailableError
 from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,9 @@ class MonitorService:
         self._whitelist: set[int] = set()  # 被订阅的 channel_id
         self._handled = 0  # 累计成功落库消息数(心跳日志用)
         self._last_heartbeat = 0.0  # time.monotonic() 上次心跳时间(周期节流用)
+        # 补拉中判定"频道不可访问"的 channel_id(每频道只 warning 一次,
+        # 避免每 30s 轮刷日志);某频道补拉成功后从集合移除,可重新 warning。
+        self._unavailable_channels: set[int] = set()
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
         """替换白名单 — 由 AppService 启动 monitor 时调。"""
@@ -246,11 +250,28 @@ class MonitorService:
                 n += 1
         except ClientClosingError:
             return  # close() 中,静默退出,不打 traceback
+        except ChatUnavailableError as e:
+            # 频道不可访问(新 session 未加载 / 已被移除):只 warning 一次,
+            # 不再每轮刷 error traceback;恢复可用(下一轮成功)后清掉标记。
+            if channel_id not in self._unavailable_channels:
+                self._unavailable_channels.add(channel_id)
+                log.warning("backfill channel %d skipped: %s", channel_id, e)
         except Exception:  # noqa: BLE001
             log.exception("backfill channel %d failed", channel_id)
+        else:
+            # 本轮成功 → 清除不可用标记(若之前被跳过,恢复后可重新 warning)
+            self._unavailable_channels.discard(channel_id)
 
     async def _backfill_all(self) -> None:
-        """对白名单里每个频道跑一轮补拉(频控:每频道每轮一次 getChatHistory)。"""
+        """对白名单里每个频道跑一轮补拉(频控:每频道每轮一次 getChatHistory)。
+
+        未登录(非 ready)时不拉取 —— TDLib 未就绪时 getChatHistory 会抛
+        "Client not started",每轮刷错误日志;登录成功 state 变 ready 后,
+        下一轮补拉自动恢复,无需外部触发。
+        """
+        if self.client.state != "ready":
+            log.info("backfill skipped: not ready (state=%s)", self.client.state)
+            return
         for cid in list(self._whitelist):
             await self._backfill(cid)
 

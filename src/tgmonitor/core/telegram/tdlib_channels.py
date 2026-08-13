@@ -43,6 +43,29 @@ if TYPE_CHECKING:
     from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
 
 
+class ChatUnavailableError(Exception):
+    """频道在 TDLib 侧不可访问(`getChat` 拿不到 chat 对象)。
+
+    触发:`iter_chat_history` 分页前用 `getChat` 预热失败(如 `[400] Chat
+    not found` — 新 session 未加载该 chat / 频道已不可访问)。语义是"该频道
+    本轮无法补拉":`MonitorService._backfill` 捕获后降级为 warning 并跳过,
+    不再每轮刷 `getChatHistory` 的 error traceback。其它 TDLib 错误
+    (网络 / flood wait 等)仍照常冒泡,由调用方决定怎么处理。
+    """
+
+    def __init__(self, channel_id: int, *, reason: str = "") -> None:
+        """`channel_id` = 不可访问的频道 id;`reason` = 底层错误描述(可空)。"""
+        self.channel_id = channel_id
+        self.reason = reason
+        super().__init__(f"channel {channel_id} unavailable: {reason or 'unknown'}")
+
+
+def _is_chat_not_found(exc: BaseException) -> bool:
+    """判断异常是否为 TDLib "Chat not found"(本地无该 chat 对象)。"""
+    msg = getattr(exc, "message", None) or str(exc)
+    return "chat not found" in msg.lower()
+
+
 class ChannelsApi:
     """Telegram Data API — channels 子系统的 composition 包装。
 
@@ -248,7 +271,26 @@ class ChannelsApi:
         TDLib `getChatHistory.from_message_id` 只支持向旧方向翻页,所以传
         参语义是"截止这条之前",而非"从这条之后"。翻页游标 = 本批最小 id。
         限流:每页间不 sleep(由调用方 ChannelSyncService 控)。
+
+        分页前先用 `getChat` 预热一次:新 session / 频道失去访问时,
+        `getChatHistory` 会直接 [400] Chat not found,预热把失败提前并转成
+        明确的 `ChatUnavailableError`(调用方如 monitor backfill 据此降级)。
         """
+        # 预热:先把 chat 加载进 TDLib 本地缓存(getChat 对已加入频道是
+        # offline 请求,开销可忽略)。旧实现不预热,新 session 下每轮 backfill
+        # 都拿 [400] Chat not found 刷 error traceback。
+        try:
+            chat = await self._c.request({"@type": "getChat", "chat_id": channel_id})
+        except ClientClosingError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            if _is_chat_not_found(e):
+                raise ChatUnavailableError(
+                    channel_id, reason=getattr(e, "message", None) or str(e),
+                ) from e
+            raise
+        if chat is None:
+            raise ChatUnavailableError(channel_id, reason="getChat returned None")
         # Async generator:`_check_alive()` 在每次分页入口 throw,中途 close() 就
         # 立刻结束迭代(不再排下一页 getChatHistory request,免得撞 10s 超时 +
         # 跨 loop wakeup 噪音)
