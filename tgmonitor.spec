@@ -32,9 +32,26 @@ block_cipher = None
 # tdlib_json 内置 libtdjson native lib(命名:`libtdjson_<plat>_<arch>.<ext>`,
 # 由 build_libtdjson.sh / build_libtdjson.ps1 生成;未编译时 collect 为空,属正常 dev 状态)
 tdlib_json_data = collect_data_files("tdlib_json")
-# 项目自身资源(SVG / icons / QSS)— 走 importlib.resources
-tg_resources = collect_data_files("tgmonitor.resources")
-ui_resources = collect_data_files("tgmonitor.ui.resources")
+
+
+def _pkg_datas(pkg: str) -> list[tuple[str, str]]:
+    """收集 pkg 的 data 文件,dest 归一化为以包名开头的完整目标路径。
+
+    collect_data_files 在 PyInstaller 6.21 返回的 dest 已是完整包路径
+    (如 `tgmonitor/resources/icons`);早期版本可能只给相对包目录的路径
+    (如 `icons`)。统一归一化,确保 `icons/` 这类子目录不被抹平 ——
+    否则运行时按 `resources/icons/nav_live.svg` 定位会报 FileNotFoundError
+    (Windows 打包产物启动即崩的根因)。
+    """
+    prefix = pkg.replace(".", "/")
+    out = []
+    for src, dest in collect_data_files(pkg):
+        if dest == prefix or dest.startswith(prefix + "/"):
+            out.append((src, dest))
+        else:
+            out.append((src, f"{prefix}/{dest}" if dest else prefix))
+    return out
+
 
 datas = []
 # tdlib_json 的 native lib 在 pkg 内是 `tdlib_json/tdlib/libtdjson_*.<ext>`。
@@ -42,10 +59,10 @@ datas = []
 # 所以 destination 必须是 `tdlib_json/tdlib` —— PyInstaller 才把文件展到
 # `<bundle>/tdlib_json/tdlib/libtdjson_*.<ext>`,loader 找得到。
 # (用 `tdlib_json` 会把 `tdlib/` 子目录抹平,loader 找不到 → smoke test 报错)
-for src, dest in tdlib_json_data:
-    datas.append((src, f"tdlib_json/{dest}" if dest else "tdlib_json"))
-datas += [(src, "tgmonitor/resources") for src, _ in tg_resources]
-datas += [(src, "tgmonitor/ui/resources") for src, _ in ui_resources]
+datas += _pkg_datas("tdlib_json")
+# 项目自身资源(SVG / icons / QSS)— 走 importlib.resources,保留子目录结构
+datas += _pkg_datas("tgmonitor.resources")
+datas += _pkg_datas("tgmonitor.ui.resources")
 
 # tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports
 hiddenimports = []
