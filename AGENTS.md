@@ -52,7 +52,7 @@ core(app_service 门面 + 领域服务)
 |---|---|
 | `__main__.py` / `app.py` | 入口。`run()` 是组合根:构建 qasync `QEventLoop` 后**单 loop `run_forever` + `ensure_future`**(历史坑:不要用 `run_until_complete`);凭据未配置时 factory 返回占位 client,应用正常启动显示未登录引导;真 client 构造失败弹 QMessageBox;退出码 0/1/130 |
 | `core/config.py` | pydantic-settings 配置,`TG_` 环境变量前缀 |
-| `core/events.py` | EventBus:async pub/sub,订阅者异常被吞掉(不崩主流程)。领域事件如 LoginStateChanged / ChannelSubscribed / MessageReceived / ExportDone / ErrorOccurred / AuthErrorOccurred / SettingsChanged / ChannelSyncProgress |
+| `core/events.py` | EventBus:async pub/sub,订阅者异常被吞掉(不崩主流程)。领域事件如 LoginStateChanged / ConnectionStateChanged / ChannelSubscribed / MessageReceived / ExportDone / ErrorOccurred / AuthErrorOccurred / SettingsChanged / ChannelSyncProgress |
 | `core/dto.py` | 跨边界数据传输对象 |
 | `core/app_service.py` | UI 唯一入口门面,含热重载 `reconfigure()` |
 | `core/auth_service.py` | 登录/登出与登录状态管理 |

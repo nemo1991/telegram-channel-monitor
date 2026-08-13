@@ -316,6 +316,9 @@ class MainWindow(QMainWindow):
         # 状态栏
         self.setStatusBar(QStatusBar())
         self.status_bar = self.statusBar()
+        # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
+        self._conn_label = QLabel("TG 未连接")
+        self.status_bar.addPermanentWidget(self._conn_label)
         self.status_bar.showMessage("就绪")
 
         root.addWidget(right, 1)
@@ -398,6 +401,7 @@ class MainWindow(QMainWindow):
     def _wire_events(self) -> None:
         self._vm.message_received.connect(self._on_message_received)
         self._vm.login_state.connect(self._on_login_state)
+        self._vm.conn_state.connect(self._on_conn_state)
         self._vm.channels_changed.connect(self._refresh_state)
         self._vm.export_done.connect(self._on_export_done)
         self._vm.error.connect(self._on_error)
@@ -468,6 +472,16 @@ class MainWindow(QMainWindow):
 
     def _on_login_state(self, state: str) -> None:
         self.status_bar.showMessage(f"登录状态: {state}", 4000)
+
+    def _on_conn_state(self, state: str) -> None:
+        text = {
+            "waiting_for_network": "TG 等待网络",
+            "connecting": "TG 连接中…",
+            "updating": "TG 同步中…",
+            "ready": "TG 已连接",
+            "unknown": "TG 状态未知",
+        }.get(state, f"TG {state}")
+        self._conn_label.setText(text)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         if error:

@@ -11,6 +11,7 @@ build/
 *.db
 .coverage
 coverage.xml
+.DS_Store
 # PyInstaller spec 主文件进 git;`.spec.bak` 是开发者临时备份
 *.spec.bak
 # AppImage 构建临时目录(脚本生成,可重建)

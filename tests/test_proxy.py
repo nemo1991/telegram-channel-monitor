@@ -229,3 +229,103 @@ def test_aio_event_emit_login_state_changed_via_bus() -> None:
         assert _AUTH_STATE_MAP.get(tdlib_id) == ours, (
             f"期望 {tdlib_id} → {ours!r},实际 {_AUTH_STATE_MAP.get(tdlib_id)!r}"
         )
+
+
+# ---- _setup_proxy:addProxy / disableProxy 显式请求 ----
+# 回归 2026-08-13 Windows 线上 bug:send()(fire-and-forget)的 addProxy 失败
+# 响应没有 request_id,被 tdlib_json 静默丢弃 → 代理不生效,只有开 TUN 才通。
+# 现在改用 request() 显式等响应,失败直接抛 TdlibError,启动流程转可见错误。
+
+@pytest.mark.asyncio
+async def test_setup_proxy_sends_addproxy_when_configured(
+    tmp_path: Path, bus, stub_tdlib_init,
+) -> None:
+    """配了 SOCKS5 代理 → 发 addProxy(enable=True),server/port/凭据逐字段正确。"""
+    from tgmonitor.core.telegram import tdlib_client as tdc
+
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+10000000000",
+        proxy="socks5://u:p@127.0.0.1:1080",
+        session_dir=tmp_path / "session",
+    )
+    client = tdc.TdlibTelegramClient(s, event_bus=bus)
+    client._running = True  # request() 会校验 running
+    captured: list[dict] = []
+
+    async def _fake_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(query)
+        return {"@type": "proxy", "id": 7}
+
+    client.request = _fake_request  # type: ignore[method-assign]
+    await client._setup_proxy()
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload["@type"] == "addProxy"
+    assert payload["enable"] is True
+    assert payload["server"] == "127.0.0.1"
+    assert payload["port"] == 1080
+    proxy_type = payload["type"]
+    assert proxy_type["@type"] == "proxyTypeSocks5"
+    assert proxy_type["username"] == "u"
+    assert proxy_type["password"] == "p"
+
+
+@pytest.mark.asyncio
+async def test_setup_proxy_disables_when_no_proxy(
+    tmp_path: Path, bus, stub_tdlib_init,
+) -> None:
+    """未配代理 → 发 disableProxy,防止残留/默认代理生效。
+
+    注:不用 conftest `settings` 直接构造 — Settings 默认读平台数据目录 `.env`,
+    用户机器上可能配了 TG_PROXY。显式 `_env_file=None` + `proxy=None` 保证确定。
+    """
+    from tgmonitor.core.telegram import tdlib_client as tdc
+
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+10000000000",
+        proxy=None,
+        session_dir=tmp_path / "session",
+    )
+    client = tdc.TdlibTelegramClient(s, event_bus=bus)
+    client._running = True
+    captured: list[dict] = []
+
+    async def _fake_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(query)
+        return {"@type": "ok"}
+
+    client.request = _fake_request  # type: ignore[method-assign]
+    await client._setup_proxy()
+    assert [q["@type"] for q in captured] == ["disableProxy"]
+
+
+@pytest.mark.asyncio
+async def test_setup_proxy_raises_tdlib_error(
+    tmp_path: Path, bus, stub_tdlib_init,
+) -> None:
+    """addProxy 被 TDLib 拒绝 → 必须抛 TdlibError(启动流程转可见错误)。"""
+    from tgmonitor.core.telegram import tdlib_client as tdc
+
+    s = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+10000000000",
+        proxy=None,
+        session_dir=tmp_path / "session",
+    )
+    client = tdc.TdlibTelegramClient(s, event_bus=bus)
+    client._running = True
+
+    async def _bad_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
+        raise tdc.TdlibError(code=400, message="addProxy failed")
+
+    client.request = _bad_request  # type: ignore[method-assign]
+    with pytest.raises(tdc.TdlibError):
+        await client._setup_proxy()

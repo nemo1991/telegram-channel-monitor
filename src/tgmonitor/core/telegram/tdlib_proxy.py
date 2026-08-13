@@ -10,6 +10,7 @@
 - `_probe_proxy` — 真做 SOCKS5 握手(不只是 TCP 通)
 - `_translate_boot_error` — start() 超时时把 seen codes 翻人话
 - `_AUTH_STATE_MAP` — TDLib `authorizationState*` 的 `@type` → 字符串
+- `_CONN_STATE_MAP` — TDLib `connectionState*` 的 `@type` → 字符串
 
 不依赖 `TdlibTelegramClient` 类,可独立测试;`factory.py` 也复用 `parse_socks5_proxy`。
 """
@@ -42,6 +43,16 @@ _AUTH_STATE_MAP: dict[str, str] = {
     "authorizationStateLoggingOut": "logging_out",
     "authorizationStateClosing": "closing",
     "authorizationStateClosed": "closed",
+}
+
+# ---- TDLib connectionState* 的 @type → 我们的字符串 ----
+# 对应 updateConnectionState 事件里嵌套的 connectionState* 对象;UI 状态栏据此显示通信状态。
+
+_CONN_STATE_MAP: dict[str, str] = {
+    "connectionStateWaitingForNetwork": "waiting_for_network",
+    "connectionStateConnecting": "connecting",
+    "connectionStateUpdating": "updating",
+    "connectionStateReady": "ready",
 }
 
 

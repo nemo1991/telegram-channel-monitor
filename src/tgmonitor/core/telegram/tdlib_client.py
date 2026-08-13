@@ -48,6 +48,7 @@ from tgmonitor.core.telegram.tdlib_errors import (  # noqa: E402
 from tgmonitor.core.telegram.tdlib_messages import _map_message  # noqa: E402
 from tgmonitor.core.telegram.tdlib_proxy import (  # noqa: E402
     _AUTH_STATE_MAP,
+    _CONN_STATE_MAP,
     _load_or_create_encryption_key,
     _probe_proxy,
     _translate_boot_error,
@@ -213,6 +214,11 @@ class TdlibTelegramClient(_AiClient):
         self.add_event_handler(
             self._on_new_message,
             update_type="updateNewMessage",
+        )
+        # 网络连接状态(updateConnectionState)→ ConnectionStateChanged 事件
+        self.add_event_handler(
+            self._on_connection_state,
+            update_type="updateConnectionState",
         )
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
@@ -408,6 +414,35 @@ class TdlibTelegramClient(_AiClient):
         except Exception:  # noqa: BLE001
             log.exception("updateNewMessage handling failed")
 
+    async def _on_connection_state(self, client_self, update) -> None:
+        """TDLib 网络连接状态(updateConnectionState)→ `ConnectionStateChanged` 事件。
+
+        状态来源是 TDLib 推送的 `connectionState*` 对象(如 connectionStateReady);
+        这是 UI 底部状态栏"与 TG 的通信状态"的最准信号 — 代理 / DC 不通时它只会
+        停在 waiting_for_network / connecting,一眼可见。
+        """
+        try:
+            state_obj = getattr(update, "state", None)
+            state_type = ""
+            if isinstance(state_obj, dict):
+                state_type = state_obj.get("@type", "")
+            elif state_obj is not None:
+                state_type = getattr(state_obj, "@type", "")
+            new_state = _CONN_STATE_MAP.get(state_type, "unknown")
+            log.info("tdlib connection state → %s (%s)", new_state, state_type)
+            if self._bus is not None:
+                asyncio.create_task(self._safe_publish_conn_state(new_state))
+        except Exception:  # noqa: BLE001
+            log.exception("connection state handling failed")
+
+    async def _safe_publish_conn_state(self, state: str) -> None:
+        try:
+            from tgmonitor.core.events import ConnectionStateChanged
+            assert self._bus is not None
+            await self._bus.publish(ConnectionStateChanged(state=state))
+        except Exception:  # noqa: BLE001
+            log.exception("publish ConnectionStateChanged failed")
+
     # ============================================================
     # Preflight & 启动
     # ============================================================
@@ -458,7 +493,14 @@ class TdlibTelegramClient(_AiClient):
         log.info("[tdlib] SetLogVerbosityLevel in %.3fs", _t.monotonic() - t)
         # 走 base 的 _setup_proxy / _setup_options
         t = _t.monotonic()
-        await self._setup_proxy()
+        try:
+            await self._setup_proxy()
+        except TdlibError as e:
+            detail = _extract_error_detail(e)
+            log.error("[tdlib] _setup_proxy failed: %s", e)
+            await self._kill_client()
+            self._set_state("error", detail=f"代理设置失败: {detail}")
+            return
         log.info("[tdlib] _setup_proxy in %.3fs", _t.monotonic() - t)
         t = _t.monotonic()
         await self._setup_options()

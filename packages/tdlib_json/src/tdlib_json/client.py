@@ -300,22 +300,36 @@ class TdlibJsonClient:
 
     async def _setup_proxy(self):
         if self.proxy is None:
-            await self.send({"@type": "disableProxy"})
+            await self.request({"@type": "disableProxy"}, request_timeout=10)
             return
 
-        await self.send(
-            {
-                "@type": "addProxy",
-                "enable": True,
-                "server": self.proxy.host,
-                "port": self.proxy.port,
-                "type": {
-                    "@type": "proxyTypeSocks5",
-                    "username": self.proxy.username,
-                    "password": self.proxy.password,
+        # 用 request()(带 request_id 等响应)而不是 send()(fire-and-forget):
+        # send() 的 addProxy 失败响应没有 request_id,被 _handle_pending_request
+        # 静默丢弃 → 应用自以为配好了代理,实际走直连 → 墙内表现为
+        # "代理不生效,开了 TUN 才能通"。等响应 + 显式 raise 才能暴露失败。
+        try:
+            response = await self.request(
+                {
+                    "@type": "addProxy",
+                    "enable": True,
+                    "server": self.proxy.host,
+                    "port": self.proxy.port,
+                    "type": {
+                        "@type": "proxyTypeSocks5",
+                        "username": self.proxy.username,
+                        "password": self.proxy.password,
+                    },
                 },
-            }
-        )
+                request_timeout=10,
+            )
+            proxy_id = response.get("id") if isinstance(response, dict) else None
+            self.logger.info(
+                "addProxy enabled: id=%s server=%s:%d",
+                proxy_id, self.proxy.host, self.proxy.port,
+            )
+        except TdlibError as e:
+            self.logger.error("addProxy failed: %s", e)
+            raise
 
     async def _setup_options(self):
         options = self.settings.get("options")

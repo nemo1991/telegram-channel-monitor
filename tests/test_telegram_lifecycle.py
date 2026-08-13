@@ -947,3 +947,71 @@ def test_factory_builds_real_client_when_credentials_present(
 
     client = build_telegram_client(settings, use_fake=False, event_bus=bus)
     assert isinstance(client, tdc.TdlibTelegramClient)
+
+
+# ============================================================
+# updateConnectionState → ConnectionStateChanged(底部状态栏)
+# ============================================================
+
+def test_conn_state_map_covers_lifecycle_keys() -> None:
+    """`_CONN_STATE_MAP` 覆盖 TDLib 全部连接状态 @type(漏一个状态栏就停摆)。"""
+    keys = set(tdc._CONN_STATE_MAP.keys())
+    expected = {
+        "connectionStateWaitingForNetwork",
+        "connectionStateConnecting",
+        "connectionStateUpdating",
+        "connectionStateReady",
+    }
+    assert expected.issubset(keys)
+
+
+@pytest.mark.asyncio
+async def test_connection_state_publishes_event(settings, bus, stub_tdlib_init) -> None:
+    """updateConnectionState(嵌套 connectionStateReady)→ bus 发 ConnectionStateChanged。
+
+    注意:真实 update 永远先经 `TDLibObject.from_dict()` 包装再进 handler,
+    测试必须传 TDLibObject(裸 dict 没有 `.state` 属性 → 状态解析为 unknown)。
+    """
+    from tdlib_json import TDLibObject
+
+    from tgmonitor.core.events import ConnectionStateChanged
+
+    captured: list[ConnectionStateChanged] = []
+
+    async def _cap(e: object) -> None:
+        if isinstance(e, ConnectionStateChanged):
+            captured.append(e)
+
+    bus.subscribe(ConnectionStateChanged, _cap)
+
+    async with make_client(settings, bus) as client:
+        update = TDLibObject.from_dict(
+            {"@type": "updateConnectionState", "state": {"@type": "connectionStateReady"}}
+        )
+        await client._on_connection_state(client, update)
+        await asyncio.sleep(0.05)
+        assert any(e.state == "ready" for e in captured)
+
+
+@pytest.mark.asyncio
+async def test_do_start_inner_proxy_error_sets_error_state(
+    settings, bus, stub_tdlib_init,
+) -> None:
+    """`_setup_proxy` 失败(代理设置错误)→ 启动直接转 error,不再走状态机。
+
+    回归 2026-08-13:代理配了但 addProxy 被拒,旧代码 fire-and-forget 静默失败,
+    用户看到"未连接";现在 UI 应看到「代理设置失败: …」。
+    """
+    async with make_client(settings, bus) as client:
+        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
+        client.execute = _noop_async  # type: ignore[method-assign]
+        client._setup_options = _noop_async  # type: ignore[method-assign]
+        client.send = _noop_async  # type: ignore[method-assign]
+
+        async def _bad_proxy() -> None:
+            raise tdc.TdlibError(code=400, message="addProxy failed")
+
+        client._setup_proxy = _bad_proxy  # type: ignore[method-assign]
+        await asyncio.wait_for(client._do_start_inner(), timeout=2)
+        assert client._state == "error"
+        assert "代理设置失败" in client._state_detail

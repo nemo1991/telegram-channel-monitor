@@ -5,6 +5,27 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.11] - 2026-08-13
+
+### ✨ Added
+- **底部状态栏显示 TG 通信状态**:状态栏常驻右侧标签展示与 Telegram 的连接状态
+  (TG 已连接 / 连接中 / 等待网络 / 同步中),数据源为 TDLib 的
+  `updateConnectionState` 事件(新领域事件 `ConnectionStateChanged`);代理不通
+  或 DC 不可达时一眼可见,不再"看着已登录其实没通"
+
+### 🐛 Fixed
+- **Windows 代理配置不生效(只有开 TUN 模式才能收消息)**:
+  - 根因:`addProxy` 原来走 `send()`(fire-and-forget),TDLib 的失败响应没有
+    request_id,被 tdlib_json 静默丢弃 → 应用自以为配好了代理、实际走直连
+  - 修复:`_setup_proxy` 改用 `request()` 显式等响应——配了代理发
+    `addProxy`(enable=True + SOCKS5 凭据),未配发 `disableProxy`;被拒时
+    抛 `TdlibError`,启动流程转可见错误「代理设置失败: …」,不再假配成功
+
+### 🧪 Testing
+- 新增 7 个用例:代理 addProxy/disableProxy 请求形状与失败上抛、连接状态
+  事件桥接、启动期代理失败转 error、状态栏文案映射(代理 3 + 生命周期 3 +
+  状态栏 1)
+
 ## [1.0.10] - 2026-08-13
 
 ### ✨ Added

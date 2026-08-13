@@ -15,6 +15,7 @@ from tgmonitor.core.events import (
     ChannelSyncDone,
     ChannelSyncProgress,
     ChannelUnsubscribed,
+    ConnectionStateChanged,
     ErrorOccurred,
     Event,
     EventBus,
@@ -50,6 +51,7 @@ class MonitorViewModel(QObject):
     """
     message_received = Signal(object)
     login_state = Signal(str)
+    conn_state = Signal(str)      # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
     channels_changed = Signal()
     export_done = Signal(object, object)   # (result_dict | None, error | None)
     error = Signal(str)
@@ -76,6 +78,7 @@ class MonitorViewModel(QObject):
         b: EventBus = self.app.bus
         b.subscribe(MessageReceived, self._on_message_received)
         b.subscribe(LoginStateChanged, self._on_login_state)
+        b.subscribe(ConnectionStateChanged, self._on_conn_state)
         b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
         b.subscribe(ChannelUnsubscribed, self._on_channel_unsubscribed)
         b.subscribe(ExportDone, self._on_export_done)
@@ -96,6 +99,11 @@ class MonitorViewModel(QObject):
         if not isinstance(e, LoginStateChanged):
             return
         self.login_state.emit(e.state)
+
+    async def _on_conn_state(self, e: Event) -> None:
+        if not isinstance(e, ConnectionStateChanged):
+            return
+        self.conn_state.emit(e.state)
 
     async def _on_channel_subscribed(self, e: Event) -> None:
         if not isinstance(e, ChannelSubscribed) or e.channel is None:

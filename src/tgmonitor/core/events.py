@@ -39,6 +39,13 @@ class LoginStateChanged(Event):
 
 
 @dataclass
+class ConnectionStateChanged(Event):
+    """TDLib 网络连接状态变化(updateConnectionState)。"""
+
+    state: str = "unknown"  # waiting_for_network | connecting | updating | ready | unknown
+
+
+@dataclass
 class ChannelDiscovered(Event):
     """TelegramClient 枚举到的新频道(尚未加入监听白名单)。"""
 
