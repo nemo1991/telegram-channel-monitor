@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.9] - 2026-08-13
+
+### 🐛 Fixed
+- **Windows 产物资源嵌套错位**:`tgmonitor.spec` 不再依赖
+  `collect_data_files()` 的默认 dest,写死 datas 目标目录,修复打包版
+  `libtdjson_windows_amd64.dll` 与 `nav_live.svg` 等资源被拼成深层嵌套路径,
+  Windows 版可正常启动
+- **登录收不到验证码**:`submit_phone` 显式发送 `setAuthenticationPhoneNumber`
+  触发验证码下发;LoginDialog 补充手机号输入页,走完整「手机号 → 验证码 →
+  提交」流程,不再卡在 `tdlib_parameters`
+- **TDLib 启动误判与错误提示**:settle 循环在未收到任何错误码时不再快速
+  杀 boot(由 30s 总预算兜底),修复「启动较慢被误判失败」;boot 失败时
+  识别文件锁占用(session 被另一实例持有)并给出明确提示
+
 ## [1.0.8] - 2026-08-13
 
 ### 🐛 Fixed
