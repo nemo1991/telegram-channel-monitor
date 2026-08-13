@@ -5,6 +5,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.8] - 2026-08-13
+
+### 🐛 Fixed
+- **Windows 产物启动即崩(找不到 `nav_live.svg`)**:
+  - 根因:PyInstaller 6.21 的 `collect_data_files()` 返回的 dest 是完整包路径
+    (如 `tgmonitor/resources/icons`);spec 之前把 `tg_resources` 一律平铺到
+    `tgmonitor/resources`,`icons/` 子目录整个丢失 → 运行时按
+    `resources/icons/nav_live.svg` 定位直接 `FileNotFoundError`;`tdlib_json`
+    同理被拼成 `tdlib_json/tdlib_json/tdlib`,libtdjson 也放错位(UI 先崩
+    没轮到它)
+  - 修法:`tgmonitor.spec` 按包名归一化 dest、保留子目录结构,三平台一起修,
+    本地打包验证资源路径齐全
+
+### ⚙️ Changed
+- **发布缓存预热**(`build.yml`):push main 时 `warm-cache` job 只编译
+  libtdjson、不打包,把三平台产物写回 main scope(GitHub 缓存只有默认分支写入
+  的缓存其他 ref 才能恢复);打 `v*` tag 发布用同一 key 直接命中,Windows
+  vcpkg 冷编译约 2h → 命中后仅几分钟。缓存 7 天未访问自动清除,改 key 的
+  `v1` 可作废。机制详见 CONTRIBUTING.md「📦 发布」。
+
 ## [1.0.7] - 2026-08-12
 
 ### 🆕 Added
