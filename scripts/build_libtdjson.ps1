@@ -35,10 +35,14 @@ $DestName = "libtdjson_windows_amd64.dll"
 # MSVC 编译器中间文件(_CL_*.tmp)写 %TMP%;vcpkg 编译中间产物写 buildtrees。
 # 两者都在 C: 的话,tdlib 全量编译(~80min)会把 C: 挤爆,挪到 D: 后 C: 只
 # 剩 checkout + venv,安全。目录先建好,子进程(cl.exe / nmake)会继承。
+# vcpkg 二进制缓存(binary cache)也放 D::二次 install 命中存档时直接解压,
+# 不再重编 tdlib(GitHub Actions 里配合 actions/cache 持久化,发布不用等全量编译)。
 $env:TMP = Join-Path $WorkRoot "tmp"
 $env:TEMP = Join-Path $WorkRoot "tmp"
 New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
 $VcpkgInstallRoot = Join-Path $WorkRoot "installed"
+$env:VCPKG_DEFAULT_BINARY_CACHE = Join-Path $WorkRoot "binary-cache"
+New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
 # ---- 0. 定位 vcpkg ----
 if (-not $VcpkgRoot) {

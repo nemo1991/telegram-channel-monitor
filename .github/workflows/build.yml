@@ -99,6 +99,23 @@ jobs:
       # packages/tdlib_json/src/tdlib_json/tdlib/ — PyInstaller collect 它
       #   Linux / macOS:从 td/td 源码编译(bash)
       #   Windows:vcpkg 安装 tdlib 并拷贝产物(pwsh)
+      # 产物不变则跳过编译:Linux/macOS 缓存包内 tdlib/ 目录(脚本按
+      # .tdlib-version manifest 判断);Windows 缓存 vcpkg 二进制缓存
+      # (VCPKG_DEFAULT_BINARY_CACHE 在 D:\a\vcpkg-work\binary-cache)。
+      - name: Cache libtdjson build output (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: packages/tdlib_json/src/tdlib_json/tdlib
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Cache vcpkg binary cache (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: D:\a\vcpkg-work\binary-cache
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+
       - name: Build libtdjson (Linux/macOS)
         if: runner.os != 'Windows'
         run: bash scripts/build_libtdjson.sh

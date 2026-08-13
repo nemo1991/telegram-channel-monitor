@@ -13,6 +13,10 @@
 # 命名规则必须与 tdlib_json/tdjson.py `_get_bundled_tdjson_lib_path()` 一致:
 #   darwin → .dylib(arm64/amd64),linux → .so(arm64/amd64)
 #
+# 缓存:产物目录放一个 `.tdlib-version` manifest(TDLib commit + 平台)。
+# 若产物存在且 manifest 匹配当前锁定 commit,直接跳过编译进 ctypes 验证,
+# CI 里配合 actions/cache 持久化产物目录,避免每次发布重编 TDLib。
+#
 # 依赖:cmake、gperf、OpenSSL + zlib 开发头文件
 #   - macOS:  brew install cmake gperf openssl@3
 #   - Linux:  sudo apt install cmake gperf libssl-dev zlib1g-dev build-essential
@@ -41,76 +45,85 @@ esac
 DEST_DIR="$REPO_ROOT/packages/tdlib_json/src/tdlib_json/tdlib"
 DEST="$DEST_DIR/libtdjson_${system_name}_${arch}.${ext}"
 
-# ---- 0. 工具检查 ----
-for tool in cmake gperf git; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "❌ 缺 $tool — 请先安装:"
-        echo "   macOS: brew install cmake gperf"
-        echo "   Linux: sudo apt install cmake gperf"
+# ---- 0. 产物缓存判断:commit/平台未变则跳过编译 ----
+MANIFEST="$DEST_DIR/.tdlib-version"
+CURRENT_MANIFEST="tdlib=$TDLIB_COMMIT $system_name/$arch"
+
+if [[ -f "$DEST" && -f "$MANIFEST" && "$(cat "$MANIFEST")" == "$CURRENT_MANIFEST" ]]; then
+    echo "==> 命中缓存产物 $DEST(TDLib $TDLIB_VERSION commit 未变),跳过编译"
+else
+    # ---- 0.5 工具检查 ----
+    for tool in cmake gperf git; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "❌ 缺 $tool — 请先安装:"
+            echo "   macOS: brew install cmake gperf"
+            echo "   Linux: sudo apt install cmake gperf"
+            exit 1
+        fi
+    done
+
+    # ---- 1. 拉取 td/td 源码(锁定 commit)----
+    if [[ ! -d "$BUILD_DIR/src/.git" ]]; then
+        mkdir -p "$BUILD_DIR"
+        echo "==> clone td/td (浅克隆 HEAD,再 checkout 锁定 commit)"
+        git clone --depth 1 https://github.com/tdlib/td.git "$BUILD_DIR/src"
+        cd "$BUILD_DIR/src"
+        git fetch --depth 1 origin "$TDLIB_COMMIT"
+        git checkout "$TDLIB_COMMIT"
+    else
+        cd "$BUILD_DIR/src"
+        echo "==> 复用已有源码 $BUILD_DIR/src"
+    fi
+
+    # 锁定校验:HEAD 必须是指定 commit(防远端历史改写 / 本地改乱)
+    actual=$(git rev-parse HEAD)
+    if [[ "$actual" != "$TDLIB_COMMIT" ]]; then
+        echo "❌ 源码 HEAD($actual)≠ 锁定 commit($TDLIB_COMMIT),拒绝构建"
         exit 1
     fi
-done
+    echo "==> 源码锁定 OK:$TDLIB_COMMIT (TDLib $TDLIB_VERSION)"
 
-# ---- 1. 拉取 td/td 源码(锁定 commit)----
-if [[ ! -d "$BUILD_DIR/src/.git" ]]; then
-    mkdir -p "$BUILD_DIR"
-    echo "==> clone td/td (浅克隆 HEAD,再 checkout 锁定 commit)"
-    git clone --depth 1 https://github.com/tdlib/td.git "$BUILD_DIR/src"
-    cd "$BUILD_DIR/src"
-    git fetch --depth 1 origin "$TDLIB_COMMIT"
-    git checkout "$TDLIB_COMMIT"
-else
-    cd "$BUILD_DIR/src"
-    echo "==> 复用已有源码 $BUILD_DIR/src"
+    # ---- 2. cmake 配置 + 只编 tdjson target ----
+    # OpenSSL:Homebrew 的 openssl@3 不自动进 CMake 搜索路径,显式给
+    OPENSSL_ROOT_DIR=""
+    if [[ -d /opt/homebrew/opt/openssl@3 ]]; then
+        OPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+    elif [[ -d /usr/local/opt/openssl@3 ]]; then
+        OPENSSL_ROOT_DIR=/usr/local/opt/openssl@3
+    fi
+    OPENSSL_FLAGS=()
+    [[ -n "$OPENSSL_ROOT_DIR" ]] && OPENSSL_FLAGS+=("-DOPENSSL_ROOT_DIR=$OPENSSL_ROOT_DIR")
+
+    cmake -S "$BUILD_DIR/src" -B "$BUILD_DIR/build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        "${OPENSSL_FLAGS[@]+"${OPENSSL_FLAGS[@]}"}" \
+        -DTD_ENABLE_JAVA=OFF \
+        -DTD_ENABLE_DOTNET=OFF \
+        -DTD_ENABLE_TD_CLI=OFF \
+        -DTD_ENABLE_EXAMPLES=OFF
+
+    # 并行度:macOS 用 sysctl,Linux 用 nproc
+    jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)
+    cmake --build "$BUILD_DIR/build" --target tdjson -j"$jobs"
+
+    # ---- 3. 拷贝产物到包内 tdlib/ ----
+    # tdjson target 设了 SOVERSION(Linux 下是 libtdjson.so.1.8.46 + 软链),
+    # 用 `-L` 解引用拿真实文件,命名成 tdjson.py 期待的文件名。
+    # 注意:dylib/so 直接输出在 CMake build 根目录(macOS 实测),不是 build/tdjson/ 子目录。
+    mkdir -p "$DEST_DIR"
+    libfile=$(find "$BUILD_DIR/build" \( -name "libtdjson.so" -o -name "libtdjson.dylib" \) -print -quit)
+    if [[ -z "$libfile" ]]; then
+        echo "❌ 没找到编译产物 libtdjson (.so/.dylib),看 $BUILD_DIR/build/tdjson"
+        exit 1
+    fi
+    cp -L "$libfile" "$DEST"
+    echo "$CURRENT_MANIFEST" > "$MANIFEST"
+    echo "==> 产物:$DEST"
+    ls -lh "$DEST"
+    file "$DEST"
 fi
 
-# 锁定校验:HEAD 必须是指定 commit(防远端历史改写 / 本地改乱)
-actual=$(git rev-parse HEAD)
-if [[ "$actual" != "$TDLIB_COMMIT" ]]; then
-    echo "❌ 源码 HEAD($actual)≠ 锁定 commit($TDLIB_COMMIT),拒绝构建"
-    exit 1
-fi
-echo "==> 源码锁定 OK:$TDLIB_COMMIT (TDLib $TDLIB_VERSION)"
-
-# ---- 2. cmake 配置 + 只编 tdjson target ----
-# OpenSSL:Homebrew 的 openssl@3 不自动进 CMake 搜索路径,显式给
-OPENSSL_ROOT_DIR=""
-if [[ -d /opt/homebrew/opt/openssl@3 ]]; then
-    OPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
-elif [[ -d /usr/local/opt/openssl@3 ]]; then
-    OPENSSL_ROOT_DIR=/usr/local/opt/openssl@3
-fi
-OPENSSL_FLAGS=()
-[[ -n "$OPENSSL_ROOT_DIR" ]] && OPENSSL_FLAGS+=("-DOPENSSL_ROOT_DIR=$OPENSSL_ROOT_DIR")
-
-cmake -S "$BUILD_DIR/src" -B "$BUILD_DIR/build" \
-    -DCMAKE_BUILD_TYPE=Release \
-    "${OPENSSL_FLAGS[@]+"${OPENSSL_FLAGS[@]}"}" \
-    -DTD_ENABLE_JAVA=OFF \
-    -DTD_ENABLE_DOTNET=OFF \
-    -DTD_ENABLE_TD_CLI=OFF \
-    -DTD_ENABLE_EXAMPLES=OFF
-
-# 并行度:macOS 用 sysctl,Linux 用 nproc
-jobs=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)
-cmake --build "$BUILD_DIR/build" --target tdjson -j"$jobs"
-
-# ---- 3. 拷贝产物到包内 tdlib/ ----
-# tdjson target 设了 SOVERSION(Linux 下是 libtdjson.so.1.8.46 + 软链),
-# 用 `-L` 解引用拿真实文件,命名成 tdjson.py 期待的文件名。
-# 注意:dylib/so 直接输出在 CMake build 根目录(macOS 实测),不是 build/tdjson/ 子目录。
-mkdir -p "$DEST_DIR"
-libfile=$(find "$BUILD_DIR/build" \( -name "libtdjson.so" -o -name "libtdjson.dylib" \) -print -quit)
-if [[ -z "$libfile" ]]; then
-    echo "❌ 没找到编译产物 libtdjson (.so/.dylib),看 $BUILD_DIR/build/tdjson"
-    exit 1
-fi
-cp -L "$libfile" "$DEST"
-echo "==> 产物:$DEST"
-ls -lh "$DEST"
-file "$DEST"
-
-# ---- 4. 验证 ctypes 能加载 ----
+# ---- 4. 验证 ctypes 能加载(无论是否跳过编译)----
 cd "$REPO_ROOT"
 uv run python -c "
 import asyncio
