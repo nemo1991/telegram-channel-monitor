@@ -5,6 +5,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.15] - 2026-08-17
+
+### 🐛 Fixed
+- **媒体文件从不保存(FULL 策略也无效)**:组合根 `app.py` 创建 `MonitorService`
+  时未接线 `MediaDownloader`,`_handle` 里 `self.downloader is not None` 恒为
+  假 → 无论策略如何,原文件一律不下载,`media/` 目录永远为空。修复:组合根
+  创建 `MediaDownloader(client, storage, objects, max_bytes=…)` 并传入
+  `MonitorService`。新增结构测试防回归(重构 `_bootstrap` 忘传 `downloader=`
+  会直接失败)
+
 ## [1.0.14] - 2026-08-17
 
 ### 🐛 Fixed

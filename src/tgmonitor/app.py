@@ -20,7 +20,7 @@ import time
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import Settings
 from tgmonitor.core.events import EventBus
-from tgmonitor.core.monitor.service import MonitorService
+from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
 from tgmonitor.core.objectstore.factory import build_object_store
 from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.telegram.factory import build_telegram_client
@@ -111,7 +111,16 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
         time.monotonic() - t, type(client).__name__,
     )
 
-    monitor = MonitorService(bus, client, storage, objects, settings)
+    # FULL 媒体策略才真正下载原文件:组合根负责接线 MediaDownloader,
+    # MonitorService 侧 `downloader=None`(如未接线)时 FULL 策略静默退化为
+    # 不下载 — 避免历史 bug:策略选了 FULL 但没有任何下载器在工作。
+    monitor = MonitorService(
+        bus, client, storage, objects, settings,
+        downloader=MediaDownloader(
+            client, storage, objects,
+            max_bytes=settings.media_max_bytes,
+        ),
+    )
     app = AppService(bus, client, storage, objects, settings)
     log.info(
         "[bootstrap] full bootstrap done in %.2fs",

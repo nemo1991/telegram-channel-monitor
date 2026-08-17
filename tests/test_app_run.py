@@ -122,6 +122,29 @@ def test_main_window_is_constructed_after_services_ready(run_body: str) -> None:
     )
 
 
+def test_bootstrap_wires_media_downloader() -> None:
+    """组合根必须把 MediaDownloader 接线给 MonitorService。
+
+    历史 bug:策略 FULL 时 `_handle` 里 `self.downloader is not None` 恒为假
+    → 媒体文件从不落盘、media/ 目录永远为空。这是结构性测试,有人重构
+    `_bootstrap` 忘传 `downloader=` 时立即失败。
+    """
+    source = inspect.getsource(app_module)
+    tree = ast.parse(source)
+    bootstrap = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "_bootstrap"
+    )
+    body = ast.unparse(bootstrap)
+    m = re.search(r"MonitorService\s*\([^)]*", body)
+    assert m is not None, "MonitorService() call not found in _bootstrap()"
+    assert "downloader=" in m.group(0), (
+        "MonitorService must receive downloader= in _bootstrap(); without it "
+        "FULL media policy silently downloads nothing"
+    )
+
+
 def test_run_forever_pattern_uses_with_loop(run_body: str) -> None:
     """最后一行必须是 `with loop: loop.run_forever()`,由 `with` 退出钩子
     负责 close loop。
