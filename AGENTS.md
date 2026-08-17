@@ -146,7 +146,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 - **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`、`QT_LOGGING_RULES=*.warning=false`;视觉回归(`tests/test_visual_regression.py`)不进 CI,`pytest` 统一 `--ignore`。
 - **build.yml**(tag `v*` + main push + 手动触发):先编译 libtdjson(Linux/macOS 走 `build_libtdjson.sh`,Windows 走 `build_libtdjson.ps1` vcpkg)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → GitHub Release + SHA256SUMS。
-- **libtdjson 编译缓存预热**:GitHub 缓存只有默认分支(main)写入的缓存其他 ref 才能恢复,故 push main 时 `warm-cache` job 只编译、不打包,把三平台产物写回 main scope;之后打 tag 发布用同一 key(`libtdjson-${{ runner.os }}-${{ runner.arch }}-v1`)直接命中,免去每次冷编译(Windows vcpkg 约 2h → 命中后几分钟)。缓存 7 天未访问自动清除;改 key 的 `v1` 可作废。
+- **libtdjson 编译缓存预热**:GitHub 缓存只有默认分支(main)写入的缓存其他 ref 才能恢复,故 push main 时 `warm-cache` job 只编译、不打包,把三平台产物写回 main scope;之后打 tag 发布用同一 key 直接命中,免去每次冷编译(Windows vcpkg 冷编译约 2h → 命中后仅几分钟)。**三平台统一缓存包内产物目录** `packages/tdlib_json/src/tdlib_json/tdlib`,脚本按 `.tdlib-version` manifest(项目自声明的 TDLib 版本)判断是否跳过编译,与 runner 环境无关,可长期稳定命中。⚠️ 不要退回缓存 vcpkg binary cache:runner 预装 vcpkg 每天更新,abi 哈希随之变化,缓存 2~3 天必 miss(2026-08-17 v1.0.12 教训:缓存恢复成功仍冷编译 ~2h)。Windows 的 key 是 `-v2`(v1 曾是 binary-cache 内容),Linux/macOS 是 `-v1`。缓存 7 天未访问自动清除;改 key 版本号可作废缓存强制重编。
 - **audit.yml**(每周一 09:30 UTC):`pip-audit --strict` 依赖漏洞扫描。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。
 - 发布流程(打 tag 前):本地过全部测试 → CI 全绿 → 打 `v<version>` tag 推远端 → build.yml 出产物。

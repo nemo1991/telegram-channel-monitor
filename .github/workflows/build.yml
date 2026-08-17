@@ -104,9 +104,10 @@ jobs:
       # packages/tdlib_json/src/tdlib_json/tdlib/ — PyInstaller collect 它
       #   Linux / macOS:从 td/td 源码编译(bash)
       #   Windows:vcpkg 安装 tdlib 并拷贝产物(pwsh)
-      # 产物不变则跳过编译:Linux/macOS 缓存包内 tdlib/ 目录(脚本按
-      # .tdlib-version manifest 判断);Windows 缓存 vcpkg 二进制缓存
-      # (VCPKG_DEFAULT_BINARY_CACHE 在 D:\a\vcpkg-work\binary-cache)。
+      # 产物不变则跳过编译:三平台统一缓存包内 tdlib/ 目录(脚本按
+      # .tdlib-version manifest 判断)。Windows 不缓存 vcpkg binary cache:
+      # runner 预装 vcpkg 每天更新,abi 哈希随之变化,缓存 2~3 天必 miss。
+      # (2026-08-17 v1.0.12 教训:binary-cache 缓存恢复成功仍冷编译 ~2h)
       - name: Cache libtdjson build output (Linux/macOS)
         if: runner.os != 'Windows'
         uses: actions/cache@v4
@@ -114,12 +115,14 @@ jobs:
           path: packages/tdlib_json/src/tdlib_json/tdlib
           key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: Cache vcpkg binary cache (Windows)
+      - name: Cache libtdjson build output (Windows)
         if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
-          path: D:\a\vcpkg-work\binary-cache
-          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+          # v2:与 v1 的 vcpkg binary cache 内容不同(改缓存产物目录),key 升级
+          # 防止新旧内容混用;下次发布即可命中
+          path: packages/tdlib_json/src/tdlib_json/tdlib
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Build libtdjson (Linux/macOS)
         if: runner.os != 'Windows'
@@ -184,9 +187,11 @@ jobs:
 
   # 预热 libtdjson 编译缓存(GitHub 缓存机制:不同 tag 的 run 之间不能互相
   # 恢复缓存,只有默认分支 main 写入的缓存任何 ref 都能命中)。因此在 main
-  # push 上跑一个只编译、不打包的 job,把三平台产物/二进制缓存写回 main
-  # scope;之后打 v* tag 发布时 build job 用同一 key 直接命中,免去每次冷
-  # 编译(Windows vcpkg 冷编译约 2h → 命中后仅几分钟)。
+  # push 上跑一个只编译、不打包的 job,把三平台产物目录写回 main scope;
+  # 之后打 v* tag 发布时 build job 用同一 key 直接命中,免去每次冷编译
+  # (Windows vcpkg 冷编译约 2h → 命中后仅几分钟)。
+  # 注:产物目录 + .tdlib-version manifest 的跳过逻辑只依赖项目声明的
+  # TDLib 版本,与 runner 预装 vcpkg 版本无关,缓存可长期稳定命中。
   warm-cache:
     name: warm-cache (${{ matrix.os }})
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -255,12 +260,12 @@ jobs:
           path: packages/tdlib_json/src/tdlib_json/tdlib
           key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: Cache vcpkg binary cache (Windows)
+      - name: Cache libtdjson build output (Windows)
         if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
-          path: D:\a\vcpkg-work\binary-cache
-          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
+          path: packages/tdlib_json/src/tdlib_json/tdlib
+          key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Build libtdjson (Linux/macOS)
         if: runner.os != 'Windows'
