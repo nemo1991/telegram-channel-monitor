@@ -5,6 +5,28 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.17] - 2026-08-17
+
+### ✨ Added
+- **媒体异步下载队列**:FULL 策略下新消息先落库 + 立即发 `MessageReceived`
+  (界面秒见),再由后台 worker 串行下载原文件 —— 大文件下载(最长 30 分钟)
+  不再阻塞消息入库,彻底消除「下载期间信息空窗」;上次运行中断遗留的
+  DOWNLOADING 任务重启后由 backfill 自动重新入队
+- **下载状态跟踪**:`MediaDTO` 新增 `download_status`
+  (`PENDING / DOWNLOADING / DONE / FAILED`)与 `download_error`,四态全量
+  持久化(PG / JSONL / Mongo);新事件 `MediaDownloaded` 驱动 UI 实时刷新:
+  列表行与详情页显示「⏳ 下载中 / ✓ 已完成 / ❌ 下载失败 + 原因」,失败不再
+  无限重试,可从存储直观确认媒体是否在下载
+
+### 🛠️ Refactored
+- `MonitorService._handle` 拆分:幂等落库与媒体下载解耦,下载走
+  `_download_worker` + `asyncio.Queue`;`download_one` 契约改为永不抛/永不
+  返 None(失败返回带 FAILED 状态的 MediaDTO),worker 单条失败不退出
+
+### 🧪 Testing
+- 新增慢下载客户端用例:断言 DOWNLOADING 瞬时态 → DONE → 存储回写 →
+  对象存储真实文件落地;失败路径断言 FAILED + 错误原因
+
 ## [1.0.16] - 2026-08-17
 
 ### ⚡ Performance
