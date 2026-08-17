@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 from typing import BinaryIO
@@ -58,26 +59,37 @@ class LocalObjectStore(ObjectStore):
     # ---- 操作 ----
 
     async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
-        """原子写:.part + rename;若 caller 没传 sha256,自动补一个到 meta。"""
+        """原子写:.part + rename;若 caller 没传 sha256,自动补一个到 meta。
+
+        写盘 + sha256 是重 IO/CPU,放 `asyncio.to_thread` — 否则 FULL 策略下
+        下载 100MB+ 视频同步写盘会阻塞 qasync 主事件循环,UI 卡顿。
+        """
         path = self._path(key)
         self._ensure_inside_root(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # 原子写:写到 .part 再 rename
-        tmp = path.with_suffix(path.suffix + ".part")
-        tmp.write_bytes(data)
-        tmp.replace(path)
-        # 若 caller 没传 sha256,自动算一个
-        if meta is not None and meta.sha256 is None:
-            meta.sha256 = hashlib.sha256(data).hexdigest()
+
+        def _write() -> str | None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 原子写:写到 .part 再 rename
+            tmp = path.with_suffix(path.suffix + ".part")
+            tmp.write_bytes(data)
+            tmp.replace(path)
+            # 若 caller 没传 sha256,自动算一个(大文件哈希也 off-loop)
+            if meta is not None and meta.sha256 is None:
+                return hashlib.sha256(data).hexdigest()
+            return None
+
+        digest = await asyncio.to_thread(_write)
+        if meta is not None and digest is not None:
+            meta.sha256 = digest
         return key
 
     async def get(self, key: str) -> bytes:
-        """读全量 bytes;不存在抛 `KeyError`。"""
+        """读全量 bytes;不存在抛 `KeyError`。读盘走 to_thread 不阻塞 loop。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         if not path.exists():
             raise KeyError(key)
-        return path.read_bytes()
+        return await asyncio.to_thread(path.read_bytes)
 
     async def exists(self, key: str) -> bool:
         """是否存在(比 try get + 捕获 KeyError 轻)。"""

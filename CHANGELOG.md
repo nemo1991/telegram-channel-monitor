@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.16] - 2026-08-17
+
+### ⚡ Performance
+- **大文件写盘不再卡 UI**:`LocalObjectStore` / `FolderObjectStore` 的
+  `put()`(原子写 .part + rename)与 `get()`(全量读盘)改走
+  `asyncio.to_thread`,FULL 策略下下载 100MB+ 视频时不再同步阻塞 qasync
+  主事件循环。新增测试断言 put/get 均经 to_thread 调度,防回归
+
+### 🐛 Fixed
+- **单个媒体下载失败不再中断监听**:`MediaDownloader.download_one` 对
+  `objects.put` 异常兜底记录 warning 并返回 None(不再冒泡),monitor 循环
+  继续处理后续消息;同时修正 `FolderObjectStore` docstring 中过时的分片
+  落盘路径示例(实际为「目录前缀 + 文件名前 2 位 + 第 3-4 位」两级分片)
+
 ## [1.0.15] - 2026-08-17
 
 ### 🐛 Fixed

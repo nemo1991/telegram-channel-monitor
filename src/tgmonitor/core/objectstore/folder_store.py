@@ -1,13 +1,15 @@
 """FolderObjectStore — 本地 FS,两级分片布局。
 
-布局:`<root>/<key前2位>/<key后2位>/<key>` —— 例如
+布局:`<root>/<目录前缀>/<文件名前2位>/<文件名第3-4位>/<key>`
+(目录前缀按字面保留,分片针对**文件名**部分) —— 例如
     key = "media/abcdef1234567890.jpg"
-    落盘: <root>/me/di/media/abcdef1234567890.jpg
+    落盘: <root>/media/ab/cd/abcdef1234567890.jpg
 
 适用:大量小文件时,避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import BinaryIO
@@ -18,7 +20,7 @@ _VALID_KEY = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
 
 class FolderObjectStore(ObjectStore):
-    """两级分片:key 前 2 字符 + 后 2 字符做目录。
+    """两级分片:文件名前 2 字符 + 后 2 字符做目录(目录前缀按字面保留)。
 
     适用:大量小文件时避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
     """
@@ -70,22 +72,31 @@ class FolderObjectStore(ObjectStore):
     # ---- 操作 ----
 
     async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
-        """原子写:.part + rename;key 校验白名单字符 + 防越界。"""
+        """原子写:.part + rename;key 校验白名单字符 + 防越界。
+
+        写盘是重 IO,放 `asyncio.to_thread` — 否则 FULL 策略下下载 100MB+ 视频
+        同步写盘会阻塞 qasync 主事件循环,UI 卡顿。
+        """
         path = self._path(key)
         self._ensure_inside_root(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".part")
-        tmp.write_bytes(data)
-        tmp.replace(path)
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 原子写:写到 .part 再 rename
+            tmp = path.with_suffix(path.suffix + ".part")
+            tmp.write_bytes(data)
+            tmp.replace(path)
+
+        await asyncio.to_thread(_write)
         return key
 
     async def get(self, key: str) -> bytes:
-        """读全量 bytes;不存在抛 `KeyError`。"""
+        """读全量 bytes;不存在抛 `KeyError`。读盘走 to_thread 不阻塞 loop。"""
         path = self._path(key)
         self._ensure_inside_root(path)
         if not path.exists():
             raise KeyError(key)
-        return path.read_bytes()
+        return await asyncio.to_thread(path.read_bytes)
 
     async def exists(self, key: str) -> bool:
         """是否存在(比 try get + 捕获 KeyError 轻)。"""

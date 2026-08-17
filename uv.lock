@@ -896,7 +896,7 @@ source = { editable = "packages/tdlib_json" }
 
 [[package]]
 name = "tgmonitor"
-version = "1.0.15"
+version = "1.0.16"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

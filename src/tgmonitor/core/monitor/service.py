@@ -420,7 +420,14 @@ class MediaDownloader:
             content_type=media.mime_type,
             size=len(data),
         )
-        await self.objects.put(key, data, meta)
+        try:
+            await self.objects.put(key, data, meta)
+        except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
+            log.warning(
+                "objectstore.put(msg_pk=%s, key=%s) failed: %s",
+                msg_pk, key, e,
+            )
+            return None
         # 返新 MediaDTO:保留原字段,只覆盖 object_key / object_backend / file_size。
         # dataclasses.replace 比 `__dict__` 解构更稳(保留 frozen / __post_init__ 等),
         # 这里 MediaDTO 是普通 dataclass,replace() 同样适用。
