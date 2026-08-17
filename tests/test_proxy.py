@@ -240,7 +240,12 @@ def test_aio_event_emit_login_state_changed_via_bus() -> None:
 async def test_setup_proxy_sends_addproxy_when_configured(
     tmp_path: Path, bus, stub_tdlib_init,
 ) -> None:
-    """配了 SOCKS5 代理 → 发 addProxy(enable=True),server/port/凭据逐字段正确。"""
+    """配了 SOCKS5 代理 → 发 addProxy(enable=True),proxy 对象内 server/port/凭据逐字段正确。
+
+    TDLib 1.8.x 起 addProxy 签名是 (proxy_, enable_),server/port/type 必须
+    内嵌 `{"@type": "proxy"}` 对象;1.7 扁平格式会被 1.8.46 以 400 拒绝
+    (v1.0.13 线上 bug:代理可达仍报「代理设置失败」)。
+    """
     from tgmonitor.core.telegram import tdlib_client as tdc
 
     s = Settings(  # type: ignore[call-arg]
@@ -257,7 +262,7 @@ async def test_setup_proxy_sends_addproxy_when_configured(
 
     async def _fake_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
         captured.append(query)
-        return {"@type": "proxy", "id": 7}
+        return {"@type": "addedProxy", "id": 7}
 
     client.request = _fake_request  # type: ignore[method-assign]
     await client._setup_proxy()
@@ -265,9 +270,13 @@ async def test_setup_proxy_sends_addproxy_when_configured(
     payload = captured[0]
     assert payload["@type"] == "addProxy"
     assert payload["enable"] is True
-    assert payload["server"] == "127.0.0.1"
-    assert payload["port"] == 1080
-    proxy_type = payload["type"]
+    # server/port/type 必须内嵌 proxy 对象(TDLib 1.8+ 格式)
+    assert "server" not in payload and "port" not in payload and "type" not in payload
+    proxy_obj = payload["proxy"]
+    assert proxy_obj["@type"] == "proxy"
+    assert proxy_obj["server"] == "127.0.0.1"
+    assert proxy_obj["port"] == 1080
+    proxy_type = proxy_obj["type"]
     assert proxy_type["@type"] == "proxyTypeSocks5"
     assert proxy_type["username"] == "u"
     assert proxy_type["password"] == "p"

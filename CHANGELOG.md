@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.14] - 2026-08-17
+
+### 🐛 Fixed
+- **Windows 代理可达却提示「代理设置失败」**:`tdlib_json` 的 `_setup_proxy()`
+  发 `addProxy` 用的是 TDLib 1.7 时代的扁平参数格式(`server`/`port`/`type`
+  直接平铺在 addProxy 上),TDLib 1.8.x 起签名改为 `addProxy(proxy_, enable_)`,
+  三字段必须内嵌在 `{"@type": "proxy"}` 对象里;1.8.46 收到旧格式返回 400,
+  启动直接进入 error state,UI 右上角误报「代理设置失败」。修复:改用
+  `addProxy(proxy={...}, enable=true)` 新格式。该 bug 只影响配置了 `TG_PROXY`
+  的启动路径
+
 ## [1.0.13] - 2026-08-17
 
 ### 🐛 Fixed

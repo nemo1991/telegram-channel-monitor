@@ -307,17 +307,26 @@ class TdlibJsonClient:
         # send() 的 addProxy 失败响应没有 request_id,被 _handle_pending_request
         # 静默丢弃 → 应用自以为配好了代理,实际走直连 → 墙内表现为
         # "代理不生效,开了 TUN 才能通"。等响应 + 显式 raise 才能暴露失败。
+        #
+        # 格式注意:TDLib 1.8.x 起 addProxy 签名是 (proxy_, enable_),server /
+        # port / type 必须内嵌在 `{"@type": "proxy"}` 对象里。1.7 时代的扁平
+        # 格式(server/port/type 直接平铺在 addProxy 上)会被 1.8.46 以 400
+        # "Field 'proxy' must be filled" 拒绝(v1.0.13 线上:代理可达仍报
+        # 「代理设置失败」)。aiotdlib 归档前就沿用了旧格式,迁移时未同步。
         try:
             response = await self.request(
                 {
                     "@type": "addProxy",
                     "enable": True,
-                    "server": self.proxy.host,
-                    "port": self.proxy.port,
-                    "type": {
-                        "@type": "proxyTypeSocks5",
-                        "username": self.proxy.username,
-                        "password": self.proxy.password,
+                    "proxy": {
+                        "@type": "proxy",
+                        "server": self.proxy.host,
+                        "port": self.proxy.port,
+                        "type": {
+                            "@type": "proxyTypeSocks5",
+                            "username": self.proxy.username,
+                            "password": self.proxy.password,
+                        },
                     },
                 },
                 request_timeout=10,
