@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from tgmonitor.core.dto import ChannelDTO, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MessageDTO
 from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
 
@@ -61,6 +61,8 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
                 "thumb_key": med.thumb_key,
                 "thumb_backend": med.thumb_backend,
                 "emoji": med.emoji,
+                "download_status": med.download_status.value,
+                "download_error": med.download_error,
             }
             for med in m.media
         ],
@@ -76,6 +78,13 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
     media = []
     for md in d.get("media", []):
         try:
+            try:
+                dl_status = MediaDownloadStatus(
+                    str(md.get("download_status", "pending"))
+                )
+            except ValueError:
+                # 旧数据 / 非法值回退 pending,不丢整条 media
+                dl_status = MediaDownloadStatus.PENDING
             media.append(
                 MediaDTO(
                     type=MediaType(md["type"]),
@@ -91,6 +100,8 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
                     thumb_key=md.get("thumb_key"),
                     thumb_backend=md.get("thumb_backend"),
                     emoji=md.get("emoji"),
+                    download_status=dl_status,
+                    download_error=md.get("download_error"),
                 )
             )
         except (KeyError, ValueError):

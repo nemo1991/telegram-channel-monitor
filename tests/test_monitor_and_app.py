@@ -7,7 +7,7 @@ from typing import AsyncIterator
 import pytest
 
 from tests.conftest import make_message
-from tgmonitor.core.dto import MessageDTO
+from tgmonitor.core.dto import MediaDTO, MessageDTO
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
@@ -516,3 +516,152 @@ async def test_monitor_heartbeat_logs_when_stream_active(
     assert all(
         r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message
     ), f"心跳应为 INFO 级别;records={messages}"
+
+
+# ============================================================
+# 异步下载队列(FULL 策略:先落库 → 后台下载 → 回写状态 + MediaDownloaded)
+# ============================================================
+
+
+def _media_with_file_id(file_id: str, **overrides) -> MediaDTO:
+    """构造带 telegram_file_id 的 MediaDTO(下载队列用)。"""
+    from tgmonitor.core.dto import MediaType
+
+    return MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="pic.jpg",
+        file_size=11,
+        telegram_file_id=file_id,
+        **overrides,
+    )
+
+
+class _SlowDownloadClient(FakeTelegramClient):
+    """`download_file` 睡 0.2s 再返回 — 模拟大文件下载耗时。
+
+    让「先落库 DOWNLOADING → 后台下载 → 回写 DONE」的时序可确定性观察,
+    而不是在 0.05s 的 sleep 里被秒完成下载的假 client 竞态掉。
+    """
+
+    async def download_file(self, file_id: str) -> bytes | None:
+        await asyncio.sleep(0.2)
+        return await super().download_file(file_id)
+
+
+async def test_full_policy_downloads_media_async(
+    bus, storage, objectstore, settings
+) -> None:
+    """FULL 策略 + MediaDownloader:新消息先落库(DOWNLOADING)→ 后台下载 →
+    回写 DONE + object_key → 发 MediaDownloaded 事件;消息不阻塞落库。
+
+    回归:大文件下载(最长 30 分钟)不再阻塞消息落库 —— 用户立即可见
+    「下载中」状态,而不是看到有记录无文件的空窗。
+    """
+    from tgmonitor.core.config import MediaPolicy
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.events import MediaDownloaded, MessageReceived
+    from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
+
+    client = _SlowDownloadClient()
+    client.set_download("fid-1", b"image-bytes")
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    mon = MonitorService(
+        bus, client, storage, objectstore, full,
+        downloader=MediaDownloader(client, storage, objectstore),
+    )
+    mon.set_whitelist([100])
+    received: list[MessageReceived] = []
+    downloaded: list[MediaDownloaded] = []
+    downloaded_evt = asyncio.Event()
+
+    async def _on_received(e: MessageReceived) -> None:
+        received.append(e)
+
+    async def _on_downloaded(e: MediaDownloaded) -> None:
+        downloaded.append(e)
+        downloaded_evt.set()
+
+    bus.subscribe(MessageReceived, _on_received)
+    bus.subscribe(MediaDownloaded, _on_downloaded)
+
+    msg = make_message(
+        channel_id=100, msg_id=10, text="media!",
+        media=[_media_with_file_id("fid-1")],
+    )
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        # 下载未完成(假 client 睡 0.2s)→ 此刻应已落库且 media 是 DOWNLOADING
+        await asyncio.sleep(0.05)
+        assert len(received) == 1, "MessageReceived 应先行发布"
+        assert received[0].message.media[0].download_status == (
+            MediaDownloadStatus.DOWNLOADING
+        )
+        stored = await storage.get_message(100, 10)
+        assert stored is not None
+        assert stored.media[0].download_status == MediaDownloadStatus.DOWNLOADING
+        # 等 worker 完成下载并回写(超时报错)
+        await asyncio.wait_for(downloaded_evt.wait(), timeout=2.0)
+        assert len(downloaded) == 1
+        med = downloaded[0].media
+        assert med is not None
+        assert med.download_status == MediaDownloadStatus.DONE
+        assert med.object_key, "下载成功应回写 object_key"
+        # storage 已回写 DONE
+        stored = await storage.get_message(100, 10)
+        assert stored is not None
+        assert stored.media[0].download_status == MediaDownloadStatus.DONE
+        assert stored.media[0].object_key == med.object_key
+        # 对象存储真实有文件
+        assert await objectstore.exists(med.object_key)
+        assert await objectstore.get(med.object_key) == b"image-bytes"
+    finally:
+        await mon.stop()
+
+
+async def test_full_policy_download_failure_marks_failed(
+    bus, client, storage, objectstore, settings
+) -> None:
+    """下载失败 → 回写 FAILED + download_error(UI 可见原因),不阻塞消息落库。"""
+    from tgmonitor.core.config import MediaPolicy
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.events import MediaDownloaded
+    from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
+
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    mon = MonitorService(
+        bus, client, storage, objectstore, full,
+        downloader=MediaDownloader(client, storage, objectstore),
+    )
+    mon.set_whitelist([100])
+    downloaded: list[MediaDownloaded] = []
+    downloaded_evt = asyncio.Event()
+
+    async def _on_downloaded(e: MediaDownloaded) -> None:
+        downloaded.append(e)
+        downloaded_evt.set()
+
+    bus.subscribe(MediaDownloaded, _on_downloaded)
+
+    client.set_download("fid-2", None)  # 注入 None = 下载失败
+    msg = make_message(
+        channel_id=100, msg_id=11, text="broken",
+        media=[_media_with_file_id("fid-2")],
+    )
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        await asyncio.wait_for(downloaded_evt.wait(), timeout=2.0)
+        assert len(downloaded) == 1
+        med = downloaded[0].media
+        assert med is not None
+        assert med.download_status == MediaDownloadStatus.FAILED
+        assert med.download_error, "失败应带原因"
+        assert med.object_key is None
+        stored = await storage.get_message(100, 11)
+        assert stored is not None
+        assert stored.media[0].download_status == MediaDownloadStatus.FAILED
+        assert stored.media[0].download_error
+    finally:
+        await mon.stop()

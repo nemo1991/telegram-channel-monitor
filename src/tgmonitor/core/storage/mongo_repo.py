@@ -11,8 +11,22 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+)
 from tgmonitor.core.storage.repository import StorageRepository
+
+
+def _media_status(value: object | None) -> MediaDownloadStatus:
+    """反序列化 download_status;非法 / 缺失(旧库)回退 pending。"""
+    try:
+        return MediaDownloadStatus(str(value))
+    except ValueError:
+        return MediaDownloadStatus.PENDING
 
 
 def _media_to_doc(m: MediaDTO) -> dict[str, Any]:
@@ -30,6 +44,8 @@ def _media_to_doc(m: MediaDTO) -> dict[str, Any]:
         "thumb_key": m.thumb_key,
         "thumb_backend": m.thumb_backend,
         "emoji": m.emoji,
+        "download_status": m.download_status.value,
+        "download_error": m.download_error,
     }
 
 
@@ -48,6 +64,8 @@ def _doc_to_media(d: dict[str, Any]) -> MediaDTO:
         thumb_key=d.get("thumb_key"),
         thumb_backend=d.get("thumb_backend"),
         emoji=d.get("emoji"),
+        download_status=_media_status(d.get("download_status")),
+        download_error=d.get("download_error"),
     )
 
 

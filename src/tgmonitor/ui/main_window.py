@@ -51,7 +51,11 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MessageDTO, SyncOptions
-from tgmonitor.core.events import AuthErrorOccurred, LoginStateChanged
+from tgmonitor.core.events import (
+    AuthErrorOccurred,
+    LoginStateChanged,
+    MediaDownloaded,
+)
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.state_labels import state_dot, state_label
@@ -400,6 +404,7 @@ class MainWindow(QMainWindow):
 
     def _wire_events(self) -> None:
         self._vm.message_received.connect(self._on_message_received)
+        self._vm.media_downloaded.connect(self._on_media_downloaded)
         self._vm.login_state.connect(self._on_login_state)
         self._vm.conn_state.connect(self._on_conn_state)
         self._vm.channels_changed.connect(self._refresh_state)
@@ -469,6 +474,15 @@ class MainWindow(QMainWindow):
             {cid: ch.title for cid, ch in self._vm.known_channels.items()}
         )
         self.live_view.append(m)
+
+    def _on_media_downloaded(self, e) -> None:
+        """媒体下载结束(成功/失败) → 实时流行与详情面板刷新状态。"""
+        if not isinstance(e, MediaDownloaded) or e.media is None:
+            return
+        self.live_view.update_media_status(
+            e.channel_id, e.telegram_msg_id, e.media,
+        )
+        self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
 
     def _on_login_state(self, state: str) -> None:
         self.status_bar.showMessage(f"登录状态: {state}", 4000)

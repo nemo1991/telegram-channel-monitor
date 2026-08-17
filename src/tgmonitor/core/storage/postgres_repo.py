@@ -13,7 +13,13 @@ from typing import Any
 
 import asyncpg
 
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+)
 from tgmonitor.core.storage.repository import StorageRepository
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
@@ -35,6 +41,8 @@ def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
         m.thumb_key,
         m.thumb_backend,
         m.emoji,
+        m.download_status.value,
+        m.download_error,
     )
 
 
@@ -66,7 +74,17 @@ def _row_to_media(row: asyncpg.Record) -> MediaDTO:
         thumb_key=row["thumb_key"],
         thumb_backend=row["thumb_backend"],
         emoji=row["emoji"],
+        download_status=_media_status(row.get("download_status")),
+        download_error=row.get("download_error"),
     )
+
+
+def _media_status(value: object | None) -> MediaDownloadStatus:
+    """反序列化 download_status;非法 / 缺失(旧库)回退 pending。"""
+    try:
+        return MediaDownloadStatus(str(value))
+    except ValueError:
+        return MediaDownloadStatus.PENDING
 
 
 def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
@@ -320,8 +338,10 @@ class PostgresRepository(StorageRepository):
                             (message_id, type, mime_type, file_name, file_size,
                              width, height, duration, telegram_file_id,
                              object_key, object_backend, thumb_key, thumb_backend,
-                             emoji)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                             emoji, download_status, download_error)
+                        VALUES
+                            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                             $15,$16)
                         """,
                     *_media_to_row(msg_pk, m, idx),
                 )

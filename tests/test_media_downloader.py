@@ -5,11 +5,12 @@
 
 覆盖:
   1. 成功:注入 bytes → ObjectStore 真写入 → 返回的 MediaDTO 填了 object_key
-  2. file_id 缺失 → None + 不抛
-  3. file_size > max_bytes(known-size)→ None + 不下载
+     且 `download_status=DONE`
+  2. file_id 缺失 → FAILED + "无 telegram_file_id" + 不抛
+  3. file_size > max_bytes(known-size)→ FAILED + 不下载
   4. max_bytes=0 → 已知大尺寸也不拦
-  5. download_file 返 None → None + 不抛
-  6. 真下载 > max_bytes(unknown-size hard cap)→ None + 不保留 part 文件
+  5. download_file 返 None → FAILED + 不抛
+  6. 真下载 > max_bytes(unknown-size hard cap)→ FAILED + 不写入对象存储
   7. make_key 稳定性:同一 file_id 不同 file_name → 同 key
 """
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tgmonitor.core.dto import MediaDTO, MediaType
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType
 from tgmonitor.core.monitor.service import MediaDownloader
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
@@ -69,6 +70,7 @@ async def test_download_one_stores_bytes_and_returns_updated_dto(
     out = await dl.download_one(msg_pk=42, media=_make_media(file_size=118))
 
     assert out is not None, "expected updated MediaDTO, got None"
+    assert out.download_status == MediaDownloadStatus.DONE
     assert out.object_key, "object_key 未填"
     assert out.object_backend == "local"
     assert out.file_size == 118, "真下载大小应覆盖 file_size"
@@ -82,7 +84,7 @@ async def test_download_one_stores_bytes_and_returns_updated_dto(
 
 # ---- 2. file_id 缺失 ----
 
-async def test_download_one_returns_none_when_file_id_missing(
+async def test_download_one_returns_failed_when_file_id_missing(
     client: FakeTelegramClient, objects: LocalObjectStore
 ) -> None:
     dl = _make_dl(client, objects)
@@ -90,7 +92,10 @@ async def test_download_one_returns_none_when_file_id_missing(
 
     out = await dl.download_one(msg_pk=1, media=med)
 
-    assert out is None
+    assert out is not None
+    assert out.download_status == MediaDownloadStatus.FAILED
+    assert out.download_error, "失败应带原因"
+    assert out.object_key is None
     # 没 file_id → 注入啥都没用
     client.set_download("fid-A", b"data")
     assert await client.download_file("fid-A") == b"data"
@@ -109,7 +114,9 @@ async def test_download_one_skips_oversized_by_setting(
 
     out = await dl.download_one(msg_pk=2, media=med)
 
-    assert out is None, "300MB > 200MB 应被 max_bytes 拦截"
+    assert out is not None, "300MB > 200MB 应被 max_bytes 拦截"
+    assert out.download_status == MediaDownloadStatus.FAILED
+    assert out.download_error
     # 没写
     assert not (objects._root / "media").exists() or not any(
         (objects._root / "media").iterdir()
@@ -129,13 +136,14 @@ async def test_download_one_zero_max_bytes_means_unlimited(
     out = await dl.download_one(msg_pk=3, media=med)
 
     assert out is not None
+    assert out.download_status == MediaDownloadStatus.DONE
     assert out.file_size == 500  # 真下载 500 bytes
     assert await objects.get(out.object_key) == payload
 
 
 # ---- 5. download 失败 ----
 
-async def test_download_one_returns_none_on_download_failure(
+async def test_download_one_returns_failed_on_download_failure(
     client: FakeTelegramClient, objects: LocalObjectStore
 ) -> None:
     client.set_download("fid-A", None)  # 显式注入 None = 失败
@@ -143,7 +151,10 @@ async def test_download_one_returns_none_on_download_failure(
 
     out = await dl.download_one(msg_pk=4, media=_make_media())
 
-    assert out is None
+    assert out is not None
+    assert out.download_status == MediaDownloadStatus.FAILED
+    assert out.download_error, "失败应带原因"
+    assert out.object_key is None
     # 没有任何 bytes 写入
     assert not (objects._root / "media").exists() or not any(
         (objects._root / "media").iterdir()
@@ -158,10 +169,8 @@ async def test_download_one_hard_cap_for_unknown_size(
     """file_size 未知(媒体类型不报大小,如某些 sticker),但真下来 > max_bytes → 拒。
 
     验证:
-      - 返 None(不返 object_key 写过的 DTO)
-      - objects 里的 .part 已被原子 rename 覆盖成真实文件 — 但内容是已写入的
-        full data,不在 None 路径里(因为真下载下来后才发现超 size);业务上
-        等同于"下载了但拒绝入索引",可接受。
+      - 返 FAILED + download_error(不返 object_key 写过的 DTO)
+      - `objects.put` 未被调用(检查在 put 之前完成),对象存储无残留文件
     """
     payload = b"BIG" * 100_000  # 300 KB
     client.set_download("fid-A", payload)
@@ -171,8 +180,11 @@ async def test_download_one_hard_cap_for_unknown_size(
         msg_pk=5, media=_make_media(file_size=None),  # 大小未知
     )
 
-    assert out is None
-    # 确认 objects.put 没被调用(否则返 DTO)
+    assert out is not None
+    assert out.download_status == MediaDownloadStatus.FAILED
+    assert out.download_error, "失败应带原因"
+    assert out.object_key is None
+    # 确认 objects.put 没被调用(否则返 DONE 的 DTO)
     assert not (objects._root / "media").exists() or not any(
         (objects._root / "media").iterdir()
     )
@@ -206,6 +218,7 @@ async def test_download_one_zero_max_bytes_passes_actual_oversized(
     out = await dl.download_one(msg_pk=6, media=med)
 
     assert out is not None
+    assert out.download_status == MediaDownloadStatus.DONE
     assert out.file_size == 5000
     assert await objects.get(out.object_key) == payload
 
@@ -232,6 +245,7 @@ async def test_download_one_passes_size_via_meta(
     )
 
     assert out is not None
+    assert out.download_status == MediaDownloadStatus.DONE
     meta = await objects.stat(out.object_key)
     assert meta is not None
     assert meta.size == 6

@@ -21,7 +21,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
-from tgmonitor.core.dto import MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.ui.widgets.form_row import empty_hint
 
 
@@ -174,6 +174,37 @@ class MessageView(QListWidget):
         self._seen.clear()
         self._refresh_empty_state()
 
+    def update_media_status(
+        self, channel_id: int, telegram_msg_id: int, media: MediaDTO
+    ) -> None:
+        """异步下载结束回调:找到对应行,更新 DTO 里的 media 并重绘文本。
+
+        `media` 是 `_download_worker` 回写后的新对象(`dataclasses.replace`
+        产物);UI 里 `_ROLE_DTO` 与 worker 持有同一 `MessageDTO` 引用,通常
+        `dto.media[i] is media` 直接命中,这里再用 file_id 兜底匹配。
+        """
+        row = self._seen.get((channel_id, telegram_msg_id))
+        if row is None:
+            return
+        item = self.item(row)
+        if item is None:
+            return
+        dto = item.data(self._ROLE_DTO)
+        if not isinstance(dto, MessageDTO):
+            return
+        for i, med in enumerate(dto.media):
+            if med is media or (
+                media.telegram_file_id
+                and med.telegram_file_id == media.telegram_file_id
+            ):
+                dto.media[i] = media
+                break
+        item.setText(self._format(dto))
+        item.setData(self._ROLE_DTO, dto)
+        # 重检过滤(状态变化不影响匹配结果,但保持与 append 一致)
+        if self._filter_text and not self._matches(dto, self._filter_text):
+            item.setHidden(True)
+
     def _format(self, m: MessageDTO) -> str:
         # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂
         # `datetime.now(UTC)`,或 _map_message 的 `datetime.fromtimestamp(ts, UTC)`)。
@@ -196,5 +227,16 @@ class MessageView(QListWidget):
             head += f"  👤 {m.author}"
         body = m.text or ""
         if m.has_media:
-            body += f"  📎 {','.join(med.type.value for med in m.media)}"
+            parts = []
+            for med in m.media:
+                label = med.type.value
+                # 下载状态标记:⏳ 下载中 / ❌ 失败 / ✓ 已下载(PENDING 不加后缀)
+                if med.download_status == MediaDownloadStatus.DOWNLOADING:
+                    label += "⏳"
+                elif med.download_status == MediaDownloadStatus.FAILED:
+                    label += "❌"
+                elif med.download_status == MediaDownloadStatus.DONE:
+                    label += "✓"
+                parts.append(label)
+            body += f"  📎 {','.join(parts)}"
         return f"{head}\n  {body}"

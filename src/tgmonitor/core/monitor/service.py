@@ -19,10 +19,11 @@ import time
 from typing import Iterable
 
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import MediaDTO, MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.core.events import (
     ErrorOccurred,
     EventBus,
+    MediaDownloaded,
     MessageDeleted,
     MessageReceived,
 )
@@ -79,6 +80,11 @@ class MonitorService:
         # 补拉中判定"频道不可访问"的 channel_id(每频道只 warning 一次,
         # 避免每 30s 轮刷日志);某频道补拉成功后从集合移除,可重新 warning。
         self._unavailable_channels: set[int] = set()
+        # 异步下载队列:FULL 策略时 `_handle` 先落库(media 标 DOWNLOADING),
+        # 再入队由 `_download_worker` 串行消费;下载结束后回写状态 + 发
+        # MediaDownloaded 事件。串行单 worker 避免 TDLib 并发下载互相干扰。
+        self._download_queue: asyncio.Queue[tuple[MessageDTO, int]] | None = None
+        self._download_task: asyncio.Task | None = None
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
         """替换白名单 — 由 AppService 启动 monitor 时调。"""
@@ -112,6 +118,12 @@ class MonitorService:
         self._backfill_task = asyncio.create_task(
             self._backfill_loop(), name="MonitorService.backfill"
         )
+        # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
+        if self.downloader is not None:
+            self._download_queue = asyncio.Queue()
+            self._download_task = asyncio.create_task(
+                self._download_worker(), name="MonitorService.download"
+            )
         log.info(
             "MonitorService started; whitelist size=%d",
             len(self._whitelist),
@@ -120,6 +132,14 @@ class MonitorService:
     async def stop(self) -> None:
         """停 monitor + 关流 + 等 task 退出(2s 超时硬 cancel)。"""
         self._stop.set()
+        if self._download_task is not None:
+            self._download_task.cancel()
+            try:
+                await self._download_task
+            except asyncio.CancelledError:
+                pass
+            self._download_task = None
+        self._download_queue = None
         if self._backfill_task is not None:
             self._backfill_task.cancel()
             try:
@@ -299,28 +319,36 @@ class MonitorService:
         # 媒体下载策略:
         #   METADATA  → 跳过 thumb / full
         #   THUMBNAIL → 走 _maybe_store_thumb(空 hook,留给未来)
-        #   FULL      → thumb + MediaDownloader.download_one(若已配)
+        #   FULL      → thumb + 异步下载原文件(见下)
         if msg.media and self.settings.media_policy != MediaPolicy.METADATA:
-            updated_media: list[MediaDTO] = []
             for med in msg.media:
                 await self._maybe_store_thumb(med)
-                if (
-                    self.settings.media_policy == MediaPolicy.FULL
-                    and self.downloader is not None
-                    and not med.object_key
-                ):
-                    updated = await self.downloader.download_one(
-                        msg_pk=msg.id, media=med,
-                    )
-                    if updated is not None:
-                        updated_media.append(updated)
-                        continue
-                updated_media.append(med)
-            msg.media = updated_media
+        # 异步下载:FULL + 已接 downloader 时,需要下载的 media 标 DOWNLOADING,
+        # **先落库 + 发 MessageReceived**(用户立刻可见"下载中"),再由
+        # `_download_worker` 后台下载,完成后回写状态并发 MediaDownloaded。
+        # 不阻塞消息落库 —— 大文件下载(最长 30 分钟)不再制造"空窗"。
+        queued: list[int] = []
+        queue = self._download_queue
+        if (
+            msg.media
+            and self.settings.media_policy == MediaPolicy.FULL
+            and self.downloader is not None
+            and queue is not None
+        ):
+            for idx, med in enumerate(msg.media):
+                # PENDING=新消息;DOWNLOADING=上次运行中断遗留 → 重启后重新下载;
+                # DONE / FAILED 不再重下(FAILED 让用户看原因,不无限重试)。
+                if med.download_status in (
+                    MediaDownloadStatus.PENDING,
+                    MediaDownloadStatus.DOWNLOADING,
+                ) and not med.object_key:
+                    med.download_status = MediaDownloadStatus.DOWNLOADING
+                    med.download_error = None
+                    queued.append(idx)
 
-        # 幂等落库(FULL 模式下 msg.media[*].object_key 已被 MediaDownloader
-        # 写回,save_message 一次写入完整状态;InMemoryRepository 是 dict 覆写,
-        # jsonl / mongo / postgres 各仓也按 (channel_id, telegram_msg_id) upsert)
+        # 幂等落库(FULL 模式下 media 状态由异步下载队列写回,`save_message`
+        # 是 upsert:InMemoryRepository 是 dict 覆写,jsonl / mongo / postgres
+        # 各仓也按 (channel_id, telegram_msg_id) 更新)。
         await self.storage.save_message(msg)
         self._handled += 1
         log.debug(
@@ -328,6 +356,59 @@ class MonitorService:
             msg.channel_id, msg.telegram_msg_id, self._handled,
         )
         await self.bus.publish(MessageReceived(message=msg))
+
+        # 下载任务入队(落库之后才入队 —— 若下载过程中退出,DB 里是
+        # DOWNLOADING 状态,重启后 backfill 会重新入队下载)。
+        if queued and queue is not None:
+            for idx in queued:
+                await queue.put((msg, idx))
+
+    async def _download_worker(self) -> None:
+        """串行消费下载队列:下载 → 回写 storage → 发 MediaDownloaded。
+
+        `download_one` 契约不抛(失败也返回带 FAILED 状态的 MediaDTO),
+        这里仍包一层防御,worker 本身永不因单条失败退出。
+        """
+        assert self.downloader is not None
+        assert self._download_queue is not None
+        while True:
+            msg, idx = await self._download_queue.get()
+            med = msg.media[idx]
+            try:
+                updated = await self.downloader.download_one(
+                    msg_pk=msg.id, media=med,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单条失败不影响 worker
+                log.exception("download media failed: msg_pk=%s idx=%d", msg.id, idx)
+                updated = dataclasses.replace(
+                    med,
+                    download_status=MediaDownloadStatus.FAILED,
+                    download_error=f"下载异常: {e}",
+                )
+            msg.media[idx] = updated
+            log.info(
+                "media download done: channel=%s msg_id=%s idx=%d status=%s key=%s",
+                msg.channel_id, msg.telegram_msg_id, idx,
+                updated.download_status.value,
+                updated.object_key or "-",
+            )
+            try:
+                await self.storage.save_message(msg)
+            except Exception as e:  # noqa: BLE001
+                log.exception(
+                    "update media status failed: channel=%s msg_id=%s: %s",
+                    msg.channel_id, msg.telegram_msg_id, e,
+                )
+            await self.bus.publish(
+                MediaDownloaded(
+                    channel_id=msg.channel_id,
+                    telegram_msg_id=msg.telegram_msg_id,
+                    media=updated,
+                )
+            )
+            self._download_queue.task_done()
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息 + 发 MessageDeleted 事件(由 UI 删除按钮 / 撤回时调)。"""
@@ -355,14 +436,18 @@ class MediaDownloader:
     原文件**,只是元数据 + 缩略图 + 一个空 key。现在:
       - 入参:`media: MediaDTO`(含 `telegram_file_id` / `file_size` / `mime_type`)
       - 行为:`client.download_file(file_id)` 拿 bytes → `objects.put` → 返
-        **更新过的** `MediaDTO`(`object_key` / `object_backend` / `file_size` 已填)
-      - 失败返 None,不抛 — monitor 循环继续。
+        **更新过的** `MediaDTO`(`object_key` / `object_backend` / `file_size` 已填,
+        `download_status=DONE`)
+      - 失败**不抛也不返 None**,而是返回 `download_status=FAILED` +
+        `download_error=<原因>` 的 MediaDTO —— 原因可落库、UI 可见(用户不再
+        只能从日志猜"有记录无文件"是为什么)。
 
-    边界:
-      - `telegram_file_id` 缺失 → 返 None + DEBUG
-      - `media.file_size > max_bytes` → 返 None + WARNING(0 = 无限制)
-      - `download_file` 返 None → 返 None + WARNING
-      - 实际下载 bytes > max_bytes(大小未知场景 hard cap)→ 返 None + WARNING
+    边界(全部 → FAILED + 原因):
+      - `telegram_file_id` 缺失 → "无 telegram_file_id"
+      - `media.file_size > max_bytes` → "超过单文件上限"
+      - `download_file` 返 None(超时 / 无数据)→ "下载失败/超时"
+      - 实际下载 bytes > max_bytes(大小未知场景 hard cap)→ "实际大小超过上限"
+      - `objects.put` 异常 → "对象存储写入失败: ..."
     """
 
     def __init__(
@@ -386,35 +471,42 @@ class MediaDownloader:
         ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
         return f"media/{h}.{ext}{suffix}"
 
-    async def download_one(self, msg_pk: int, media: MediaDTO) -> MediaDTO | None:
-        """下载 → 入 ObjectStore → 返回填了 `object_key` 的新 MediaDTO。
+    async def download_one(self, msg_pk: int, media: MediaDTO) -> MediaDTO:
+        """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
 
-        `msg_pk` 仅用于日志(消息主键,出问题时定位上下文);不写 DB(写 DB 是
-        `MonitorService._handle` 的责任)。
+        成功:`object_key` / `object_backend` / `file_size` 已填,`download_status=DONE`;
+        失败:`download_status=FAILED` + `download_error`(原因可持久化 / UI 展示),
+        不抛异常。`msg_pk` 仅用于日志(消息主键,出问题时定位上下文)。
         """
+
+        def failed(reason: str) -> MediaDTO:
+            log.warning(
+                "skip media msg_pk=%s %s: %s",
+                msg_pk, media.file_name or media.telegram_file_id or media.type.value,
+                reason,
+            )
+            return dataclasses.replace(
+                media,
+                download_status=MediaDownloadStatus.FAILED,
+                download_error=reason,
+            )
+
         fid = media.telegram_file_id
         if not fid:
             log.debug("skip media msg_pk=%s: no telegram_file_id", msg_pk)
-            return None
+            return failed("无 telegram_file_id")
         if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
-            log.warning(
-                "skip media msg_pk=%s %s: %d bytes > max %d",
-                msg_pk, media.file_name or fid, media.file_size, self.max_bytes,
+            return failed(
+                f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节"
             )
-            return None
         data = await self.client.download_file(fid)
         if data is None:
-            log.warning(
-                "download_file(msg_pk=%s, fid=%s) returned None", msg_pk, fid,
-            )
-            return None
+            return failed("下载超时或未返回数据")
         # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)
         if self.max_bytes and len(data) > self.max_bytes:
-            log.warning(
-                "downloaded msg_pk=%s fid=%s exceeded %d bytes, dropping",
-                msg_pk, fid, self.max_bytes,
+            return failed(
+                f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节"
             )
-            return None
         key = self.make_key(media)
         meta = ObjectMeta(
             content_type=media.mime_type,
@@ -423,16 +515,14 @@ class MediaDownloader:
         try:
             await self.objects.put(key, data, meta)
         except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
-            log.warning(
-                "objectstore.put(msg_pk=%s, key=%s) failed: %s",
-                msg_pk, key, e,
-            )
-            return None
-        # 返新 MediaDTO:保留原字段,只覆盖 object_key / object_backend / file_size。
-        # dataclasses.replace 比 `__dict__` 解构更稳(保留 frozen / __post_init__ 等),
-        # 这里 MediaDTO 是普通 dataclass,replace() 同样适用。
+            return failed(f"对象存储写入失败: {e}")
+        # 返新 MediaDTO:保留原字段,只覆盖 object_key / object_backend / file_size
+        # 与下载状态。dataclasses.replace 比 `__dict__` 解构更稳(保留 frozen /
+        # __post_init__ 等),这里 MediaDTO 是普通 dataclass,replace() 同样适用。
         return dataclasses.replace(
             media,
+            download_status=MediaDownloadStatus.DONE,
+            download_error=None,
             object_key=key,
             object_backend=self.objects.backend_name,
             file_size=len(data),

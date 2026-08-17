@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, TypeVar
 
-from tgmonitor.core.dto import ChannelDTO, ExportResult, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, ExportResult, MediaDTO, MessageDTO
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,18 @@ class MessageDeleted(Event):
 
     channel_id: int = 0
     telegram_msg_id: int = 0
+
+
+@dataclass
+class MediaDownloaded(Event):
+    """一条媒体下载结束(成功或失败都发;`media.download_status` 区分)。
+
+    UI 据此刷新对应消息的展示(下载中 → 已下载 / 失败+原因)。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    media: MediaDTO | None = None
 
 
 @dataclass

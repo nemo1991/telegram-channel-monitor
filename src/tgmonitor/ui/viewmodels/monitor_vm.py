@@ -21,6 +21,7 @@ from tgmonitor.core.events import (
     EventBus,
     ExportDone,
     LoginStateChanged,
+    MediaDownloaded,
     MessageReceived,
     SettingsChanged,
 )
@@ -50,6 +51,7 @@ class MonitorViewModel(QObject):
     # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
     """
     message_received = Signal(object)
+    media_downloaded = Signal(object)  # MediaDownloaded(下载结束,成功或失败)
     login_state = Signal(str)
     conn_state = Signal(str)      # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
     channels_changed = Signal()
@@ -77,6 +79,7 @@ class MonitorViewModel(QObject):
     def _wire_bus(self) -> None:
         b: EventBus = self.app.bus
         b.subscribe(MessageReceived, self._on_message_received)
+        b.subscribe(MediaDownloaded, self._on_media_downloaded)
         b.subscribe(LoginStateChanged, self._on_login_state)
         b.subscribe(ConnectionStateChanged, self._on_conn_state)
         b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
@@ -94,6 +97,11 @@ class MonitorViewModel(QObject):
             return
         # 直接 emit MessageDTO — 不要 asdict,会丢嵌套 MediaDTO 类型
         self.message_received.emit(e.message)
+
+    async def _on_media_downloaded(self, e: Event) -> None:
+        if not isinstance(e, MediaDownloaded):
+            return
+        self.media_downloaded.emit(e)
 
     async def _on_login_state(self, e: Event) -> None:
         if not isinstance(e, LoginStateChanged):

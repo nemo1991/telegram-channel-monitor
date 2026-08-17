@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS media (
 
 -- 兼容旧库:已存在的 media 表补 emoji 列(IF NOT EXISTS 幂等)。
 ALTER TABLE media ADD COLUMN IF NOT EXISTS emoji TEXT;
+-- 下载状态列(异步下载队列写入;旧库无此列,IF NOT EXISTS 幂等)。
+ALTER TABLE media ADD COLUMN IF NOT EXISTS download_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE media ADD COLUMN IF NOT EXISTS download_error TEXT;
+-- 历史数据迁移:已有 object_key 的行视为已下载(done);其余保持 pending,
+-- 切到 FULL 策略后 backfill 会对 pending 媒体重新触发下载。
+UPDATE media SET download_status = 'done'
+    WHERE object_key IS NOT NULL AND download_status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_media_message
     ON media (message_id);

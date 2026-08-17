@@ -52,6 +52,21 @@ class MediaType(str, Enum):
     VIDEO_NOTE = "video_note"
 
 
+class MediaDownloadStatus(str, Enum):
+    """媒体下载状态 — 用户可观察:「对象存储里没有文件」时能看出是正在下 / 失败。
+
+    - `PENDING`    : 未安排下载(元数据策略 / 旧数据 / 无 downloader)
+    - `DOWNLOADING`: 下载中(已入队或正在下;应用重启后视为可重新下载)
+    - `DONE`       : 下载成功,`object_key` / `object_backend` 已填
+    - `FAILED`     : 下载失败或被跳过,`download_error` 有原因
+    """
+
+    PENDING = "pending"
+    DOWNLOADING = "downloading"
+    DONE = "done"
+    FAILED = "failed"
+
+
 @dataclass
 class MediaDTO:
     """一条消息附带的媒体。
@@ -79,6 +94,10 @@ class MediaDTO:
     # ObjectStore 引用(缩略图)
     thumb_key: str | None = None
     thumb_backend: str | None = None
+
+    # 下载状态(异步下载队列写入;持久化到各仓储)
+    download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
+    download_error: str | None = None        # FAILED 时的原因(超限 / 超时 / 存储写入失败…)
 
     # Sticker 专属 — 关联的 emoji 字符(如 "😀");其它 type 始终 None
     emoji: str | None = None

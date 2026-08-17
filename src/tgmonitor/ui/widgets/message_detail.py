@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO
 
 
 def _to_local_str(dt: datetime | None) -> str:
@@ -192,6 +192,16 @@ class MessageDetail(QScrollArea):
 
         self.setWidget(wrap)
 
+    def refresh_if_showing(self, channel_id: int, telegram_msg_id: int) -> None:
+        """下载状态回写后,若详情面板正显示该消息则重建(状态行更新)。"""
+        cur = self._current
+        if (
+            cur is not None
+            and cur.channel_id == channel_id
+            and cur.telegram_msg_id == telegram_msg_id
+        ):
+            self.show_message(cur)
+
     def _section_label(self, text: str) -> QLabel:
         """Section header — 正文 / 媒体 / 原始 JSON 小节标题。
 
@@ -216,4 +226,13 @@ class MessageDetail(QScrollArea):
             lines.append(f"   尺寸: {med.width} × {med.height}")
         if med.duration:
             lines.append(f"   时长: {med.duration} 秒")
+        # 下载状态(异步下载队列回写;PENDING 不显示,避免旧数据噪音)
+        if med.download_status == MediaDownloadStatus.DONE:
+            lines.append("   状态: 已下载 ✓")
+        elif med.download_status == MediaDownloadStatus.DOWNLOADING:
+            lines.append("   状态: 下载中… ⏳")
+        elif med.download_status == MediaDownloadStatus.FAILED:
+            lines.append("   状态: 下载失败 ❌")
+            if med.download_error:
+                lines.append(f"   原因: {med.download_error}")
         return "\n".join(lines)
