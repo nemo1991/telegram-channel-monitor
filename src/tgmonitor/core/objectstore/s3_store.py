@@ -68,14 +68,22 @@ class S3ObjectStore(ObjectStore):
 
     @asynccontextmanager
     async def _client(self) -> Any:
+        """yield 真正的 boto3 client。
+
+        `aioboto3.Session.client()` 返回的是 `ClientCreatorContext`(异步
+        上下文管理器),必须先 `async with` 进入才能拿到可调用的 client ——
+        直接 yield context 对象会导致所有 `put_object` / `head_bucket` 等
+        调用报 `'ClientCreatorContext' object has no attribute ...`。
+        """
         assert self._session is not None, "call connect() first"
-        yield self._session.client(
+        async with self._session.client(
             "s3",
             endpoint_url=self._endpoint,
             region_name=self._region,
             aws_access_key_id=self._access,
             aws_secret_access_key=self._secret,
-        )
+        ) as s3:
+            yield s3
 
     # ---- 操作 ----
 
