@@ -110,14 +110,14 @@ jobs:
       # (2026-08-17 v1.0.12 教训:binary-cache 缓存恢复成功仍冷编译 ~2h)
       - name: Cache libtdjson build output (Linux/macOS)
         if: runner.os != 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: packages/tdlib_json/src/tdlib_json/tdlib
           key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Cache libtdjson build output (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # v2:与 v1 的 vcpkg binary cache 内容不同(改缓存产物目录),key 升级
           # 防止新旧内容混用;下次发布即可命中
@@ -255,14 +255,14 @@ jobs:
       # 缓存 key 与 build job 完全一致:main push 写入 → tag 发布精确命中
       - name: Cache libtdjson build output (Linux/macOS)
         if: runner.os != 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: packages/tdlib_json/src/tdlib_json/tdlib
           key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Cache libtdjson build output (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: packages/tdlib_json/src/tdlib_json/tdlib
           key: libtdjson-${{ runner.os }}-${{ runner.arch }}-v2
