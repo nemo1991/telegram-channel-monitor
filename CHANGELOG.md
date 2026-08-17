@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.13] - 2026-08-17
+
+### 🐛 Fixed
+- **打包产物缺失 schema.sql(v1.0.12 Windows 打开报错)**:`postgres_repo` 用
+  `Path(__file__).parent / "schema.sql"` 定位建表 SQL,但 PyInstaller 默认只
+  打包 Python 文件,spec 未收集该数据文件 → 配置 PostgreSQL 后
+  `init_schema()` 直接 FileNotFoundError。修复:spec datas 增加单文件条目
+  `schema.sql → tgmonitor/core/storage/`,已本地打包验证产物含该文件
+
 ## [1.0.12] - 2026-08-17
 
 ### 🐛 Fixed
