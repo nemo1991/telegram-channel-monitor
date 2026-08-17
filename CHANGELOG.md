@@ -5,6 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.18] - 2026-08-17
+
+### 🐛 Fixed
+- **S3 对象存储写入必失败**:`S3ObjectStore._client()` 把
+  `aioboto3.Session.client()` 返回的 `ClientCreatorContext`(异步上下文管理器
+  本身)直接当 boto3 client 用,`put_object` 等调用全部抛
+  `'ClientCreatorContext' object has no attribute 'put_object'`。`connect()`
+  里的 `head_bucket` 恰好被 `try/except` 吞掉所以启动无报错,首次写对象才
+  暴露。修复:先 `async with` 进入 context 再 yield 真正的 client。新增
+  S3 后端回归测试(mock `ClientCreatorContext` 行为,覆盖 put/get、
+  自动建桶、delete)
+
 ## [1.0.17] - 2026-08-17
 
 ### ✨ Added
