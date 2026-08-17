@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.19] - 2026-08-17
+
+### 🐛 Fixed
+- **打包产物运行时 `no module named aioboto3.s3`**:PyInstaller 静态分析只
+  收集 `import aioboto3`,而 aioboto3 通过字符串 lazy import
+  (`'aioboto3.s3.inject.inject_s3_transfer_methods'`)运行时动态加载服务
+  子模块,静态扫描全部漏掉。`tgmonitor.spec` 改用
+  `collect_submodules("aioboto3") + collect_submodules("aiobotocore")`
+  整包收集,三平台产物均含 S3 全部子模块。本地已用 pyi-archive_viewer
+  验证 PYZ 包含 `aioboto3.s3` / `aioboto3.s3.inject` / `aiobotocore.*`
+
 ## [1.0.18] - 2026-08-17
 
 ### 🐛 Fixed
