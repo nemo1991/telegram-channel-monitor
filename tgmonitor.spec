@@ -68,8 +68,15 @@ if _SCHEMA_SQL.is_file():
 else:
     print(f"[spec] WARNING: 缺失 schema.sql {_SCHEMA_SQL}")
 
-# tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports
-hiddenimports = []
+# tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports。
+# aioboto3(S3 对象存储)例外:它通过 `session.client("s3")` 用**字符串
+# lazy import** 注册服务子模块(如 `'aioboto3.s3.inject.inject_s3_transfer_methods'`),
+# PyInstaller 静态分析只能看到 `import aioboto3`,漏掉全部子模块 → 打包产物
+# 运行时 `no module named aioboto3.s3`(v1.0.18 Windows 产物报错)。collect_submodules
+# 把 aioboto3 / aiobotocore(client 类同样运行时才构造)整包收集,彻底兜底。
+from PyInstaller.utils.hooks import collect_submodules
+
+hiddenimports = collect_submodules("aioboto3") + collect_submodules("aiobotocore")
 
 # App icon:macOS BUNDLE 只接受 .icns,我们目前只有 .svg(Pillow 也转不了)。
 # v1.0.0 release 不强求 app icon — 用 None 让 PyInstaller fallback 到系统默认
