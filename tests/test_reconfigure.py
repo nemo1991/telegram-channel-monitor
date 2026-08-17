@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.conftest import InMemoryRepository
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
@@ -92,3 +94,98 @@ async def test_reconfigure_noop_when_unchanged(tmp_path: Path):
     bus.subscribe(SettingsChanged, lambda e: seen.append(e))
     await app.reconfigure(s1)  # 同一份
     assert seen == []
+
+
+class _BrokenStorage:
+    """connect 即失败的新 storage — 模拟 PG 连不上的场景。"""
+
+    async def connect(self) -> None:
+        raise ConnectionError("connect failed: PG 不可达")
+
+    async def init_schema(self) -> None:
+        raise AssertionError("init_schema 不应被调用")
+
+
+class _InitFailsStorage:
+    """connect 成功但 init_schema 失败 — 验证新建连接被清理、旧库不动。"""
+
+    closed = False
+
+    async def connect(self) -> None:
+        pass
+
+    async def init_schema(self) -> None:
+        raise RuntimeError("init_schema failed: 无权限建表")
+
+    async def close(self) -> None:
+        type(self).closed = True
+
+
+async def test_reconfigure_storage_failure_keeps_old_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """重建 storage 失败时:旧 storage 不被关闭仍可用、settings 不提交、无事件。
+
+    回归 2026-08-13:旧实现"先关旧 storage 再建新库",PG 连不上时旧库已
+    close,monitor 写进已关闭的 store → 数据静默丢失。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    client = FakeTelegramClient()
+    app = AppService(bus, client, storage, objects, s1)
+
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_storage",
+        lambda settings: _BrokenStorage(),
+    )
+    s2 = _settings(
+        tmp_path,
+        db_backend=DBBackend.POSTGRES,
+        db_dsn="postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor",
+    )
+    s2.ensure_dirs()
+    seen: list[SettingsChanged] = []
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+
+    with pytest.raises(ConnectionError):
+        await app.reconfigure(s2)
+
+    # 旧 storage 未被关闭,仍可正常使用
+    assert app.storage is storage
+    assert await app.storage.ping() is True
+    # settings 未提交、SettingsChanged 未发布
+    assert app.settings is s1
+    assert seen == []
+
+
+async def test_reconfigure_storage_init_schema_failure_closes_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """新库 connect 成功但 init_schema 失败:新建连接被关闭(不留泄漏)、旧库可用。"""
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_storage",
+        lambda settings: _InitFailsStorage(),
+    )
+    s2 = _settings(tmp_path, db_backend=DBBackend.POSTGRES, db_dsn="postgresql://x")
+    s2.ensure_dirs()
+
+    with pytest.raises(RuntimeError):
+        await app.reconfigure(s2)
+
+    assert _InitFailsStorage.closed is True
+    assert app.storage is storage
+    assert await app.storage.ping() is True

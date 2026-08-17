@@ -291,16 +291,30 @@ class AppService:
         ))
 
     async def _rebuild_storage(self, new_settings: Settings) -> None:
-        """关旧 storage → 建新 → `init_schema`。失败时不抛(只 log)。"""
+        """切换 storage:**先建新库**(connect + init_schema)成功后才关旧库。
+
+        失败时异常上抛(`reconfigure` 中止、settings 不提交),且旧 storage
+        保持可用 — 不能"先关后建":新库连不上时旧存储已 close,monitor 会
+        写进已关闭的 store,数据静默丢失(2026-08-13 修,PG 连不上时的表现)。
+        """
         self._reconfiguring = True
         try:
+            new_storage = build_storage(new_settings)
+            try:
+                await new_storage.connect()
+                await new_storage.init_schema()
+            except BaseException:
+                # 新库未就绪:关掉已建连接再上抛,不留泄漏;旧 storage 不动
+                try:
+                    await new_storage.close()
+                except Exception:  # noqa: BLE001
+                    log.exception("关闭未就绪的新 storage 失败")
+                raise
+            # 新库就绪后才关旧库并替换;关旧库失败只 log,不影响切换
             try:
                 await self.storage.close()
             except Exception as e:  # noqa: BLE001
                 log.warning("关闭旧 storage 失败: %s", e)
-            new_storage = build_storage(new_settings)
-            await new_storage.connect()
-            await new_storage.init_schema()
             self.storage = new_storage
             # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #C 收尾:之前
             # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
@@ -315,13 +329,13 @@ class AppService:
             self._reconfiguring = False
 
     async def _rebuild_objects(self, new_settings: Settings) -> None:
-        """关旧 objectstore → 建新。失败时不抛(只 log)。"""
+        """切换 objectstore:先建新、成功后关旧(与 `_rebuild_storage` 同语义)。"""
+        new_objects = build_object_store(new_settings)
+        await new_objects.connect()
         try:
             await self.objects.close()
         except Exception as e:  # noqa: BLE001
             log.warning("关闭旧 objectstore 失败: %s", e)
-        new_objects = build_object_store(new_settings)
-        await new_objects.connect()
         self.objects = new_objects
 
 

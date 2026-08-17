@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.12] - 2026-08-17
+
+### 🐛 Fixed
+- **保存到 PostgreSQL 不可用**:旧实现「先关旧 storage 再建新库」,PG 连不上时
+  旧存储已被关闭、monitor 写入已关闭的 store 数据静默丢失;改为**先建新库
+  (connect + init_schema)就绪后才关旧库切换**,失败时清理新建连接再上抛,
+  旧库保持可用,不再出现"保存后既没存进 PG、原 JSONL 也写不进去"的断档
+- **保存并应用不再写坏配置**:"保存并应用"检测到存储/对象存储配置变更时,
+  先验证新配置连通性 + 表结构(init_schema),通过才写入 .env 并热重载;
+  失败弹「保存失败,设置未写入 .env」,原 .env 保持原样——避免保存不可达的
+  DSN 后下次启动 bootstrap 直接挂掉
+
+### 🧪 Testing
+- 新增 2 个用例:reconfigure 存储失败时旧库保持可用、init_schema 失败时
+  新建连接被清理(不泄漏)
+
 ## [1.0.11] - 2026-08-13
 
 ### ✨ Added

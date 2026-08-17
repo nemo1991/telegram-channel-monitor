@@ -423,7 +423,13 @@ class SettingsPage(QWidget):
             QMessageBox.critical(self, "写入失败", str(exc))
 
     def _on_apply(self) -> None:
-        """写 .env + 热重载 AppService。"""
+        """保存并应用:后端校验通过后才写 .env + 热重载。
+
+        2026-08-13 交互要求:存储 / 对象存储配置发生变更时,先验证新配置
+        (`reconfigure` 内部先建新库 → connect → init_schema,失败上抛),
+        全部就绪才落盘 .env 并切换;否则提示用户、.env 保持原样 — 避免
+        保存了不可达的 DSN,下次启动 bootstrap 直接挂掉。
+        """
         try:
             e = self._collect()
         except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
@@ -434,20 +440,33 @@ class SettingsPage(QWidget):
         if errs:
             QMessageBox.warning(self, "校验失败", "\n".join(errs))
             return
-        try:
-            new_settings = e.to_settings()
-            update_env_with_settings(self._env_path, new_settings)
-        except OSError as exc:
-            QMessageBox.critical(self, ".env 写入失败", str(exc))
-            return
+        new_settings = e.to_settings()
 
-        # 热重载
+        async def _validate_and_apply() -> None:
+            # reconfigure:存储/对象存储变更时先建新库验证,失败上抛(不落盘)
+            await self._app.reconfigure(new_settings)
+            # 后端就绪后才写 .env(重启 bootstrap 用的就是这份配置)
+            update_env_with_settings(self._env_path, new_settings)
+
+        def _applied(_result: object) -> None:
+            QMessageBox.information(self, "已应用", "设置已保存并热重载")
+
+        def _apply_failed(exc: BaseException) -> None:
+            if isinstance(exc, OSError):
+                QMessageBox.critical(self, ".env 写入失败", str(exc))
+                return
+            QMessageBox.critical(
+                self, "保存失败",
+                f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
+                "请检查数据库 / 对象存储配置与对应服务是否可达后重试。",
+            )
+
         run_coro(
-            self._loop, self._app.reconfigure(new_settings),
-            on_success=lambda _r: log.info("settings applied + hot-reloaded"),
+            self._loop, _validate_and_apply(),
+            on_success=_applied,
+            on_error=_apply_failed,
             error_label="reconfigure",
         )
-        QMessageBox.information(self, "已应用", "设置已保存并热重载")
 
     def _on_test_proxy(self) -> None:
         """测试 SOCKS5 代理的 TCP 可达性。"""
