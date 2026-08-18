@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.22] - 2026-08-18
+
+### 🐛 Fixed
+- **配置保存全链路校验对象存储,坏配置不再静默通过**:此前「保存并应用」只在
+  对象存储字段本身变化时才重建校验,坏配置一旦躺在 `.env`(典型:MinIO 端点
+  填成 console 端口 9001),之后保存任何设置(仅改凭据/代理)都会跳过校验、
+  静默落盘,直到写 media 才报 `S3 API Requests must be made to API port`。
+  现在 `reconfigure` 对对象存储改为**无条件**真实 connect 校验,失败上抛、
+  设置不提交
+- **「仅保存到 .env」也做后端校验**:新增 `AppService.validate_backends()`,
+  保存前对 storage(connect + init_schema)与 objectstore(connect)做真实连通
+  性检查,失败放弃写 .env 并弹「后端配置未通过校验」;校验期间禁用保存按钮,
+  防重复提交。校验用临时连接,成功/失败即关闭,不影响运行中的 store
+- **启动时对象存储不可用在状态栏醒目提示**:bootstrap connect 失败时状态栏
+  常驻红字「⚠ 对象存储不可用」并附原因与去设置页提示;热重载成功后自动消除
+
 ## [1.0.21] - 2026-08-18
 
 ### 🐛 Fixed
