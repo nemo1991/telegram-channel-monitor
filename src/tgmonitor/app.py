@@ -94,11 +94,23 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
 
     t = time.monotonic()
     objects = build_object_store(settings)
-    await objects.connect()
-    log.info(
-        "[bootstrap] objectstore.connect() took %.2fs backend=%s",
-        time.monotonic() - t, settings.objectstore_backend.value,
-    )
+    try:
+        await objects.connect()
+    except Exception as e:  # noqa: BLE001
+        # v1.0.21:对象存储不可用(端点错/凭据错/桶无权限)不阻止应用启动 —
+        # 媒体落盘是可降级能力,失败在保存设置时已严格校验;启动这里只降级
+        # 记日志,下载任务会标 download_error,用户可感知。
+        log.error(
+            "[bootstrap] objectstore.connect() failed, 媒体下载将失败: %s "
+            "(backend=%s bucket=%s endpoint=%s)",
+            e, settings.objectstore_backend.value,
+            settings.objectstore_bucket, settings.objectstore_endpoint,
+        )
+    else:
+        log.info(
+            "[bootstrap] objectstore.connect() took %.2fs backend=%s",
+            time.monotonic() - t, settings.objectstore_backend.value,
+        )
 
     t = time.monotonic()
     # 凭据未配置时,factory 返回占位 client(UnconfiguredTelegramClient)→ UI

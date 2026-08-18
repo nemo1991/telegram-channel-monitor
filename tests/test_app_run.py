@@ -268,3 +268,31 @@ def test_log_level_env(monkeypatch) -> None:
     assert _log_level() == logging.INFO
     monkeypatch.delenv("TG_LOG_LEVEL")
     assert _log_level() == logging.INFO
+
+
+async def test_bootstrap_continues_when_objectstore_connect_fails(
+    monkeypatch, settings, bus, client, storage,
+) -> None:
+    """v1.0.21 回归:对象存储 connect 失败(如 S3 HeadBucket 400)不阻止启动。
+
+    用户报的 `Client Error 400 when calling the HeadBucket` 是 v1.0.20 引入:
+    为满足"保存设置时校验对象存储配置"把 connect() 改成真实校验,但启动
+    bootstrap 也调它 → S3 配置有问题的用户直接启动失败弹窗。现在启动降级为
+    log.error + 继续;保存设置时的严格校验保留在 app_service 的 reconfigure。
+    """
+    class _BrokenStore:
+        async def connect(self) -> None:
+            raise ConnectionError("HeadBucket 400")
+
+    monkeypatch.setattr(app_module, "Settings", lambda: settings)
+    monkeypatch.setattr(app_module, "build_storage", lambda s: storage)
+    monkeypatch.setattr(app_module, "build_object_store", lambda s: _BrokenStore())
+    monkeypatch.setattr(
+        app_module, "build_telegram_client",
+        lambda s, use_fake=False, event_bus=None: client,
+    )
+
+    app_svc, monitor, settings_out = await app_module._bootstrap()
+    assert app_svc is not None
+    assert monitor is not None
+    assert settings_out is settings

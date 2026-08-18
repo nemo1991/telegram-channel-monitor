@@ -332,6 +332,17 @@ async def test_s3_delete(monkeypatch):
     assert ("delete_object", {"Bucket": "test-bucket", "Key": "media/a.jpg"}) in client.calls
 
 
+async def test_s3_put_without_connect_raises_runtime_error():
+    """v1.0.21:connect() 未成功时操作必须抛清晰 RuntimeError,不是 assert。
+
+    启动降级后 S3 配置有问题的用户也能进应用,此时任何 put 都走这里 —
+    assert 会把裸断言堆给用户,显式 RuntimeError 能给出可操作提示。
+    """
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    with pytest.raises(RuntimeError, match="未连接"):
+        await store.put("media/a.jpg", b"data")
+
+
 # ---- connect 权限校验(local / folder)----
 
 

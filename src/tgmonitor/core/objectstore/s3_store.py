@@ -94,7 +94,12 @@ class S3ObjectStore(ObjectStore):
         直接 yield context 对象会导致所有 `put_object` / `head_bucket` 等
         调用报 `'ClientCreatorContext' object has no attribute ...`。
         """
-        assert self._session is not None, "call connect() first"
+        if self._session is None:
+            # v1.0.21:启动降级后 connect() 未成功时也会走到这里 — 用清晰的
+            # RuntimeError 替代 assert(用户看到的是可操作提示,不是断言)。
+            raise RuntimeError(
+                "对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存"
+            )
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint,
