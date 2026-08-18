@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.21] - 2026-08-18
+
+### 🐛 Fixed
+- **启动时对象存储不可用不再阻止应用启动**:v1.0.20 把 S3 `connect()` 改成
+  真实 head_bucket 校验后,启动 bootstrap 也走该校验,S3 配置有问题的用户
+  直接启动失败弹窗(`Client Error 400 when calling the HeadBucket`)。现在
+  启动降级为 log.error + 继续,媒体下载失败会标 download_error;保存设置时
+  的严格校验保留(失败不落盘、旧 store 保持可用)
+- **S3 未连接时操作抛清晰错误**:`connect()` 未成功时 `put` 等操作改抛显式
+  `RuntimeError`(提示检查对象存储设置后重新保存),替代裸 assert
+
 ## [1.0.20] - 2026-08-18
 
 ### 🐛 Fixed
