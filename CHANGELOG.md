@@ -5,6 +5,28 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.23] - 2026-08-18
+
+### 🐛 Fixed
+- **代理 / 会话目录变更不再是「假成功」**:`diff_settings` 此前只比对凭据 /
+  storage / objects 三组字段,`proxy` / `session_dir` 单独变更时
+  `diff.changed=False` → `reconfigure` 直接 return,运行时完全不生效,UI
+  却弹「设置已保存并热重载」。现在新增 `client_changed`(proxy / session_dir),
+  变更会提交设置并弹「代理或会话目录已变更,请重启应用生效」提示
+  (TDLibClient 在启动时创建,运行时不重建)
+- **热重载切存储后端后 monitor 同步生效(不再需要重启)**:此前 reconfigure
+  只换 `AppService` 自己的引用,`MonitorService` / `MediaDownloader` /
+  `ChannelSyncService` 仍持旧 storage,切换 PG 后实时 / 补拉消息继续写旧库。
+  现在新增 `MonitorService.update_backends()`,热重载把新 storage / objects /
+  settings 同步给 monitor(含重建下载器 + 从新 storage 重载订阅白名单)
+- **设置页下拉框禁用滚轮切换选中项**:设置页在 QScrollArea 内,滚动页面时滚轮
+  悬停在下拉框上会无意识地切换「数据库后端 / 对象存储后端」等配置,保存后静默
+  覆盖 `.env`(实测 PG 配置被滚成 JSONL)。`_NoWheelComboBox` 重写 `wheelEvent`
+  忽略滚轮,改为显式点开下拉选择
+
+### 🧹 Chore
+- `reconfigure` 后重建 `AuthService`(此前持旧 settings 引用,凭据预检用旧值)
+
 ## [1.0.22] - 2026-08-18
 
 ### 🐛 Fixed

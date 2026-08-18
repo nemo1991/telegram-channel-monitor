@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import InMemoryRepository
+from tests.conftest import InMemoryRepository, make_message
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.events import EventBus, SettingsChanged
+from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.storage.jsonl_store import JsonlFileStore
@@ -346,3 +347,138 @@ async def test_validate_backends_failure_raises_keeps_runtime(
     assert app.storage is storage
     assert app.objects is objects
     assert app.settings is s1
+
+
+async def test_reconfigure_syncs_backends_to_monitor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """热重载切 storage 后 monitor / downloader / channel_sync 都指向新后端。
+
+    回归 2026-08-18:reconfigure 只换 AppService 自己的引用,monitor /
+    MediaDownloader / channel_sync 仍持旧 storage → 实时 / 补拉消息继续写
+    旧库,用户看到"切 PG 没生效,重启才生效"。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    client = FakeTelegramClient()
+    monitor = MonitorService(
+        bus, client, storage, objects, s1,
+        downloader=MediaDownloader(client, storage, objects),
+    )
+    app = AppService(bus, client, storage, objects, s1, monitor=monitor)
+
+    # 新 storage 预置订阅频道 100 — 模拟切到的 PG 里已有的订阅真理
+    s2 = _settings(tmp_path, db_root=tmp_path / "m2")
+    s2.ensure_dirs()
+    new_storage = InMemoryRepository()
+    await new_storage.connect()
+    await new_storage.set_channel_subscribed(100, True)
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_storage",
+        lambda settings: new_storage,
+    )
+
+    await app.reconfigure(s2)
+
+    # 所有持引用者都切到新后端
+    assert app.storage is new_storage
+    assert monitor.storage is new_storage
+    assert monitor.objects is app.objects
+    assert monitor.downloader is not None
+    assert monitor.downloader.storage is new_storage
+    assert monitor.downloader.objects is app.objects
+    assert monitor.downloader.max_bytes == s2.media_max_bytes
+    # 白名单从新 storage 重载(订阅真理随存储切换)
+    assert monitor.subscribed_ids == frozenset({100})
+    # channel_sync 也换新 storage
+    assert app.channel_sync.storage is new_storage
+
+    # 行为验证:monitor._handle 落库进新 storage,旧库不落
+    msg = make_message(channel_id=100, msg_id=1, text="after-reload")
+    await monitor._handle(msg)
+    assert await new_storage.get_message(100, 1) is not None
+    assert await storage.get_message(100, 1) is None
+
+
+async def test_reconfigure_objects_only_syncs_monitor(tmp_path: Path):
+    """仅对象存储变化时,monitor.objects 也切到新 store、storage 保持原对象。
+
+    无条件 _rebuild_objects 后 app.objects 是全新实例,monitor 若仍持旧引用
+    会写进已关闭的 store(媒体下载失败且无从察觉)。
+    """
+    s1 = _settings(tmp_path, objectstore_backend=ObjectStoreBackend.LOCAL)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = InMemoryRepository()
+    objects = LocalObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    client = FakeTelegramClient()
+    monitor = MonitorService(bus, client, storage, objects, s1)
+    app = AppService(bus, client, storage, objects, s1, monitor=monitor)
+
+    s2 = _settings(tmp_path, objectstore_backend=ObjectStoreBackend.FOLDER)
+    s2.ensure_dirs()
+    old_objects = app.objects
+    await app.reconfigure(s2)
+
+    assert app.objects is not old_objects
+    assert isinstance(app.objects, FolderObjectStore)
+    assert monitor.objects is app.objects
+    assert monitor.storage is storage  # storage 未变,引用保持
+
+
+async def test_reconfigure_proxy_change_publishes_needs_restart(tmp_path: Path):
+    """proxy 单独变更:settings 提交 + SettingsChanged.needs_restart=True。
+
+    回归 2026-08-18:旧 diff 不含 proxy / session_dir,纯代理变更 diff.changed
+    =False → reconfigure 直接 return,settings 不提交,UI 却弹「已保存并热重载」
+    (假成功)。现在应提交并标记需重启生效。
+    """
+    s1 = _settings(tmp_path, proxy=None)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    s2 = _settings(tmp_path, proxy="socks5://127.0.0.1:1080")
+    s2.ensure_dirs()
+    seen: list[SettingsChanged] = []
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+
+    await app.reconfigure(s2)
+
+    assert app.settings is s2
+    assert seen and seen[0].needs_restart is True
+    assert seen[0].needs_relogin is False
+    assert seen[0].what == "client"
+
+
+async def test_reconfigure_session_dir_change_publishes_needs_restart(tmp_path: Path):
+    """session_dir 单独变更:同样标记 needs_restart(不重建 client)。"""
+    s1 = _settings(tmp_path, session_dir=tmp_path / "s1")
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    s2 = _settings(tmp_path, session_dir=tmp_path / "s2")
+    s2.ensure_dirs()
+    seen: list[SettingsChanged] = []
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+
+    await app.reconfigure(s2)
+
+    assert app.settings is s2
+    assert seen and seen[0].needs_restart is True
+    assert seen[0].needs_relogin is False

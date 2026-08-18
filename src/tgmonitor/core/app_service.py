@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.auth_service import AuthService
 from tgmonitor.core.config import Settings
@@ -45,6 +45,9 @@ from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
 
+if TYPE_CHECKING:
+    from tgmonitor.core.monitor.service import MonitorService
+
 log = logging.getLogger(__name__)
 
 
@@ -58,17 +61,23 @@ class AppService:
         storage: StorageRepository,
         objects: ObjectStore,
         settings: Settings,
+        monitor: MonitorService | None = None,
     ) -> None:
         """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。
 
         AuthService 在此构造(2026-08-03 微切抽出),持同样的 `bus + client +
         settings` — 不需要 storage / objects。
+
+        `monitor` 由组合根(app.py)注入(2026-08-18 修热重载):reconfigure
+        要把新 storage/objects/settings 同步给 monitor,否则热重载切 PG 后
+        monitor 仍写旧库,重启才生效。
         """
         self.bus = bus
         self.client = client
         self.storage = storage
         self.objects = objects
         self.settings = settings
+        self.monitor = monitor
         # 内部状态
         self._update_streams: list[UpdateStream] = []
         self._running = False
@@ -262,14 +271,20 @@ class AppService:
     async def reconfigure(self, new_settings: Settings) -> None:
         """用新 settings 重建 storage / objects(不重建 TelegramClient)。
 
-        Telegram 凭据(api_id/api_hash/phone)若变化,needs_relogin=True(UI 引导登出登入)。
+        Telegram 凭据(api_id/api_hash/phone)若变化,needs_relogin=True(UI 引导登出登入);
+        proxy / session_dir 若变化,needs_restart=True(TdlibClient 构造参数,运行时
+        不重建,UI 提示需重启生效 — 2026-08-18,此前纯代理/会话目录变更 diff 判
+        无变化直接 return,UI 却弹「已保存并热重载」,属假成功)。
 
-        流程(2026-08-03 微切):
-          1. `diff_settings` 算 needs_relogin / storage_changed / objects_changed
+        流程(2026-08-03 微切,2026-08-18 加后端同步 + needs_restart):
+          1. `diff_settings` 算 needs_relogin / storage_changed / objects_changed /
+             client_changed
           2. 无变化 → return
           3. storage 优先(在 hot path)→ `_rebuild_storage`
           4. objects → `_rebuild_objects`(2026-08-18 起**无条件**跑 — 见下)
-          5. publish `SettingsChanged` + 提交新 settings
+          5. 把新 storage/objects/settings 同步给 monitor(含重建下载器 +
+             重载白名单)、重建 channel_sync — 否则热重载切 PG 不生效
+          6. publish `SettingsChanged` + 提交新 settings
 
         `_rebuild_objects` 无条件执行的背景:之前只在 `objects_changed` 时重建
         校验,若坏的对象存储配置已躺在 .env、本轮保存恰好没改对象存储字段,
@@ -289,12 +304,26 @@ class AppService:
         # 无条件校验对象存储(配置即使没变也真实 connect 校验)
         await self._rebuild_objects(new_settings)
 
-        # 4) 提交新 settings + 事件
+        # 5) 把新后端同步给所有持引用者 —— reconfigure 只换 AppService 自己
+        # 的引用时,monitor / MediaDownloader 仍持旧 storage,实时 / 补拉消息
+        # 继续写旧库,用户看到"切 PG 没生效,重启才生效"(2026-08-18 修)。
+        if self.monitor is not None:
+            await self.monitor.update_backends(
+                self.storage, self.objects, new_settings,
+            )
+        from tgmonitor.core.channel_sync import ChannelSyncService
+        self.channel_sync = ChannelSyncService(self.bus, self.client, self.storage)
+
+        # 6) 提交新 settings + 事件
         self.settings = new_settings
+        # AuthService 持旧 settings 引用的话,_check_credentials 预检用旧凭据
+        # (2026-08-18:reconfigure 后重建,消除引用不一致)
+        self.auth = AuthService(self.bus, self.client, new_settings)
         await self.bus.publish(SettingsChanged(
             what=_what_label(diff),
             new_settings=new_settings,
             needs_relogin=diff.needs_relogin,
+            needs_restart=diff.client_changed,  # proxy / session_dir 变更需重启生效
         ))
 
     async def _rebuild_storage(self, new_settings: Settings) -> None:
@@ -400,8 +429,9 @@ class AppService:
 def _what_label(diff: SettingsDiff) -> str:
     """`SettingsChanged.what` 字段标签(给 UI 分类显示)。
 
-    优先级:storage+objectstore > storage > objectstore > credentials
-    (credentials 单独成立时是纯凭据变化,storage/objects 都没碰)。
+    优先级:storage+objectstore > storage > objectstore > client > credentials
+    (client 单独成立时是纯 proxy / session_dir 变化,storage/objects 都没碰;
+    credentials 单独成立时是纯凭据变化)。
     """
     if diff.storage_changed and diff.objects_changed:
         return "storage+objectstore"
@@ -409,5 +439,7 @@ def _what_label(diff: SettingsDiff) -> str:
         return "storage"
     if diff.objects_changed:
         return "objectstore"
+    if diff.client_changed:
+        return "client"
     return "credentials"
 

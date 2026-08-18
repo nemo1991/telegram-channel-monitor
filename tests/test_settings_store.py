@@ -173,3 +173,22 @@ def test_diff_settings_objectstore_change():
     assert d.objects_changed is True
     assert d.storage_changed is False
 
+
+def test_diff_settings_proxy_change_needs_restart():
+    old = _settings(proxy=None)
+    new = _settings(proxy="socks5://127.0.0.1:1080")
+    d = diff_settings(old, new)
+    assert d.client_changed is True
+    assert d.storage_changed is False
+    assert d.objects_changed is False
+    assert d.needs_relogin is False
+    assert d.changed is True
+
+
+def test_diff_settings_session_dir_change_needs_restart():
+    old = _settings(session_dir=Path("/tmp/s1"))
+    new = _settings(session_dir=Path("/tmp/s2"))
+    d = diff_settings(old, new)
+    assert d.client_changed is True
+    assert d.changed is True
+

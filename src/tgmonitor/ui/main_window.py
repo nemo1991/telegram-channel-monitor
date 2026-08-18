@@ -532,7 +532,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"⚠ {msg}", 5000)
 
     def _on_settings_changed(
-        self, what: str, needs_relogin: bool, backend_label: str,
+        self, what: str, needs_relogin: bool, needs_restart: bool, backend_label: str,
     ) -> None:
         # v1.0.22:热重载成功即代表对象存储本轮已通过无条件 connect 校验,
         # 启动时挂上的红字警告可移除
@@ -547,6 +547,15 @@ class MainWindow(QMainWindow):
                 self,
                 "凭据已变更",
                 "Telegram 凭据已变更。\n请重新登录以继续监听。",
+            )
+        elif needs_restart:
+            # v1.0.23:proxy / session_dir 是 TdlibClient 构造参数,运行时
+            # 不重建 client,变更已写入 .env 但需重启应用才生效
+            QMessageBox.information(
+                self,
+                "需重启生效",
+                "代理或会话目录已变更并保存。\n"
+                "TDLib 客户端在启动时创建,请重启应用使其生效。",
             )
 
     # ======================== 同步请求 ========================

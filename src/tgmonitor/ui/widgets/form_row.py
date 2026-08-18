@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -35,6 +36,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class _NoWheelComboBox(QComboBox):
+    """禁用滚轮切换选中项的下拉框(见 `combo_field` 注释)。"""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 — Qt 命名
+        # 忽略滚轮:让事件冒泡给外层滚动区(QScrollArea 正常滚动页面),
+        # 不改变当前选中项。PySide6 6.11 未暴露 QComboBox::setWheelEventsEnabled,
+        # 用重写 wheelEvent 达到同等效果。
+        event.ignore()
 
 
 def text_field(
@@ -76,7 +87,10 @@ def combo_field(
         combo_field(form, "后端:", DBBackend)        # 枚举
         combo_field(form, "性别:", [("m", "男"), ("f", "女")])  # 对
     """
-    cmb = QComboBox()
+    cmb = _NoWheelComboBox()
+    # 禁用滚轮切换选中项:设置页在 QScrollArea 里,滚轮经过下拉框会无意识地
+    # 改掉「数据库后端 / 对象存储后端」等配置,保存后静默覆盖 .env(2026-08-18
+    # 实测:PG 配置被滚成 JSONL)。用户想改后端应显式点开下拉选择。
     for opt in options:
         if isinstance(opt, tuple):
             data, display_text = opt

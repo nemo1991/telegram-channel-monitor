@@ -283,15 +283,25 @@ class SettingsDiff:
       needs_relogin: api_id / api_hash / phone 之一变化(Telegram 凭据)
       storage_changed: db_backend / db_dsn / db_root 之一变化
       objects_changed: objectstore_* 字段之一变化
+      client_changed: proxy / session_dir 之一变化(TdlibClient 构造参数,运行时
+        不重建 client,需重启生效 — 2026-08-18 新增,此前纯代理/会话目录变更
+        diff.changed=False,reconfigure 直接 return,UI 却弹「已保存并热重载」,
+        属假成功)
     """
     needs_relogin: bool
     storage_changed: bool
     objects_changed: bool
+    client_changed: bool
 
     @property
     def changed(self) -> bool:
         """任一字段变化即 True — `reconfigure` 据此 short-circuit。"""
-        return self.needs_relogin or self.storage_changed or self.objects_changed
+        return (
+            self.needs_relogin
+            or self.storage_changed
+            or self.objects_changed
+            or self.client_changed
+        )
 
 
 def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
@@ -319,8 +329,13 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
         or old.objectstore_secret_key != new.objectstore_secret_key
         or old.objectstore_region != new.objectstore_region
     )
+    client_changed = (
+        old.proxy != new.proxy
+        or old.session_dir != new.session_dir
+    )
     return SettingsDiff(
         needs_relogin=needs_relogin,
         storage_changed=storage_changed,
         objects_changed=objects_changed,
+        client_changed=client_changed,
     )

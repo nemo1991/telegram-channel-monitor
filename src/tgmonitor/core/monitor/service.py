@@ -98,6 +98,37 @@ class MonitorService:
         """从白名单摘掉一个频道(退订;不存在 idempotent 不抛)。"""
         self._whitelist.discard(channel_id)
 
+    async def update_backends(
+        self,
+        storage: StorageRepository,
+        objects: ObjectStore,
+        settings: Settings,
+    ) -> None:
+        """热重载后把新 storage/objects/settings 同步给 monitor 及其下载器。
+
+        由 `AppService.reconfigure` 调用(2026-08-18 修):之前 reconfigure
+        只换 AppService 自己的引用,monitor / MediaDownloader 仍持旧
+        storage —— 热重载切 PG 后实时 / 补拉消息仍写旧库,重启才生效。
+        这里同步替换引用 + 重建 MediaDownloader(新 storage/objects/
+        max_bytes)+ 从新 storage 重载白名单(订阅真理随存储切换)。
+        """
+        self.storage = storage
+        self.objects = objects
+        self.settings = settings
+        if self.downloader is not None:
+            self.downloader = MediaDownloader(
+                self.client, storage, objects,
+                max_bytes=settings.media_max_bytes,
+            )
+        # 订阅真理随存储切换:白名单从新 storage 重载;失败只降级记日志,
+        # 不阻断 reconfigure 的其余提交(保留原白名单,下一次订阅/退订事件会修正)。
+        try:
+            subscribed = await storage.list_subscribed_channels()
+        except Exception:  # noqa: BLE001
+            log.exception("update_backends: 从新 storage 重载白名单失败,保持原白名单")
+            return
+        self.set_whitelist(c.id for c in subscribed)
+
     @property
     def subscribed_ids(self) -> frozenset[int]:
         """订阅频道 id 的快照集合 — UI 只读访问用。

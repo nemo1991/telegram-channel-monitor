@@ -8,7 +8,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import ExportFormat, ExportRequest
-from tgmonitor.ui.widgets.form_row import path_field
+from tgmonitor.ui.widgets.form_row import combo_field, path_field
 
 _FORMAT_EXT = {
     ExportFormat.JSON: ".json",
@@ -76,11 +75,8 @@ class ExportDialog(QDialog):
         rl.addWidget(self.in_to)
         form.addRow("时间范围:", row)
 
-        # 格式
-        self.cmb_fmt = QComboBox()
-        for f in ExportFormat:
-            self.cmb_fmt.addItem(f.value, f)
-        form.addRow("格式:", self.cmb_fmt)
+        # 格式(combo_field 禁用滚轮切换 — 防滚动误改导出格式)
+        self.cmb_fmt = combo_field(form, "格式:", ExportFormat)
 
         # 选项
         self.chk_thumbs = QCheckBox("HTML 导出时内嵌缩略图")

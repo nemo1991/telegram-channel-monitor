@@ -113,6 +113,32 @@ def test_combo_field_adds_row(form: QFormLayout) -> None:
     assert form.rowCount() == 1
 
 
+def test_combo_field_disables_wheel_selection(form: QFormLayout) -> None:
+    """滚轮经过下拉框不得改选中项(2026-08-18 修复)。
+
+    设置页在 QScrollArea 里,滚动页面时滚轮悬停在下拉框上会无意识地切换
+    「数据库后端 / 对象存储后端」,保存后静默覆盖 .env(实测 PG 被滚成
+    JSONL)。`_NoWheelComboBox` 重写 wheelEvent 忽略滚轮,选中项保持。
+    """
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    cmb = combo_field(form, "Backend:", _Color)
+    cmb.setCurrentIndex(1)
+    assert cmb.currentData() == _Color.BLUE
+    # 模拟滚轮向下滚一格(angleDelta.y=120):默认 QComboBox 会切到下一项,
+    # 我们的实现忽略该事件,选中项必须保持。
+    ev = QWheelEvent(
+        QPointF(0, 0), QPointF(0, 0),
+        QPoint(0, 0), QPoint(0, 120),
+        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+    cmb.wheelEvent(ev)
+    assert cmb.currentData() == _Color.BLUE
+    assert cmb.currentIndex() == 1
+
+
 # ---- spin_field ----
 
 def test_spin_field_basic(form: QFormLayout) -> None:

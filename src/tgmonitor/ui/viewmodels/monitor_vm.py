@@ -57,7 +57,7 @@ class MonitorViewModel(QObject):
     channels_changed = Signal()
     export_done = Signal(object, object)   # (result_dict | None, error | None)
     error = Signal(str)
-    settings_changed = Signal(str, bool, str)  # (what, needs_relogin, backend_label)
+    settings_changed = Signal(str, bool, bool, str)  # (what, needs_relogin, needs_restart, backend_label)
     # 全量同步进度(sync dialog 订阅)
     sync_progress = Signal(object)         # ChannelSyncProgress
     sync_done = Signal(object)             # ChannelSyncDone(带 result)
@@ -150,7 +150,7 @@ class MonitorViewModel(QObject):
         backend_label = (
             f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
         )
-        self.settings_changed.emit(e.what, e.needs_relogin, backend_label)
+        self.settings_changed.emit(e.what, e.needs_relogin, e.needs_restart, backend_label)
 
     async def _on_sync_progress(self, e: Event) -> None:
         if not isinstance(e, ChannelSyncProgress):

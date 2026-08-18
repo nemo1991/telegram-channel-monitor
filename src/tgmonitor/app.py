@@ -136,7 +136,7 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None
             max_bytes=settings.media_max_bytes,
         ),
     )
-    app = AppService(bus, client, storage, objects, settings)
+    app = AppService(bus, client, storage, objects, settings, monitor=monitor)
     log.info(
         "[bootstrap] full bootstrap done in %.2fs",
         time.monotonic() - t0,
