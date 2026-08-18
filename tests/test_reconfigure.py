@@ -244,3 +244,105 @@ async def test_reconfigure_objectstore_failure_keeps_old_objects(
     assert seen == []
     # 新建未就绪的 objectstore 被关闭,不留泄漏
     assert _BrokenObjects.closed is True
+
+
+async def test_reconfigure_validates_objects_even_when_objects_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """2026-08-18:任何设置变化都无条件重建校验对象存储(即使配置没变)。
+
+    回归:坏对象存储配置已躺在 .env 时,若本轮保存恰好只改了别的字段(如
+    手机号 / 代理),旧逻辑 `if diff.objects_changed` 跳过校验 → 静默通过,
+    直到写 media 才报 `S3 API Requests must be made to API port`。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    class _Broken:
+        closed = False
+
+        async def connect(self) -> None:
+            raise ConnectionError("connect failed: S3 端点不可达")
+
+        async def close(self) -> None:
+            type(self).closed = True
+
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_object_store",
+        lambda settings: _Broken(),
+    )
+    s2 = _settings(tmp_path, api_id=2)  # 仅凭据变化,对象存储字段未变
+    s2.ensure_dirs()
+
+    with pytest.raises(ConnectionError):
+        await app.reconfigure(s2)
+
+    # 即使 objects_changed=False 也真的重连校验了,失败时旧 store 保持、不提交
+    assert _Broken.closed is True
+    assert app.objects is objects
+    assert app.settings is s1
+
+
+async def test_validate_backends_ok_does_not_swap_runtime(tmp_path: Path):
+    """validate_backends:校验通过时 self.storage / self.objects 原样不动。"""
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    s2 = _settings(tmp_path, db_root=tmp_path / "m2", objectstore_root=tmp_path / "o2")
+    s2.ensure_dirs()
+    await app.validate_backends(s2)
+
+    # 运行时不切换(仅保存到 .env 的语义)
+    assert app.storage is storage
+    assert app.objects is objects
+    assert app.settings is s1
+
+
+async def test_validate_backends_failure_raises_keeps_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """validate_backends:后端连不上时上抛、运行时不动、新建连接被清理。"""
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    class _BrokenStorage:
+        closed = False
+
+        async def connect(self) -> None:
+            raise ConnectionError("connect failed: PG 不可达")
+
+        async def close(self) -> None:
+            type(self).closed = True
+
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_storage",
+        lambda settings: _BrokenStorage(),
+    )
+    s2 = _settings(tmp_path, db_backend=DBBackend.POSTGRES, db_dsn="postgresql://x")
+    s2.ensure_dirs()
+
+    with pytest.raises(ConnectionError):
+        await app.validate_backends(s2)
+
+    assert _BrokenStorage.closed is True  # 校验失败新建连接被关闭
+    assert app.storage is storage
+    assert app.objects is objects
+    assert app.settings is s1

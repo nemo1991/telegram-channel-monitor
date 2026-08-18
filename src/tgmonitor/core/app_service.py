@@ -268,8 +268,15 @@ class AppService:
           1. `diff_settings` 算 needs_relogin / storage_changed / objects_changed
           2. 无变化 → return
           3. storage 优先(在 hot path)→ `_rebuild_storage`
-          4. objects → `_rebuild_objects`
+          4. objects → `_rebuild_objects`(2026-08-18 起**无条件**跑 — 见下)
           5. publish `SettingsChanged` + 提交新 settings
+
+        `_rebuild_objects` 无条件执行的背景:之前只在 `objects_changed` 时重建
+        校验,若坏的对象存储配置已躺在 .env、本轮保存恰好没改对象存储字段,
+        diff 判 objects 未变 → 跳过校验 → 静默通过,直到写 media 才报
+        `S3 API Requests must be made to API port`。现在只要有任何设置变化
+        (含纯凭据 / 纯代理变化),都真实 connect 校验一次对象存储,失败上抛、
+        settings 不提交。
         """
         diff = diff_settings(self.settings, new_settings)
         if not diff.changed:
@@ -279,8 +286,8 @@ class AppService:
 
         if diff.storage_changed:
             await self._rebuild_storage(new_settings)
-        if diff.objects_changed:
-            await self._rebuild_objects(new_settings)
+        # 无条件校验对象存储(配置即使没变也真实 connect 校验)
+        await self._rebuild_objects(new_settings)
 
         # 4) 提交新 settings + 事件
         self.settings = new_settings
@@ -349,6 +356,45 @@ class AppService:
         except Exception as e:  # noqa: BLE001
             log.warning("关闭旧 objectstore 失败: %s", e)
         self.objects = new_objects
+
+    async def validate_backends(self, new_settings: Settings) -> None:
+        """仅校验后端连通性,**不切换运行时** — 供「仅保存到 .env」按钮用。
+
+        storage:connect → init_schema → close;objectstore:connect → close。
+        任一失败上抛,调用方据此放弃落盘 .env;成功时 `self.storage` /
+        `self.objects` 完全不受影响。校验中新建的连接失败即关闭,不留泄漏
+        (与 `_rebuild_storage` / `_rebuild_objects` 同一套失败清理语义)。
+        """
+        new_settings.ensure_dirs()
+
+        new_storage = build_storage(new_settings)
+        try:
+            await new_storage.connect()
+            await new_storage.init_schema()
+        except BaseException:
+            try:
+                await new_storage.close()
+            except Exception:  # noqa: BLE001
+                log.exception("关闭校验用的 storage 失败")
+            raise
+        try:
+            await new_storage.close()
+        except Exception as e:  # noqa: BLE001
+            log.warning("关闭校验用的 storage 失败: %s", e)
+
+        new_objects = build_object_store(new_settings)
+        try:
+            await new_objects.connect()
+        except BaseException:
+            try:
+                await new_objects.close()
+            except Exception:  # noqa: BLE001
+                log.exception("关闭校验用的 objectstore 失败")
+            raise
+        try:
+            await new_objects.close()
+        except Exception as e:  # noqa: BLE001
+            log.warning("关闭校验用的 objectstore 失败: %s", e)
 
 
 def _what_label(diff: SettingsDiff) -> str:

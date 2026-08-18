@@ -292,7 +292,9 @@ async def test_bootstrap_continues_when_objectstore_connect_fails(
         lambda s, use_fake=False, event_bus=None: client,
     )
 
-    app_svc, monitor, settings_out = await app_module._bootstrap()
+    app_svc, monitor, settings_out, objects_error = await app_module._bootstrap()
     assert app_svc is not None
     assert monitor is not None
     assert settings_out is settings
+    # v1.0.22:connect 失败原因带回给 UI(状态栏红字提示),不再是纯 log
+    assert objects_error == "HeadBucket 400"

@@ -412,7 +412,12 @@ class SettingsPage(QWidget):
     # ------ 槽 ------
 
     def _on_save_env(self) -> None:
-        """仅写 .env,不热重载。"""
+        """仅写 .env,不热重载;写前同样做后端连通性校验。
+
+        2026-08-18 交互要求:与「保存并应用」一致,写 .env 前先建连验证
+        storage / 对象存储(失败上抛、不落盘),避免把不可达的 DSN / S3
+        端点写进 .env、下次启动 bootstrap 直接挂掉。
+        """
         try:
             e = self._collect()
         except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
@@ -423,11 +428,40 @@ class SettingsPage(QWidget):
         if errs:
             QMessageBox.warning(self, "校验失败", "\n".join(errs))
             return
-        try:
-            update_env_with_settings(self._env_path, e.to_settings())
+        new_settings = e.to_settings()
+
+        # 校验期间禁用按钮,避免重复点击叠加多个校验任务
+        self.btn_save_env.setEnabled(False)
+        self.btn_apply.setEnabled(False)
+
+        async def _validate_and_save() -> None:
+            await self._app.validate_backends(new_settings)
+            # 后端就绪后才写 .env(重启 bootstrap 用的就是这份配置)
+            update_env_with_settings(self._env_path, new_settings)
+
+        def _saved(_result: object) -> None:
+            self.btn_save_env.setEnabled(True)
+            self.btn_apply.setEnabled(True)
             QMessageBox.information(self, "已保存", f"设置已写入 {self._env_path}")
-        except OSError as exc:
-            QMessageBox.critical(self, "写入失败", str(exc))
+
+        def _save_failed(exc: BaseException) -> None:
+            self.btn_save_env.setEnabled(True)
+            self.btn_apply.setEnabled(True)
+            if isinstance(exc, OSError):
+                QMessageBox.critical(self, ".env 写入失败", str(exc))
+                return
+            QMessageBox.critical(
+                self, "保存失败",
+                f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
+                "请检查数据库 / 对象存储配置与对应服务是否可达后重试。",
+            )
+
+        run_coro(
+            self._loop, _validate_and_save(),
+            on_success=_saved,
+            on_error=_save_failed,
+            error_label="validate_backends",
+        )
 
     def _on_apply(self) -> None:
         """保存并应用:后端校验通过后才写 .env + 热重载。

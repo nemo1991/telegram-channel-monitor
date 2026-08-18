@@ -102,17 +102,24 @@ class MainWindow(QMainWindow):
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop,
         env_path: Path | None = None,
+        objects_error: str | None = None,
     ) -> None:
         """构造主窗口 + 装配子 widget + 连信号 + 触发初始刷新。
 
         `env_path` fallback 跟 `app.py` 同步:platform-native
         (`~/.local/share/tgmonitor/.env` 或 `~/Library/Application Support/tgmonitor/.env`),
         不依赖 cwd。
+
+        `objects_error` = 启动 bootstrap 时对象存储 connect 失败的原因
+        (v1.0.22 起由 app.py 传入);非空则在状态栏红字常驻提示,用户可在
+        设置页改好配置后热重载清除。
         """
         super().__init__()
         self.app = app
         self.monitor = monitor
         self.loop = loop
+        self._objects_error = objects_error
+        self._objects_warn_label: QLabel | None = None
         # v1.0.1:env_path fallback 跟 app.py 同步 — platform-native
         # (~/.local/share/tgmonitor/.env / ~/Library/Application Support/tgmonitor/.env),
         # 不依赖 cwd。
@@ -323,6 +330,17 @@ class MainWindow(QMainWindow):
         # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
         self._conn_label = QLabel("TG 未连接")
         self.status_bar.addPermanentWidget(self._conn_label)
+        # v1.0.22:启动时对象存储 connect 失败 → 状态栏红字常驻提示(不只写日志)。
+        # 用户从日志看不到问题,媒体下载又静默失败,必须让「对象存储不可用」在
+        # UI 上直接可见;设置页热重载成功(`_on_settings_changed`)后自动移除。
+        if self._objects_error:
+            self._objects_warn_label = QLabel(f"⚠ 对象存储不可用: {self._objects_error}")
+            self._objects_warn_label.setStyleSheet("color: #d03030; font-weight: 600;")
+            self._objects_warn_label.setToolTip(
+                "媒体文件将无法下载 / 保存。请到 设置 → 对象存储 检查配置"
+                "(S3/MinIO 填 API 地址,勿填控制台地址)后重新保存。"
+            )
+            self.status_bar.addPermanentWidget(self._objects_warn_label)
         self.status_bar.showMessage("就绪")
 
         root.addWidget(right, 1)
@@ -516,6 +534,12 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(
         self, what: str, needs_relogin: bool, backend_label: str,
     ) -> None:
+        # v1.0.22:热重载成功即代表对象存储本轮已通过无条件 connect 校验,
+        # 启动时挂上的红字警告可移除
+        if self._objects_warn_label is not None:
+            self.status_bar.removeWidget(self._objects_warn_label)
+            self._objects_warn_label.deleteLater()
+            self._objects_warn_label = None
         msg = f"已热重载: {what} → {backend_label}"
         self.status_bar.showMessage(msg, 5000)
         if needs_relogin:

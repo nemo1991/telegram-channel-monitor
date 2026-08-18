@@ -66,7 +66,7 @@ def _setup_file_logging(level: int) -> None:
         log.exception("failed to enable file logging")
 
 
-async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
+async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None]:
     t0 = time.monotonic()
     settings = Settings()
     # v1.0.1:Settings 的 Path defaults 已经是 platform-native 绝对路径
@@ -94,12 +94,15 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
 
     t = time.monotonic()
     objects = build_object_store(settings)
+    objects_error: str | None = None
     try:
         await objects.connect()
     except Exception as e:  # noqa: BLE001
         # v1.0.21:对象存储不可用(端点错/凭据错/桶无权限)不阻止应用启动 —
         # 媒体落盘是可降级能力,失败在保存设置时已严格校验;启动这里只降级
         # 记日志,下载任务会标 download_error,用户可感知。
+        # v1.0.22:错误信息带回给 UI,主窗口状态栏红字常驻提示(不只写日志)。
+        objects_error = str(e)
         log.error(
             "[bootstrap] objectstore.connect() failed, 媒体下载将失败: %s "
             "(backend=%s bucket=%s endpoint=%s)",
@@ -138,7 +141,7 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings]:
         "[bootstrap] full bootstrap done in %.2fs",
         time.monotonic() - t0,
     )
-    return app, monitor, settings
+    return app, monitor, settings, objects_error
 
 
 def _show_setup_failure_dialog(err: BaseException) -> None:
@@ -269,7 +272,7 @@ def run() -> None:
         """
         try:
             t_setup = time.monotonic()
-            app_svc, monitor, settings = await _bootstrap()
+            app_svc, monitor, settings, objects_error = await _bootstrap()
 
             # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
             t = time.monotonic()
@@ -294,7 +297,8 @@ def run() -> None:
 
             # UI 构造 — 现在 services 都 ready,事件总线已就位
             from tgmonitor.ui.main_window import MainWindow
-            win = MainWindow(app_svc, monitor, loop, env_path=env_path)
+            win = MainWindow(app_svc, monitor, loop, env_path=env_path,
+                             objects_error=objects_error)
             # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
             # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
             # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
