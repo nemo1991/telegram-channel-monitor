@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 
 import aioboto3
 import pytest
@@ -345,7 +346,17 @@ async def test_s3_put_without_connect_raises_runtime_error():
 
 # ---- connect 权限校验(local / folder)----
 
+# Windows 无 POSIX 权限位,os.chmod(0o555) 只影响只读属性、目录仍可写,
+# 无法用 chmod 模拟"不可写目录"(真实场景走 ACL)。probe_writable 逻辑
+# 本身跨平台正确,这里只跳过测试用例(2026-08-18 Windows CI 实测:
+# chmod 后 probe 仍成功,DID NOT RAISE PermissionError)。
+_windows_skip = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows 无 POSIX chmod 权限位,无法模拟只读目录(需 ACL)",
+)
 
+
+@_windows_skip
 async def test_local_connect_readonly_root_raises(tmp_path):
     """目录存在但不可写:connect 抛 PermissionError(保存设置时提前暴露)。"""
     root = tmp_path / "ro"
@@ -359,6 +370,7 @@ async def test_local_connect_readonly_root_raises(tmp_path):
         os.chmod(root, 0o755)
 
 
+@_windows_skip
 async def test_folder_connect_readonly_root_raises(tmp_path):
     """folder 后端同样做真实写探测。"""
     root = tmp_path / "ro"
