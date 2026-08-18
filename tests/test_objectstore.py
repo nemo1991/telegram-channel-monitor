@@ -2,14 +2,27 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import aioboto3
 import pytest
+from botocore.exceptions import BotoCoreError, ClientError
 
 from tgmonitor.core.objectstore.base import ObjectMeta
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.objectstore.s3_store import S3ObjectStore
+
+
+def _client_error(status: int, code: str) -> ClientError:
+    """构造 botocore ClientError(模拟 S3 错误响应)。"""
+    return ClientError(
+        {
+            "Error": {"Code": code, "Message": "boom"},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        },
+        "HeadBucket",
+    )
 
 
 async def _wrap_to_thread(monkeypatch, calls: list[str]) -> None:
@@ -221,12 +234,12 @@ async def test_s3_put_get_roundtrip(monkeypatch):
 
 
 async def test_s3_connect_creates_bucket_when_missing(monkeypatch):
-    """head_bucket 抛异常(桶不存在)→ 走 create_bucket 分支。"""
+    """head_bucket 404(桶不存在)→ 走 create_bucket 分支。"""
 
     class _MissingBucketClient(_FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
-            raise Exception("NoSuchBucket")
+            raise _client_error(404, "NoSuchBucket")
 
     fake = _FakeSession()
     fake._fake_client = _MissingBucketClient()
@@ -239,8 +252,110 @@ async def test_s3_connect_creates_bucket_when_missing(monkeypatch):
     assert created[0][1]["CreateBucketConfiguration"]["LocationConstraint"] == "ap-east-1"
 
 
+async def test_s3_connect_forbidden_raises(monkeypatch):
+    """head_bucket 403(无权限)→ 直接上抛,不尝试建桶(配置错误不落盘)。"""
+
+    class _ForbiddenClient(_FakeS3Client):
+        async def head_bucket(self, **kw: object) -> dict:
+            self._record("head_bucket", kw)
+            raise _client_error(403, "AccessDenied")
+
+    fake = _FakeSession()
+    fake._fake_client = _ForbiddenClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    with pytest.raises(ClientError):
+        await store.connect()
+    assert [c[0] for c in fake._fake_client.calls] == ["head_bucket"]
+
+
+async def test_s3_connect_endpoint_error_raises(monkeypatch):
+    """head_bucket 网络 / 端点类错误(BotoCoreError)→ 上抛,不尝试建桶。"""
+
+    class _NetErrorClient(_FakeS3Client):
+        async def head_bucket(self, **kw: object) -> dict:
+            self._record("head_bucket", kw)
+            raise BotoCoreError()
+
+    fake = _FakeSession()
+    fake._fake_client = _NetErrorClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    with pytest.raises(BotoCoreError):
+        await store.connect()
+    assert [c[0] for c in fake._fake_client.calls] == ["head_bucket"]
+
+
+async def test_s3_connect_bucket_owned_by_you_ok(monkeypatch):
+    """head 404 → create 报 BucketAlreadyOwnedByYou(并发建桶竞争)→ 视为成功。"""
+
+    class _CreateRaceClient(_FakeS3Client):
+        async def head_bucket(self, **kw: object) -> dict:
+            self._record("head_bucket", kw)
+            raise _client_error(404, "NoSuchBucket")
+
+        async def create_bucket(self, **kw: object) -> dict:
+            self._record("create_bucket", kw)
+            raise _client_error(409, "BucketAlreadyOwnedByYou")
+
+    fake = _FakeSession()
+    fake._fake_client = _CreateRaceClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()  # 不抛
+
+
+async def test_s3_connect_create_forbidden_raises(monkeypatch):
+    """head 404 → create 报 AccessDenied(无建桶权限)→ 上抛。"""
+
+    class _CreateDeniedClient(_FakeS3Client):
+        async def head_bucket(self, **kw: object) -> dict:
+            self._record("head_bucket", kw)
+            raise _client_error(404, "NoSuchBucket")
+
+        async def create_bucket(self, **kw: object) -> dict:
+            self._record("create_bucket", kw)
+            raise _client_error(403, "AccessDenied")
+
+    fake = _FakeSession()
+    fake._fake_client = _CreateDeniedClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    with pytest.raises(ClientError):
+        await store.connect()
+
+
 async def test_s3_delete(monkeypatch):
     store, client = _make_s3_store(monkeypatch)
     await store.connect()
     await store.delete("media/a.jpg")
     assert ("delete_object", {"Bucket": "test-bucket", "Key": "media/a.jpg"}) in client.calls
+
+
+# ---- connect 权限校验(local / folder)----
+
+
+async def test_local_connect_readonly_root_raises(tmp_path):
+    """目录存在但不可写:connect 抛 PermissionError(保存设置时提前暴露)。"""
+    root = tmp_path / "ro"
+    root.mkdir()
+    os.chmod(root, 0o555)
+    try:
+        s = LocalObjectStore(root=root)
+        with pytest.raises(PermissionError):
+            await s.connect()
+    finally:
+        os.chmod(root, 0o755)
+
+
+async def test_folder_connect_readonly_root_raises(tmp_path):
+    """folder 后端同样做真实写探测。"""
+    root = tmp_path / "ro"
+    root.mkdir()
+    os.chmod(root, 0o555)
+    try:
+        s = FolderObjectStore(root=root)
+        with pytest.raises(PermissionError):
+            await s.connect()
+    finally:
+        os.chmod(root, 0o755)

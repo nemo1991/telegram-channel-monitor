@@ -130,6 +130,7 @@ module = [
     "asyncpg",                     # Postgres async driver
     "motor", "motor.*",            # Mongo async driver
     "aioboto3", "aioboto3.*",       # S3 async SDK
+    "botocore", "botocore.*",       # aioboto3 底层的 S3 协议栈(无 stub)
     "jinja2",                      # HTML export 模板
 ]
 ignore_missing_imports = true

@@ -329,9 +329,21 @@ class AppService:
             self._reconfiguring = False
 
     async def _rebuild_objects(self, new_settings: Settings) -> None:
-        """切换 objectstore:先建新、成功后关旧(与 `_rebuild_storage` 同语义)。"""
+        """切换 objectstore:先建新、成功后关旧(与 `_rebuild_storage` 同语义)。
+
+        `connect()` 失败(如 S3 端点 / 凭据 / 权限错)异常上抛,reconfigure
+        中止、settings 不提交、旧 objectstore 保持可用;新建连接被关闭不留泄漏
+        (2026-08-18,与 _rebuild_storage 对齐)。
+        """
         new_objects = build_object_store(new_settings)
-        await new_objects.connect()
+        try:
+            await new_objects.connect()
+        except BaseException:
+            try:
+                await new_objects.close()
+            except Exception:  # noqa: BLE001
+                log.exception("关闭未就绪的新 objectstore 失败")
+            raise
         try:
             await self.objects.close()
         except Exception as e:  # noqa: BLE001

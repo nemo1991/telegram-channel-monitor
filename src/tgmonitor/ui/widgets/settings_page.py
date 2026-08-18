@@ -210,11 +210,18 @@ class SettingsPage(QWidget):
         )
 
         # S3
-        self.in_os_endpoint = text_field(f, "S3 Endpoint:", "https://s3.amazonaws.com")
+        self.in_os_endpoint = text_field(f, "S3 Endpoint:", "https://s3.<region>.amazonaws.com")
         self.in_os_region = text_field(f, "Region:", "us-east-1")
         self.in_os_access_key = text_field(f, "Access Key:", "", echo_password=True)
         self.in_os_secret_key = text_field(f, "Secret Key:", "", echo_password=True)
         self.in_os_bucket = text_field(f, "Bucket:", "tgmonitor")
+        self.lbl_os_s3_hint = QLabel(
+            "提示:AWS 填 s3.<region>.amazonaws.com(留空走默认);"
+            "MinIO / 阿里 OSS 填各自 API 地址;勿填控制台 / 网页地址"
+        )
+        self.lbl_os_s3_hint.setProperty("role", "hint")
+        self.lbl_os_s3_hint.setWordWrap(True)
+        f.addRow("", self.lbl_os_s3_hint)
 
         self.cmb_os.currentIndexChanged.connect(self._on_os_backend_changed)
         self._on_os_backend_changed()
@@ -289,9 +296,9 @@ class SettingsPage(QWidget):
         if hit is not None:
             g, idx = hit
             self._set_form_row_visible(g, idx, is_local)
-        # S3 字段:S3 时显示
+        # S3 字段 + 提示:S3 时显示
         for w in (self.in_os_endpoint, self.in_os_region, self.in_os_access_key,
-                  self.in_os_secret_key, self.in_os_bucket):
+                  self.in_os_secret_key, self.in_os_bucket, self.lbl_os_s3_hint):
             hit = self._find_form_row(w)
             if hit is not None:
                 g, idx = hit

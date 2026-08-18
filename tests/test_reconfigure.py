@@ -189,3 +189,58 @@ async def test_reconfigure_storage_init_schema_failure_closes_new(
     assert _InitFailsStorage.closed is True
     assert app.storage is storage
     assert await app.storage.ping() is True
+
+
+class _BrokenObjects:
+    """connect 即失败的新 objectstore — 模拟 S3 端点 / 凭据错。"""
+
+    closed = False
+
+    async def connect(self) -> None:
+        raise ConnectionError("connect failed: S3 端点不可达")
+
+    async def close(self) -> None:
+        type(self).closed = True
+
+
+async def test_reconfigure_objectstore_failure_keeps_old_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """重建 objectstore 失败时:旧 store 不被关闭仍可用、settings 不提交、无事件。
+
+    回归 2026-08-18:旧实现 `s3_store.connect()` 吞掉全部异常,S3 端点填错 /
+    凭据错在保存设置时完全感知不到,直到写 media 才报错;且新建连接未关闭会泄漏。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service.build_object_store",
+        lambda settings: _BrokenObjects(),
+    )
+    s2 = _settings(
+        tmp_path,
+        objectstore_backend=ObjectStoreBackend.S3,
+        objectstore_endpoint="https://bad.example.com",
+        objectstore_bucket="bad-bucket",
+    )
+    s2.ensure_dirs()
+    seen: list[SettingsChanged] = []
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+
+    with pytest.raises(ConnectionError):
+        await app.reconfigure(s2)
+
+    # 旧 objectstore 未被关闭、settings 未提交、SettingsChanged 未发布
+    assert app.objects is objects
+    assert await app.objects.exists("k") is False  # 旧 store 仍可用
+    assert app.settings is s1
+    assert seen == []
+    # 新建未就绪的 objectstore 被关闭,不留泄漏
+    assert _BrokenObjects.closed is True

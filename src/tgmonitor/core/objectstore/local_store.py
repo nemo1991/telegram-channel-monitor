@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 from typing import BinaryIO
 
-from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
+from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
 
 def _safe_key(key: str) -> Path:
@@ -36,8 +36,13 @@ class LocalObjectStore(ObjectStore):
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
-        """确保 root 目录存在(幂等)。"""
+        """确保 root 目录存在且可写(配置变更保存前做真实写探测)。
+
+        mkdir(exist_ok=True) 对「目录已存在但不可写」不报错,写入时才失败;
+        加一步探针写/删,权限问题在保存设置时就暴露(2026-08-18)。
+        """
         self._root.mkdir(parents=True, exist_ok=True)
+        probe_writable(self._root)
 
     async def close(self) -> None:
         """本地 FS 无连接 — no-op。"""

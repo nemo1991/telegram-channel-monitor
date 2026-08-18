@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncIterator, BinaryIO
 
 
@@ -18,6 +19,19 @@ class ObjectMeta:
     content_type: str | None = None
     size: int | None = None
     sha256: str | None = None
+
+
+def probe_writable(root: Path) -> None:
+    """真实写探测:目录已存在但不可写时 `mkdir(exist_ok=True)` 不报错,
+    写入时才失败。connect() 在保存设置 / 启动时调它,提前暴露权限问题
+    (2026-08-18,与 S3 connect 校验对齐)。失败抛 `PermissionError`。
+    """
+    probe = root / ".tgmonitor_write_probe"
+    try:
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        raise PermissionError(f"对象存储目录不可写: {root}") from exc
 
 
 class ObjectStore(ABC):

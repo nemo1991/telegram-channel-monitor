@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any, BinaryIO
 
 import aioboto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
 
@@ -43,24 +44,42 @@ class S3ObjectStore(ObjectStore):
     # ---- 生命周期 ----
 
     async def connect(self) -> None:
-        """建 aioboto3 Session + 探测 / 自动创建 bucket(幂等)。"""
+        """建 aioboto3 Session + 探测 / 自动创建 bucket;失败上抛。
+
+        2026-08-18 修:旧实现把 head_bucket / create_bucket 的所有异常吞掉,
+        endpoint 填错 / 凭据错 / 网络不通 / 桶无权限在「保存设置」时完全感知
+        不到,直到真正写 media(put_object)才报错(典型:
+        `S3 API Requests must be made to API port`)。现在 connect() 做真实
+        连通性校验,reconfigure 失败上抛 → 设置不落盘:
+          - head_bucket 成功 → 桶存在且可达
+          - ClientError 404 → 桶不存在,尝试 create_bucket("已存在"类视为成功)
+          - 其他 ClientError / BotoCoreError → 原样上抛
+        """
         self._session = aioboto3.Session()
-        # 探测 / 自动建 bucket
         async with self._client() as s3:
             try:
                 await s3.head_bucket(Bucket=self._bucket)
-            except Exception:
-                try:
-                    if self._region == "us-east-1":
-                        await s3.create_bucket(Bucket=self._bucket)
-                    else:
-                        await s3.create_bucket(
-                            Bucket=self._bucket,
-                            CreateBucketConfiguration={"LocationConstraint": self._region},
-                        )
-                except Exception:
-                    # 已存在或其他原因(head 已报过) — 忽略
-                    pass
+                return  # 桶存在且可达
+            except ClientError as exc:
+                if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 404:
+                    raise  # 403 无权限 / 400 端点错等 — 配置错误,上抛
+            except BotoCoreError:
+                raise  # 网络 / 端点 / 凭据类错误 — 上抛
+            # 桶不存在(404)→ 尝试自动创建
+            try:
+                if self._region == "us-east-1":
+                    await s3.create_bucket(Bucket=self._bucket)
+                else:
+                    await s3.create_bucket(
+                        Bucket=self._bucket,
+                        CreateBucketConfiguration={"LocationConstraint": self._region},
+                    )
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+                    raise  # 无建桶权限 / 端点错等 — 上抛
+            except BotoCoreError:
+                raise
 
     async def close(self) -> None:
         """释放 session 引用(aioboto3 内部 client 在 GC 时关)。"""
