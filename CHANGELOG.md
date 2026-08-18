@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.0.20] - 2026-08-18
+
+### 🐛 Fixed
+- **对象存储配置错误在保存时才暴露,直到写 media 才报错**:旧实现
+  `S3ObjectStore.connect()` 把 `head_bucket` / `create_bucket` 的**所有异常
+  吞掉**,endpoint 填错 / 凭据错 / 网络不通 / 桶无权限在「保存设置」时完全
+  感知不到,直到真正写媒体(典型报错 `S3 API Requests must be made to API
+  port`)才失败。现在 `connect()` 做真实连通性校验:head_bucket 成功即通过;
+  404(桶不存在)自动建桶、「已存在」类错误视为成功;403 无权限 / 400 端点错 /
+  网络错误一律上抛 → reconfigure 中止、设置不落盘、旧 store 保持可用
+- **local / folder 目录不可写检测**:`mkdir(exist_ok=True)` 对「目录已存在
+  但不可写」不报错,写入时才失败。connect() 增加真实写探针(写删
+  `.tgmonitor_write_probe`),权限问题在保存设置时提前暴露
+- **S3 设置页 endpoint 占位提示**:表单提示改用
+  `https://s3.<region>.amazonaws.com`,并新增仅 S3 后端显示的提示 label
+
 ## [1.0.19] - 2026-08-17
 
 ### 🐛 Fixed
