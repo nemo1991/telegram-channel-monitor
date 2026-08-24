@@ -5,6 +5,44 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-08-24
+
+### ✨ Added
+- **Media Manager(媒体管理)— 第 5 个导航页(Ctrl+5)**:浏览 / 重试 / 删除 /
+  打开已下载的媒体,支持按频道 / 类型 / 状态筛选、按文件名搜索、单选与多选。
+  每行可执行 3 个操作:**Open**(系统默认程序打开 Local/Folder 后端)、
+  **Retry**(强制重下 FAILED 项)、**Delete**(refcount-aware 摘 media + 顺手
+  删孤儿 bytes)。底部工具栏带「Prune Orphans」按钮触发 orphan reconcile 真删。
+- **Orphan reconcile(孤儿字节清理)**:新增 `AppService.reconcile_orphans(
+  dry_run=...)` 扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有
+  但 storage 没引用的文件。启动时 2 秒延迟 dry_run=True(报告但不删),Media
+  Manager「Prune Orphans」按钮显式调 dry_run=False 真删。Local / Folder 后端
+  支持,S3 后端 iter_keys raise NotImplementedError → UI 灰按钮提示「不支持」
+- **3 个新事件**:`MediaDeleted` / `MediaRetried` / `MediaReconcileFinished` —
+  UI 据此刷新 LIVE 流 + Media Manager 状态
+
+### 🐛 Fixed
+- **删消息时清理孤儿字节**:`MonitorService.delete_message` 删 message 前对每条
+  media 的 `object_key` 做 refcount(`_count_media_with_object_key`),=0 才真删
+  ObjectStore bytes。同 file_id 跨消息去重场景下,另一条 message 仍引用的 key
+  不会被误删
+- **`JsonlFileStore._media_by_fid` 索引维护修复**:此前 `save_message` 只 ADD
+  不 REMOVE,DONE → PENDING 切换时旧 fid 留在索引里 → `find_media_by_file_id`
+  返 stale entry,retry 路径的 skip #1 误命中。现在 `save_message` / `delete_message`
+  对受影响 fids 做 re-evaluate,扫所有消息看哪个 fid 还有 DONE + object_key;
+  无 → 从索引删,有 → 用最新。InMemory 测试 fixture 同步修复
+
+### 🧪 Tests
+- `test_media_manager.py`(16 个)— list_media filter 组合、delete_media refcount、
+  retry_media force 路径、open_media Local/Folder/S3 分支、事件发布
+- `test_orphan_reconcile.py`(6 个)— Local / Folder / S3 后端 reconcile 全覆盖
+- `test_message_view.py`(+3)— `remove_row(channel_id, telegram_msg_id)` 行为
+- `test_monitor_and_app.py`(+2)— `delete_message` 孤儿 bytes 清与保留语义
+- `test_jsonl_store.py`(+3)— `_media_by_fid` 索引维护
+- `test_media_downloader.py`(+2)— `download_one(force=True)` 跳过 storage /
+  objectstore skip
+- `test_objectstore.py`(+3)— `iter_keys` Local / Folder 实现
+
 ## [1.0.23] - 2026-08-18
 
 ### 🐛 Fixed
