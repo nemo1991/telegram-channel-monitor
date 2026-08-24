@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from pathlib import Path
-from typing import BinaryIO
+from typing import AsyncIterator, BinaryIO
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
@@ -121,3 +122,33 @@ class LocalObjectStore(ObjectStore):
         """默认 `BytesIO(await get())`;Local 不 override streaming。"""
         # 显式继承默认实现即可(BytesIO)
         return await super().open_read(key)
+
+    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
+        """枚举所有 key — `os.walk(root)` 走 to_thread,产相对路径 key。
+
+        2026-08-24 orphan reconcile 用:扫 ObjectStore 里所有 keys,跟 storage
+        媒体索引对比,差集 = 孤儿。FS 遍历是阻塞 IO,放 to_thread 防 UI 卡顿。
+        """
+        root = self._root
+
+        def _walk() -> AsyncIterator[str]:  # type: ignore[misc]  — async gen 转 sync gen 的内部细节
+            for dirpath, _dirnames, filenames in os.walk(root):
+                for fn in filenames:
+                    full = Path(dirpath) / fn
+                    rel = os.path.relpath(full, root)
+                    # 跳过探针文件(connect 时 probe_writable 创建/删除,可能短暂存在)
+                    if ".tgmonitor_write_probe" in fn:
+                        continue
+                    if prefix and not rel.startswith(prefix):
+                        continue
+                    yield rel
+
+        async def _to_thread_iter(sync_it):
+            """把同步 generator 转 async,中间用 to_thread 让出 loop。"""
+            # 一次性收集到 list 再 yield(简单且 O(N))。后续若 N 大可改 chunked。
+            items = await asyncio.to_thread(list, _walk())
+            for k in items:
+                yield k
+
+        async for k in _to_thread_iter(None):
+            yield k

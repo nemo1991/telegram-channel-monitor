@@ -1,11 +1,12 @@
 # mypy: disable-error-code="attr-defined"
 """VerticalNavBar — 左侧竖向导航(深色底,跨主题)。
 
-4 个 Tab:
-  0: 实时流(LIVE)   — 实时消息流
-  1: 大盘(DASHBOARD) — 统计 + 活动时间线
-  2: 频道(CHANNELS) — 频道管理(订阅/退订/同步)
-  3: 设置(SETTINGS) — 所有配置(凭据/存储/代理/媒体/同步)
+5 个 Tab:
+  0: 实时流(LIVE)     — 实时消息流
+  1: 大盘(DASHBOARD)  — 统计 + 活动时间线
+  2: 频道(CHANNELS)   — 频道管理(订阅/退订/同步)
+  3: 媒体管理(MEDIA)  — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+  4: 设置(SETTINGS)   — 所有配置(凭据/存储/代理/媒体/同步)
 
 设计:
 - 在浅色和暗色模式下都用深色底 — 形成稳定的"导航锚点",不被主题切换影响
@@ -33,6 +34,7 @@ _NAV_ITEMS = [
     ("nav_live", "实时流"),
     ("nav_dashboard", "大盘"),
     ("nav_channels", "频道"),
+    ("nav_media", "媒体"),
     ("nav_settings", "设置"),
 ]
 
@@ -172,12 +174,12 @@ class _NavButton(QWidget):
 
 
 class VerticalNavBar(QWidget):
-    """暗色垂直导航栏,容纳 4 个 _NavButton。"""
+    """暗色垂直导航栏,容纳 5 个 _NavButton。"""
 
     current_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """建 4 个 _NavButton + 默认高亮第一个(0 = LIVE)。"""
+        """建 5 个 _NavButton + 默认高亮第一个(0 = LIVE)。"""
         super().__init__(parent)
         self._current = 0
         self._buttons: list[_NavButton] = []

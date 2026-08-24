@@ -70,6 +70,12 @@ UPDATE media SET download_status = 'done'
 CREATE INDEX IF NOT EXISTS idx_media_message
     ON media (message_id);
 
+-- 跨消息媒体去重:find_media_by_file_id 用 partial index,只索引已下载成功的行
+-- (object_key IS NOT NULL),缩小索引体积、提升查询效率。绝大多数未下载的
+-- media 行不会被收录。
+CREATE INDEX IF NOT EXISTS idx_media_telegram_file_id
+    ON media (telegram_file_id) WHERE object_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS meta (
     key     TEXT PRIMARY KEY,
     value   TEXT

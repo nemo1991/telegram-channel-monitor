@@ -18,6 +18,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, AsyncIterator
@@ -27,6 +28,9 @@ from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
     ExportRequest,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
     MessageDTO,
     SyncOptions,
     SyncResult,
@@ -36,6 +40,10 @@ from tgmonitor.core.events import (
     ChannelUnsubscribed,
     ErrorOccurred,
     EventBus,
+    MediaDeleted,
+    MediaDownloaded,
+    MediaReconcileFinished,
+    MediaRetried,
     SettingsChanged,
 )
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -85,7 +93,17 @@ class AppService:
         self._reconfiguring = False
         # 全量同步服务(用户多选触发)— 延迟初始化避免循环 import
         from tgmonitor.core.channel_sync import ChannelSyncService
-        self.channel_sync = ChannelSyncService(bus, client, storage)
+        # 2026-08-24:与 monitor 共享同一个 MediaDownloader 实例(FULL 策略下
+        # sync 也会复用做媒体下载);非 FULL 策略 / 未接线时传 None,sync 跳过下载。
+        self.downloader = (
+            monitor.downloader if (monitor is not None) else None
+        )
+        self.channel_sync = ChannelSyncService(
+            bus, client, storage,
+            downloader=self.downloader,
+            objects=objects,
+            media_policy=settings.media_policy,
+        )
         # 鉴权 façade(2026-08-03 微切抽出)— 3 个 submit_* 方法 + 凭据预检
         self.auth = AuthService(bus, client, settings)
 
@@ -253,6 +271,242 @@ class AppService:
         async for _ in svc.run(request):
             yield
 
+    # ---------- Media Manager(2026-08-24 新增) ----------
+
+    async def list_media(
+        self,
+        *,
+        channel_id: int | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """列出已下载 / 失败 / 下载中媒体 — 应用层 flatten + 过滤。
+
+        不引入新的 `StorageRepository.list_media` 抽象方法(2026-08-24 决定 D2):
+        直接调 `storage.list_messages` 然后 Python 层 flatten,避免触碰 4 个
+        后端 + 5 个测试 fixture。MVP 数据规模(几千 ~ 几万消息)单次 < 50ms。
+        """
+        chs = await self.storage.list_channels()
+        if not chs:
+            return []
+        ch_ids = (
+            [channel_id] if channel_id is not None
+            else [c.id for c in chs]
+        )
+        msgs = await self.storage.list_messages(ch_ids, limit=limit * 5)
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        search_lo = search.lower()
+        for msg in msgs:
+            for idx, med in enumerate(msg.media):
+                if status is not None and med.download_status != status:
+                    continue
+                if media_type is not None and med.type != media_type:
+                    continue
+                if search_lo and search_lo not in (med.file_name or "").lower():
+                    continue
+                rows.append((msg, idx, med))
+                if len(rows) >= limit:
+                    return rows
+        return rows
+
+    async def delete_media(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> None:
+        """摘 media from message + refcount=0 时清 bytes + 发 MediaDeleted。
+
+        与 `MonitorService.delete_message` 的 bytes 清理语义一致:跨消息去重
+        场景下,另一 message 仍引用同 `object_key` 时只摘当前 message 的 media,
+        不动 bytes;无引用时 `objects.delete(key)` 释放磁盘。
+        """
+        msg = await self.storage.get_message(channel_id, telegram_msg_id)
+        if msg is None or media_idx >= len(msg.media):
+            return
+        med = msg.media[media_idx]
+        object_key = med.object_key
+        new_media = msg.media[:media_idx] + msg.media[media_idx + 1:]
+        new_msg = dataclasses.replace(msg, media=new_media)
+        await self.storage.update_message(new_msg)
+        if object_key:
+            try:
+                n = await self._count_media_with_object_key(object_key)
+            except Exception:  # noqa: BLE001
+                log.exception("count media by key failed: %s", object_key)
+                n = 0
+            if n == 0 and self.objects is not None:
+                try:
+                    await self.objects.delete(object_key)
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "delete bytes %s failed (already gone?)", object_key,
+                        exc_info=True,
+                    )
+        await self.bus.publish(MediaDeleted(
+            channel_id=channel_id,
+            telegram_msg_id=telegram_msg_id,
+            media_idx=media_idx,
+        ))
+
+    async def retry_media(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> None:
+        """重下 FAILED media:`objects.delete(old_key)` + download_one(force=True)。
+
+        非 FAILED 状态直接返回(不报错,UI 通常 disable Retry 按钮,这里兜底)。
+        成功后回写 storage + 发 MediaDownloaded(LIVE view 据此刷新状态)。
+        """
+        msg = await self.storage.get_message(channel_id, telegram_msg_id)
+        if msg is None or media_idx >= len(msg.media):
+            return
+        med = msg.media[media_idx]
+        if med.download_status != MediaDownloadStatus.FAILED:
+            return
+        old_object_key = med.object_key
+        new_med = dataclasses.replace(
+            med,
+            object_key=None,
+            object_backend=None,
+            download_status=MediaDownloadStatus.PENDING,
+            download_error=None,
+        )
+        new_media = list(msg.media)
+        new_media[media_idx] = new_med
+        new_msg = dataclasses.replace(msg, media=tuple(new_media))
+        await self.storage.update_message(new_msg)
+        # 清旧 bytes — 让 download_one(force=True) 一定走真下载路径
+        if old_object_key and self.objects is not None:
+            try:
+                await self.objects.delete(old_object_key)
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "retry pre-clean bytes %s failed", old_object_key,
+                    exc_info=True,
+                )
+        # 先发 MediaRetried,UI 立刻把状态切到 PENDING(避免用户重复点 Retry)
+        await self.bus.publish(MediaRetried(
+            channel_id=channel_id,
+            telegram_msg_id=telegram_msg_id,
+            media_idx=media_idx,
+        ))
+        # 然后走同步下载路径(retry 走 AppService 直调,不走 worker queue —
+        # 2026-08-24 D4:不增加 force flag 进 queue,避免协议变更)
+        if self.downloader is not None:
+            try:
+                updated = await self.downloader.download_one(
+                    msg_pk=msg.id, media=new_med, force=True,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.exception("retry download failed: %s", e)
+                updated = dataclasses.replace(
+                    new_med,
+                    download_status=MediaDownloadStatus.FAILED,
+                    download_error=f"重试异常: {e}",
+                )
+            # 回写最终状态
+            final_media = list(new_msg.media)
+            final_media[media_idx] = updated
+            final_msg = dataclasses.replace(new_msg, media=tuple(final_media))
+            await self.storage.update_message(final_msg)
+            await self.bus.publish(MediaDownloaded(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media=updated,
+            ))
+
+    async def open_media(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> bool:
+        """系统默认程序打开 media 文件。True = 成功发起,False = 不可打开。
+
+        2026-08-24 D5:仅 Local / Folder 后端支持(LocalObjectStore / FolderObjectStore);
+        S3 后端 MVP 不可打开,返 False 由 UI 弹「暂不支持」对话框。
+        """
+        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
+        from tgmonitor.core.objectstore.local_store import LocalObjectStore
+
+        msg = await self.storage.get_message(channel_id, telegram_msg_id)
+        if msg is None or media_idx >= len(msg.media):
+            return False
+        med = msg.media[media_idx]
+        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
+            return False
+        if isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+
+            abs_path = str(self.objects._root / med.object_key)  # noqa: SLF001 — 与 iter_keys / delete 共用 root
+            return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path)))
+        return False  # S3 / 其它后端 MVP 不支持
+
+    async def reconcile_orphans(self, *, dry_run: bool = True) -> MediaReconcileFinished:
+        """扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有但 storage 没引用。
+
+        dry_run=True(默认)只 log 不删;Media Manager 「Prune Orphans」按钮显式
+        触发 dry_run=False 真删。S3 后端 raise NotImplementedError 时直接当作
+        scanned=0 返回(Media Manager 显示「S3 不支持 reconcile」)。
+        """
+        backend = self.objects.backend_name if self.objects else ""
+        scanned_keys: set[str] = set()
+        referenced_keys: set[str] = set()
+        if self.objects is not None and hasattr(self.objects, "iter_keys"):
+            try:
+                async for k in self.objects.iter_keys(prefix="media/"):
+                    scanned_keys.add(k)
+            except NotImplementedError:
+                log.info("reconcile skipped: %s backend iter_keys not implemented",
+                         backend)
+        chs = await self.storage.list_channels()
+        if chs:
+            msgs = await self.storage.list_messages(
+                [c.id for c in chs], limit=100_000,
+            )
+            for m in msgs:
+                for med in m.media:
+                    if (med.object_key
+                            and med.download_status == MediaDownloadStatus.DONE):
+                        referenced_keys.add(med.object_key)
+        orphans = scanned_keys - referenced_keys
+        deleted = 0
+        if not dry_run and self.objects is not None and orphans:
+            for k in orphans:
+                try:
+                    await self.objects.delete(k)
+                    deleted += 1
+                except Exception:  # noqa: BLE001
+                    log.warning("reconcile delete %s failed", k, exc_info=True)
+        evt = MediaReconcileFinished(
+            backend=backend,
+            scanned=len(scanned_keys),
+            referenced=len(referenced_keys),
+            orphans=len(orphans),
+            deleted=deleted,
+            dry_run=dry_run,
+        )
+        log.info(
+            "reconcile: backend=%s scanned=%d referenced=%d orphans=%d "
+            "deleted=%d dry_run=%s",
+            backend, evt.scanned, evt.referenced, evt.orphans, evt.deleted,
+            dry_run,
+        )
+        await self.bus.publish(evt)
+        return evt
+
+    async def _count_media_with_object_key(self, object_key: str) -> int:
+        """refcount:同 MonitorService._count_media_with_object_key — 扫全部 channel。"""
+        chs = await self.storage.list_channels()
+        if not chs:
+            return 0
+        msgs = await self.storage.list_messages(
+            [c.id for c in chs], limit=100_000,
+        )
+        n = 0
+        for m in msgs:
+            for med in m.media:
+                if med.object_key == object_key:
+                    n += 1
+        return n
+
     # ---------- 关闭 ----------
 
     async def shutdown(self) -> None:
@@ -311,8 +565,17 @@ class AppService:
             await self.monitor.update_backends(
                 self.storage, self.objects, new_settings,
             )
+            # 2026-08-24:reconfigure 后 monitor 重建了 MediaDownloader(新
+            # storage / objects / max_bytes),同步给 self.downloader 让 sync
+            # 也用新实例。policy 变化同样需要 — 直接拿新 settings 字段。
+            self.downloader = self.monitor.downloader
         from tgmonitor.core.channel_sync import ChannelSyncService
-        self.channel_sync = ChannelSyncService(self.bus, self.client, self.storage)
+        self.channel_sync = ChannelSyncService(
+            self.bus, self.client, self.storage,
+            downloader=self.downloader,
+            objects=self.objects,
+            media_policy=new_settings.media_policy,
+        )
 
         # 6) 提交新 settings + 事件
         self.settings = new_settings

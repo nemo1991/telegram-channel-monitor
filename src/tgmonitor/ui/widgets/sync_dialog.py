@@ -205,8 +205,14 @@ class SyncProgressDialog(QDialog):
         """VM 信号槽:每条 ChannelSyncProgress 更新对应频道行的状态 / 图标 / 进度。
 
         stage → icon 映射:`metadata` 🔄 / `history` 📥 / `backoff` ⏸ /
-        `done` ✅ / `failed` ❌;history 阶段 `total=None` 时只显示「N 条」。
+        `done` ✅ / `failed` ❌ / `init` ⏳ / `channel_start` ▶;history 阶段
+        `total=None` 时只显示「N 条」;init 阶段不进 row,只更新 summary。
         """
+        # 2026-08-24:init 事件不进 row — 只更新顶部 summary,避免 0 号伪频道
+        # 出现在 list 上。
+        if e.stage == "init":
+            self.lbl_summary.setText(f"准备同步 {e.total} 个频道…")
+            return
         if e.channel_id not in self._rows:
             self._add_row(e.channel_id)
         title = self._channel_titles.get(e.channel_id, f"#{e.channel_id}")
@@ -216,6 +222,8 @@ class SyncProgressDialog(QDialog):
             "backoff": "⏸",
             "done": "✅",
             "failed": "❌",
+            "init": "⏳",
+            "channel_start": "▶",
         }.get(e.stage, "•")
         if e.stage == "history" and e.total is None:
             progress_str = f"{e.progress} 条"

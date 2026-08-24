@@ -382,3 +382,42 @@ async def test_folder_connect_readonly_root_raises(tmp_path):
             await s.connect()
     finally:
         os.chmod(root, 0o755)
+
+
+# ---- iter_keys(2026-08-24 Media Manager orphan reconcile)----
+
+
+async def test_local_iter_keys_returns_all(tmp_path):
+    """LocalObjectStore.iter_keys 返回所有 key(相对 root)。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    await s.put("media/abc.jpg", b"x")
+    await s.put("media/xyz.png", b"y")
+    await s.put("logs/today.log", b"z")  # 非 media 前缀也应返
+    keys = sorted([k async for k in s.iter_keys()])
+    assert keys == ["logs/today.log", "media/abc.jpg", "media/xyz.png"]
+
+
+async def test_local_iter_keys_prefix_filter(tmp_path):
+    """iter_keys(prefix="media/") 只返匹配前缀的 key。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    await s.put("media/abc.jpg", b"x")
+    await s.put("media/xyz.png", b"y")
+    await s.put("logs/today.log", b"z")
+    keys = sorted([k async for k in s.iter_keys(prefix="media/")])
+    assert keys == ["media/abc.jpg", "media/xyz.png"]
+
+
+async def test_folder_iter_keys_returns_all(tmp_path):
+    """FolderObjectStore.iter_keys 把分片路径重组为原始 key。
+
+    put "media/abcdef.jpg" → 落盘 `<root>/media/ab/cd/abcdef.jpg`
+    iter_keys 应返 `media/abcdef.jpg`(把 ab/cd/ 合并)。
+    """
+    s = FolderObjectStore(root=tmp_path)
+    await s.connect()
+    await s.put("media/abcdef.jpg", b"hello")
+    await s.put("media/1234567.png", b"world")
+    keys = sorted([k async for k in s.iter_keys()])
+    assert keys == ["media/1234567.png", "media/abcdef.jpg"]

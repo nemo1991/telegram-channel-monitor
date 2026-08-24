@@ -1,6 +1,6 @@
 """主窗口 — 导航(左) + 内容页(QStackedWidget)。
 
-架构从「工具栏 + splitter 侧栏」改为「竖向导航 + 四页内容」:
+架构从「工具栏 + splitter 侧栏」改为「竖向导航 + 五页内容」:
 
   ┌─────────────────────────────────────────────┐
   │ ●                          🟢 已登录  [登出] │ ← 紧凑头栏
@@ -10,10 +10,13 @@
   │ 实时│   0: 实时流(LIVE) — MessageView 全宽     │
   │    │   1: 大盘(DASHBOARD) — 统计 + 活动        │
   │ 📊  │   2: 频道(CHANNELS) — ChannelWidget     │
-  │ 大盘│   3: 设置(SETTINGS) — 整页配置           │
-  │    │                                           │
+  │ 大盘│   3: 媒体管理(MEDIA) — MediaManagerWidget│
+  │    │   4: 设置(SETTINGS) — 整页配置           │
   │ 📋  │                                           │
   │ 频道│                                           │
+  │    │                                           │
+  │ 💾  │                                           │
+  │ 媒体│                                           │
   │    │                                           │
   │ ⚙  │                                           │
   │ 设置│                                           │
@@ -55,6 +58,7 @@ from tgmonitor.core.events import (
     AuthErrorOccurred,
     LoginStateChanged,
     MediaDownloaded,
+    MessageDeleted,
 )
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
@@ -63,6 +67,7 @@ from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
+from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.search_bar import SearchBar
@@ -84,13 +89,14 @@ ShutdownCb = Callable[[], Awaitable[None]]
 
 
 class MainWindow(QMainWindow):
-    """应用主窗口:左导航 + 4 页内容 + 紧凑头栏 + 状态栏。
+    """应用主窗口:左导航 + 5 页内容 + 紧凑头栏 + 状态栏。
 
-    # 4 个 page 由 QStackedWidget 持有:
+    # 5 个 page 由 QStackedWidget 持有:
     #   0 LIVE      → MessageView + MessageDetail(实时流 + 详情)
     #   1 DASHBOARD → 统计 + 活动时间线 + 快速操作
     #   2 CHANNELS  → ChannelWidget(订阅 / 退订 / 全量同步)
-    #   3 SETTINGS  → 整页配置(凭据 / 存储 / 代理 / 媒体 / 同步)
+    #   3 MEDIA     → MediaManagerWidget(浏览 / 重试 / 删 / 打开 + prune)
+    #   4 SETTINGS  → 整页配置(凭据 / 存储 / 代理 / 媒体 / 同步)
     #
     # 退出:closeEvent 同步阻塞等 async shutdown 完成,保证 storage / client /
     #       tdjson 子进程都被显式关掉。
@@ -317,7 +323,16 @@ class MainWindow(QMainWindow):
         ch_layout.addWidget(self.channel_panel, 1)
         self.stack.addWidget(channels_page)
 
-        # 3: 设置
+        # 3: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+        media_page = QWidget()
+        media_layout = QVBoxLayout(media_page)
+        media_layout.setContentsMargins(0, 0, 0, 0)
+        media_layout.setSpacing(0)
+        self.media_manager = MediaManagerWidget()
+        media_layout.addWidget(self.media_manager)
+        self.stack.addWidget(media_page)
+
+        # 4: 设置
         self.settings_page = SettingsPage(self.app, self.loop, self.env_path)
         self.stack.addWidget(self.settings_page)
 
@@ -348,6 +363,8 @@ class MainWindow(QMainWindow):
 
         # ---- 信号连接 ----
         self.nav.current_changed.connect(self.stack.setCurrentIndex)
+        # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
+        self.nav.current_changed.connect(self._on_nav_changed)
         self.header.btn_logout.clicked.connect(self._on_logout_clicked)
         self.header.btn_action.clicked.connect(self._on_header_action)
         self.header.search_bar.text_changed.connect(self._on_search_changed)
@@ -362,13 +379,32 @@ class MainWindow(QMainWindow):
         self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
         self.channel_panel.sync_requested.connect(self._on_sync_requested)
 
+        # MediaManagerWidget 信号
+        self.media_manager.refresh_requested.connect(
+            lambda: self._on_media_refresh()
+        )
+        self.media_manager.open_requested.connect(
+            lambda cid, mid, idx: self._vm.open_media(cid, mid, idx)
+        )
+        self.media_manager.retry_requested.connect(
+            lambda cid, mid, idx: self._vm.retry_media(cid, mid, idx)
+        )
+        self.media_manager.delete_requested.connect(
+            lambda cid, mid, idx: self._vm.delete_media(cid, mid, idx)
+        )
+        self.media_manager.batch_retry_requested.connect(self._on_media_batch_retry)
+        self.media_manager.batch_delete_requested.connect(
+            self._on_media_batch_delete
+        )
+        self.media_manager.prune_requested.connect(self._on_media_prune)
+
         # MessageView → MessageDetail(点击消息显示详情)
         self.live_view.message_selected.connect(self.message_detail.show_message)
 
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键。
 
-          Ctrl+1/2/3/4 — 切换 tab
+          Ctrl+1/2/3/4/5 — 切换 tab(LIVE/DASHBOARD/CHANNELS/MEDIA/SETTINGS)
           Ctrl+R      — 刷新频道列表
           Ctrl+F      — 聚焦搜索框
           Ctrl+E      — 导出
@@ -376,7 +412,7 @@ class MainWindow(QMainWindow):
         """
         from PySide6.QtGui import QKeySequence, QShortcut
 
-        for idx in range(4):
+        for idx in range(5):
             sc = QShortcut(QKeySequence(f"Ctrl+{idx + 1}"), self)
             sc.activated.connect(lambda i=idx: self._switch_tab(i))
 
@@ -395,6 +431,15 @@ class MainWindow(QMainWindow):
     def _switch_tab(self, idx: int) -> None:
         self.nav.set_current(idx)
         # nav.set_current 已经 emit current_changed,stack 会自动跟
+
+    def _on_nav_changed(self, idx: int) -> None:
+        """nav tab 切换 — 切到 MEDIA 页(3)触发一次列表刷新。
+
+        其他页忽略。VM 异步拉数据,第一次可能因 known_channels 还没就绪而
+        短暂为空,后续 channels_changed → _refresh_state 也会再刷一次。
+        """
+        if idx == 3:
+            self._on_media_refresh()
 
     def _focus_search(self) -> None:
         """聚焦到搜索框 + 自动切到 LIVE 页(搜索只在消息视图里有意义)"""
@@ -422,6 +467,7 @@ class MainWindow(QMainWindow):
 
     def _wire_events(self) -> None:
         self._vm.message_received.connect(self._on_message_received)
+        self._vm.message_edited.connect(self._on_message_edited)
         self._vm.media_downloaded.connect(self._on_media_downloaded)
         self._vm.login_state.connect(self._on_login_state)
         self._vm.conn_state.connect(self._on_conn_state)
@@ -429,10 +475,16 @@ class MainWindow(QMainWindow):
         self._vm.export_done.connect(self._on_export_done)
         self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
+        # Media Manager 转发(2026-08-24)
+        self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
+        self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
 
         # 订阅 EventBus 登录状态变化(状态点更新)
         self.app.bus.subscribe(LoginStateChanged, self._on_bus_login)
         self.app.bus.subscribe(AuthErrorOccurred, self._on_bus_auth_error)
+        # MessageDeleted 直接订阅总线(VM 没 Qt signal — LIVE 流需要按事件
+        # 删行)
+        self.app.bus.subscribe(MessageDeleted, self._on_bus_message_deleted)
 
     # ======================== 槽 ========================
 
@@ -492,6 +544,13 @@ class MainWindow(QMainWindow):
             {cid: ch.title for cid, ch in self._vm.known_channels.items()}
         )
         self.live_view.append(m)
+
+    def _on_message_edited(self, m: MessageDTO) -> None:
+        """2026-08-24:TDLib updateMessageContent → MessageEdited 事件 → 整条 cell 重渲。
+
+        按 (channel_id, telegram_msg_id) 找现有 row,不增删。
+        """
+        self.live_view.replace_message(m)
 
     def _on_media_downloaded(self, e) -> None:
         """媒体下载结束(成功/失败) → 实时流行与详情面板刷新状态。"""
@@ -557,6 +616,81 @@ class MainWindow(QMainWindow):
                 "代理或会话目录已变更并保存。\n"
                 "TDLib 客户端在启动时创建,请重启应用使其生效。",
             )
+
+    # ======================== Media Manager 槽 (2026-08-24) ========================
+
+    def _on_media_refresh(self) -> None:
+        """Media Manager 顶部 refresh / filter 变化 → 拉一次列表。
+
+        同时把当前 known channels 推给 widget 的 channel 下拉框。
+        """
+        self.media_manager.set_known_channels(list(self._vm.known_channels.values()))
+        f = self.media_manager.current_filters()
+        self._vm.load_media_list(
+            channel_id=f["channel_id"],
+            status=f["status"],
+            media_type=f["media_type"],
+            search=f["search"],
+        )
+
+    def _on_media_batch_retry(self, keys: list) -> None:
+        """批量 retry — keys 是 widget 内部的 _RowKey 列表(对象)。"""
+        items = [(k.channel_id, k.telegram_msg_id, k.media_idx) for k in keys]
+        async def _go() -> None:
+            for cid, mid, idx in items:
+                try:
+                    await self.app.retry_media(cid, mid, idx)
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "batch retry failed: %s/%s/%d", cid, mid, idx,
+                    )
+        run_coro(self.loop, _go(), error_label="batch_retry_media")
+
+    def _on_media_batch_delete(self, keys: list) -> None:
+        """批量 delete — 二次确认 + 调 VM.delete_media_batch。"""
+        if not keys:
+            return
+        n = len(keys)
+        ans = QMessageBox.warning(
+            self,
+            "删除确认",
+            f"确定删除选中的 {n} 条媒体?\n"
+            "删除后无法撤销;若 bytes 不再被引用,文件也会从对象存储删除。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        items = [(k.channel_id, k.telegram_msg_id, k.media_idx) for k in keys]
+        self._vm.delete_media_batch(items)
+        # 删除完顺手刷新一次列表
+        self._on_media_refresh()
+
+    def _on_media_prune(self) -> None:
+        """Media Manager 「Prune Orphans」按钮 — 二次确认 → reconcile(dry_run=False)。
+
+        dry_run=False 会真删 ObjectStore bytes;UI 强警告。
+        """
+        ans = QMessageBox.warning(
+            self,
+            "Prune Orphans",
+            "扫描对象存储并删除无引用的孤立文件。\n"
+            "此操作不可撤销,确认执行?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self._vm.reconcile_orphans(dry_run=False)
+
+    async def _on_bus_message_deleted(self, e) -> None:
+        """EventBus:MonitorService.delete_message 发的 MessageDeleted → LIVE 流删行。
+
+        bytes 清理由 MonitorService.delete_message 内部已做,这里只管 UI。
+        """
+        if not isinstance(e, MessageDeleted):
+            return
+        self.live_view.remove_row(e.channel_id, e.telegram_msg_id)
 
     # ======================== 同步请求 ========================
 

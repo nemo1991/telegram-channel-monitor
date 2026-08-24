@@ -436,3 +436,28 @@ class PostgresRepository(StorageRepository):
             return await conn.fetchval(
                 "SELECT count(*)::int FROM messages WHERE channel_id = $1", channel_id
             )
+
+    async def find_media_by_file_id(
+        self, telegram_file_id: str
+    ) -> MediaDTO | None:
+        """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
+
+        命中条件 `object_key IS NOT NULL AND download_status = 'done'`;partial
+        index(`idx_media_telegram_file_id`)保证单条查询 O(log N) → 命中 LIMIT 1。
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM media
+                WHERE telegram_file_id = $1
+                  AND object_key IS NOT NULL
+                  AND download_status = 'done'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                telegram_file_id,
+            )
+        if row is None:
+            return None
+        return _row_to_media(row)

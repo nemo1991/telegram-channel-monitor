@@ -174,6 +174,24 @@ class MessageView(QListWidget):
         self._seen.clear()
         self._refresh_empty_state()
 
+    def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
+        """外部调 — 删一行(LIVE 流中 `MessageDeleted` 事件消费处)。
+
+        2026-08-24:Media Manager 删 message 后,MonitorService 已发
+        `MessageDeleted(channel_id, telegram_msg_id)`,MainWindow 收到调这里
+        把对应 row 从 LIVE 流摘掉。找不到 idempotent — 不抛异常。
+        """
+        key = (channel_id, telegram_msg_id)
+        row = self._seen.pop(key, None)
+        if row is None:
+            return
+        self.takeItem(row)
+        # 后面的 row index -= 1
+        for k in self._seen:
+            if self._seen[k] > row:
+                self._seen[k] -= 1
+        self._refresh_empty_state()
+
     def update_media_status(
         self, channel_id: int, telegram_msg_id: int, media: MediaDTO
     ) -> None:
@@ -204,6 +222,30 @@ class MessageView(QListWidget):
         # 重检过滤(状态变化不影响匹配结果,但保持与 append 一致)
         if self._filter_text and not self._matches(dto, self._filter_text):
             item.setHidden(True)
+
+    def replace_message(self, msg: MessageDTO) -> None:
+        """编辑事件触发(2026-08-24):整条 cell 重渲 — 文本/views/forwards/edited/media 都可能变。
+
+        按 (channel_id, telegram_msg_id) 找现有 row,调 _format 重渲 + 替换 DTO,
+        不增加 / 删除 row。找不到(理论上不该 — 编辑事件来自已落库消息)则
+        fallthrough 当作新消息 append。
+        """
+        key = (msg.channel_id, msg.telegram_msg_id)
+        row = self._seen.get(key)
+        if row is None:
+            # 罕见:编辑事件先于 new message 到达 / 重启期间发生 — 当新增处理
+            self.append_message(msg)
+            return
+        item = self.item(row)
+        if item is None:
+            return
+        item.setText(self._format(msg))
+        item.setData(self._ROLE_DTO, msg)
+        # 重检过滤
+        if self._filter_text and not self._matches(msg, self._filter_text):
+            item.setHidden(True)
+        else:
+            item.setHidden(False)
 
     def _format(self, m: MessageDTO) -> str:
         # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂

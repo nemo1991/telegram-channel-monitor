@@ -25,7 +25,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MessageDTO
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+)
 from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
 
@@ -173,6 +179,9 @@ class JsonlFileStore(StorageRepository):
         self._next_msg_pk = 1
         # 全局 meta(key -> str)
         self._meta: dict[str, str] = {}
+        # telegram_file_id -> MediaDTO(已 DONE 且 object_key 非 None)— 用于
+        # find_media_by_file_id 跨频道去重。ChannelFile 加载时一次性构建。
+        self._media_by_fid: dict[str, MediaDTO] = {}
 
     # ---- 生命周期 ----
 
@@ -214,6 +223,24 @@ class JsonlFileStore(StorageRepository):
             for r in cf.rows:
                 if int(r.get("id", 0)) >= self._next_msg_pk:
                     self._next_msg_pk = int(r["id"]) + 1
+                # 同步构建 media_by_fid 索引(任一 media 已 DONE 才记)
+                for md in r.get("media", []):
+                    fid = md.get("telegram_file_id")
+                    if not fid:
+                        continue
+                    if md.get("download_status") != MediaDownloadStatus.DONE.value:
+                        continue
+                    if not md.get("object_key"):
+                        continue
+                    # 后写入的优先(upsert 路径)
+                    self._media_by_fid[fid] = MediaDTO(
+                        type=md["type"],
+                        telegram_file_id=fid,
+                        object_key=md.get("object_key"),
+                        object_backend=md.get("object_backend"),
+                        file_size=md.get("file_size"),
+                        download_status=MediaDownloadStatus.DONE,
+                    )
             self._files[cid] = cf
 
     async def close(self) -> None:
@@ -345,6 +372,14 @@ class JsonlFileStore(StorageRepository):
         """幂等 upsert;自动分配 message.id(若未传);返回 DB 内部 id。
 
         跨 save 串行化(同 / 跨频道),保证 _next_msg_pk 不撞 + flush 顺序。
+
+        2026-08-24:`_media_by_fid` 索引维护改为 re-evaluate 模式(只在 upsert
+        路径覆盖 fid 不再 OK,旧实现只 ADD 没 REMOVE — DONE→PENDING 切换时旧
+        fid 留在索引里,`find_media_by_file_id` 返 stale entry 让 retry 路径
+        的 skip #1 误命中)。新实现:update 前记录 old.media,update 后对
+        `old ∪ new` 的所有 fid 扫所有 messages 看是否还有 DONE+object_key 引用;
+        没有 → 从 `_media_by_fid` 删;有 → 用最新。MVP 数据规模 O(fids × msgs)
+        可接受。
         """
         async with self._write_lock:
             # 确保频道存在
@@ -358,21 +393,76 @@ class JsonlFileStore(StorageRepository):
             if not message.id:
                 message.id = self._next_msg_pk
                 self._next_msg_pk += 1
+            # 取旧 media(可能有同 fid 的 DONE 项)用于 re-evaluate 索引
+            old_msg = await self.get_message(message.channel_id, message.telegram_msg_id)
+            old_fids = {
+                m.telegram_file_id for m in (old_msg.media if old_msg else [])
+                if m.telegram_file_id
+            }
             d = _message_to_dict(message)
             await cf.upsert(d)
             await cf.flush()
+            # re-evaluate 索引:对 (old_fids ∪ new_fids) 每个 fid 看 storage
+            # 是否还有任何 DONE+object_key 的引用。
+            new_fids = {m.telegram_file_id for m in message.media if m.telegram_file_id}
+            affected = old_fids | new_fids
+            for fid in affected:
+                best = self._find_done_by_fid(fid)
+                if best is None:
+                    self._media_by_fid.pop(fid, None)
+                else:
+                    self._media_by_fid[fid] = best
             return message.id
+
+    def _find_done_by_fid(self, telegram_file_id: str) -> MediaDTO | None:
+        """扫所有 messages(内存中)找第一个同 fid 且 DONE+object_key 的 media。
+
+        多个 message 引用同一 fid(跨消息去重场景)时返最新(DB 中已写入的
+        顺序)。MVP 复杂度 O(total messages);后续可下沉到按 channel 索引。
+        """
+        for cf in self._files.values():
+            for row in cf.rows:
+                for md in row.get("media", []):
+                    if md.get("telegram_file_id") != telegram_file_id:
+                        continue
+                    if md.get("download_status") != MediaDownloadStatus.DONE.value:
+                        continue
+                    if not md.get("object_key"):
+                        continue
+                    return MediaDTO(
+                        type=MediaType(md["type"]),
+                        telegram_file_id=telegram_file_id,
+                        object_key=md.get("object_key"),
+                        object_backend=md.get("object_backend"),
+                        file_size=md.get("file_size"),
+                        download_status=MediaDownloadStatus.DONE,
+                    )
+        return None
 
     async def update_message(self, message: MessageDTO) -> None:
         """按 (channel_id, telegram_msg_id) 覆盖式更新(代理到 save_message)。"""
         await self.save_message(message)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删单条消息;不存在不抛。"""
+        """删单条消息;不存在不抛。2026-08-24:同步清理 `_media_by_fid` 索引 —
+        若该 message 含 fid,删后 storage 无引用,索引条目该清。
+        """
         async with self._write_lock:
+            old_msg = await self.get_message(channel_id, telegram_msg_id)
             cf = await self._file_for(channel_id)
             await cf.delete(telegram_msg_id)
             await cf.flush()
+            if old_msg:
+                for med in old_msg.media:
+                    fid = med.telegram_file_id
+                    if not fid or fid not in self._media_by_fid:
+                        continue
+                    # 还有其它 message 引用同 fid → 留;否则删
+                    best = self._find_done_by_fid(fid)
+                    if best is None:
+                        self._media_by_fid.pop(fid, None)
+                    else:
+                        self._media_by_fid[fid] = best
 
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
@@ -418,3 +508,12 @@ class JsonlFileStore(StorageRepository):
         """该频道已落库消息数;不应用 date 过滤。"""
         cf = await self._file_for(channel_id)
         return len(cf.rows)
+
+    async def find_media_by_file_id(
+        self, telegram_file_id: str
+    ) -> MediaDTO | None:
+        """跨频道去重:任一先前已 DONE 的同 file_id media → 拷字段复用。
+
+        索引在 `connect()` 加载时 + 每次 `save_message` 时增量更新,O(1) 查。
+        """
+        return self._media_by_fid.get(telegram_file_id)

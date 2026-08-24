@@ -11,7 +11,7 @@ import pytest_asyncio
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaType, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaDownloadStatus, MediaType, MessageDTO
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -29,6 +29,8 @@ class InMemoryRepository(StorageRepository):
         self.messages: dict[tuple[int, int], MessageDTO] = {}
         self._msg_pk = 0
         self._meta: dict[str, str] = {}
+        # telegram_file_id -> MediaDTO(已 DONE)— find_media_by_file_id 用
+        self._media_by_fid: dict[str, MediaDTO] = {}
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
@@ -100,14 +102,44 @@ class InMemoryRepository(StorageRepository):
         else:
             self._msg_pk += 1
             message.id = self._msg_pk
+        # 2026-08-24:re-evaluate 索引 — DONE→PENDING 切换时旧 fid 索引条目该清。
+        old_msg = self.messages.get(key)
+        old_fids = {m.telegram_file_id for m in (old_msg.media if old_msg else []) if m.telegram_file_id}
         self.messages[key] = message
+        new_fids = {m.telegram_file_id for m in message.media if m.telegram_file_id}
+        for fid in old_fids | new_fids:
+            best = self._find_done_by_fid(fid)
+            if best is None:
+                self._media_by_fid.pop(fid, None)
+            else:
+                self._media_by_fid[fid] = best
         return message.id
+
+    def _find_done_by_fid(self, telegram_file_id: str) -> MediaDTO | None:
+        """与 JsonlFileStore 同步(2026-08-24):返第一个同 fid 且 DONE+object_key 的 media。"""
+        for m in self.messages.values():
+            for med in m.media:
+                if (med.telegram_file_id == telegram_file_id
+                        and med.download_status == MediaDownloadStatus.DONE
+                        and med.object_key):
+                    return med
+        return None
 
     async def update_message(self, message: MessageDTO) -> None:
         await self.save_message(message)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        self.messages.pop((channel_id, telegram_msg_id), None)
+        key = (channel_id, telegram_msg_id)
+        old = self.messages.pop(key, None)
+        if old:
+            for med in old.media:
+                fid = med.telegram_file_id
+                if fid and fid in self._media_by_fid:
+                    best = self._find_done_by_fid(fid)
+                    if best is None:
+                        self._media_by_fid.pop(fid, None)
+                    else:
+                        self._media_by_fid[fid] = best
 
     async def get_message(
         self, channel_id: int, telegram_msg_id: int
@@ -142,6 +174,12 @@ class InMemoryRepository(StorageRepository):
 
     async def count_messages(self, channel_id: int) -> int:
         return sum(1 for m in self.messages.values() if m.channel_id == channel_id)
+
+    async def find_media_by_file_id(
+        self, telegram_file_id: str
+    ) -> MediaDTO | None:
+        """跨消息去重:任一 prior 已 DONE 的同 file_id media → 返 DTO。"""
+        return self._media_by_fid.get(telegram_file_id)
 
     async def ping(self) -> bool:
         return True

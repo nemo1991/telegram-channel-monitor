@@ -665,3 +665,494 @@ async def test_full_policy_download_failure_marks_failed(
         assert stored.media[0].download_error
     finally:
         await mon.stop()
+
+
+# ============================================================
+# 2026-08-24:monitor dedup + edit-event path
+# ============================================================
+
+
+async def test_live_monitor_re_arrival_routes_to_edit_path(
+    monitor, client, bus, storage
+) -> None:
+    """同 id 重推(session 内)_seen_ids 命中 → 走 _handle_edited 而非 _handle。
+
+    行为:
+    - 第 1 次 push → MessageReceived(text=v1)+ save_message(v1)
+    - 第 2 次 push(同 id,text=v2)→ _seen_ids 已记录 → 走 _handle_edited
+      → MessageEdited + update_message(text=v2 覆盖)
+    - MessageReceived 只发 1 次(编辑不发新消息事件,避免 UI 把它当新插入)
+    """
+    from tgmonitor.core.events import MessageEdited, MessageReceived
+
+    monitor.set_whitelist([100])
+    received: list[MessageReceived] = []
+    edited: list[MessageEdited] = []
+    edited_evt = asyncio.Event()
+
+    async def _on_recv(e: MessageReceived) -> None:
+        received.append(e)
+    async def _on_edit(e: MessageEdited) -> None:
+        edited.append(e)
+        edited_evt.set()
+    bus.subscribe(MessageReceived, _on_recv)
+    bus.subscribe(MessageEdited, _on_edit)
+
+    await monitor.start()
+    try:
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v1"))
+        await asyncio.sleep(0.1)
+        assert len(received) == 1
+        # 第 2 次:同 id,v2 — 应走编辑路径
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v2"))
+        await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
+        # MessageReceived 仍 1 条(编辑不发新消息事件)
+        assert len(received) == 1
+        # MessageEdited 1 条,text 已是 v2
+        assert len(edited) == 1
+        assert edited[0].message is not None
+        assert edited[0].message.text == "v2"
+        # storage 文本被覆盖为 v2
+        stored = await storage.get_message(100, 1)
+        assert stored is not None and stored.text == "v2"
+    finally:
+        await monitor.stop()
+
+
+async def test_live_monitor_silent_skip_when_message_in_storage(
+    monitor, client, bus, storage
+) -> None:
+    """同 id 推 3 次 → 仅 1 条 MessageReceived,后 2 次都走编辑路径发 MessageEdited。
+
+    与 test_live_monitor_re_arrival_routes_to_edit_path 互为补充:那个测 1 次
+    重发,这个测连续 3 次,验证 _seen_ids 一致命中。
+    """
+    from tgmonitor.core.events import MessageEdited, MessageReceived
+
+    monitor.set_whitelist([100])
+    received: list[MessageReceived] = []
+    edited: list[MessageEdited] = []
+
+    async def _on_recv(e: MessageReceived) -> None:
+        received.append(e)
+    async def _on_edit(e: MessageEdited) -> None:
+        edited.append(e)
+    bus.subscribe(MessageReceived, _on_recv)
+    bus.subscribe(MessageEdited, _on_edit)
+
+    await monitor.start()
+    try:
+        for i in range(3):
+            await client.simulate_incoming(
+                make_message(channel_id=100, msg_id=1, text=f"v{i}")
+            )
+        await asyncio.sleep(0.2)
+        # 仅 1 条 MessageReceived
+        assert len(received) == 1
+        # 2 条 MessageEdited
+        assert len(edited) == 2
+        # storage 文本被覆盖到最后一轮(v2)
+        stored = await storage.get_message(100, 1)
+        assert stored is not None and stored.text == "v2"
+    finally:
+        await monitor.stop()
+
+
+async def test_full_policy_skips_download_when_storage_has_prior(
+    monitor, client, bus, storage, objectstore, settings
+) -> None:
+    """跨消息 media 去重:msg 1 已下完,msg 2 同 file_id → 不重下,MediaDownloaded 不发。
+
+    msg 2 落库时 media 已是 DONE + object_key 拷自 storage 优先副本。
+    """
+    from tgmonitor.core.config import MediaPolicy
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.events import MediaDownloaded, MessageReceived
+    from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
+
+    client.set_download("fid-X", b"shared-bytes")
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    mon = MonitorService(
+        bus, client, storage, objectstore, full,
+        downloader=MediaDownloader(client, storage, objectstore),
+    )
+    mon.set_whitelist([100])
+    received: list[MessageReceived] = []
+    downloaded: list[MediaDownloaded] = []
+    downloaded_evt = asyncio.Event()
+
+    async def _on_received(e: MessageReceived) -> None:
+        received.append(e)
+
+    async def _on_downloaded(e: MediaDownloaded) -> None:
+        downloaded.append(e)
+        downloaded_evt.set()
+    bus.subscribe(MessageReceived, _on_received)
+    bus.subscribe(MediaDownloaded, _on_downloaded)
+
+    msg1 = make_message(
+        channel_id=100, msg_id=10, text="first",
+        media=[_media_with_file_id("fid-X")],
+    )
+    msg2 = make_message(
+        channel_id=100, msg_id=11, text="second",
+        media=[_media_with_file_id("fid-X")],
+    )
+    await mon.start()
+    try:
+        # msg 1:正常下载
+        await client.simulate_incoming(msg1)
+        await asyncio.wait_for(downloaded_evt.wait(), timeout=2.0)
+        assert len(downloaded) == 1
+        downloaded_evt.clear()
+        # msg 2:同 file_id → _handle 阶段拷 storage 优先副本 → 不入下载队列
+        await client.simulate_incoming(msg2)
+        await asyncio.sleep(0.3)
+        # 仅 msg 1 的下载事件
+        assert len(downloaded) == 1, "msg 2 应命中 media dedup,不重下"
+        # msg 2 落库时 media 已 DONE + object_key
+        assert len(received) == 2
+        msg2_received = received[1].message
+        assert msg2_received is not None
+        assert msg2_received.media[0].download_status == MediaDownloadStatus.DONE
+        assert msg2_received.media[0].object_key, "应拷 storage 优先 object_key"
+    finally:
+        await mon.stop()
+
+
+async def test_full_policy_dedup_cross_messages_via_storage(
+    monitor, client, bus, storage, objectstore, settings
+) -> None:
+    """不同 file_name 但同 telegram_file_id → storage find_media_by_file_id 命中。
+
+    与上面互补:这个测 storage skip #1(MediaDownloader.download_one 入口),
+    上面测 _handle 阶段的 media dedup。两条路径一起覆盖。
+    """
+    from tgmonitor.core.config import MediaPolicy
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.events import MediaDownloaded
+    from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
+
+    client.set_download("fid-Y", b"only-once")
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    mon = MonitorService(
+        bus, client, storage, objectstore, full,
+        downloader=MediaDownloader(client, storage, objectstore),
+    )
+    mon.set_whitelist([100])
+    downloaded: list = []
+    downloaded_evt = asyncio.Event()
+
+    async def _on_dl(e):
+        downloaded.append(e)
+        downloaded_evt.set()
+    bus.subscribe(MediaDownloaded, _on_dl)
+
+    msg1 = make_message(
+        channel_id=100, msg_id=20, text="a",
+        media=[_media_with_file_id("fid-Y")],
+    )
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg1)
+        await asyncio.wait_for(downloaded_evt.wait(), timeout=2.0)
+        assert len(downloaded) == 1
+        downloaded_evt.clear()
+
+        # 直接调 download_one:模拟 sync 重新拉这条 media(同 file_id)
+        med2 = _media_with_file_id("fid-Y")
+        assert mon.downloader is not None
+        out = await mon.downloader.download_one(msg_pk=0, media=med2)
+        # 应命中 storage skip #1 → DONE, 不调 client.download_file
+        assert out.download_status == MediaDownloadStatus.DONE
+        assert out.object_key, "拷自 storage"
+        # 无新下载事件
+        assert len(downloaded) == 1
+    finally:
+        await mon.stop()
+
+
+async def test_live_monitor_emits_message_edited_on_content_change(
+    monitor, client, bus, storage
+) -> None:
+    """先推 (100,1,v1),再推同 id v2(模拟 updateMessageContent)→ 发 MessageEdited。
+
+    MessageReceived 只发 1 次(v1 时),编辑后 MessageEdited 触发,storage 文本被覆盖。
+    """
+    from tgmonitor.core.events import MessageEdited, MessageReceived
+
+    monitor.set_whitelist([100])
+    received: list[MessageReceived] = []
+    edited: list[MessageEdited] = []
+    edited_evt = asyncio.Event()
+
+    async def _on_edited(e: MessageEdited) -> None:
+        edited.append(e)
+        edited_evt.set()
+    async def _on_recv(e: MessageReceived) -> None:
+        received.append(e)
+    bus.subscribe(MessageReceived, _on_recv)
+    bus.subscribe(MessageEdited, _on_edited)
+
+    await monitor.start()
+    try:
+        # 第 1 条:v1
+        await client.simulate_incoming(
+            make_message(channel_id=100, msg_id=1, text="v1")
+        )
+        await asyncio.sleep(0.2)
+        assert len(received) == 1
+        # 第 2 条:同 id,text v2 — _seen_ids 命中 → 走 _handle_edited
+        await client.simulate_incoming(
+            make_message(channel_id=100, msg_id=1, text="v2")
+        )
+        await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
+        # 仍仅 1 条 MessageReceived(编辑不发)
+        assert len(received) == 1
+        # 1 条 MessageEdited,text 已覆盖
+        assert len(edited) == 1
+        assert edited[0].message is not None
+        assert edited[0].message.text == "v2"
+        # storage 也已覆盖
+        stored = await storage.get_message(100, 1)
+        assert stored is not None and stored.text == "v2"
+    finally:
+        await monitor.stop()
+
+
+async def test_edit_path_overwrites_text_views_forwards_edited_media(
+    monitor, client, bus, storage
+) -> None:
+    """编辑覆盖所有可变字段:text / views / forwards / edited / media。
+
+    不动 message.id 与原 author 等不变字段(dataclasses.replace)。
+    """
+    from datetime import UTC, datetime
+
+    from tgmonitor.core.events import MessageEdited
+
+    monitor.set_whitelist([100])
+    edited: list[MessageEdited] = []
+    edited_evt = asyncio.Event()
+
+    async def _on_edited(e: MessageEdited) -> None:
+        edited.append(e)
+        edited_evt.set()
+    bus.subscribe(MessageEdited, _on_edited)
+
+    # 第 1 条:initial
+    initial = make_message(channel_id=100, msg_id=1, text="v1")
+    # 第 2 条:edit,改 text + views + forwards + edited + media
+    edited_dto = MessageDTO(
+        id=0, channel_id=100, telegram_msg_id=1,
+        date=datetime(2026, 1, 1, tzinfo=UTC),
+        text="v2-edited",
+        author="alice",
+        views=200,
+        forwards=15,
+        edited=True,
+        media=[_media_with_file_id("new-fid")],
+    )
+
+    await monitor.start()
+    try:
+        await client.simulate_incoming(initial)
+        await asyncio.sleep(0.1)
+        # 同 id,模拟 updateMessageContent — 改 fields
+        await client.simulate_incoming(edited_dto)
+        await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
+
+        stored = await storage.get_message(100, 1)
+        assert stored is not None
+        assert stored.text == "v2-edited"
+        assert stored.views == 200
+        assert stored.forwards == 15
+        assert stored.edited is True
+        assert len(stored.media) == 1
+        assert stored.media[0].telegram_file_id == "new-fid"
+        # author 未变(编辑字段表不含 author)
+        assert stored.author == "alice"
+    finally:
+        await monitor.stop()
+
+
+async def test_edit_path_when_storage_empty_saves_as_new(
+    monitor, client, bus, storage
+) -> None:
+    """编辑路径 + storage 空(罕见)→ 当作新增保存,仍发 MessageEdited。
+
+    模拟:手动往 _seen_ids 注入 key(假装已见过),然后推 (100,1)
+    → _seen_ids 命中 → 走 _handle_edited → storage.get_message 返 None
+    → save_message + MessageEdited(不发 MessageReceived)。
+    """
+    from tgmonitor.core.events import MessageEdited, MessageReceived
+
+    monitor.set_whitelist([100])
+    edited: list[MessageEdited] = []
+    received: list[MessageReceived] = []
+
+    async def _on_edited(e: MessageEdited) -> None:
+        edited.append(e)
+    async def _on_recv(e: MessageReceived) -> None:
+        received.append(e)
+    bus.subscribe(MessageEdited, _on_edited)
+    bus.subscribe(MessageReceived, _on_recv)
+
+    await monitor.start()
+    try:
+        # 手动在 _seen_ids 塞 (100, 1),但 storage 没这条消息
+        monitor._seen_ids[(100, 1)] = None
+        await client.simulate_incoming(
+            make_message(channel_id=100, msg_id=1, text="edit-on-empty")
+        )
+        await asyncio.sleep(0.2)
+        # MessageReceived 不发(编辑路径走 MessageEdited)
+        assert received == []
+        # MessageEdited 发,消息已落库
+        assert len(edited) == 1
+        assert edited[0].message.text == "edit-on-empty"
+        stored = await storage.get_message(100, 1)
+        assert stored is not None
+        assert stored.text == "edit-on-empty"
+    finally:
+        await monitor.stop()
+
+
+async def test_seen_ids_cache_evicts_when_over_limit(
+    monitor, client, bus
+) -> None:
+    """推 10001 条不同 id → _seen_ids 收敛到 10000(OrderedDict LRU)。"""
+    monitor.set_whitelist([100])
+    await monitor.start()
+    try:
+        for mid in range(1, 10002):
+            await client.simulate_incoming(
+                make_message(channel_id=100, msg_id=mid, text=f"m-{mid}")
+            )
+        await asyncio.sleep(0.5)
+        # LRU cap=10000
+        assert len(monitor._seen_ids) == 10000
+        # 最旧的(1-1=0)被踢
+        assert (100, 1) not in monitor._seen_ids
+        # 最新(10001)还在
+        assert (100, 10001) in monitor._seen_ids
+    finally:
+        await monitor.stop()
+
+
+async def test_delete_message_removes_orphan_bytes(
+    bus, storage, objectstore, settings, client
+) -> None:
+    """2026-08-24 delete_message 清孤儿 bytes:唯一引用该 key 的 message 被删
+    → refcount=0 → objects.delete 被调 → ObjectStore 里 key 不再存在。
+
+    路径:storage 里一条 message 带 fid="fid-X" + object_key="media/abc.png"
+    → delete_message(100, 1) → ObjectStore 上 "media/abc.png" 被真删。
+    """
+    import dataclasses
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.monitor.service import MonitorService
+
+    # 落库 + 写入 ObjectStore
+    await objectstore.put("media/abc.png", b"image-bytes", None)
+    assert await objectstore.exists("media/abc.png")
+    base = _media_with_file_id("fid-X")
+    done = dataclasses.replace(
+        base,
+        object_key="media/abc.png",
+        object_backend="local",
+        download_status=MediaDownloadStatus.DONE,
+        file_size=len(b"image-bytes"),
+    )
+    msg = make_message(channel_id=100, msg_id=1, text="", media=[done])
+    await storage.save_message(msg)
+    # 跑 MonitorService.delete_message
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    await mon.delete_message(100, 1)
+    # message 已删
+    assert await storage.get_message(100, 1) is None
+    # refcount=0 → bytes 真删
+    assert not await objectstore.exists("media/abc.png")
+
+
+async def test_delete_message_keeps_bytes_when_referenced(
+    bus, storage, objectstore, settings, client
+) -> None:
+    """同 file_id 两条 message 都用同一 key,删一条 → bytes 保留(另一条还在引用)。
+
+    回归:refcount 没引入前,删消息会把同 key 的 bytes 一并误删,跨消息去重场景下
+    另一条 message 的 media 变孤儿(reference 还在但找不到 bytes)。
+    """
+    import dataclasses
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+    from tgmonitor.core.monitor.service import MonitorService
+
+    await objectstore.put("media/shared.png", b"shared-bytes", None)
+    # 同 file_id="fid-Y" + 同 key="media/shared.png" 的两条 message(模拟跨消息去重)
+    base = _media_with_file_id("fid-Y")
+    med = dataclasses.replace(
+        base,
+        object_key="media/shared.png",
+        object_backend="local",
+        download_status=MediaDownloadStatus.DONE,
+        file_size=len(b"shared-bytes"),
+    )
+    await storage.save_message(make_message(
+        channel_id=100, msg_id=10, text="first", media=[med],
+    ))
+    await storage.save_message(make_message(
+        channel_id=100, msg_id=11, text="second", media=[med],
+    ))
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    # 删其中一条
+    await mon.delete_message(100, 10)
+    # message 10 已删,message 11 还在
+    assert await storage.get_message(100, 10) is None
+    assert await storage.get_message(100, 11) is not None
+    # key 仍被 message 11 引用 → bytes 保留
+    assert await objectstore.exists("media/shared.png")
+    assert await objectstore.get("media/shared.png") == b"shared-bytes"
+
+
+def test_edited_message_ui_replace_message_renders_new_text():
+    """UI 层:MessageView.replace_message 按 (channel_id, telegram_msg_id) 找 row,
+    调 _format 重渲,row 数不变,文本更新到 v2。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])  # noqa: F841 — keep alive
+    from datetime import UTC, datetime
+
+    from tgmonitor.core.dto import MessageDTO
+    from tgmonitor.ui.widgets.message_view import MessageView
+
+    view = MessageView()
+    # 频道标题缓存,让 _format 输出稳定
+    view.set_channel_titles({100: "TNews"})
+    # 先 append 一条 v1
+    msg1 = MessageDTO(
+        id=0, channel_id=100, telegram_msg_id=1,
+        date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        text="v1", author="alice", media=[],
+    )
+    view.append(msg1)
+    assert view.count() == 1
+    # 编辑事件触发 replace_message(v2)
+    msg2 = MessageDTO(
+        id=0, channel_id=100, telegram_msg_id=1,
+        date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        text="v2-edited", author="alice", media=[],
+    )
+    view.replace_message(msg2)
+    # row 数不变
+    assert view.count() == 1
+    # 内容更新
+    item = view.item(0)
+    assert item is not None
+    dto_after = item.data(MessageView._ROLE_DTO)
+    assert isinstance(dto_after, MessageDTO)
+    assert dto_after.text == "v2-edited"
+    # 显示文本含 "v2-edited"
+    assert "v2-edited" in item.text()

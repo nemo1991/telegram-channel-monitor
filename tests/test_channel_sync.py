@@ -156,12 +156,23 @@ async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
     # 原有 50 + 新拉 50 = 100
     assert len(msgs) == 100
     # total_messages_added 是"新落库",不含已存在的
-    assert captured["done"][0].result.total_messages_added == 50
+    res = captured["done"][0].result
+    assert res.total_messages_added == 50
+    # resume 路径拉 49-100(fake client before_msg_id 语义);49-50 与 storage
+    # 命中 skip, 51-100 新落。messages_added 仍 50(只算新落)。
+    assert res.per_channel[100].messages_added == 50
+    assert res.per_channel[100].messages_skipped >= 2
 
 
-async def test_resume_disabled_re_pulls_all(bus, client, storage, settings):
+async def test_resume_disabled_re_pulls_and_skips_already_stored(
+    bus, client, storage, settings
+):
     """resume_from_saved=False → 即使 storage 有 max_id,也从头拉。
-    save_message 幂等 → 总条数不变,total_messages_added = 0。"""
+
+    skip-if-stored:storage 已有的 1-50 在 re-sync 时静默跳过,
+    `messages_skipped == 50`,新增计数 50(51-100 真正写入)。
+    `total_messages_added == 50`(语义:实际写入 DB 的新消息)。
+    """
     for mid in range(1, 51):
         await storage.save_message(MessageDTO(
             id=0, channel_id=100, telegram_msg_id=mid,
@@ -177,8 +188,13 @@ async def test_resume_disabled_re_pulls_all(bus, client, storage, settings):
     await svc.sync_channels([100], options)
     msgs = await storage.list_messages([100])
     assert len(msgs) == 100  # 仍然 100(幂等)
-    # resume=False + storage 已有 50 → 重拉全 100,新落 50(原 1-50 已存,51-100 是新的)
-    assert captured["done"][0].result.total_messages_added == 50
+    # resume=False + storage 已有 50 → 重拉全 100:
+    #   - 原 1-50 命中 skip → messages_skipped += 50
+    #   - 51-100 真正新落 → messages_added += 50
+    res = captured["done"][0].result
+    assert res.total_messages_added == 50
+    assert res.per_channel[100].messages_skipped == 50
+    assert res.per_channel[100].messages_added == 50
 
 
 # ============================================================
@@ -380,3 +396,111 @@ def test_translate_rate_limit_returns_none_for_unrelated():
         message = "Something else"
     got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
     assert got is None
+
+
+# ============================================================
+# 2026-08-24:skip-if-stored + 同步进度 init / channel_start
+# ============================================================
+
+
+async def test_sync_skips_already_stored_messages(
+    bus, client, storage, settings
+):
+    """re-sync 同一频道 — storage 已有 100 条,client 再推 100 同 id,全静默跳过。
+
+    messages_added=0, messages_skipped=100, len(msgs) 仍 100。
+    """
+    # pre-populate 1-100
+    for mid in range(1, 101):
+        await storage.save_message(MessageDTO(
+            id=0, channel_id=100, telegram_msg_id=mid,
+            text=f"old-{mid}", date=datetime(2026, 1, 1),
+        ))
+    svc = await _make_app(bus, client, storage)
+    client.set_history(100, max_id=100, count=100)
+    options = SyncOptions(
+        include_metadata=False, include_history=True,
+        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=False,
+    )
+    captured = _capture_events(bus)
+    result = await svc.sync_channels([100], options)
+    msgs = await storage.list_messages([100])
+    # 仍然 100 条(没新增,也没多写)
+    assert len(msgs) == 100
+    # 全部命中 skip → messages_skipped=100, messages_added=0
+    ch_res = result.per_channel[100]
+    assert ch_res.messages_added == 0
+    assert ch_res.messages_skipped == 100
+    # total_messages_added 是「实际写入」,应 0
+    assert captured["done"][0].result.total_messages_added == 0
+
+
+async def test_sync_emits_init_event(bus, client, storage, settings):
+    """sync 入口发 init 事件 — stage='init', total=2。"""
+    svc = await _make_app(bus, client, storage)
+    client.set_metadata(ChannelDTO(id=1, title="A", kind="channel"))
+    client.set_metadata(ChannelDTO(id=2, title="B", kind="channel"))
+    client.set_history(1, max_id=5, count=5)
+    client.set_history(2, max_id=5, count=5)
+    captured = _capture_events(bus)
+    options = SyncOptions(
+        include_metadata=True, include_history=True,
+        chat_delay_ms=0, page_delay_ms=0,
+    )
+    await svc.sync_channels([1, 2], options)
+    # 第一条 progress 应是 init
+    init_events = [e for e in captured["progress"] if e.stage == "init"]
+    assert len(init_events) == 1
+    assert init_events[0].total == 2
+    assert init_events[0].progress == 0
+
+
+async def test_sync_emits_channel_start_event(bus, client, storage, settings):
+    """每个频道开始前发 channel_start 事件。"""
+    svc = await _make_app(bus, client, storage)
+    client.set_history(100, max_id=10, count=10)
+    captured = _capture_events(bus)
+    options = SyncOptions(
+        include_metadata=False, include_history=True,
+        chat_delay_ms=0, page_delay_ms=0,
+    )
+    await svc.sync_channels([100], options)
+    starts = [e for e in captured["progress"] if e.stage == "channel_start"]
+    assert len(starts) == 1
+    assert starts[0].channel_id == 100
+    # channel_start 应在 history 事件之前
+    assert starts[0].__dict__["stage"] == "channel_start"
+    # 通过时间顺序(订阅顺序就是发出顺序)验证
+    progress_stages = [e.stage for e in captured["progress"]]
+    cs_idx = progress_stages.index("channel_start")
+    first_history_idx = progress_stages.index("history")
+    assert cs_idx < first_history_idx
+
+
+async def test_sync_progress_history_includes_skipped_counter(
+    bus, client, storage, settings
+):
+    """history 节流事件 detail 同时含「新增」与「已存」计数。"""
+    # pre-populate 30 条
+    for mid in range(1, 31):
+        await storage.save_message(MessageDTO(
+            id=0, channel_id=100, telegram_msg_id=mid,
+            text=f"old-{mid}", date=datetime(2026, 1, 1),
+        ))
+    svc = await _make_app(bus, client, storage)
+    client.set_history(100, max_id=100, count=100)
+    captured = _capture_events(bus)
+    options = SyncOptions(
+        include_metadata=False, include_history=True,
+        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=False,
+    )
+    await svc.sync_channels([100], options)
+    # 至少一条 history 事件 detail 含「新增 ... 已存 ...」
+    assert any(
+        e.detail and "新增" in e.detail and "已存" in e.detail
+        for e in captured["progress"] if e.stage == "history"
+    )
+    # 终态 SyncResult.per_channel 携带 skipped 计数(30 skip + 70 新落)
+    res = captured["done"][0].result
+    assert res.per_channel[100].messages_skipped >= 30
+    assert res.per_channel[100].messages_added == 70

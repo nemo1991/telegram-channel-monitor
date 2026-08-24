@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, BinaryIO
+from typing import Any, AsyncIterator, BinaryIO
 
 import aioboto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -158,3 +158,15 @@ class S3ObjectStore(ObjectStore):
         from io import BytesIO
 
         return BytesIO(await self.get(key))
+
+    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:  # noqa: ARG002
+        """S3 后端 — MVP 不实现(ListObjectsV2 paginator 工程量大)。
+
+        2026-08-24:Media Manager reconcile 对 S3 用户显示「reconcile 不可用」,
+        不抛意外异常。`AppService.reconcile_orphans` 调用方会捕 NotImplementedError。
+        """
+        raise NotImplementedError(
+            "S3 后端 iter_keys 未实现;reconcile 仅支持 Local / Folder"
+        )
+        if False:  # pragma: no cover — 让函数成为 async generator
+            yield ""

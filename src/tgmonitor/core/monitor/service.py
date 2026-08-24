@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
 import hashlib
 import logging
@@ -25,6 +26,7 @@ from tgmonitor.core.events import (
     EventBus,
     MediaDownloaded,
     MessageDeleted,
+    MessageEdited,
     MessageReceived,
 )
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
@@ -85,6 +87,12 @@ class MonitorService:
         # MediaDownloaded 事件。串行单 worker 避免 TDLib 并发下载互相干扰。
         self._download_queue: asyncio.Queue[tuple[MessageDTO, int]] | None = None
         self._download_task: asyncio.Task | None = None
+        # 2026-08-24:最近 stream 见过 / 落库过的 (channel_id, telegram_msg_id)。
+        # 用于区分 updateNewMessage 与 updateMessageContent:命中走 _handle_edited,
+        # miss 走 _handle。OrderedDict 限长 10000,超长 evict 最旧。
+        self._seen_ids: collections.OrderedDict[tuple[int, int], None] = (
+            collections.OrderedDict()
+        )
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
         """替换白名单 — 由 AppService 启动 monitor 时调。"""
@@ -144,6 +152,7 @@ class MonitorService:
         if self._task is not None:
             return
         self._stop.clear()
+        self._seen_ids.clear()
         self._stream = self.client.subscribe_updates()
         self._task = asyncio.create_task(self._run(), name="MonitorService")
         self._backfill_task = asyncio.create_task(
@@ -221,7 +230,14 @@ class MonitorService:
                         msg.channel_id, msg.telegram_msg_id,
                     )
                     try:
-                        await self._handle(msg)
+                        # 2026-08-24:按 _seen_ids 区分「新消息」与「编辑」—
+                        # TDLib 编辑( updateMessageContent)走同一个 stream,
+                        # 用 cache 命中标记。
+                        key = (msg.channel_id, msg.telegram_msg_id)
+                        if key in self._seen_ids:
+                            await self._handle_edited(msg)
+                        else:
+                            await self._handle(msg)
                     except Exception as e:  # noqa: BLE001
                         log.exception("handle message failed: %s", e)
                         await self.bus.publish(
@@ -341,12 +357,45 @@ class MonitorService:
             await self._backfill_all()
 
     async def _handle(self, msg: MessageDTO) -> None:
+        """新消息路径(2026-08-24):已存/已编辑的消息在 `_run` 处已路由到 `_handle_edited`。
+
+        这里:
+          - 白名单守门
+          - 跨消息 media 去重(同 file_id 已有 DONE → 拷字段,不入下载队列)
+          - 记录 `_seen_ids`(让后续 updateMessageContent 走编辑路径)
+          - 落库 + 发 MessageReceived
+        """
         if msg.channel_id not in self._whitelist:
             log.debug(
                 "monitor ignored msg: channel_id=%s not in whitelist %s",
                 msg.channel_id, sorted(self._whitelist),
             )
             return
+
+        # 跨消息 media 去重(2026-08-24):任一先前已 DONE 的同 file_id media →
+        # 拷 object_key / object_backend / file_size,后续 PENDING/DOWNLOADING +
+        # `not object_key` 规则看到 object_key 已填自然不入下载队列。
+        if msg.media:
+            for med in msg.media:
+                if med.telegram_file_id and not med.object_key:
+                    prior = await self.storage.find_media_by_file_id(
+                        med.telegram_file_id,
+                    )
+                    if (prior is not None
+                            and prior.download_status == MediaDownloadStatus.DONE
+                            and prior.object_key):
+                        med.object_key = prior.object_key
+                        med.object_backend = prior.object_backend
+                        med.file_size = prior.file_size
+                        med.download_status = MediaDownloadStatus.DONE
+                        med.download_error = None
+
+        # 记录这条消息已见,后续 updateMessageContent 会走 _handle_edited
+        key = (msg.channel_id, msg.telegram_msg_id)
+        self._seen_ids[key] = None
+        if len(self._seen_ids) > 10000:
+            self._seen_ids.popitem(last=False)
+
         # 媒体下载策略:
         #   METADATA  → 跳过 thumb / full
         #   THUMBNAIL → 走 _maybe_store_thumb(空 hook,留给未来)
@@ -369,6 +418,8 @@ class MonitorService:
             for idx, med in enumerate(msg.media):
                 # PENDING=新消息;DOWNLOADING=上次运行中断遗留 → 重启后重新下载;
                 # DONE / FAILED 不再重下(FAILED 让用户看原因,不无限重试)。
+                # 注:跨消息去重(D8 上面那段)已把已下载的 media 标 DONE +
+                # object_key 已填,这里 `not object_key` 自然跳过。
                 if med.download_status in (
                     MediaDownloadStatus.PENDING,
                     MediaDownloadStatus.DOWNLOADING,
@@ -393,6 +444,52 @@ class MonitorService:
         if queued and queue is not None:
             for idx in queued:
                 await queue.put((msg, idx))
+
+    async def _handle_edited(self, msg: MessageDTO) -> None:
+        """编辑路径(2026-08-24):`_run` 路由命中 `_seen_ids` 后调这里。
+
+        编辑的常见字段:text / views / forwards / edited 标志 / media 列表 —
+        覆盖式写回 storage(`update_message`)并发 `MessageEdited` 事件。
+
+        不入队下载(编辑不该重下媒体);不发 `MessageReceived`(避免
+        MessageView 把它当新消息插入)。
+
+        不依赖 whitelist:编辑事件来自「已订阅时收到的消息历史」,用户可能后续
+        退订了频道 — 编辑仍要落库,UI 显示该消息时按 channels_changed 自行
+        过滤。
+        """
+        existed = await self.storage.get_message(
+            msg.channel_id, msg.telegram_msg_id,
+        )
+        if existed is None:
+            # 编辑前消息不在 storage(罕见:用户从未订阅该频道,或 sync 还没拉过)
+            # — 当作新增走 save_message。
+            await self.storage.save_message(msg)
+            # 注意:仍要记 _seen_ids,后续真编辑可继续走 _handle_edited 覆盖。
+            self._seen_ids[(msg.channel_id, msg.telegram_msg_id)] = None
+            if len(self._seen_ids) > 10000:
+                self._seen_ids.popitem(last=False)
+            log.debug(
+                "monitor edited (no prior): channel=%s msg_id=%s",
+                msg.channel_id, msg.telegram_msg_id,
+            )
+            await self.bus.publish(MessageEdited(message=msg))
+            return
+        # 字段级覆盖 — 保留 storage 的 message.id 与其它未列字段
+        updated = dataclasses.replace(
+            existed,
+            text=msg.text,
+            views=msg.views,
+            forwards=msg.forwards,
+            edited=msg.edited,
+            media=msg.media,
+        )
+        await self.storage.update_message(updated)
+        log.debug(
+            "monitor edited: channel=%s msg_id=%s",
+            msg.channel_id, msg.telegram_msg_id,
+        )
+        await self.bus.publish(MessageEdited(message=updated))
 
     async def _download_worker(self) -> None:
         """串行消费下载队列:下载 → 回写 storage → 发 MediaDownloaded。
@@ -442,13 +539,66 @@ class MonitorService:
             self._download_queue.task_done()
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删单条消息 + 发 MessageDeleted 事件(由 UI 删除按钮 / 撤回时调)。"""
+        """删单条消息 + 清孤儿 bytes + 发 MessageDeleted 事件。
+
+        2026-08-24:顺手清 bytes — 对该 message 的每个 `media.object_key`
+        做一次 refcount 检查(`_count_media_with_object_key`),refcount=0 时
+        才 `objects.delete(key)`,避免误删跨消息去重场景下其它 message 还在
+        用的 bytes。清理失败只 log,不阻断删除。
+        """
+        old = await self.storage.get_message(channel_id, telegram_msg_id)
         await self.storage.delete_message(channel_id, telegram_msg_id)
+        if old:
+            for med in old.media:
+                key = med.object_key
+                if not key:
+                    continue
+                try:
+                    n = await self._count_media_with_object_key(key)
+                except Exception:  # noqa: BLE001
+                    log.exception("count media by key failed: %s", key)
+                    continue
+                if n == 0 and self.objects is not None:
+                    try:
+                        await self.objects.delete(key)
+                        log.info(
+                            "monitor delete orphan bytes: channel=%s msg=%s key=%s",
+                            channel_id, telegram_msg_id, key,
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.warning(
+                            "monitor delete bytes %s failed (already gone?)", key,
+                            exc_info=True,
+                        )
         await self.bus.publish(
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
 
     # ---- helpers ----
+
+    async def _count_media_with_object_key(self, object_key: str) -> int:
+        """refcount:扫 storage.list_messages 数同 `object_key` 的 media 出现次数。
+
+        MVP 用应用层扫描(2026-08-24):数据规模(几千 ~ 几万 message)足够小,
+        单次 < 50ms;若超 10 万 message 再下沉到 SQL 抽象方法。
+        返回 = 该 `object_key` 还被几条 message 引用。
+
+        用 `list_channels` 而非 `list_subscribed_channels`:删消息路径下用户
+        可能已退订频道(历史消息保留),被删 message 引用的 key 还可能跟其它
+        已退订频道的消息共享 — 必须扫全部频道。
+        """
+        chs = await self.storage.list_channels()
+        if not chs:
+            return 0
+        msgs = await self.storage.list_messages(
+            [c.id for c in chs], limit=100_000,
+        )
+        n = 0
+        for m in msgs:
+            for med in m.media:
+                if med.object_key == object_key:
+                    n += 1
+        return n
 
     async def _maybe_store_thumb(self, med: MediaDTO) -> None:
         """若 media 已带 thumb_key(由 TdlibClient 预先下载),什么都不做;
@@ -502,8 +652,19 @@ class MediaDownloader:
         ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
         return f"media/{h}.{ext}{suffix}"
 
-    async def download_one(self, msg_pk: int, media: MediaDTO) -> MediaDTO:
+    async def download_one(
+        self, msg_pk: int, media: MediaDTO, *, force: bool = False,
+    ) -> MediaDTO:
         """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
+
+        skip-if-stored 顺序(2026-08-24):
+          1) storage 已有同 `telegram_file_id` 的 DONE media → 拷字段,不发 TDLib 请求
+          2) ObjectStore 已有同 `make_key(media)` → 视为已下载,补 object_key / backend
+          3) 两个都 miss → 走原下载流程
+
+        `force=True` 时跳过 #1 + #2(2026-08-24 Media Manager retry 路径用):用户
+        显式要求「重新尝试」,即使已下载也再发 TDLib 请求覆盖。调用方有责任
+        先 `objects.delete(old_key)` 清理旧 bytes,否则写入会覆盖。
 
         成功:`object_key` / `object_backend` / `file_size` 已填,`download_status=DONE`;
         失败:`download_status=FAILED` + `download_error`(原因可持久化 / UI 展示),
@@ -526,6 +687,44 @@ class MediaDownloader:
         if not fid:
             log.debug("skip media msg_pk=%s: no telegram_file_id", msg_pk)
             return failed("无 telegram_file_id")
+
+        # 跳过 #1:storage 已有同 file_id 的成功下载 → 拷字段,不发 TDLib 请求
+        # `force=True`(retry)时跳过 — 用户显式要求重试,即使 prior 已存也走原下载。
+        if not force:
+            prior = await self.storage.find_media_by_file_id(fid)
+            if (prior is not None
+                    and prior.download_status == MediaDownloadStatus.DONE
+                    and prior.object_key):
+                log.debug(
+                    "skip media msg_pk=%s: storage hit (fid=%s key=%s)",
+                    msg_pk, fid, prior.object_key,
+                )
+                return dataclasses.replace(
+                    media,
+                    download_status=MediaDownloadStatus.DONE,
+                    download_error=None,
+                    object_key=prior.object_key,
+                    object_backend=prior.object_backend,
+                    file_size=prior.file_size,
+                )
+
+        # 跳过 #2:ObjectStore 已有该 key → 视为已下载,补字段
+        # `force=True` 同样跳过。
+        key = self.make_key(media)
+        if not force and await self.objects.exists(key):
+            log.debug(
+                "skip media msg_pk=%s: objectstore hit (key=%s)",
+                msg_pk, key,
+            )
+            return dataclasses.replace(
+                media,
+                download_status=MediaDownloadStatus.DONE,
+                download_error=None,
+                object_key=key,
+                object_backend=self.objects.backend_name,
+                file_size=media.file_size,
+            )
+
         if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
             return failed(
                 f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节"
@@ -538,7 +737,6 @@ class MediaDownloader:
             return failed(
                 f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节"
             )
-        key = self.make_key(media)
         meta = ObjectMeta(
             content_type=media.mime_type,
             size=len(data),

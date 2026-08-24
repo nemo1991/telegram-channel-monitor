@@ -131,8 +131,10 @@ class MongoRepository(StorageRepository):
             self._db = None
 
     async def init_schema(self) -> None:
-        """建 4 个索引:(channel_id, telegram_msg_id) 唯一 / (channel_id, date) /
-        (date) / media.message_id — 幂等(create_index 同名 no-op)。"""
+        """建索引:(channel_id, telegram_msg_id) 唯一 / (channel_id, date) /
+        (date) / media.message_id / media.telegram_file_id — 幂等
+        (create_index 同名 no-op)。
+        """
         # 唯一索引
         await self.db.messages.create_index(
             [("channel_id", 1), ("telegram_msg_id", 1)], unique=True
@@ -140,6 +142,8 @@ class MongoRepository(StorageRepository):
         await self.db.messages.create_index([("channel_id", 1), ("date", 1)])
         await self.db.messages.create_index([("date", 1)])
         await self.db.media.create_index([("message_id", 1)])
+        # 跨消息媒体去重索引(2026-08-24):find_media_by_file_id 用
+        await self.db.media.create_index([("telegram_file_id", 1)])
 
     async def ping(self) -> bool:
         """`db.command("ping")` 探活;任何异常返 False。"""
@@ -322,3 +326,23 @@ class MongoRepository(StorageRepository):
     async def count_messages(self, channel_id: int) -> int:
         """该频道已落库消息数(走 count_documents,不应用 date 过滤)。"""
         return await self.db.messages.count_documents({"channel_id": channel_id})
+
+    async def find_media_by_file_id(
+        self, telegram_file_id: str
+    ) -> MediaDTO | None:
+        """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
+
+        命中条件 `object_key 非 None AND download_status == 'done'`。返回最新写入
+        的那条(`_id` 倒序 → 物理插入序倒序 = upsert 路径下最新优先)。
+        """
+        doc = await self.db.media.find_one(
+            {
+                "telegram_file_id": telegram_file_id,
+                "object_key": {"$ne": None},
+                "download_status": "done",
+            },
+            sort=[("_id", -1)],
+        )
+        if doc is None:
+            return None
+        return _doc_to_media(doc)

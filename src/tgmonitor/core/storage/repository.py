@@ -145,6 +145,22 @@ class StorageRepository(ABC):
         """该频道已落库消息数(忽略 date_from/to)。"""
         ...
 
+    @abstractmethod
+    async def find_media_by_file_id(
+        self, telegram_file_id: str
+    ) -> MediaDTO | None:
+        """查任意 prior MediaDTO 同 `telegram_file_id`(任意 channel)且下载已完成。
+
+        用于跨消息媒体去重:同一 file_id 在 channel A 已下载成功 → channel B 再
+        出现时直接复用 `object_key` / `object_backend` / `file_size`,不发起 TDLib
+        `GetFile` 请求。
+
+        命中条件:`download_status == DONE` 且 `object_key` 非 None。命中时返回的
+        DTO 至少含上述三字段;`download_status != DONE` 视为未下,返 None。
+        不抛,找不到返 None。
+        """
+        ...
+
     # ---- 健康检查 ----
 
     @abstractmethod

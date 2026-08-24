@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
 
 from tgmonitor.core.config import Settings
-from tgmonitor.core.dto import ChannelDTO, ExportRequest
+from tgmonitor.core.dto import ChannelDTO, ExportRequest, MediaDownloadStatus, MediaType
 from tgmonitor.core.events import (
     ChannelSubscribed,
     ChannelSyncDone,
@@ -21,7 +21,11 @@ from tgmonitor.core.events import (
     EventBus,
     ExportDone,
     LoginStateChanged,
+    MediaDeleted,
     MediaDownloaded,
+    MediaReconcileFinished,
+    MediaRetried,
+    MessageEdited,
     MessageReceived,
     SettingsChanged,
 )
@@ -51,6 +55,7 @@ class MonitorViewModel(QObject):
     # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
     """
     message_received = Signal(object)
+    message_edited = Signal(object)  # 2026-08-24:编辑事件 MessageDTO
     media_downloaded = Signal(object)  # MediaDownloaded(下载结束,成功或失败)
     login_state = Signal(str)
     conn_state = Signal(str)      # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
@@ -61,6 +66,11 @@ class MonitorViewModel(QObject):
     # 全量同步进度(sync dialog 订阅)
     sync_progress = Signal(object)         # ChannelSyncProgress
     sync_done = Signal(object)             # ChannelSyncDone(带 result)
+    # Media Manager(2026-08-24 新增)
+    media_list_loaded = Signal(object)     # list_media 返回值(list of (msg, idx, media))
+    media_retried = Signal(object)         # MediaRetried 转发
+    media_deleted = Signal(object)         # MediaDeleted 转发
+    media_reconcile_done = Signal(object)  # MediaReconcileFinished 转发
 
     def __init__(
         self,
@@ -79,6 +89,7 @@ class MonitorViewModel(QObject):
     def _wire_bus(self) -> None:
         b: EventBus = self.app.bus
         b.subscribe(MessageReceived, self._on_message_received)
+        b.subscribe(MessageEdited, self._on_message_edited)
         b.subscribe(MediaDownloaded, self._on_media_downloaded)
         b.subscribe(LoginStateChanged, self._on_login_state)
         b.subscribe(ConnectionStateChanged, self._on_conn_state)
@@ -89,6 +100,10 @@ class MonitorViewModel(QObject):
         b.subscribe(SettingsChanged, self._on_settings_changed)
         b.subscribe(ChannelSyncProgress, self._on_sync_progress)
         b.subscribe(ChannelSyncDone, self._on_sync_done)
+        # Media Manager 转发(2026-08-24)
+        b.subscribe(MediaRetried, self._on_media_retried)
+        b.subscribe(MediaDeleted, self._on_media_deleted)
+        b.subscribe(MediaReconcileFinished, self._on_media_reconcile_done)
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
 
@@ -97,6 +112,16 @@ class MonitorViewModel(QObject):
             return
         # 直接 emit MessageDTO — 不要 asdict,会丢嵌套 MediaDTO 类型
         self.message_received.emit(e.message)
+
+    async def _on_message_edited(self, e: Event) -> None:
+        """2026-08-24:TDLib updateMessageContent 来的编辑事件 → 转发 UI。
+
+        UI 通过 message_edited 信号 → MessageView.replace_message 找到现有
+        cell 重渲,不增删 row。
+        """
+        if not isinstance(e, MessageEdited) or e.message is None:
+            return
+        self.message_edited.emit(e.message)
 
     async def _on_media_downloaded(self, e: Event) -> None:
         if not isinstance(e, MediaDownloaded):
@@ -161,6 +186,89 @@ class MonitorViewModel(QObject):
         if not isinstance(e, ChannelSyncDone):
             return
         self.sync_done.emit(e)
+
+    # ---- Media Manager 事件转发(2026-08-24) ----
+
+    async def _on_media_retried(self, e: Event) -> None:
+        if not isinstance(e, MediaRetried):
+            return
+        self.media_retried.emit(e)
+
+    async def _on_media_deleted(self, e: Event) -> None:
+        if not isinstance(e, MediaDeleted):
+            return
+        self.media_deleted.emit(e)
+
+    async def _on_media_reconcile_done(self, e: Event) -> None:
+        if not isinstance(e, MediaReconcileFinished):
+            return
+        self.media_reconcile_done.emit(e)
+
+    # ---- Media Manager UI 入口(2026-08-24) ----
+
+    def load_media_list(
+        self,
+        *,
+        channel_id: int | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+    ) -> None:
+        """后台 fire app.list_media → emit media_list_loaded(rows)。"""
+        async def _go() -> None:
+            # 默认 None 透传(None 视作 "all",不过滤)
+            st = status if isinstance(status, MediaDownloadStatus) else None
+            mt = media_type if isinstance(media_type, MediaType) else None
+            rows = await self.app.list_media(
+                channel_id=channel_id,
+                status=st,
+                media_type=mt,
+                search=search,
+                limit=limit,
+            )
+            self.media_list_loaded.emit(rows)
+
+        run_coro(self.loop, _go(), error_label="load_media_list")
+
+    def delete_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
+        """单条 media 删除 — 后台 fire app.delete_media。"""
+        async def _go() -> None:
+            await self.app.delete_media(channel_id, telegram_msg_id, media_idx)
+        run_coro(self.loop, _go(), error_label="delete_media")
+
+    def delete_media_batch(self, items: list[tuple[int, int, int]]) -> None:
+        """批量删除 — items: list[(channel_id, telegram_msg_id, media_idx)]。"""
+        async def _go() -> None:
+            for cid, mid, idx in items:
+                try:
+                    await self.app.delete_media(cid, mid, idx)
+                except Exception:  # noqa: BLE001 — 单条失败不影响 batch
+                    log.exception("delete_media batch failed: %s/%s/%d", cid, mid, idx)
+        run_coro(self.loop, _go(), error_label="delete_media_batch")
+
+    def retry_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
+        """单条 retry — 后台 fire app.retry_media。"""
+        async def _go() -> None:
+            await self.app.retry_media(channel_id, telegram_msg_id, media_idx)
+        run_coro(self.loop, _go(), error_label="retry_media")
+
+    def open_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
+        """打开 media 文件 — 后台 fire app.open_media(同步返回 bool)。"""
+        async def _go() -> None:
+            ok = await self.app.open_media(channel_id, telegram_msg_id, media_idx)
+            if not ok:
+                log.warning(
+                    "open_media failed: channel=%s msg=%s idx=%d",
+                    channel_id, telegram_msg_id, media_idx,
+                )
+        run_coro(self.loop, _go(), error_label="open_media")
+
+    def reconcile_orphans(self, *, dry_run: bool) -> None:
+        """孤儿 reconcile — dry_run=True 只 log,dry_run=False 真删。"""
+        async def _go() -> None:
+            await self.app.reconcile_orphans(dry_run=dry_run)
+        run_coro(self.loop, _go(), error_label="reconcile_orphans")
 
     # ---- UI 主动调用 ----
 

@@ -260,3 +260,55 @@ def test_empty_overlay_reappears_after_clear(qapp):
     view.clear_view()
     assert view.count() == 0
     assert not view._empty_overlay.isHidden()
+
+# ---- remove_row (2026-08-24 Media Manager 接入) ----
+
+
+def _make_msg(channel_id: int, telegram_msg_id: int) -> MessageDTO:
+    return MessageDTO(
+        id=0, channel_id=channel_id, telegram_msg_id=telegram_msg_id,
+        text="x", author=None,
+        date=datetime(2026, 7, 15, 13, 0, 0),
+    )
+
+
+def test_remove_row_drops_matching_key(qapp):
+    """remove_row(channel_id, telegram_msg_id) → 该行从 list 消失,_seen 同步。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    view.append(_make_msg(1, 101))
+    view.append(_make_msg(1, 102))
+    assert view.count() == 3
+    # 删中间那条(#101)
+    view.remove_row(1, 101)
+    assert view.count() == 2
+    assert (1, 101) not in view._seen
+    # 剩两条的 _seen row index 仍连续(append 时 102 在 row 0,101 在 row 1,100 在 row 2,
+    # 删 row 1 → 102 在 0 不变,100 在 1(原 2-1))
+    assert view._seen[(1, 102)] == 0
+    assert view._seen[(1, 100)] == 1
+
+
+def test_remove_row_no_match_is_noop(qapp):
+    """remove_row 不存在的 key → 不抛异常,不删其它行。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    view.append(_make_msg(1, 101))
+    before = view.count()
+    before_seen = dict(view._seen)
+    view.remove_row(999, 999)
+    assert view.count() == before
+    assert view._seen == before_seen
+
+
+def test_remove_row_then_append(qapp):
+    """删一行后再 append 新行 → row index 自洽,行为正确。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    view.append(_make_msg(1, 101))
+    view.remove_row(1, 100)
+    view.append(_make_msg(2, 200))
+    assert view.count() == 2
+    # 删 100 后,#101 在 row 0;append #200 时 insertItem(0) → #201 在 row 0,#101 在 row 1
+    assert view._seen[(2, 200)] == 0
+    assert view._seen[(1, 101)] == 1

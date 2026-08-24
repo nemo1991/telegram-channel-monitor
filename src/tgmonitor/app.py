@@ -295,6 +295,17 @@ def run() -> None:
             await app_svc.bootstrap()
             log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
 
+            # 启动 orphan reconcile(2026-08-24):dry_run=True 默认只 log 不删,
+            # 给 2 秒延迟让 storage / objectstore 完全 ready 再扫。后续 Prune
+            # Orphans 按钮(Media Manager 页)走 dry_run=False 显式删。
+            async def _startup_reconcile() -> None:
+                try:
+                    await asyncio.sleep(2.0)
+                    await app_svc.reconcile_orphans(dry_run=True)
+                except Exception:  # noqa: BLE001 — startup reconcile 不能让 UI 崩溃
+                    log.exception("startup orphan reconcile failed")
+            asyncio.create_task(_startup_reconcile())
+
             # UI 构造 — 现在 services 都 ready,事件总线已就位
             from tgmonitor.ui.main_window import MainWindow
             win = MainWindow(app_svc, monitor, loop, env_path=env_path,

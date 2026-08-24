@@ -183,6 +183,7 @@ class ChannelSyncResult:
     metadata_updated: bool = False
     messages_added: int = 0          # 本轮拉到的消息数(不去重)
     new_messages_added: int = 0      # 本轮新落库的消息数(existed is None 时 +1)
+    messages_skipped: int = 0        # 本轮发现已存、不重写的消息数(skip-if-stored)
     history_ended_at_msg_id: int | None = None  # 本轮拉到最早/最新的 msg_id
     error: str | None = None
     rate_limited: bool = False

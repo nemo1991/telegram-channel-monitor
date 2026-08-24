@@ -215,6 +215,12 @@ class TdlibTelegramClient(_AiClient):
             self._on_new_message,
             update_type="updateNewMessage",
         )
+        # 2026-08-24:消息编辑( updateMessageContent)— 推到同一 stream,
+        # MonitorService 用 _seen_ids 区分「这是新消息 vs 编辑」。
+        self.add_event_handler(
+            self._on_message_edited,
+            update_type="updateMessageContent",
+        )
         # 网络连接状态(updateConnectionState)→ ConnectionStateChanged 事件
         self.add_event_handler(
             self._on_connection_state,
@@ -413,6 +419,36 @@ class TdlibTelegramClient(_AiClient):
                 await s.push(dto)
         except Exception:  # noqa: BLE001
             log.exception("updateNewMessage handling failed")
+
+    async def _on_message_edited(self, client_self, update: TDLibObject) -> None:
+        """updateMessageContent(2026-08-24):message 字段携带编辑后完整 Message 对象。
+
+        走 `_map_message` 同样的入口,产出 DTO 后推给所有 `UpdateStream` ——
+        与 _on_new_message 共用 `_streams` 列表,DTO 类型不变。
+        MonitorService 在 `_run` 用 `_seen_ids` 区分「新消息 vs 编辑」。
+
+        不在 handler 侧做 whitelist 守门:编辑事件来自「已订阅时收到的消息历史」,
+        用户可能后续退订了频道 — 编辑仍要落库,UI 显示该消息时按 channels_changed
+        自行判断是否过滤。
+        """
+        try:
+            msg = getattr(update, "message", None)
+            if msg is None:
+                log.debug(
+                    "updateMessageContent received without message payload: %s",
+                    getattr(update, "@type", type(update).__name__),
+                )
+                return
+            log.debug(
+                "updateMessageContent received: chat_id=%s msg_id=%s",
+                getattr(msg, "chat_id", None),
+                getattr(msg, "id", None),
+            )
+            dto = _map_message(msg)
+            for s in list(self._streams):
+                await s.push(dto)
+        except Exception:  # noqa: BLE001
+            log.exception("updateMessageContent handling failed")
 
     async def _on_connection_state(self, client_self, update) -> None:
         """TDLib 网络连接状态(updateConnectionState)→ `ConnectionStateChanged` 事件。

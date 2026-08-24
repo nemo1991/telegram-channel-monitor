@@ -35,8 +35,11 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from tgmonitor.core.config import MediaPolicy
 from tgmonitor.core.dto import (
     ChannelSyncResult,
+    MediaDownloadStatus,
+    MediaDTO,
     SyncOptions,
     SyncResult,
 )
@@ -49,6 +52,8 @@ from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import EventBus
+    from tgmonitor.core.monitor.service import MediaDownloader
+    from tgmonitor.core.objectstore.base import ObjectStore
     from tgmonitor.core.storage.repository import StorageRepository
 
 log = logging.getLogger(__name__)
@@ -62,11 +67,24 @@ class ChannelSyncService:
         bus: EventBus,
         client: TelegramClient,
         storage: StorageRepository,
+        *,
+        downloader: MediaDownloader | None = None,
+        objects: ObjectStore | None = None,
+        media_policy: MediaPolicy = MediaPolicy.METADATA,
     ) -> None:
-        """`bus` = 发 ChannelSyncProgress / ChannelSyncDone 事件。"""
+        """`bus` = 发 ChannelSyncProgress / ChannelSyncDone 事件。
+
+        `downloader` / `objects` / `media_policy`(2026-08-24 接入)— sync 媒体
+        下载复用 monitor 的 `MediaDownloader`,FULL 策略下 sync 也会下载原文件。
+        `downloader.download_one` 已自带 skip-if-stored,所以 re-sync 频道命中
+        storage 已有同 file_id 时不发 TDLib 请求。
+        """
         self.bus = bus
         self.client = client
         self.storage = storage
+        self.downloader = downloader
+        self.objects = objects
+        self.media_policy = media_policy
         self._cancel = asyncio.Event()
         # 进度 throttle:同一频道不连续 publish(避免 N×100 条消息时
         # 事件风暴把 UI 卡死)— 50ms 节流
@@ -86,10 +104,22 @@ class ChannelSyncService:
 
         只负责循环控制 + `total_messages_added` 累加 + 顶部取消 + 末尾 done
         事件。具体的元数据 / 历史 / 异常处理都下沉到 helper。
+
+        进度事件(2026-08-24):
+          - 顶部发 `init`(载 total 频道数),让进度对话框先显示「准备同步 N 频道」
+          - 每个频道 `_sync_one_channel` 顶部发 `channel_start`
+          - 末尾每个频道发 `done`,detail 带「新增 N / 已存 M」
         """
         self._cancel.clear()
         result = SyncResult(per_channel={})
         t0 = time.monotonic()
+
+        # 顶部 init 事件(2026-08-24):让 UI 提前显示总频道数,避免空白 N 秒
+        if channel_ids:
+            await self._emit_progress(
+                0, "init", progress=0, total=len(channel_ids),
+                detail=f"{len(channel_ids)} 频道待同步",
+            )
 
         for cid in channel_ids:
             if self._cancel.is_set():
@@ -108,8 +138,9 @@ class ChannelSyncService:
                 result.rate_limited_seconds = rate_limited_seconds
             await self._emit_progress(
                 cid, "done", progress=1, total=1,
-                detail=f"meta={'✓' if ch_result.metadata_updated else '—'} "
-                       f"history={ch_result.messages_added}",
+                detail=(f"meta={'✓' if ch_result.metadata_updated else '—'} "
+                        f"new={ch_result.messages_added} "
+                        f"skipped={ch_result.messages_skipped}"),
             )
 
         log.info(
@@ -145,6 +176,10 @@ class ChannelSyncService:
         取消:helper 内部 break / return 时写 ch_result.error = "cancelled"。
         """
         ch_result = ChannelSyncResult(channel_id=cid)
+        # 频道开始事件(2026-08-24):让 UI 在 metadata 之前就先知道这个频道在动了
+        await self._emit_progress(
+            cid, "channel_start", progress=0, total=0, detail="开始同步",
+        )
         # 限流 → 把 retry_after 透传到 outer result(供 UI 进度条展示整体退避)
         rate_limited_seconds: float | None = None
         try:
@@ -247,11 +282,33 @@ class ChannelSyncService:
             existed = await self.storage.get_message(
                 m.channel_id, m.telegram_msg_id,
             )
-            await self.storage.save_message(m)
-            ch_result.messages_added += 1
-            if existed is None:
+            if existed is not None:
+                # 已在库中 — 静默跳过,只递增 skipped 与 cursor;
+                # 不写 save_message,不递增 messages_added / new_messages_added。
+                ch_result.messages_skipped += 1
+                ch_result.history_ended_at_msg_id = m.telegram_msg_id
+            else:
+                await self.storage.save_message(m)
+                ch_result.messages_added += 1
                 ch_result.new_messages_added += 1
-            ch_result.history_ended_at_msg_id = m.telegram_msg_id
+                ch_result.history_ended_at_msg_id = m.telegram_msg_id
+                # 媒体下载(FULL 策略)— 复用 monitor 的 MediaDownloader,
+                # download_one 内部已带 skip-if-stored(2026-08-24)
+                if (m.media
+                        and self.downloader is not None
+                        and self.media_policy == MediaPolicy.FULL):
+                    needs_resave = False
+                    for idx, med in enumerate(m.media):
+                        if med.download_status != MediaDownloadStatus.PENDING:
+                            continue
+                        updated = await self.downloader.download_one(
+                            msg_pk=m.id, media=med,
+                        )
+                        if updated is not med:
+                            m.media[idx] = updated
+                            needs_resave = True
+                    if needs_resave:
+                        await self.storage.save_message(m)
             page_count += 1
             # 进度节流:同频道同阶段不连续 publish(防事件风暴)
             now = time.monotonic()
@@ -261,7 +318,9 @@ class ChannelSyncService:
                 self._last_stage[cid] = "history"
                 await self._emit_progress(
                     cid, "history", progress=ch_result.messages_added,
-                    total=None, detail="",
+                    total=None,
+                    detail=(f"新增 {ch_result.messages_added} "
+                            f"已存 {ch_result.messages_skipped}"),
                 )
             # 单条间隔(防限速)
             if options.chat_delay_ms > 0:

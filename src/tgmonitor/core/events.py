@@ -74,6 +74,17 @@ class MessageReceived(Event):
 
 
 @dataclass
+class MessageEdited(Event):
+    """消息文本 / 媒体被编辑(TDLib updateMessageContent)。
+
+    编辑不走 updateNewMessage,所以不能依赖 live skip-if-stored 自动吸收 —
+    必须有独立事件让 UI 知道「同一条 cell 内容变了」。
+    """
+
+    message: MessageDTO | None = None
+
+
+@dataclass
 class MessageDeleted(Event):
     """一条消息被删除(由 monitor 收到 `DeleteMessages` 更新)。"""
 
@@ -91,6 +102,45 @@ class MediaDownloaded(Event):
     channel_id: int = 0
     telegram_msg_id: int = 0
     media: MediaDTO | None = None
+
+
+@dataclass
+class MediaDeleted(Event):
+    """2026-08-24 Media Manager:一条 media 被用户从某 message 删除。
+
+    UI 据此从 LIVE view 移除对应 cell(Media Manager 自己 reload)。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    media_idx: int = -1
+
+
+@dataclass
+class MediaRetried(Event):
+    """2026-08-24 Media Manager:一条 FAILED media 被用户触发重下。
+
+    UI 收到可更新对应 cell 的状态显示(DOWNLOADING → 等下一次 MediaDownloaded)。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    media_idx: int = -1
+
+
+@dataclass
+class MediaReconcileFinished(Event):
+    """2026-08-24:orphan reconcile 一次扫描结束(无论 dry_run / 真删)。
+
+    UI 据此更新 Media Manager footer 的「Prune Orphans」按钮状态 + 计数。
+    """
+
+    backend: str = ""      # 'local' / 'folder' / 's3'
+    scanned: int = 0       # ObjectStore keys
+    referenced: int = 0    # storage 命中
+    orphans: int = 0       # 孤儿数(scanned - referenced)
+    deleted: int = 0       # 实际 delete 数(dry_run 时为 0)
+    dry_run: bool = True
 
 
 @dataclass

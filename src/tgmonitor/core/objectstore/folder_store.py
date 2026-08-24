@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from pathlib import Path
-from typing import BinaryIO
+from typing import AsyncIterator, BinaryIO
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
@@ -129,3 +130,50 @@ class FolderObjectStore(ObjectStore):
         from io import BytesIO
 
         return BytesIO(await self.get(key))
+
+    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
+        """枚举所有 key — 把分片布局展开成原始 key(2026-08-24 orphan reconcile)。
+
+        落盘是两级分片 `media/ab/cd/<name>`,要返的是原始 key `media/<name>` —
+        把路径里的分片目录(`media/<ab>/<cd>/`)重组成 `media/<name>`。
+        走 to_thread 防 UI 卡顿。
+        """
+        root = self._root
+        shard = self._shard
+
+        def _walk() -> list[str]:
+            keys: list[str] = []
+            for dirpath, _dirnames, filenames in os.walk(root):
+                for fn in filenames:
+                    if ".tgmonitor_write_probe" in fn:
+                        continue
+                    full = Path(dirpath) / fn
+                    rel_path = full.relative_to(root)
+                    parts = list(rel_path.parts)
+                    if not parts:
+                        continue
+                    # 重组:如果文件名带分片目录(head/tail/),合并成完整 key
+                    # 例:`media / ab / cd / abc.jpg` → `media/abc.jpg`
+                    if shard > 0 and len(parts) >= 4 and parts[-1].startswith(
+                        parts[-3] + parts[-2] + "",
+                    ):
+                        # 最后一段文件名以 head + tail 开头 → 重组
+                        # 反向:把 `parent / head / tail / name` → `parent / name`
+                        # 这里 parent 是 parts[:-3]
+                        parent = parts[:-3]
+                        reconstructed = "/".join(parent + [parts[-1]])
+                    elif shard > 0 and len(parts) >= 3 and parts[-1].startswith(
+                        parts[-2] + "",
+                    ) and len(parts[-2]) == shard:
+                        # 三段式:parent / head / name(分片未生效 — 名字太短不分片)
+                        reconstructed = "/".join(parts)
+                    else:
+                        reconstructed = "/".join(parts)
+                    if prefix and not reconstructed.startswith(prefix):
+                        continue
+                    keys.append(reconstructed)
+            return keys
+
+        items = await asyncio.to_thread(_walk)
+        for k in items:
+            yield k
