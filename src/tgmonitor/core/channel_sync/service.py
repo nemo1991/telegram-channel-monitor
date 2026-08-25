@@ -39,7 +39,6 @@ from tgmonitor.core.config import MediaPolicy
 from tgmonitor.core.dto import (
     ChannelSyncResult,
     MediaDownloadStatus,
-    MediaDTO,
     SyncOptions,
     SyncResult,
 )

@@ -11,7 +11,7 @@ import pytest_asyncio
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MediaDownloadStatus, MediaType, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MediaDTO, MediaType, MessageDTO
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -180,6 +180,50 @@ class InMemoryRepository(StorageRepository):
     ) -> MediaDTO | None:
         """跨消息去重:任一 prior 已 DONE 的同 file_id media → 返 DTO。"""
         return self._media_by_fid.get(telegram_file_id)
+
+    async def list_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """2026-08-25 PR #3:list_media 下沉 — flatten + filter 全在这里。
+
+        顺序按 message.date 升序 / message.id(同 channel + date);offset/limit
+        在 filter 后切片。MVP 数据规模 < 50ms,无索引。
+        """
+        # 1) 先按 message.date 排序(与 list_messages 一致)
+        msgs = await self.list_messages(
+            channel_ids if channel_ids else [c.id for c in self.channels.values()],
+            limit=None,
+        )
+        search_lo = search.lower()
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        for msg in msgs:
+            for idx, med in enumerate(msg.media):
+                if status is not None and med.download_status != status:
+                    continue
+                if media_type is not None and med.type != media_type:
+                    continue
+                if search_lo and search_lo not in (med.file_name or "").lower():
+                    continue
+                rows.append((msg, idx, med))
+        if offset:
+            rows = rows[offset:]
+        return rows[:limit]
+
+    async def count_media_by_object_key(self, object_key: str) -> int:
+        """2026-08-25 PR #3:refcount — 顺序扫 messages 数同 object_key。"""
+        n = 0
+        for m in self.messages.values():
+            for med in m.media:
+                if med.object_key == object_key:
+                    n += 1
+        return n
 
     async def ping(self) -> bool:
         return True

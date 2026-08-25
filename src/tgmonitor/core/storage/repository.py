@@ -14,7 +14,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from tgmonitor.core.dto import ChannelDTO, MediaDTO, MessageDTO
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+)
 
 
 class StorageRepository(ABC):
@@ -158,6 +164,40 @@ class StorageRepository(ABC):
         命中条件:`download_status == DONE` 且 `object_key` 非 None。命中时返回的
         DTO 至少含上述三字段;`download_status != DONE` 视为未下,返 None。
         不抛,找不到返 None。
+        """
+        ...
+
+    @abstractmethod
+    async def list_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """列媒体(2026-08-25 PR #3)— 应用层扁平 + 后端下沉到此处。
+
+        返回 `(msg, idx, media)` 三元组 list;`idx` 是 media 在 message.media 数组
+        中的位置(0-based)。所有 filter 都是 AND 关系,空值视作不过滤。
+
+        排序:不强制,各后端自己定(目前统一按 message 落库顺序的逆序,
+        InMemory / Jsonl 顺序扫,Postgres / Mongo 按 message.date DESC)。
+
+        分页:`offset` 跳过 N 条;`limit` 限制返数。MVP 阶段各后端实现可简化
+        (InMemory / Jsonl 顺序扫 + slice;Postgres / Mongo 用 SQL/aggregate 偏移)。
+        """
+        ...
+
+    @abstractmethod
+    async def count_media_by_object_key(self, object_key: str) -> int:
+        """同 `object_key` 引用次数(2026-08-25 PR #3)— refcount 用。
+
+        应用层 `_count_media_with_object_key` 在此 PR 删除,改调本方法。
+        Postres/Mongo 用 SQL/aggregate count,O(1);InMemory/Jsonl 走顺序扫
+        (与原来应用层实现一致)。
         """
         ...
 

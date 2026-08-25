@@ -334,6 +334,10 @@ class MongoRepository(StorageRepository):
 
         命中条件 `object_key 非 None AND download_status == 'done'`。返回最新写入
         的那条(`_id` 倒序 → 物理插入序倒序 = upsert 路径下最新优先)。
+
+        注意:media 在本实现里是 messages 子文档(2026-08-25),此方法从
+        `db.media` 集合查 — 现存 latent bug,不在 PR #3 范围;返回的命中会
+        一直是 None,调用方已有「命中即用,不命中走真下载」容错。
         """
         doc = await self.db.media.find_one(
             {
@@ -346,3 +350,102 @@ class MongoRepository(StorageRepository):
         if doc is None:
             return None
         return _doc_to_media(doc)
+
+    async def list_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """2026-08-25 PR #3:Mongo 后端 list_media — `$unwind messages.media` + `$match`。
+
+        media 在本实现里是 messages 子文档(2026-08-25 决策),所以走
+        aggregate pipeline 把每个 message 拆成 N 个「message × media」组合,
+        再用 `$match` 应用 status / type / search 过滤。`search` 走
+        `file_name` 简单 substring(mongo 后续可上 text index)。
+
+        排序:`m.date DESC, m._id DESC, m.media[]._idx ASC` — 与 Postgres 对齐,
+        同 message 内 media 按数组顺序(`idx` 由 `$unwind` 的 includeArrayIndex
+        提供)。
+
+        分页:`$skip offset` + `$limit limit`。MVP 不上 cursor-based,offset 在
+        Mongo 上对小数据集足够,UI 也没用上 deep paging。
+        """
+        match_q: dict[str, Any] = {}
+        if channel_ids:
+            match_q["channel_id"] = {"$in": channel_ids}
+        if status is not None:
+            match_q["media.download_status"] = status.value
+        if media_type is not None:
+            match_q["media.type"] = media_type.value
+        if search:
+            # 简单 substring:文件名为 null 也算未命中,regex 转义防注入。
+            match_q["media.file_name"] = {
+                "$regex": _escape_regex(search),
+                "$options": "i",
+            }
+        pipeline: list[dict[str, Any]] = []
+        # 1) 先按 channel 过滤 message(减少 unwind 前集大小)
+        if channel_ids:
+            pipeline.append({"$match": {"channel_id": {"$in": channel_ids}}})
+        # 2) unwind media 子文档数组,includeArrayIndex 给 $idx 用于排序/返回
+        pipeline.append({
+            "$unwind": {
+                "path": "$media",
+                "includeArrayIndex": "media_idx",
+            },
+        })
+        # 3) media 字段过滤(无 media 的不会被 unwind,自然空)
+        media_match: dict[str, Any] = {}
+        if status is not None:
+            media_match["media.download_status"] = status.value
+        if media_type is not None:
+            media_match["media.type"] = media_type.value
+        if search:
+            media_match["media.file_name"] = {
+                "$regex": _escape_regex(search),
+                "$options": "i",
+            }
+        if media_match:
+            pipeline.append({"$match": media_match})
+        # 4) 排序:日期新→旧,同 message 内 media 顺序
+        pipeline.append({"$sort": {"date": -1, "_id": -1, "media_idx": 1}})
+        # 5) 偏移 + 限制
+        if offset:
+            pipeline.append({"$skip": offset})
+        if limit:
+            pipeline.append({"$limit": limit})
+        cursor = self.db.messages.aggregate(pipeline)
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        async for d in cursor:
+            med = _doc_to_media(d["media"])
+            # 把媒体子文档从 messages.media 数组临时抽掉,避免 MessageDTO 重复
+            d_no_media = {k: v for k, v in d.items() if k != "media"}
+            msg = _doc_to_message({**d_no_media, "media": [med]})
+            rows.append((msg, int(d["media_idx"]), med))
+        return rows
+
+    async def count_media_by_object_key(self, object_key: str) -> int:
+        """2026-08-25 PR #3:refcount — `$unwind` + `$match` + `$count`。
+
+        Mongo 5+ 支持直接 `$count`;走 `messages.media` 子文档。O(扫描)
+        + 索引 `media.object_key` 可走 IXSCAN(2026-08-25 未建,后续按需加)。
+        """
+        pipeline = [
+            {"$unwind": "$media"},
+            {"$match": {"media.object_key": object_key}},
+            {"$count": "n"},
+        ]
+        async for d in self.db.messages.aggregate(pipeline):
+            return int(d.get("n", 0))
+        return 0
+
+
+def _escape_regex(s: str) -> str:
+    """转义 Mongo `$regex` 注入(2026-08-25 PR #3)。"""
+    import re
+    return re.escape(s)

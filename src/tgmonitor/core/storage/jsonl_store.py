@@ -517,3 +517,61 @@ class JsonlFileStore(StorageRepository):
         索引在 `connect()` 加载时 + 每次 `save_message` 时增量更新,O(1) 查。
         """
         return self._media_by_fid.get(telegram_file_id)
+
+    async def list_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """2026-08-25 PR #3:Jsonl 后端的 list_media。
+
+        MVP 不加 per-channel 之外的索引,扫订阅 channel 的 jsonl 文件顺序读
+        + 过滤;数据规模万级消息内 < 100ms。Postgres / Mongo 不需要这条路径。
+        """
+        ch_ids = (
+            channel_ids
+            if channel_ids
+            else [c.id for c in await self.list_subscribed_channels()]
+        )
+        # 按 channel_id 顺序读每个 channel_file(每文件内按写入顺序 = 时间顺序)
+        msgs: list[MessageDTO] = []
+        for cid in ch_ids:
+            cf = await self._file_for(cid)
+            for row in cf.rows:
+                # `cf.rows` 是 dict 列表(每行 = 一条 message 的 JSON 反序列化);
+                # 同 `list_messages` 的扫描路径(L490-494),用 `_dict_to_message` 转 DTO。
+                msgs.append(_dict_to_message(row))
+        search_lo = search.lower()
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        for msg in msgs:
+            for idx, med in enumerate(msg.media):
+                if status is not None and med.download_status != status:
+                    continue
+                if media_type is not None and med.type != media_type:
+                    continue
+                if search_lo and search_lo not in (med.file_name or "").lower():
+                    continue
+                rows.append((msg, idx, med))
+        if offset:
+            rows = rows[offset:]
+        return rows[:limit]
+
+    async def count_media_by_object_key(self, object_key: str) -> int:
+        """2026-08-25 PR #3:refcount — 扫订阅 channel jsonl,数同 object_key。"""
+        chs = await self.list_subscribed_channels()
+        n = 0
+        for c in chs:
+            cf = await self._file_for(c.id)
+            for row in cf.rows:
+                # `cf.rows` 是 dict;先转 MessageDTO 再扫 media 数组,
+                # 与 `list_media` 路径一致。
+                msg = _dict_to_message(row)
+                for med in msg.media:
+                    if med.object_key == object_key:
+                        n += 1
+        return n

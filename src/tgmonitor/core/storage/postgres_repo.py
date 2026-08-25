@@ -461,3 +461,96 @@ class PostgresRepository(StorageRepository):
         if row is None:
             return None
         return _row_to_media(row)
+
+    async def list_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """2026-08-25 PR #3:Postgres 后端的 list_media — `messages m JOIN media` + filter。
+
+        SQL `JOIN` 在 PG 里走 `idx_media_*` 索引;`ORDER BY m.date DESC, m.id DESC`
+        保证结果顺序稳定。`search` 用 `LOWER(file_name) LIKE LOWER('%...%')` 简单
+        substring match(MVP,后续用 pg_trgm 优化)。
+        """
+        assert self._pool is not None
+        sql = [
+            "SELECT m.*, me.id AS media_id, me.type AS media_type,",
+            "       me.mime_type, me.file_name, me.file_size, me.width, me.height,",
+            "       me.duration, me.telegram_file_id, me.object_key,",
+            "       me.object_backend, me.thumb_key, me.thumb_backend, me.emoji,",
+            "       me.download_status AS media_dl_status, me.download_error,",
+            "       me.media_idx",
+            "FROM messages m JOIN media me ON me.message_id = m.id",
+            "WHERE 1=1",
+        ]
+        params: list[Any] = []
+        idx = 1
+        if channel_ids:
+            sql.append(f"AND m.channel_id = ANY(${idx})")
+            params.append(channel_ids)
+            idx += 1
+        if status is not None:
+            sql.append(f"AND me.download_status = ${idx}")
+            params.append(status.value)
+            idx += 1
+        if media_type is not None:
+            sql.append(f"AND me.type = ${idx}")
+            params.append(media_type.value)
+            idx += 1
+        if search:
+            sql.append(f"AND LOWER(COALESCE(me.file_name, '')) LIKE ${idx}")
+            params.append(f"%{search.lower()}%")
+            idx += 1
+        sql.append("ORDER BY m.date DESC, m.id DESC, me.media_idx ASC")
+        if limit:
+            sql.append(f"LIMIT ${idx} OFFSET ${idx + 1}")
+            params.extend([limit, offset])
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("\n".join(sql), *params)
+        # row → media dict(2 处复用,抽出 helper 避免重复)
+        def _row_to_media_dict(r: asyncpg.Record) -> dict[str, Any]:
+            return {
+                "type": r["media_type"],
+                "mime_type": r["mime_type"],
+                "file_name": r["file_name"],
+                "file_size": r["file_size"],
+                "width": r["width"],
+                "height": r["height"],
+                "duration": r["duration"],
+                "telegram_file_id": r["telegram_file_id"],
+                "object_key": r["object_key"],
+                "object_backend": r["object_backend"],
+                "thumb_key": r["thumb_key"],
+                "thumb_backend": r["thumb_backend"],
+                "emoji": r["emoji"],
+                "download_status": r["media_dl_status"],
+                "download_error": r["download_error"],
+            }
+        msg_keys = (
+            "id", "channel_id", "telegram_msg_id", "author",
+            "date", "text", "views", "forwards", "reply_to_msg_id",
+            "edited", "raw",
+        )
+        return [
+            (
+                _row_to_message({k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]),
+                r["media_idx"],
+                _row_to_media(_row_to_media_dict(r)),
+            )
+            for r in rows
+        ]
+
+    async def count_media_by_object_key(self, object_key: str) -> int:
+        """2026-08-25 PR #3:refcount — `SELECT count(*)` 走索引 O(log N)。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT count(*)::int FROM media WHERE object_key = $1",
+                object_key,
+            )

@@ -554,7 +554,9 @@ class MonitorService:
                 if not key:
                     continue
                 try:
-                    n = await self._count_media_with_object_key(key)
+                    # 2026-08-25 PR #3:refcount 下沉到 storage 后端
+                    # (SQL count / Mongo aggregate / InMemory / Jsonl 顺序扫)。
+                    n = await self.storage.count_media_by_object_key(key)
                 except Exception:  # noqa: BLE001
                     log.exception("count media by key failed: %s", key)
                     continue
@@ -576,29 +578,9 @@ class MonitorService:
 
     # ---- helpers ----
 
-    async def _count_media_with_object_key(self, object_key: str) -> int:
-        """refcount:扫 storage.list_messages 数同 `object_key` 的 media 出现次数。
-
-        MVP 用应用层扫描(2026-08-24):数据规模(几千 ~ 几万 message)足够小,
-        单次 < 50ms;若超 10 万 message 再下沉到 SQL 抽象方法。
-        返回 = 该 `object_key` 还被几条 message 引用。
-
-        用 `list_channels` 而非 `list_subscribed_channels`:删消息路径下用户
-        可能已退订频道(历史消息保留),被删 message 引用的 key 还可能跟其它
-        已退订频道的消息共享 — 必须扫全部频道。
-        """
-        chs = await self.storage.list_channels()
-        if not chs:
-            return 0
-        msgs = await self.storage.list_messages(
-            [c.id for c in chs], limit=100_000,
-        )
-        n = 0
-        for m in msgs:
-            for med in m.media:
-                if med.object_key == object_key:
-                    n += 1
-        return n
+    # 2026-08-25 PR #3:删除 `_count_media_with_object_key` — 由
+    # `storage.count_media_by_object_key` 替代,后端走 SQL/Mongo 索引 O(1),
+    # InMemory/Jsonl 走顺序扫(与旧实现等价)。
 
     async def _maybe_store_thumb(self, med: MediaDTO) -> None:
         """若 media 已带 thumb_key(由 TdlibClient 预先下载),什么都不做;
