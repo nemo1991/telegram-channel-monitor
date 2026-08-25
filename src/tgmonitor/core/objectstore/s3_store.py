@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, BinaryIO
 
@@ -15,6 +16,8 @@ import aioboto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
+
+log = logging.getLogger(__name__)
 
 
 class S3ObjectStore(ObjectStore):
@@ -159,14 +162,34 @@ class S3ObjectStore(ObjectStore):
 
         return BytesIO(await self.get(key))
 
-    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:  # noqa: ARG002
-        """S3 后端 — MVP 不实现(ListObjectsV2 paginator 工程量大)。
+    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
+        """S3 后端 — 用 `list_objects_v2` paginator 枚举桶里所有 key(2026-08-25 PR #2)。
 
-        2026-08-24:Media Manager reconcile 对 S3 用户显示「reconcile 不可用」,
-        不抛意外异常。`AppService.reconcile_orphans` 调用方会捕 NotImplementedError。
+        实现要点:
+        - 必须传 `prefix`(E2 设计)— 桶里通常有非 media 资产,全桶扫描慢且
+          容易把无关文件当孤儿误删。`AppService.reconcile_orphans` 固定传
+          `prefix="media/"`。
+        - paginator 由 boto3 内置分页(默认每页 1000),`async for` 拿每个
+          key。
+        - 出错(`ClientError` / `BotoCoreError`)→ 上抛,调用方
+          `AppService.reconcile_orphans` 已包 try/except。
+        - `Prefix=""` 走全桶扫描,API 允许但代价高,文档警告用户。
         """
-        raise NotImplementedError(
-            "S3 后端 iter_keys 未实现;reconcile 仅支持 Local / Folder"
-        )
-        if False:  # pragma: no cover — 让函数成为 async generator
-            yield ""
+        if not prefix:
+            log.warning(
+                "S3.iter_keys called with empty prefix — full bucket scan, "
+                "may be slow / costly on large buckets"
+            )
+        if self._session is None:
+            raise RuntimeError(
+                "对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存"
+            )
+        async with self._client() as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(
+                Bucket=self._bucket, Prefix=prefix,
+            ):
+                for obj in page.get("Contents", []) or []:
+                    key = obj.get("Key")
+                    if key:
+                        yield key

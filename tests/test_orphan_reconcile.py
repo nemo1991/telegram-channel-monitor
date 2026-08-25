@@ -152,21 +152,76 @@ async def test_folder_reconcile_prune_deletes_orphan_bytes(
 async def test_s3_reconcile_skips_gracefully(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """S3 后端 iter_keys raise NotImplementedError → reconcile 当作后端不可用,不崩。
+    """S3 后端未连接 → iter_keys 抛 RuntimeError → reconcile 兜底空集。
 
-    app.reconcile_orphans 应该捕 NotImplementedError 退化为 scanned=0,
-    orphans=0,deleted=0。
+    2026-08-25 PR #2:iter_keys 已用 aioboto3 paginator 真实现,不再 raise
+    NotImplementedError;但 session=None 时会抛 RuntimeError("未连接"),
+    AppService.reconcile_orphans 兜底成空集(Scanned=0/Orphans=0/Deleted=0),
+    UI Media Manager 仍显示「灰按钮」+ log 警告。
     """
+
     s3 = S3ObjectStore(bucket="test-bucket")
-    # 不调 connect() — 跳过真实 SDK 调用
+    # 不调 connect() — session 仍是 None
     saved = app.objects
     app.objects = s3  # type: ignore[assignment]
     try:
         evt = await app.reconcile_orphans(dry_run=True)
         assert evt.backend == "s3"
-        # scanned / orphans = 0(NotImplementedError → 退化为空集)
         assert evt.scanned == 0
         assert evt.orphans == 0
         assert evt.deleted == 0
+    finally:
+        app.objects = saved  # type: ignore[assignment]
+
+
+@pytest.mark.asyncio
+async def test_s3_reconcile_with_iter_keys(
+    app: AppService, storage: StorageRepository, monkeypatch,
+) -> None:
+    """S3 后端 iter_keys 真返回 key 列表时,reconcile 能正确算 orphan / referenced。
+
+    2026-08-25 PR #2:用 fake S3 store 注入 iter_keys 返回固定 key 列表,验证
+    reconcile 端到端逻辑(S3 后端能正常 reconcile 了)。
+    """
+
+    class _FakeS3(S3ObjectStore):
+        """覆盖 connect + iter_keys + delete — 不走真 aioboto3,直接喂固定 keys。"""
+
+        def __init__(self) -> None:
+            super().__init__(bucket="test-bucket")
+            self.deleted: list[str] = []
+
+        async def connect(self) -> None:  # noqa: D401
+            # 不真接 SDK;标记 session 非 None 让 _client() 进入 async with,
+            # 但我们 override delete 绕开 aioboto3 调用。
+            self._session = True  # type: ignore[assignment]
+
+        async def iter_keys(self, prefix: str = ""):  # noqa: ARG002
+            yield "media/orphan.jpg"  # 没被 storage 引用 → orphan
+            yield "media/keep.jpg"    # 被 storage 引用 → keep
+            yield "media/other.png"   # 没被引用 → orphan
+
+        async def delete(self, key: str) -> None:
+            """记录被删的 key,不走真 SDK。"""
+            self.deleted.append(key)
+
+    s3 = _FakeS3()
+    await s3.connect()
+    saved = app.objects
+    app.objects = s3  # type: ignore[assignment]
+    try:
+        await storage.save_message(_msg(100, 1, [_done("f-keep", "media/keep.jpg")]))
+        evt = await app.reconcile_orphans(dry_run=True)
+        assert evt.backend == "s3"
+        assert evt.scanned == 3
+        assert evt.referenced == 1
+        assert evt.orphans == 2  # orphan.jpg + other.png
+        assert evt.deleted == 0  # dry_run
+
+        # prune 模式真删
+        evt2 = await app.reconcile_orphans(dry_run=False)
+        assert evt2.orphans == 2
+        assert evt2.deleted == 2
+        assert sorted(s3.deleted) == ["media/orphan.jpg", "media/other.png"]
     finally:
         app.objects = saved  # type: ignore[assignment]

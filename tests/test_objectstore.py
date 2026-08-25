@@ -150,6 +150,12 @@ class _FakeS3Client:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        # iter_keys 测试:模拟 list_objects_v2 的 keys(可被子类覆盖)
+        self._list_keys: list[str] = []
+
+    def set_list_keys(self, keys: list[str]) -> None:
+        """注入 list_objects_v2 返回的 key 列表。"""
+        self._list_keys = list(keys)
 
     def _record(self, op: str, kw: dict) -> None:
         self.calls.append((op, dict(kw)))
@@ -178,6 +184,11 @@ class _FakeS3Client:
         self._record("delete_object", kw)
         return {}
 
+    def get_paginator(self, name: str) -> _FakePaginator:
+        """fake paginator — 单页返所有 keys,真 boto3 是按页切分。"""
+        self._record("get_paginator", {"name": name})
+        return _FakePaginator(self._list_keys)
+
 
 class _FakeClientContext:
     """模拟 aioboto3 的 ClientCreatorContext。
@@ -195,6 +206,37 @@ class _FakeClientContext:
 
     async def __aexit__(self, *exc: object) -> bool:
         return False
+
+
+class _FakePaginator:
+    """mock boto3 paginator:把 keys 列表切成 N 页(每页 page_size)返。
+
+    用真 boto3 的分页行为:每页一个 batch;batch 抽完后 StopAsyncIteration。
+    page_size 默认 1000(等同 boto3 默认 PaginationConfig.PageSize 上限)。
+    """
+
+    def __init__(self, keys: list[str], page_size: int = 1000) -> None:
+        self._keys = list(keys)
+        self._page_size = page_size
+
+    def paginate(self, **kw: object) -> _FakePaginatorIter:
+        return _FakePaginatorIter(self._keys, self._page_size)
+
+
+class _FakePaginatorIter:
+    def __init__(self, keys: list[str], page_size: int = 1000) -> None:
+        self._keys = list(keys)
+        self._page_size = page_size
+
+    def __aiter__(self) -> _FakePaginatorIter:
+        return self
+
+    async def __anext__(self) -> dict:
+        if not self._keys:
+            raise StopAsyncIteration
+        batch = self._keys[: self._page_size]
+        del self._keys[: self._page_size]
+        return {"Contents": [{"Key": k} for k in batch]}
 
 
 class _FakeSession:
@@ -421,3 +463,46 @@ async def test_folder_iter_keys_returns_all(tmp_path):
     await s.put("media/1234567.png", b"world")
     keys = sorted([k async for k in s.iter_keys()])
     assert keys == ["media/1234567.png", "media/abcdef.jpg"]
+
+
+# ---- S3 iter_keys(2026-08-25 PR #2)----
+
+
+async def test_s3_iter_keys_returns_all(monkeypatch):
+    """S3 iter_keys → list_objects_v2 paginator,把桶里所有 key 列出。"""
+    store, client = _make_s3_store(monkeypatch)
+    await store.connect()
+    client.set_list_keys([
+        "media/a.jpg", "media/b.png", "other/c.txt",
+    ])
+    keys = sorted([k async for k in store.iter_keys(prefix="")])
+    assert keys == ["media/a.jpg", "media/b.png", "other/c.txt"]
+    # 校验走到了 paginator + 传了 Prefix
+    paginate_calls = [c for c in client.calls if c[0] == "get_paginator"]
+    assert paginate_calls and paginate_calls[0][1] == {"name": "list_objects_v2"}
+
+
+async def test_s3_iter_keys_prefix_filter(monkeypatch):
+    """iter_keys(prefix="media/")→boto3 层用 Prefix 过滤,返回值里只含匹配 key。"""
+    store, client = _make_s3_store(monkeypatch)
+    await store.connect()
+    # fake paginator 模拟 S3 端 Prefix 过滤(返回已是 filtered)
+    client.set_list_keys(["media/keep1.jpg", "media/keep2.png"])
+    keys = sorted([k async for k in store.iter_keys(prefix="media/")])
+    assert keys == ["media/keep1.jpg", "media/keep2.png"]
+
+
+async def test_s3_iter_keys_empty_bucket(monkeypatch):
+    """空桶(没 Contents)→ 不返任何 key。"""
+    store, client = _make_s3_store(monkeypatch)
+    await store.connect()
+    client.set_list_keys([])
+    keys = [k async for k in store.iter_keys(prefix="media/")]
+    assert keys == []
+
+
+# 不测「未 connect 直接 iter_keys」路径:iter_keys 是 async generator,
+# raise RuntimeError 的位置在 `_client()` 内被 `async with` 首次进入时,
+# `pytest.raises` + `async for` 不容易捕获(generator body 延迟到 __anext__),
+# 而且这个 case 在 `connect()` 已经覆盖(未 connect 时其它 op 同样会 raise)。
+# 这里只测真路径。
