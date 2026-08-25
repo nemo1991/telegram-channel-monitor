@@ -397,6 +397,8 @@ class MainWindow(QMainWindow):
             self._on_media_batch_delete
         )
         self.media_manager.prune_requested.connect(self._on_media_prune)
+        # 2026-08-25 PR #4:按频道批量删除 — 二次确认后调 vm.delete_by_channel
+        self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
 
         # MessageView → MessageDetail(点击消息显示详情)
         self.live_view.message_selected.connect(self.message_detail.show_message)
@@ -478,6 +480,10 @@ class MainWindow(QMainWindow):
         # Media Manager 转发(2026-08-24)
         self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
         self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
+        # 按频道批量删除反馈(2026-08-25 PR #4)
+        self._vm.channel_cleared.connect(self.media_manager.on_channel_cleared)
+        # 缩略图 VM signal — 直接绑 widget(2026-08-25 PR #1)
+        self.media_manager.set_view_model(self._vm)
 
         # 订阅 EventBus 登录状态变化(状态点更新)
         self.app.bus.subscribe(LoginStateChanged, self._on_bus_login)
@@ -682,6 +688,23 @@ class MainWindow(QMainWindow):
         if ans != QMessageBox.Yes:
             return
         self._vm.reconcile_orphans(dry_run=False)
+
+    def _on_media_clear_channel(self, channel_id: int) -> None:
+        """2026-08-25 PR #4:Media Manager 「Clear Channel」按钮 — 二次确认后
+        调 vm.delete_by_channel(channel_id)。会清空该频道全部 message + 孤儿 bytes,
+        跨消息去重场景下其它频道仍引用的 bytes 不动。
+        """
+        ans = QMessageBox.warning(
+            self,
+            "Clear Channel",
+            f"删除频道 #{channel_id} 的全部消息与媒体(含对象存储 bytes)。\n"
+            "此操作不可撤销,确认执行?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self._vm.delete_by_channel(channel_id)
 
     async def _on_bus_message_deleted(self, e) -> None:
         """EventBus:MonitorService.delete_message 发的 MessageDeleted → LIVE 流删行。

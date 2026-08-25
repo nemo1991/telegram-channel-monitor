@@ -8,7 +8,7 @@
 │  🎬 [Dev]  #msg17 video clip.mp4 5.4MB ❌ [Open][Retry][Delete]
 │  🎵 [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Retry][Delete]
 ├────────────────────────────────────────────────────┤
-│  [Select All] [Retry Selected] [Delete Selected] [Prune Orphans]
+│  [Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans]
 │  Storage: 142 MB / 23 files · 1 failed
 └────────────────────────────────────────────────────┘
 
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -47,6 +48,7 @@ from tgmonitor.core.dto import (
     MediaType,
     MessageDTO,
 )
+from tgmonitor.ui.widgets.thumbnail_cache import ThumbnailCache, cache_key_for
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +115,10 @@ class MediaManagerWidget(QWidget):
     refresh_requested = Signal()
     prune_requested = Signal()  # MainWindow → 二次确认 → VM.reconcile_orphans(False)
 
+    # 2026-08-25 PR #4:按频道批量删除 — payload channel_id(MainWindow 收到后
+    # 二次确认 + 调 vm.delete_by_channel)
+    clear_channel_requested = Signal(int)
+
     # 频道列表变化(VM.refresh_joined_channels → 这里)
     set_channels_requested = Signal()  # MainWindow 接到就 vm.refresh_joined_channels
 
@@ -125,6 +131,17 @@ class MediaManagerWidget(QWidget):
         self._known_channels: dict[int, ChannelDTO] = {}
         self._rows: list[tuple[MessageDTO, int, MediaDTO]] = []
         self._last_keys: list[_RowKey] = []  # 与 _rows 一一对应,row → key
+
+        # 缩略图缓存(2026-08-25 PR #1)— 进程内 LRU,200 条
+        self._thumb_cache = ThumbnailCache()
+        # 当前行 → QLabel thumb 的映射;VM signal 进来时定位行用
+        # 重渲后重建,所以不要跨渲染持有引用
+        self._thumb_labels: dict[_RowKey, QLabel] = {}
+
+        # VM 引用延迟注入:MainWindow 在 init 后调 set_view_model(vm) 把
+        # thumbnail_loaded / load_thumbnail 绑进来;widget 不直接 import VM
+        # 解耦。
+        self._vm = None  # type: ignore[var-annotated]
 
         self._build_ui()
         self._wire_filter()
@@ -190,7 +207,7 @@ class MediaManagerWidget(QWidget):
         return hbox
 
     def _build_toolbar(self) -> QVBoxLayout:
-        """[Select All] [Retry Selected] [Delete Selected] [Prune Orphans] + status label。"""
+        """[Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans] + status label。"""
         vbox = QVBoxLayout()
         vbox.setSpacing(6)
 
@@ -214,6 +231,16 @@ class MediaManagerWidget(QWidget):
         self.btn_delete_sel.setEnabled(False)
         self.btn_delete_sel.clicked.connect(self._on_batch_delete)
         actions.addWidget(self.btn_delete_sel)
+
+        # 2026-08-25 PR #4:按频道批量删除 — 清空 filter 选中频道的全部 message
+        # (含 media + bytes);MainWindow 接到信号二次确认后再调 VM。
+        self.btn_clear_channel = QPushButton("🗑 Clear Channel")
+        self.btn_clear_channel.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_channel.setToolTip(
+            "Delete ALL messages in the selected channel (irreversible)",
+        )
+        self.btn_clear_channel.clicked.connect(self._on_clear_channel)
+        actions.addWidget(self.btn_clear_channel)
 
         actions.addStretch(1)
 
@@ -250,6 +277,43 @@ class MediaManagerWidget(QWidget):
         self.edit_search.textChanged.connect(lambda _: self._search_timer.start())
 
     # ---- 公共槽(MainWindow 调) ----
+
+    def set_view_model(self, vm: object) -> None:
+        """MainWindow 注入 VM — 绑 thumbnail_loaded signal + 缓存 vm 引用。
+
+        vm 故意是 `object` 类型,widget 不引入 VM import 依赖(架构上 VM → widget
+        单向)。重渲前清空旧的 thumb_labels 引用避免 stale。
+        """
+        self._vm = vm
+        try:
+            vm.thumbnail_loaded.connect(self._on_thumbnail_loaded)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            log.exception("set_view_model: connect thumbnail_loaded failed")
+
+    def _on_thumbnail_loaded(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int, pix: object,
+    ) -> None:
+        """VM.thumbnail_loaded → 找行 + 写 LRU + setPixmap。
+
+        row 已不在 list(被删/重渲)→ 仍写 LRU,下次同样 key 命中。
+        """
+        if not isinstance(pix, QPixmap):
+            return
+        key = _RowKey(channel_id, telegram_msg_id, media_idx)
+        # 1) 写 LRU
+        row = self._find_row_by_key(key)
+        if row is not None:
+            med = row[2]
+            ck = cache_key_for(med)
+            if ck is not None:
+                self._thumb_cache.put(ck[0], ck[1], pix)
+        # 2) 命中 label → setPixmap
+        label = self._thumb_labels.get(key)
+        if label is None:
+            return
+        # 清掉 emoji text,设置 pixmap;aspect-ratio 保留(已在 cache 层 scaled)
+        label.setText("")
+        label.setPixmap(pix)
 
     def set_known_channels(self, channels: list[ChannelDTO]) -> None:
         """VM.bootstrap_ui → MainWindow → 这里。
@@ -325,6 +389,7 @@ class MediaManagerWidget(QWidget):
         """清空 list → 按 rows 重建 item + 自绘 widget;更新 status label。"""
         self.list.clear()
         self._last_keys = []
+        self._thumb_labels.clear()  # 旧 label 全部失效
 
         total_bytes = 0
         count_done = 0
@@ -356,11 +421,47 @@ class MediaManagerWidget(QWidget):
         # 选中变化 → enable/disable toolbar
         self._on_selection_changed()
 
+        # 缩略图加载(2026-08-25 PR #1):只有 PHOTO/VIDEO + DONE 才值得加载;
+        # audio/document/sticker 等保持 emoji。先查 LRU,命中直接 setPixmap,
+        # miss 再触发 vm.load_thumbnail 异步。
+        for row in self._rows:
+            self._maybe_load_thumb_for_row(*row)
+
+    def _maybe_load_thumb_for_row(
+        self, msg: MessageDTO, idx: int, med: MediaDTO,
+    ) -> None:
+        """单行缩略图处理:cache hit 即时 setPixmap;miss 触发 VM 异步加载。"""
+        # 只对 photo / video + DONE 加载;audio/document/sticker 不参与
+        if med.download_status != MediaDownloadStatus.DONE:
+            return
+        if med.type not in (MediaType.PHOTO, MediaType.VIDEO, MediaType.VIDEO_NOTE,
+                            MediaType.ANIMATION, MediaType.STICKER):
+            return
+        ck = cache_key_for(med)
+        if ck is None:
+            return
+        # 命中 → 即时写 label
+        cached = self._thumb_cache.get(ck[0], ck[1])
+        key = _RowKey(msg.channel_id, msg.telegram_msg_id, idx)
+        label = self._thumb_labels.get(key)
+        if cached is not None and label is not None:
+            label.setText("")
+            label.setPixmap(cached)
+            return
+        # miss → 触发 VM 加载
+        if self._vm is not None:
+            try:
+                self._vm.load_thumbnail(  # type: ignore[attr-defined]
+                    msg.channel_id, msg.telegram_msg_id, idx, med,
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("vm.load_thumbnail dispatch failed")
+
     def _row_widget_size_hint(self) -> Any:
-        """单行自绘 widget 的 size hint(高度 36;宽度撑满)。"""
+        """单行自绘 widget 的 size hint(高度 = 缩略图 40px + 上下 margin)。"""
         from PySide6.QtCore import QSize
 
-        return QSize(800, 40)
+        return QSize(800, 48)
 
     def _build_row_widget(
         self, msg: MessageDTO, idx: int, med: MediaDTO, key: _RowKey,
@@ -372,11 +473,14 @@ class MediaManagerWidget(QWidget):
         hbox.setContentsMargins(8, 4, 8, 4)
         hbox.setSpacing(8)
 
-        # icon
-        ico = QLabel(_MEDIA_ICONS.get(med.type, "📎"))
-        ico.setFixedWidth(20)
-        ico.setAlignment(Qt.AlignCenter)
-        hbox.addWidget(ico)
+        # 缩略图列(2026-08-25 PR #1)— 64×64,初始显 emoji,
+        # VM 异步加载完后 setPixmap 替换。失败/非图保持 emoji。
+        thumb = QLabel(_MEDIA_ICONS.get(med.type, "📎"))
+        thumb.setFixedSize(40, 40)
+        thumb.setAlignment(Qt.AlignCenter)
+        thumb.setStyleSheet("font-size: 22px;")
+        self._thumb_labels[key] = thumb
+        hbox.addWidget(thumb)
 
         # channel name(优先 known_channels,否则 #channel_id)
         ch = self._known_channels.get(msg.channel_id)
@@ -505,6 +609,26 @@ class MediaManagerWidget(QWidget):
         keys = self._selected_keys()
         if keys:
             self.batch_delete_requested.emit(keys)
+
+    def _on_clear_channel(self) -> None:
+        """2026-08-25 PR #4:取当前 filter 选中的 channel_id → emit 信号。
+
+        MainWindow 接到信号做二次确认(QMessageBox.warning)再调
+        vm.delete_by_channel。空 filter(All Channels)时直接 disable 按钮。
+        """
+        channel_id = self.cmb_channel.currentData()
+        if channel_id is None:
+            # `All Channels` / 未选 — 不允许整库清空
+            return
+        self.clear_channel_requested.emit(int(channel_id))
+
+    def on_channel_cleared(self, channel_id: int, deleted: int) -> None:
+        """2026-08-25 PR #4:VM 反馈 → status bar + 自动 reload 当前 filter 列表。"""
+        self.lbl_status.setText(
+            f"Cleared channel #{channel_id}: {deleted} messages removed",
+        )
+        # 重 load 当前 filter(可能就是这个 channel)刷新 UI
+        self.refresh_requested.emit()
 
     def _row_is_failed(self, key: _RowKey) -> bool:
         r = self._find_row_by_key(key)

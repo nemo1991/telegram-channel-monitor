@@ -282,34 +282,21 @@ class AppService:
         search: str = "",
         limit: int = 1000,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-        """列出已下载 / 失败 / 下载中媒体 — 应用层 flatten + 过滤。
+        """列出已下载 / 失败 / 下载中媒体(2026-08-25 PR #3 下沉)— 单行转发 storage。
 
-        不引入新的 `StorageRepository.list_media` 抽象方法(2026-08-24 决定 D2):
-        直接调 `storage.list_messages` 然后 Python 层 flatten,避免触碰 4 个
-        后端 + 5 个测试 fixture。MVP 数据规模(几千 ~ 几万消息)单次 < 50ms。
+        filter 全部下沉到 `StorageRepository.list_media` 后端(InMemory /
+        Jsonl 顺序扫 + slice,Postgres SQL JOIN,Mongo aggregate),UI 不再
+        触碰应用层 flatten。`offset` 暂不暴露给 UI(VM 一律默认 0)。
         """
-        chs = await self.storage.list_channels()
-        if not chs:
-            return []
-        ch_ids = (
-            [channel_id] if channel_id is not None
-            else [c.id for c in chs]
+        channel_ids = [channel_id] if channel_id is not None else None
+        return await self.storage.list_media(
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            limit=limit,
+            offset=0,
         )
-        msgs = await self.storage.list_messages(ch_ids, limit=limit * 5)
-        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
-        search_lo = search.lower()
-        for msg in msgs:
-            for idx, med in enumerate(msg.media):
-                if status is not None and med.download_status != status:
-                    continue
-                if media_type is not None and med.type != media_type:
-                    continue
-                if search_lo and search_lo not in (med.file_name or "").lower():
-                    continue
-                rows.append((msg, idx, med))
-                if len(rows) >= limit:
-                    return rows
-        return rows
 
     async def delete_media(
         self, channel_id: int, telegram_msg_id: int, media_idx: int,
@@ -330,7 +317,7 @@ class AppService:
         await self.storage.update_message(new_msg)
         if object_key:
             try:
-                n = await self._count_media_with_object_key(object_key)
+                n = await self.storage.count_media_by_object_key(object_key)
             except Exception:  # noqa: BLE001
                 log.exception("count media by key failed: %s", object_key)
                 n = 0
@@ -347,6 +334,57 @@ class AppService:
             telegram_msg_id=telegram_msg_id,
             media_idx=media_idx,
         ))
+
+    async def delete_by_channel(self, channel_id: int) -> int:
+        """2026-08-25 PR #4:批量删某频道所有 message + 顺手清孤儿 bytes。
+
+        与 `MonitorService.delete_message` 的 bytes 清理语义一致:对每条
+        待删 message 的每个 `media.object_key` 做 refcount 检查,=0 时
+        调 `objects.delete(key)`。
+
+        跨频道行为:不动其它 channel 的 message / media — 用户典型诉求
+        「这个频道我不想留媒体,一键清空」,只清目标频道。
+
+        退出语义:中途 storage.delete_message 抛错 → 已删除的不回滚,
+        异常上抛让调用方知道部分成功(2026-08-25:用户确认「不要回滚,
+        上抛提示」即可,后续按需加 dry-run preview)。
+        """
+        msgs = await self.storage.list_messages([channel_id], limit=None)
+        deleted = 0
+        for msg in msgs:
+            # 1) 先记下该 message 的所有 object_key(用于后续 refcount)
+            keys: list[str] = [
+                med.object_key for med in msg.media
+                if med.object_key and med.download_status == MediaDownloadStatus.DONE
+            ]
+            try:
+                await self.storage.delete_message(channel_id, msg.telegram_msg_id)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "delete_by_channel partial failure: channel=%s msg=%s",
+                    channel_id, msg.telegram_msg_id,
+                )
+                continue
+            deleted += 1
+            # 2) 删 message 后,逐 key 检查 refcount;=0 则清 bytes
+            for key in keys:
+                try:
+                    n = await self.storage.count_media_by_object_key(key)
+                except Exception:  # noqa: BLE001
+                    log.exception("count media by key failed: %s", key)
+                    continue
+                if n == 0 and self.objects is not None:
+                    try:
+                        await self.objects.delete(key)
+                    except Exception:  # noqa: BLE001
+                        log.warning(
+                            "delete_by_channel bytes %s failed", key,
+                            exc_info=True,
+                        )
+        log.info(
+            "delete_by_channel: channel=%s deleted=%d", channel_id, deleted,
+        )
+        return deleted
 
     async def retry_media(
         self, channel_id: int, telegram_msg_id: int, media_idx: int,
@@ -414,6 +452,48 @@ class AppService:
                 media=updated,
             ))
 
+    async def load_thumbnail_bytes(self, media: MediaDTO) -> bytes | None:
+        """读 media 的缩略图 bytes — UI 渲染缩略图用(2026-08-25 PR #1)。
+
+        优先 `thumb_key`(TG 端小缩略图,通常 90×90 JPEG);缺失则用
+        `object_key` 原图(decoder 仍能 render)。仅 DONE + 有 objectstore 时
+        才读;任何异常返 None 让 UI 保持 emoji 占位。
+
+        设计取舍(2026-08-25 PR #1 E1):
+        - 全量读 bytes 不流式 — 缩略图一般 ≤ 50KB,本地 FS / S3 都是单次
+          GET;流式 (open_read iterator) 在这里收益小于代码复杂度。
+        - 不调 LRU 缓存(进程内 UI 层做,service 层不持 Qt 状态)。
+        - 用 `objects.open_read(key)` 而非 `get(key)` — 接口统一,Local /
+          Folder 后端都用 BytesIO;失败时仍走 try/except 兜底。
+        """
+        if media.download_status != MediaDownloadStatus.DONE:
+            return None
+        if self.objects is None:
+            return None
+        backend = media.object_backend
+        if not backend:
+            return None
+        # thumb 优先,缺则用原图
+        key = media.thumb_key or media.object_key
+        if not key:
+            return None
+        try:
+            stream = await self.objects.open_read(key)
+            try:
+                data = stream.read()
+            finally:
+                try:
+                    stream.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            return data
+        except Exception:  # noqa: BLE001 — KeyError / S3 ClientError / 任何错
+            log.warning(
+                "load_thumbnail_bytes failed: backend=%s key=%s",
+                backend, key, exc_info=True,
+            )
+            return None
+
     async def open_media(
         self, channel_id: int, telegram_msg_id: int, media_idx: int,
     ) -> bool:
@@ -443,8 +523,9 @@ class AppService:
         """扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有但 storage 没引用。
 
         dry_run=True(默认)只 log 不删;Media Manager 「Prune Orphans」按钮显式
-        触发 dry_run=False 真删。S3 后端 raise NotImplementedError 时直接当作
-        scanned=0 返回(Media Manager 显示「S3 不支持 reconcile」)。
+        触发 dry_run=False 真删。S3 后端:
+        - 未连接(iter_keys raise RuntimeError)→ 当作 scanned=0 兜底
+        - raise NotImplementedError(理论上不再发生)→ 同上兜底
         """
         backend = self.objects.backend_name if self.objects else ""
         scanned_keys: set[str] = set()
@@ -453,9 +534,12 @@ class AppService:
             try:
                 async for k in self.objects.iter_keys(prefix="media/"):
                     scanned_keys.add(k)
-            except NotImplementedError:
-                log.info("reconcile skipped: %s backend iter_keys not implemented",
-                         backend)
+            except (NotImplementedError, RuntimeError) as e:
+                # 2026-08-25 PR #2:加 RuntimeError(S3 未连接会 raise "未连接")
+                log.info(
+                    "reconcile skipped: %s backend iter_keys unavailable: %s",
+                    backend, e,
+                )
         chs = await self.storage.list_channels()
         if chs:
             msgs = await self.storage.list_messages(
@@ -491,21 +575,6 @@ class AppService:
         )
         await self.bus.publish(evt)
         return evt
-
-    async def _count_media_with_object_key(self, object_key: str) -> int:
-        """refcount:同 MonitorService._count_media_with_object_key — 扫全部 channel。"""
-        chs = await self.storage.list_channels()
-        if not chs:
-            return 0
-        msgs = await self.storage.list_messages(
-            [c.id for c in chs], limit=100_000,
-        )
-        n = 0
-        for m in msgs:
-            for med in m.media:
-                if med.object_key == object_key:
-                    n += 1
-        return n
 
     # ---------- 关闭 ----------
 

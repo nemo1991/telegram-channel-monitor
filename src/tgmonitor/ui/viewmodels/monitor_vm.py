@@ -71,6 +71,12 @@ class MonitorViewModel(QObject):
     media_retried = Signal(object)         # MediaRetried 转发
     media_deleted = Signal(object)         # MediaDeleted 转发
     media_reconcile_done = Signal(object)  # MediaReconcileFinished 转发
+    # 按频道批量删除完成(2026-08-25 PR #4)— payload (channel_id, deleted_count)
+    channel_cleared = Signal(int, int)
+    # 缩略图加载完成(2026-08-25 PR #1)— payload (channel_id, telegram_msg_id,
+    # media_idx, QPixmap)。bytes → QPixmap 已在 qasync 主线程做,QPixmap 跨信号
+    # 安全(Qt metatype 自带);UI 收到直接 setPixmap。
+    thumbnail_loaded = Signal(int, int, int, object)
 
     def __init__(
         self,
@@ -269,6 +275,49 @@ class MonitorViewModel(QObject):
         async def _go() -> None:
             await self.app.reconcile_orphans(dry_run=dry_run)
         run_coro(self.loop, _go(), error_label="reconcile_orphans")
+
+    def delete_by_channel(self, channel_id: int) -> None:
+        """2026-08-25 PR #4:批量删某频道所有 message — 后台 fire app.delete_by_channel。
+
+        完成后 emit `channel_cleared(channel_id, deleted_count)` — UI 据此
+        状态栏反馈 + 重新加载 media list。
+        """
+        async def _go() -> None:
+            n = await self.app.delete_by_channel(channel_id)
+            self.channel_cleared.emit(channel_id, n)
+        run_coro(self.loop, _go(), error_label="delete_by_channel")
+
+    def load_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int, media: object,
+    ) -> None:
+        """UI 行内请求加载缩略图(2026-08-25 PR #1)。
+
+        流程:异步读 bytes(app.load_thumbnail_bytes)→ 主线程内 QPixmap.fromData
+        → emit thumbnail_loaded。失败(None bytes / 非图像格式)on_success 拿到
+        None,UI 端保持 emoji 不变。
+        """
+        from tgmonitor.ui.widgets.thumbnail_cache import render_pixmap
+
+        def _on_success(data: object) -> None:
+            if not isinstance(data, (bytes, bytearray)) or not data:
+                return
+            pix = render_pixmap(bytes(data))
+            if pix is None:
+                return
+            self.thumbnail_loaded.emit(channel_id, telegram_msg_id, media_idx, pix)
+
+        async def _go() -> object:
+            # media 是弱类型 object — VM 接口稳定,不依赖 DTO 强类型
+            from tgmonitor.core.dto import MediaDTO
+            if not isinstance(media, MediaDTO):
+                return None
+            return await self.app.load_thumbnail_bytes(media)
+
+        run_coro(
+            self.loop, _go(),
+            on_success=_on_success,
+            error_label="load_thumbnail",
+        )
 
     # ---- UI 主动调用 ----
 
