@@ -5,6 +5,54 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-08-25
+
+### ✨ Added
+- **媒体行内缩略图渲染(PR #1)**:Media Manager 每行 40×40 缩略图列,photo
+  直接 `QPixmap.fromData` + `Qt.AspectRatioMode.KeepAspectRatio` 渲染。video
+  / audio / document 保留 emoji 占位。新增 `ThumbnailCache`(进程内 LRU
+  OrderedDict,容量 200,`load_thumbnail_bytes` 走 `objects.open_read`)。
+  仅可视行异步加载,滚动不卡。失败 / 非图像格式 fallback 到 emoji
+- **S3 后端 orphan reconcile 支持(PR #2)**:`S3ObjectStore.iter_keys` 用 aioboto3
+  `list_objects_v2` paginator 实现(`Prefix` 参数强制,防全桶扫描)。S3 用户
+  现在能正常「Prune Orphans」清理累积的孤儿文件。`pyproject.toml` 加
+  `moto[s3]` dev 依赖做 mock 测试
+- **按频道批量删除(PR #4)**:Media Manager toolbar 加「🗑 Clear Channel」按钮
+  → `QMessageBox.warning` 二次确认 → `AppService.delete_by_channel(channel_id)`
+  → 走 1.1.0 已有的 refcount + bytes 清理路径(逐 message 删后逐 key 检查
+  refcount,=0 清 bytes,跨频道共享的 bytes 保留),UI 状态栏反馈
+  「已清空 N 条媒体」+ 自动 reload 当前 filter
+
+### 🚀 Changed
+- **list_media 下沉到 4 存储后端(PR #3)**:`StorageRepository` 新增
+  `list_media(*, channel_ids, status, media_type, search, limit, offset)`
+  + `count_media_by_object_key(object_key)` 两个 abstract 方法。
+  - InMemory / JsonlFileStore:顺序扫 + slice
+  - PostgresRepository:`messages m JOIN media` + 条件 WHERE + LIMIT/OFFSET
+  - MongoRepository:`aggregate` pipeline `$match` + `$unwind media` + `$match` +
+    `$sort` + `$skip` + `$limit`
+  `AppService.list_media` 从 28 行应用层 flatten 缩到 3 行转发;
+  `_count_media_with_object_key` helper 删除,`delete_media` /
+  `MonitorService.delete_message` 改调 `storage.count_media_by_object_key`
+
+### 🐛 Fixed
+- `JsonlFileStore.list_media` / `count_media_by_object_key` 误用 `row.message`
+  (`cf.rows` 是 dict 列表)→ AttributeError;改 `_dict_to_message(row)` 转 DTO
+
+### 🧪 Tests
+- `test_thumbnail_cache.py`(新,18 个)— LRU 行为 / `render_pixmap` 各格式
+  / `cache_key_for` 状态过滤 / `AppService.load_thumbnail_bytes` 三后端
+- `test_objectstore.py`(+3)— S3 `iter_keys` 全量 / prefix 过滤 / 空桶
+- `test_orphan_reconcile.py`(+1)— S3 后端真 reconcile
+- `test_storage_backends.py`(新,20 个)— InMemory + Jsonl 后端 list_media /
+  count_media_by_object_key 行为对齐 parity 断言
+- `test_media_manager.py`(+4)— `delete_by_channel` 全删 / 无 message /
+  清孤儿 bytes / 跨频道不动其他
+
+**Test count:** 397 → 421 (+24, 0 回归)。`ruff check` 0 错误
+
+---
+
 ## [1.1.0] - 2026-08-24
 
 ### ✨ Added
@@ -1089,7 +1137,9 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.23...v1.1.0
 [1.0.6]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.5...v1.0.6
 [1.0.7]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.6...v1.0.7
 [1.0.5]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.4...v1.0.5
