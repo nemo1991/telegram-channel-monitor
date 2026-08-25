@@ -361,3 +361,80 @@ async def test_reconcile_orphans_emits_event(
     # dry_run 不真删
     assert await objectstore.exists("media/orphan.jpg")
     assert len(received) == 1
+
+
+# ---- delete_by_channel(2026-08-25 PR #4)------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_by_channel_removes_all_messages_in_channel(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """批量删 — 目标频道所有 message 清掉,返真实删数。"""
+    # ch 100: 3 条 message(2 含 media)
+    await storage.save_message(_msg(100, 1, [_done_media("a", "media/a.jpg")]))
+    await storage.save_message(_msg(100, 2, [_done_media("b", "media/b.jpg")]))
+    await storage.save_message(_msg(100, 3, [_done_media("c", "media/c.jpg")]))
+    # ch 200: 1 条 message(不应受影响)
+    await storage.save_message(_msg(200, 1, [_done_media("d", "media/d.jpg")]))
+
+    deleted = await app.delete_by_channel(100)
+    assert deleted == 3
+    # ch 100 全空
+    assert await storage.get_message(100, 1) is None
+    assert await storage.get_message(100, 2) is None
+    assert await storage.get_message(100, 3) is None
+    # ch 200 不动
+    assert await storage.get_message(200, 1) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_by_channel_no_op_when_no_messages(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """频道存在但无 message → 返 0,不抛。"""
+    from tgmonitor.core.dto import ChannelDTO
+    await storage.upsert_channel(ChannelDTO(id=999, title="#999"))
+    deleted = await app.delete_by_channel(999)
+    assert deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_by_channel_cleans_orphan_bytes(
+    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+) -> None:
+    """该频道独占引用的 bytes 应被清(走 storage.delete_message 的 refcount 路径)。
+
+    跨频道共享的 bytes 保留(message 删一条 → 另一条仍引用 → refcount > 0 不删)。
+    """
+    await objectstore.put("media/only_here.jpg", b"data1", None)
+    await objectstore.put("media/shared.jpg", b"data2", None)
+    # ch 100: 1 条独占 + 1 条共享
+    await storage.save_message(_msg(100, 1, [_done_media("a", "media/only_here.jpg")]))
+    await storage.save_message(_msg(100, 2, [_done_media("b", "media/shared.jpg")]))
+    # ch 200: 1 条共享(sentinel → shared.jpg 引用 refcount=2)
+    await storage.save_message(_msg(200, 1, [_done_media("c", "media/shared.jpg")]))
+
+    deleted = await app.delete_by_channel(100)
+    assert deleted == 2
+
+    # only_here.jpg 已无引用 → bytes 清掉
+    assert not await objectstore.exists("media/only_here.jpg")
+    # shared.jpg 仍被 ch 200 引用 → bytes 保留
+    assert await objectstore.exists("media/shared.jpg")
+
+
+@pytest.mark.asyncio
+async def test_delete_by_channel_does_not_touch_other_channels(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """目标频道外:message 不动,channel 元数据不动(走 list_messages → delete_message)。"""
+    await storage.save_message(_msg(100, 1, []))
+    await storage.save_message(_msg(200, 1, []))
+    await storage.save_message(_msg(300, 1, []))
+
+    await app.delete_by_channel(200)
+
+    assert await storage.get_message(200, 1) is None
+    assert await storage.get_message(100, 1) is not None
+    assert await storage.get_message(300, 1) is not None
