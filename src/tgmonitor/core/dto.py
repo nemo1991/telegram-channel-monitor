@@ -161,6 +161,19 @@ class ExportResult:
     bytes_written: int
 
 
+@dataclass(frozen=True)
+class OpenMediaResult:
+    """打开 media 的结果 — 2026-08-25 v1.3.0 PR #5。
+
+    `success=True` 表示系统调用成功(QDesktopServices.openUrl 返 True);
+    `success=False` 时 `error` 必填,描述原因(媒体未下载完成 / 消息不存在 /
+    S3 拉取失败 / OS 调用失败等),UI 据此弹 QMessageBox。
+    """
+
+    success: bool
+    error: str | None = None
+
+
 # ---------- 全量同步(ChannelSyncService) ----------
 
 @dataclass

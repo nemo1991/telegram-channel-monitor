@@ -399,6 +399,8 @@ class MainWindow(QMainWindow):
         self.media_manager.prune_requested.connect(self._on_media_prune)
         # 2026-08-25 PR #4:按频道批量删除 — 二次确认后调 vm.delete_by_channel
         self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
+        # 2026-08-25 v1.3.0 PR #5:打开媒体失败 → QMessageBox.warning 带原因
+        self._vm.open_media_failed.connect(self._on_open_media_failed)
 
         # MessageView → MessageDetail(点击消息显示详情)
         self.live_view.message_selected.connect(self.message_detail.show_message)
@@ -705,6 +707,17 @@ class MainWindow(QMainWindow):
         if ans != QMessageBox.Yes:
             return
         self._vm.delete_by_channel(channel_id)
+
+    def _on_open_media_failed(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int, reason: str,
+    ) -> None:
+        """2026-08-25 v1.3.0 PR #5:VM.open_media 失败 → QMessageBox.warning
+        把 reason 显示给用户(v1.2.0 默默吞错,只能去 log 翻)。
+        """
+        QMessageBox.warning(
+            self, "打开媒体失败",
+            f"无法打开频道 #{channel_id} 消息 #{telegram_msg_id} 第 {media_idx + 1} 个媒体:\n\n{reason}",
+        )
 
     async def _on_bus_message_deleted(self, e) -> None:
         """EventBus:MonitorService.delete_message 发的 MessageDeleted → LIVE 流删行。

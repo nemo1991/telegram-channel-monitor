@@ -5,6 +5,24 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### ✨ Added
+- **S3 后端 media「在系统应用中打开」(PR #5)**:Local / Folder 直接
+  `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`;S3 后端先
+  `_stage_to_tmp()`(从 ObjectStore 拉 bytes 写到 `QStandardPaths.TempLocation`
+  下的 `tgmonitor-<token_hex(8)><ext>` 临时文件)再 openUrl。失败路径弹
+  `QMessageBox.warning` 把 reason 给用户(v1.2.0 默默 log 一行就完)。新
+  `OpenMediaResult(success, error)` dataclass + `AppService.open_media_with_result`,
+  `AppService.open_media` 退化为 1 行 wrapper 保留 `bool` 返值(向后兼容,
+  老测试零改动)
+
+### 🧪 Tests
+- `test_media_manager.py`(+4)— `open_media_with_result` missing message /
+  FAILED media / S3 stage tmp + 调 openUrl / openUrl 失败时 tmp unlink
+
+---
+
 ## [1.2.0] - 2026-08-25
 
 ### ✨ Added

@@ -77,6 +77,9 @@ class MonitorViewModel(QObject):
     # media_idx, QPixmap)。bytes → QPixmap 已在 qasync 主线程做,QPixmap 跨信号
     # 安全(Qt metatype 自带);UI 收到直接 setPixmap。
     thumbnail_loaded = Signal(int, int, int, object)
+    # 打开媒体失败(2026-08-25 v1.3.0 PR #5)— payload
+    # (channel_id, telegram_msg_id, media_idx, reason)
+    open_media_failed = Signal(int, int, int, str)
 
     def __init__(
         self,
@@ -260,13 +263,21 @@ class MonitorViewModel(QObject):
         run_coro(self.loop, _go(), error_label="retry_media")
 
     def open_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
-        """打开 media 文件 — 后台 fire app.open_media(同步返回 bool)。"""
+        """打开 media 文件 — 后台 fire app.open_media_with_result,失败时 emit
+        open_media_failed 把原因给 UI(2026-08-25 v1.3.0 PR #5)。
+        """
         async def _go() -> None:
-            ok = await self.app.open_media(channel_id, telegram_msg_id, media_idx)
-            if not ok:
+            result = await self.app.open_media_with_result(
+                channel_id, telegram_msg_id, media_idx,
+            )
+            if not result.success:
+                reason = result.error or "未知原因"
                 log.warning(
-                    "open_media failed: channel=%s msg=%s idx=%d",
-                    channel_id, telegram_msg_id, media_idx,
+                    "open_media failed: channel=%s msg=%s idx=%d reason=%s",
+                    channel_id, telegram_msg_id, media_idx, reason,
+                )
+                self.open_media_failed.emit(
+                    channel_id, telegram_msg_id, media_idx, reason,
                 )
         run_coro(self.loop, _go(), error_label="open_media")
 

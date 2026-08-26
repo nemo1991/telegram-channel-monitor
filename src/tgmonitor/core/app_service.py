@@ -18,9 +18,14 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
+import mimetypes
+import os
+import secrets
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.auth_service import AuthService
@@ -32,6 +37,7 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    OpenMediaResult,
     SyncOptions,
     SyncResult,
 )
@@ -499,25 +505,119 @@ class AppService:
     ) -> bool:
         """系统默认程序打开 media 文件。True = 成功发起,False = 不可打开。
 
-        2026-08-24 D5:仅 Local / Folder 后端支持(LocalObjectStore / FolderObjectStore);
-        S3 后端 MVP 不可打开,返 False 由 UI 弹「暂不支持」对话框。
+        2026-08-25 v1.3.0 PR #5:扩展到 S3 后端(走 `_stage_s3_to_tmp`)并暴露
+        失败原因。返回 bool 是向后兼容 wrapper — 真实实现走 `open_media_with_result`,
+        UI 失败时显示 reason。
         """
+        return (
+            await self.open_media_with_result(channel_id, telegram_msg_id, media_idx)
+        ).success
+
+    async def open_media_with_result(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> OpenMediaResult:
+        """打开 media + 返回结构化结果(2026-08-25 v1.3.0 PR #5)。
+
+        Local / Folder:直接 `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`。
+        S3:把 ObjectStore bytes 写到 `QStandardPaths.TempLocation` 下的 tmp 文件
+        再 openUrl;tmp 成功路径不主动 unlink(交给 OS 在 app exit / 重启时回收;
+        Windows 上 OS 持有 handle 时 unlink 会失败,故意不冒此风险),失败路径
+        显式 unlink 兜底。
+
+        所有异常(对象存储连接断 / get 失败 / tmp 写失败 / openUrl 返 False)都
+        收口到 OpenMediaResult,不让 UI 看到原始堆栈。
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
         from tgmonitor.core.objectstore.folder_store import FolderObjectStore
         from tgmonitor.core.objectstore.local_store import LocalObjectStore
+        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
 
         msg = await self.storage.get_message(channel_id, telegram_msg_id)
         if msg is None or media_idx >= len(msg.media):
-            return False
+            return OpenMediaResult(False, "消息或媒体不存在")
         med = msg.media[media_idx]
         if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
-            return False
-        if isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
-            from PySide6.QtCore import QUrl
-            from PySide6.QtGui import QDesktopServices
+            return OpenMediaResult(False, "媒体未下载完成")
 
-            abs_path = str(self.objects._root / med.object_key)  # noqa: SLF001 — 与 iter_keys / delete 共用 root
-            return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path)))
-        return False  # S3 / 其它后端 MVP 不支持
+        try:
+            if isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
+                # 用 backend 自带的 _path 而非 self.objects._root / key —
+                # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
+                # 直接拼 root 会落到错的子目录。
+                abs_path = self.objects._path(med.object_key)  # noqa: SLF001
+                ok = bool(
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(abs_path)))
+                )
+                return (
+                    OpenMediaResult(True) if ok
+                    else OpenMediaResult(False, "系统调用失败:请检查是否已关联默认应用")
+                )
+            if isinstance(self.objects, S3ObjectStore):
+                tmp = await self._stage_s3_to_tmp(med)
+                ok = bool(
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp)))
+                )
+                if not ok:
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                    return OpenMediaResult(
+                        False, f"系统调用失败:无法打开临时文件 {tmp.name}",
+                    )
+                return OpenMediaResult(True)
+            return OpenMediaResult(
+                False,
+                f"不支持的对象存储后端: {type(self.objects).__name__}",
+            )
+        except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
+            return OpenMediaResult(False, f"{type(exc).__name__}: {exc}")
+
+    async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
+        """2026-08-25 v1.3.0 PR #5:把 S3 media bytes 写到本地 tmp 文件用于
+        `QDesktopServices.openUrl`。
+
+        - 扩展名推断优先级:`med.file_name` 后缀 > `med.mime_type` 查
+          `mimetypes.guess_extension` > `.bin` fallback
+        - tmp 目录:`QStandardPaths.TempLocation`(macOS 是 per-user tmp),
+          不可写时回退 `~/.cache/tgmonitor`
+        - 文件名:`tgmonitor-<secrets.token_hex(8)><suffix>` — `tgmonitor-`
+          前缀留给未来 sweep 工具批量清理
+        - 写文件用 `asyncio.to_thread(tmp_path.write_bytes, data)` 防卡 loop
+        """
+        # 1. suffix
+        suffix = ""
+        if med.file_name:
+            suffix = os.path.splitext(med.file_name)[1]
+        if not suffix and med.mime_type:
+            guessed = mimetypes.guess_extension(med.mime_type, strict=False)
+            if guessed:
+                suffix = guessed
+        if not suffix:
+            suffix = ".bin"
+
+        # 2. tmp 目录
+        try:
+            from PySide6.QtCore import QStandardPaths
+
+            tmp_dir_str = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.TempLocation,
+            )
+        except Exception:  # noqa: BLE001 — PySide6 不可用兜底
+            tmp_dir_str = ""
+        tmp_dir = (
+            Path(tmp_dir_str) if tmp_dir_str
+            else Path.home() / ".cache" / "tgmonitor"
+        )
+        await asyncio.to_thread(tmp_dir.mkdir, parents=True, exist_ok=True)
+
+        # 3. 写文件
+        tmp_path = tmp_dir / f"tgmonitor-{secrets.token_hex(8)}{suffix}"
+        data = await self.objects.get(med.object_key or "")
+        await asyncio.to_thread(tmp_path.write_bytes, data)
+        return tmp_path
 
     async def reconcile_orphans(self, *, dry_run: bool = True) -> MediaReconcileFinished:
         """扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有但 storage 没引用。
