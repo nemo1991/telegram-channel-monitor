@@ -226,6 +226,16 @@ class StorageRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    async def count_media_by_channel(self, channel_id: int) -> int:
+        """该频道全部媒体数(2026-08-25 v1.3.0 PR #8)— 含 PENDING/FAILED。
+
+        用途:`ClearChannelPreview.media_count`。比 `list_media(
+        channel_ids=[id]) + len()` 更便宜,4 后端各自走 SQL/aggregate count
+        而非把 row 拉回内存。
+        """
+        ...
+
     # ---- 健康检查 ----
 
     @abstractmethod

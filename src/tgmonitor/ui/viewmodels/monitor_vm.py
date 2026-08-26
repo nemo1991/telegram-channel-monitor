@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
+    DeleteChannelPreview,
     ExportRequest,
     MediaDownloadStatus,
     MediaExportRequest,
@@ -88,6 +89,10 @@ class MonitorViewModel(QObject):
     # 打开媒体失败(2026-08-25 v1.3.0 PR #5)— payload
     # (channel_id, telegram_msg_id, media_idx, reason)
     open_media_failed = Signal(int, int, int, str)
+    # Clear Channel 预览就绪(2026-08-25 v1.3.0 PR #8)— payload
+    # DeleteChannelPreview(只读)。MainWindow 接到后弹
+    # `ClearChannelPreviewDialog` 二次确认,确认后才走 `vm.delete_by_channel`。
+    delete_preview_ready = Signal(object)
 
     def __init__(
         self,
@@ -306,6 +311,28 @@ class MonitorViewModel(QObject):
         async def _go() -> None:
             await self.app.reconcile_orphans(dry_run=dry_run)
         run_coro(self.loop, _go(), error_label="reconcile_orphans")
+
+    def preview_delete_by_channel(self, channel_id: int) -> None:
+        """2026-08-25 v1.3.0 PR #8:Clear Channel dry-run — 后台 fire
+        `app.preview_delete_by_channel` 后 emit `delete_preview_ready`。
+
+        `app.preview_*` 严格只读,不会改 storage / objects 状态。
+        MainWindow 收到 `delete_preview_ready` 后弹 `ClearChannelPreviewDialog`
+        二次确认,用户勾上「我已了解不可撤销」才 enable OK,确认后走
+        `vm.delete_by_channel(channel_id)` 真删。
+        """
+        async def _go() -> DeleteChannelPreview:
+            return await self.app.preview_delete_by_channel(channel_id)
+
+        def _on_success(preview: object) -> None:
+            if isinstance(preview, DeleteChannelPreview):
+                self.delete_preview_ready.emit(preview)
+
+        run_coro(
+            self.loop, _go(),
+            on_success=_on_success,
+            error_label="preview_delete_by_channel",
+        )
 
     def delete_by_channel(self, channel_id: int) -> None:
         """2026-08-25 PR #4:批量删某频道所有 message — 后台 fire app.delete_by_channel。

@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -694,21 +695,39 @@ class MainWindow(QMainWindow):
         self._vm.reconcile_orphans(dry_run=False)
 
     def _on_media_clear_channel(self, channel_id: int) -> None:
-        """2026-08-25 PR #4:Media Manager 「Clear Channel」按钮 — 二次确认后
-        调 vm.delete_by_channel(channel_id)。会清空该频道全部 message + 孤儿 bytes,
-        跨消息去重场景下其它频道仍引用的 bytes 不动。
+        """2026-08-25 v1.3.0 PR #8:Media Manager 「Clear Channel」按钮 —
+        先 fire `vm.preview_delete_by_channel(channel_id)`,VM 后台读 storage
+        后 emit `delete_preview_ready(DeleteChannelPreview)`,MainWindow
+        接到后弹 `ClearChannelPreviewDialog`(必勾 ack 才 enable OK)。
+        用户 OK 才走 `vm.delete_by_channel`;Cancel 不动。
         """
-        ans = QMessageBox.warning(
-            self,
-            "Clear Channel",
-            f"删除频道 #{channel_id} 的全部消息与媒体(含对象存储 bytes)。\n"
-            "此操作不可撤销,确认执行?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+        self._vm.delete_preview_ready.connect(
+            lambda preview, cid=channel_id: self._show_clear_channel_dialog(cid, preview),
         )
-        if ans != QMessageBox.Yes:
+        self._vm.preview_delete_by_channel(channel_id)
+
+    def _show_clear_channel_dialog(
+        self, channel_id: int, preview: object,
+    ) -> None:
+        """`delete_preview_ready` 信号 handler — 弹 dialog,Accepted 才真删。"""
+        from tgmonitor.core.dto import DeleteChannelPreview
+        from tgmonitor.ui.widgets.clear_channel_preview_dialog import (
+            ClearChannelPreviewDialog,
+        )
+
+        # 断开一次性连接,避免重复触发
+        try:
+            self._vm.delete_preview_ready.disconnect()
+        except (RuntimeError, TypeError):
+            pass  # 没连过 / 已断
+
+        if not isinstance(preview, DeleteChannelPreview):
             return
-        self._vm.delete_by_channel(channel_id)
+        ch = self._vm.known_channels.get(channel_id)
+        title = ch.title if ch else ""
+        dlg = ClearChannelPreviewDialog(preview, title, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._vm.delete_by_channel(channel_id)
 
     def _on_media_export_csv(self, out_path: str) -> None:
         """2026-08-25 v1.3.0 PR #7:Media Manager 「Export CSV」按钮 —

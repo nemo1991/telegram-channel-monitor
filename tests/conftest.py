@@ -293,6 +293,13 @@ class InMemoryRepository(StorageRepository):
                     n += 1
         return n
 
+    async def count_media_by_channel(self, channel_id: int) -> int:
+        """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。"""
+        return sum(
+            len(m.media) for m in self.messages.values()
+            if m.channel_id == channel_id
+        )
+
     async def ping(self) -> bool:
         return True
 

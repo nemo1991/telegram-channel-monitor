@@ -499,6 +499,20 @@ class MongoRepository(StorageRepository):
             return int(d.get("n", 0))
         return 0
 
+    async def count_media_by_channel(self, channel_id: int) -> int:
+        """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
+
+        `$match` channel + `$project` 用 `$size media` + `$group sum`。
+        """
+        pipeline = [
+            {"$match": {"channel_id": channel_id}},
+            {"$project": {"n": {"$size": {"$ifNull": ["$media", []]}}}},
+            {"$group": {"_id": None, "total": {"$sum": "$n"}}},
+        ]
+        async for d in self.db.messages.aggregate(pipeline):
+            return int(d.get("total", 0))
+        return 0
+
 
 def _escape_regex(s: str) -> str:
     """转义 Mongo `$regex` 注入(2026-08-25 PR #3)。"""

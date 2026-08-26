@@ -357,3 +357,26 @@ async def test_jsonl_count_media_pagination_consistency(jsonl_repo):
         seen += len(rows)
         offset += limit
     assert seen == total
+
+
+# ---- 2026-08-25 v1.3.0 PR #8:count_media_by_channel parity --------------
+
+
+async def test_in_mem_count_media_by_channel_matches_fixture(in_mem_repo):
+    """PR #8:InMemory count_media_by_channel = fixture 内 media 总数。
+
+    fixture: ch100 msg1=1 photo + msg2=2 media + ch200 msg10=1 photo +
+    ch300 msg5=1 video = 5
+    """
+    assert await in_mem_repo.count_media_by_channel(100) == 3  # 1 + 2
+    assert await in_mem_repo.count_media_by_channel(200) == 1
+    assert await in_mem_repo.count_media_by_channel(300) == 1
+    assert await in_mem_repo.count_media_by_channel(999) == 0  # 空 channel
+
+
+async def test_jsonl_count_media_by_channel_matches_fixture(jsonl_repo):
+    """PR #8:Jsonl count_media_by_channel parity。"""
+    assert await jsonl_repo.count_media_by_channel(100) == 3
+    assert await jsonl_repo.count_media_by_channel(200) == 1
+    assert await jsonl_repo.count_media_by_channel(300) == 1
+    assert await jsonl_repo.count_media_by_channel(999) == 0

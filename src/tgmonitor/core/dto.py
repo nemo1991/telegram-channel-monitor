@@ -221,6 +221,27 @@ class OpenMediaResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class DeleteChannelPreview:
+    """Clear Channel 操作预览 — 2026-08-25 v1.3.0 PR #8。
+
+    **严格只读**(preview_* 系列约定不调任何 `delete_*` API),给 UI 在
+    `ClearChannelPreviewDialog` 显示:
+    - `message_count`:该频道全部消息数(忽略 date_from/to)
+    - `media_count`:全部媒体数(含 PENDING/FAILED,不只是 DONE)
+    - `potential_orphan_bytes`:执行删除后**只属于该频道**的 object_key 字节数
+      (跨频道共享的不计 — refcount > 1 的 key 不会被 `delete_by_channel` 清理)
+
+    字段语义跟 `AppService.delete_by_channel` 一致,确保预览值与真实执行
+    后释放的 bytes 接近。
+    """
+
+    channel_id: int
+    message_count: int
+    media_count: int
+    potential_orphan_bytes: int
+
+
 # ---------- 全量同步(ChannelSyncService) ----------
 
 @dataclass

@@ -46,6 +46,20 @@
   `AppService.export_media_list` + `MonitorViewModel.export_media_list`
   fire-and-forget 完成 / 失败走既有 `vm.export_done` 信号 — UI 不增加
   新信号
+- **Clear Channel 加 dry-run 预览(PR #8)**:Media Manager 「🗑 Clear Channel」
+  在 `QMessageBox.warning` 二次确认之外,先 fire `vm.preview_delete_by_channel`
+  调新 `AppService.preview_delete_by_channel` (严格只读,不动 storage /
+  objects)— 弹 `ClearChannelPreviewDialog` 显示:
+  - `message_count` — 该频道全部消息数(走既有 `storage.count_messages`)
+  - `media_count` — 全部媒体数(走新 abstract
+    `StorageRepository.count_media_by_channel`,InMemory / Jsonl /
+    Postgres / Mongo 4 后端 parity)
+  - `potential_orphan_bytes` — 模拟 `delete_by_channel` 的 refcount 清理:
+    只累加「refcount=1 且 file_size 非 None」的 DONE media 字节
+    (跨频道共享不计,与实际 `objects.delete` 触发条件一致)
+  Dialog 必勾「我已了解以上操作不可撤销」才 enable OK 按钮;Cancel → 不动;
+  OK → `vm.delete_by_channel`。新增 `DeleteChannelPreview` dataclass(frozen)
+  + `delete_preview_ready` VM signal + `ClearChannelPreviewDialog` widget
 
 ### 🚀 Changed
 - `StorageRepository.list_media` 签名新增 `sort: SortKey = SortKey.DATE,
@@ -68,6 +82,12 @@
   `test_media_csv_exporter_snapshot` / `test_export_service_run_media_dispatch` /
   `test_export_service_run_messages_unchanged` / `test_registry_has_all_five`
   (替换 `test_registry_has_all_four`)
+- `test_storage_backends.py`(+2 PR #8 parity)— `count_media_by_channel` × 2
+- `tests/test_clear_channel_preview.py`(NEW,+8)— `preview_basic_counts` /
+  `preview_empty_channel_returns_zero` / `preview_shared_object_key_excluded` /
+  `preview_pending_status_excluded` / `preview_does_not_mutate_storage` /
+  `dialog_ok_disabled_until_checked` / `dialog_cancel_returns_rejected` /
+  `dialog_shows_counts_in_labels`
 
 ---
 

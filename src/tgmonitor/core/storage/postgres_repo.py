@@ -612,3 +612,16 @@ class PostgresRepository(StorageRepository):
                 "SELECT count(*)::int FROM media WHERE object_key = $1",
                 object_key,
             )
+
+    async def count_media_by_channel(self, channel_id: int) -> int:
+        """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
+
+        `JOIN messages` + WHERE channel_id + count media rows。
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT count(*)::int FROM media me "
+                "JOIN messages m ON me.message_id = m.id WHERE m.channel_id = $1",
+                channel_id,
+            )

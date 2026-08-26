@@ -127,7 +127,7 @@ async def test_registry_includes_media_csv():
 async def test_media_csv_exporter_snapshot(tmp_path):
     """PR #7:MediaListCsvExporter 写 13 列 + 每条 media 一行,列顺序固定。"""
     import csv as csv_mod
-    from datetime import datetime
+
     from tgmonitor.core.dto import MediaDownloadStatus, MediaType
 
     storage, objects, bus, _ = await _setup(tmp_path)
@@ -173,7 +173,7 @@ async def test_export_service_run_media_dispatch(tmp_path):
     ExportDone 事件 payload.message_count 是 media 行数。
     """
     from tgmonitor.core.dto import MediaExportRequest
-    from tgmonitor.core.events import EventBus, ExportDone
+    from tgmonitor.core.events import ExportDone
 
     storage, objects, bus, _ = await _setup(tmp_path)
     received: list[ExportDone] = []

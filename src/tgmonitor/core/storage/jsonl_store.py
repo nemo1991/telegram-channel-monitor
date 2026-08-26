@@ -650,3 +650,12 @@ class JsonlFileStore(StorageRepository):
                     if med.object_key == object_key:
                         n += 1
         return n
+
+    async def count_media_by_channel(self, channel_id: int) -> int:
+        """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
+
+        直接扫该 channel 的 jsonl 文件,累加每条 message 的 `media` 长度;
+        不需订阅标志(预览不区分订阅与否)。
+        """
+        cf = await self._file_for(channel_id)
+        return sum(len(row.get("media", [])) for row in cf.rows)

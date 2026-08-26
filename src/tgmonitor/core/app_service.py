@@ -32,6 +32,7 @@ from tgmonitor.core.auth_service import AuthService
 from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
+    DeleteChannelPreview,
     ExportRequest,
     MediaDownloadStatus,
     MediaDTO,
@@ -375,6 +376,60 @@ class AppService:
             telegram_msg_id=telegram_msg_id,
             media_idx=media_idx,
         ))
+
+    async def preview_delete_by_channel(
+        self, channel_id: int,
+    ) -> DeleteChannelPreview:
+        """2026-08-25 v1.3.0 PR #8:Clear Channel dry-run 预览。
+
+        **严格只读** — 不调任何 `delete_*` API。返回 `DeleteChannelPreview`:
+        - `message_count` 走 `storage.count_messages(channel_id)`
+        - `media_count` 走新 abstract `storage.count_media_by_channel`
+        - `potential_orphan_bytes`:模拟 `delete_by_channel` 的 refcount 清理
+          路径,只累加「refcount=1 且 file_size 非 None」的 DONE media 的字节
+          (跨频道共享的不计,跟实际 `objects.delete` 触发条件一致)
+
+        空 channel / 无 media 时返全 0 dataclass,不抛。
+        """
+        msg_count = await self.storage.count_messages(channel_id)
+        media_count = await self.storage.count_media_by_channel(channel_id)
+        if msg_count == 0 and media_count == 0:
+            return DeleteChannelPreview(
+                channel_id=channel_id,
+                message_count=0,
+                media_count=0,
+                potential_orphan_bytes=0,
+            )
+
+        # 只取 DONE 的 media,跟 delete_by_channel 实际清理的对象一致
+        # 注:`storage.list_media` 直接返 `list[tuple]`(不带 total),`AppService.list_media`
+        # 才返 `(rows, total)` tuple — 这里走 storage 级别避免再调一次 count_media。
+        done_rows = await self.storage.list_media(
+            channel_ids=[channel_id], status=MediaDownloadStatus.DONE,
+            limit=1_000_000, offset=0,
+        )
+        orphan_bytes = 0
+        seen: set[str] = set()
+        for _msg, _idx, med in done_rows:
+            if not med.object_key or med.object_key in seen:
+                continue
+            seen.add(med.object_key)
+            try:
+                n = await self.storage.count_media_by_object_key(med.object_key)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "preview count_media_by_object_key failed: %s",
+                    med.object_key,
+                )
+                n = 0
+            if n <= 1 and med.file_size:
+                orphan_bytes += med.file_size
+        return DeleteChannelPreview(
+            channel_id=channel_id,
+            message_count=msg_count,
+            media_count=media_count,
+            potential_orphan_bytes=orphan_bytes,
+        )
 
     async def delete_by_channel(self, channel_id: int) -> int:
         """2026-08-25 PR #4:批量删某频道所有 message + 顺手清孤儿 bytes。
