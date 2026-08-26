@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-25
+
 ### ✨ Added
 - **S3 后端 media「在系统应用中打开」(PR #5)**:Local / Folder 直接
   `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`;S3 后端先
@@ -72,22 +74,29 @@
 - `test_media_manager.py`(+4)— `list_media_returns_total_for_pagination` /
   `sort_default_unchanged_when_omitted` / `offset_pagination` /
   `count_matches_total_independent_of_pagination`
-- `test_storage_backends.py`(+12 parity)— `sort_by_size_desc` × 2 /
-  `sort_by_status_asc` × 2 / `sort_by_date_desc_default` × 2 /
-  `count_media_no_filter` × 2 / `count_media_with_filter` × 2 /
-  `count_media_pagination_consistency` × 2
+- `test_storage_backends.py`(+12 PR #6 parity + 2 PR #8 parity = +14)—
+  `sort_by_size_desc` × 2 / `sort_by_status_asc` × 2 /
+  `sort_by_date_desc_default` × 2 / `count_media_no_filter` × 2 /
+  `count_media_with_filter` × 2 / `count_media_pagination_consistency` × 2 /
+  `count_media_by_channel` × 2
 - `tests/test_media_manager_widget.py`(NEW,+13:PR #6 +10 + PR #7 +3)—
   排序 / 翻页 / signal 透传 / Export CSV 按钮 dialog 交互
 - `test_exporters.py`(+5)— `test_registry_includes_media_csv` /
   `test_media_csv_exporter_snapshot` / `test_export_service_run_media_dispatch` /
   `test_export_service_run_messages_unchanged` / `test_registry_has_all_five`
   (替换 `test_registry_has_all_four`)
-- `test_storage_backends.py`(+2 PR #8 parity)— `count_media_by_channel` × 2
 - `tests/test_clear_channel_preview.py`(NEW,+8)— `preview_basic_counts` /
   `preview_empty_channel_returns_zero` / `preview_shared_object_key_excluded` /
   `preview_pending_status_excluded` / `preview_does_not_mutate_storage` /
   `dialog_ok_disabled_until_checked` / `dialog_cancel_returns_rejected` /
   `dialog_shows_counts_in_labels`
+
+### 📊 Test totals
+
+v1.2.0 baseline → 425 passing
+v1.3.0 → **477 passing** (+52 新测试,0 回归;1 pre-existing visual
+regression flake `test_main_window_initial` 与本 PR 无关)
+ruff `check src tests`:0 errors
 
 ---
 
