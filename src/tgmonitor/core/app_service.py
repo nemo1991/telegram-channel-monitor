@@ -35,6 +35,7 @@ from tgmonitor.core.dto import (
     ExportRequest,
     MediaDownloadStatus,
     MediaDTO,
+    MediaExportRequest,
     MediaType,
     MessageDTO,
     OpenMediaResult,
@@ -273,6 +274,22 @@ class AppService:
 
     async def export(self, request: ExportRequest) -> AsyncIterator[None]:
         """yield 进度心跳(让 UI 不阻塞),正常结束或抛错。"""
+        from tgmonitor.core.export.service import ExportService
+
+        svc = ExportService(self.storage, self.objects, self.bus)
+        async for _ in svc.run(request):
+            yield
+
+    async def export_media_list(
+        self, request: MediaExportRequest,
+    ) -> AsyncIterator[None]:
+        """Media Manager 当前视图(per-media 行)导出 — 2026-08-25 v1.3.0 PR #7。
+
+        `MediaExportRequest` 与 `ExportRequest` 是完全独立的 dataclass,
+        字段语义对应 `storage.list_media`(filter + sort + offset);走
+        ExportService 内部 isinstance 调度。UI 端 fire-and-forget 即可,
+        完成 / 失败走 `ExportDone` 事件(`vm.export_done` 已绑)。
+        """
         from tgmonitor.core.export.service import ExportService
 
         svc = ExportService(self.storage, self.objects, self.bus)

@@ -157,6 +157,9 @@ class ExportFormat(str, Enum):
     CSV = "csv"
     MARKDOWN = "markdown"
     HTML = "html"
+    # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图(filter + sort + page)
+    # 一键导出 CSV — schema 与 ExportRequest 完全不同,走独立 dispatcher。
+    MEDIA_CSV = "media_csv"
 
 
 @dataclass
@@ -170,6 +173,30 @@ class ExportRequest:
     out_path: str = ""
     include_media_meta: bool = True
     include_thumbnails: bool = False         # HTML 用:把缩略图内嵌
+
+
+@dataclass
+class MediaExportRequest:
+    """per-media 导出请求 — 2026-08-25 v1.3.0 PR #7。
+
+    schema 跟 `ExportRequest` 完全不同(per-message vs per-media 行),独立
+    dataclass;`ExportService.run` 用 `isinstance` 调度。
+
+    字段语义同 `storage.list_media` kwargs;`limit=100_000` 一次性拉当前
+    filter 全量(避免大频道半截)。`sort` / `sort_dir` 复用 PR #6 引入的
+    `SortKey` / `SortDir`。
+    """
+
+    channel_id: int | None = None
+    status: MediaDownloadStatus | None = None
+    media_type: MediaType | None = None
+    search: str = ""
+    sort: SortKey = SortKey.DATE
+    sort_dir: SortDir = SortDir.DESC
+    limit: int = 100_000
+    offset: int = 0
+    out_path: str = ""
+    format: ExportFormat = ExportFormat.MEDIA_CSV
 
 
 @dataclass

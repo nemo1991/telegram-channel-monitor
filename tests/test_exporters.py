@@ -103,11 +103,118 @@ async def test_export_htmlembeds_thumbnails(tmp_path):
     assert "data:image/jpeg;base64," in html
 
 
-async def test_registry_has_all_four():
+async def test_registry_has_all_five():
+    """v1.3.0 PR #7:新增 MEDIA_CSV 后,registry 应有 5 个 format。"""
     available = EXPORTERS.available()
     assert set(available) == {
         ExportFormat.JSON,
         ExportFormat.CSV,
         ExportFormat.MARKDOWN,
         ExportFormat.HTML,
+        ExportFormat.MEDIA_CSV,
     }
+
+
+# ---- 2026-08-25 v1.3.0 PR #7:per-media CSV exporter + dispatcher ----------
+
+
+async def test_registry_includes_media_csv():
+    """PR #7:新 MEDIA_CSV 注册到 EXPORTERS。"""
+    available = EXPORTERS.available()
+    assert ExportFormat.MEDIA_CSV in available
+
+
+async def test_media_csv_exporter_snapshot(tmp_path):
+    """PR #7:MediaListCsvExporter 写 13 列 + 每条 media 一行,列顺序固定。"""
+    import csv as csv_mod
+    from datetime import datetime
+    from tgmonitor.core.dto import MediaDownloadStatus, MediaType
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "media.csv"
+
+    from tgmonitor.core.dto import MediaExportRequest
+
+    req = MediaExportRequest(
+        channel_id=None,
+        status=None,
+        media_type=None,
+        search="",
+        out_path=str(out),
+    )
+    async for _ in svc.run(req):
+        pass
+
+    assert out.exists()
+    text = out.read_text(encoding="utf-8")
+    reader = csv_mod.DictReader(text.splitlines())
+    rows = list(reader)
+    # fixture: ch100 msg1 + ch200 msg1(photo) + ch200 msg2 = 1 photo
+    # 没有 message 带 media 的 fixture → make_photo + 2 plain → 1 row
+    # 注:原始 _setup 只有 make_photo 1 条带 media
+    assert len(rows) == 1
+    row = rows[0]
+    # 13 列固定顺序
+    expected_cols = [
+        "channel_id", "channel_title", "telegram_msg_id", "message_date",
+        "media_idx", "media_type", "file_name", "file_size", "mime_type",
+        "download_status", "download_error", "object_key", "object_backend",
+    ]
+    assert list(row.keys()) == expected_cols
+    assert row["channel_id"] == "200"
+    assert row["channel_title"] == "Tech"
+    assert row["media_type"] == MediaType.PHOTO.value
+    assert row["download_status"] == MediaDownloadStatus.PENDING.value
+
+
+async def test_export_service_run_media_dispatch(tmp_path):
+    """PR #7:ExportService.run(MediaExportRequest) → 走 _run_media 分支 →
+    ExportDone 事件 payload.message_count 是 media 行数。
+    """
+    from tgmonitor.core.dto import MediaExportRequest
+    from tgmonitor.core.events import EventBus, ExportDone
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    received: list[ExportDone] = []
+
+    async def _capture(e):
+        received.append(e)
+
+    bus.subscribe(ExportDone, _capture)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "media.csv"
+    req = MediaExportRequest(out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    assert len(received) == 1
+    assert received[0].result is not None
+    assert received[0].result.out_path == str(out)
+    # fixture 1 photo + 2 plain = 1 media row
+    assert received[0].result.message_count == 1
+
+
+async def test_export_service_run_messages_unchanged(tmp_path):
+    """PR #7:ExportRequest(老)走 _run_messages 分支 — 向后兼容。"""
+    import csv as csv_mod
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(
+        channel_ids=[100, 200],
+        format=ExportFormat.CSV,
+        out_path=str(out),
+    )
+    async for _ in svc.run(req):
+        pass
+    assert out.exists()
+    # header 仍是 per-message schema:含 media_count 列(per-media CSV 没有)
+    reader = csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines())
+    assert "media_count" in (reader.fieldnames or [])
+    assert "media_types" in (reader.fieldnames or [])
+    rows = list(reader)
+    # fixture 3 messages(1 photo + 2 plain)→ per-message 行数 = 3
+    assert len(rows) == 3

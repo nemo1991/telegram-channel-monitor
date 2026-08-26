@@ -194,5 +194,52 @@ def test_total_updates_label_correctly(
     qt_app.processEvents()
 
 
+# ---- 2026-08-25 v1.3.0 PR #7:Export CSV button -------------------------
+
+
+def test_widget_has_export_csv_button(widget: MediaManagerWidget) -> None:
+    """PR #7:toolbar 加 Export CSV 按钮 + `export_csv_requested` 信号。"""
+    assert hasattr(widget, "btn_export_csv")
+    assert hasattr(widget, "export_csv_requested")
+
+
+def test_export_csv_emits_path_when_dialog_confirmed(
+    widget: MediaManagerWidget, qt_app: QApplication, monkeypatch,
+) -> None:
+    """PR #7:点 Export CSV → QFileDialog.getSaveFileName 选路径 → emit
+    `export_csv_requested(out_path)`。
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: ("/tmp/test-export.csv", "CSV files (*.csv)")),
+    )
+    captured: list[str] = []
+    widget.export_csv_requested.connect(lambda p: captured.append(p))
+
+    widget._on_export_csv()
+    qt_app.processEvents()
+    assert captured == ["/tmp/test-export.csv"]
+
+
+def test_export_csv_does_nothing_when_dialog_cancelled(
+    widget: MediaManagerWidget, qt_app: QApplication, monkeypatch,
+) -> None:
+    """PR #7:用户 Cancel → 不 emit(空 path)。"""
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: ("", "")),
+    )
+    captured: list[str] = []
+    widget.export_csv_requested.connect(lambda p: captured.append(p))
+
+    widget._on_export_csv()
+    qt_app.processEvents()
+    assert captured == []
+
+
 # 显式 import,避免 ruff F401
 _ = Qt

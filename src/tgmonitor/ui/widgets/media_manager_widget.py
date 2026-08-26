@@ -116,6 +116,10 @@ class MediaManagerWidget(QWidget):
     # 顶部刷新 / 底部 prune
     refresh_requested = Signal()
     prune_requested = Signal()  # MainWindow → 二次确认 → VM.reconcile_orphans(False)
+    # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图一键导出 CSV —
+    # MainWindow 接到 path 后构造 MediaExportRequest 调 vm.export_media_list。
+    # Signal 带 str(out_path),UI 在 click handler 里 QFileDialog 选完文件后 emit。
+    export_csv_requested = Signal(str)
 
     # 2026-08-25 PR #4:按频道批量删除 — payload channel_id(MainWindow 收到后
     # 二次确认 + 调 vm.delete_by_channel)
@@ -289,6 +293,17 @@ class MediaManagerWidget(QWidget):
         )
         self.btn_clear_channel.clicked.connect(self._on_clear_channel)
         actions.addWidget(self.btn_clear_channel)
+
+        # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
+        # (filter / sort / 全部页,不只是当前页)。MainWindow 接信号 → 构造
+        # MediaExportRequest → 调 vm.export_media_list。
+        self.btn_export_csv = QPushButton("📤 Export CSV")
+        self.btn_export_csv.setCursor(Qt.PointingHandCursor)
+        self.btn_export_csv.setToolTip(
+            "Export current filter/sort view to CSV (all pages)",
+        )
+        self.btn_export_csv.clicked.connect(self._on_export_csv)
+        actions.addWidget(self.btn_export_csv)
 
         actions.addStretch(1)
 
@@ -733,6 +748,22 @@ class MediaManagerWidget(QWidget):
             # `All Channels` / 未选 — 不允许整库清空
             return
         self.clear_channel_requested.emit(int(channel_id))
+
+    def _on_export_csv(self) -> None:
+        """2026-08-25 v1.3.0 PR #7:点 Export CSV → QFileDialog 选保存路径 →
+        emit `export_csv_requested(str)`。
+        """
+        from datetime import datetime
+
+        from PySide6.QtWidgets import QFileDialog
+
+        default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 Media Manager 当前视图", default_name, "CSV files (*.csv)",
+        )
+        if not path:
+            return
+        self.export_csv_requested.emit(path)
 
     def on_channel_cleared(self, channel_id: int, deleted: int) -> None:
         """2026-08-25 PR #4:VM 反馈 → status bar + 自动 reload 当前 filter 列表。"""

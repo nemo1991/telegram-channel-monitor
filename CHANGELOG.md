@@ -32,11 +32,27 @@
   `MonitorViewModel.load_media_list` 透传 sort / dir / offset;
   `MediaManagerWidget` filter bar 翻页按钮在边界自动 disabled,`lbl_page`
   显示 `current / total_pages`,sort/dir 变化自动 reset page=0
+- **Media Manager 一键导出 CSV(PR #7)**:toolbar 加 `📤 Export CSV` 按钮 →
+  `QFileDialog.getSaveFileName` 选保存路径 → 导出当前 filter / sort 视图
+  (不限当前页,全量)的 per-media CSV。13 列固定顺序(`channel_id` /
+  `channel_title` / `telegram_msg_id` / `message_date` / `media_idx` /
+  `media_type` / `file_name` / `file_size` / `mime_type` /
+  `download_status` / `download_error` / `object_key` / `object_backend`)。
+  新 `ExportFormat.MEDIA_CSV` + `MediaExportRequest` dataclass(schema 跟
+  既有 `ExportRequest` 不同,独立);新 `MediaListCsvExporter` 走 13 列写盘;
+  `ExportService.run` 用 `isinstance` 调度:
+  - `MediaExportRequest` → `_run_media`(per-media 行)
+  - `ExportRequest` → `_run_messages`(per-message,既有 6 测试不变)
+  `AppService.export_media_list` + `MonitorViewModel.export_media_list`
+  fire-and-forget 完成 / 失败走既有 `vm.export_done` 信号 — UI 不增加
+  新信号
 
 ### 🚀 Changed
 - `StorageRepository.list_media` 签名新增 `sort: SortKey = SortKey.DATE,
   sort_dir: SortDir = SortDir.DESC` 可选 kwargs(默认值与 v1.2.0 既有
   行为对齐,既有调用方零改动)
+- `ExportService.run` 入参扩为 `ExportRequest | MediaExportRequest`,
+  isinstance 调度分支;既有 `ExportRequest` 调用方零改动
 
 ### 🧪 Tests
 - `test_media_manager.py`(+4)— `list_media_returns_total_for_pagination` /
@@ -46,8 +62,12 @@
   `sort_by_status_asc` × 2 / `sort_by_date_desc_default` × 2 /
   `count_media_no_filter` × 2 / `count_media_with_filter` × 2 /
   `count_media_pagination_consistency` × 2
-- `tests/test_media_manager_widget.py`(NEW,+10)— widget 排序 / 翻页 /
-  signal 透传
+- `tests/test_media_manager_widget.py`(NEW,+13:PR #6 +10 + PR #7 +3)—
+  排序 / 翻页 / signal 透传 / Export CSV 按钮 dialog 交互
+- `test_exporters.py`(+5)— `test_registry_includes_media_csv` /
+  `test_media_csv_exporter_snapshot` / `test_export_service_run_media_dispatch` /
+  `test_export_service_run_messages_unchanged` / `test_registry_has_all_five`
+  (替换 `test_registry_has_all_four`)
 
 ---
 

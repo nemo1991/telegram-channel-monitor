@@ -13,6 +13,7 @@ from tgmonitor.core.dto import (
     ChannelDTO,
     ExportRequest,
     MediaDownloadStatus,
+    MediaExportRequest,
     MediaType,
     SortDir,
     SortKey,
@@ -408,3 +409,14 @@ class MonitorViewModel(QObject):
             async for _ in self.app.export(req):
                 pass
         run_coro(self.loop, _go(), error_label="start_export")
+
+    def export_media_list(self, req: MediaExportRequest) -> None:
+        """Media Manager 当前视图 → per-media CSV 导出 — 2026-08-25 v1.3.0 PR #7。
+
+        复用 `ExportDone` 事件(`vm.export_done` 已绑),UI 无须新增信号;
+        完成 / 失败通过 `_on_export_done` 走老路径弹消息框。
+        """
+        async def _go() -> None:
+            async for _ in self.app.export_media_list(req):
+                pass
+        run_coro(self.loop, _go(), error_label="export_media_list")

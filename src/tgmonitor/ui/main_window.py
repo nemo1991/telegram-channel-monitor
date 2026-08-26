@@ -399,6 +399,8 @@ class MainWindow(QMainWindow):
         self.media_manager.prune_requested.connect(self._on_media_prune)
         # 2026-08-25 PR #4:按频道批量删除 — 二次确认后调 vm.delete_by_channel
         self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
+        # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
+        self.media_manager.export_csv_requested.connect(self._on_media_export_csv)
         # 2026-08-25 v1.3.0 PR #5:打开媒体失败 → QMessageBox.warning 带原因
         self._vm.open_media_failed.connect(self._on_open_media_failed)
 
@@ -707,6 +709,26 @@ class MainWindow(QMainWindow):
         if ans != QMessageBox.Yes:
             return
         self._vm.delete_by_channel(channel_id)
+
+    def _on_media_export_csv(self, out_path: str) -> None:
+        """2026-08-25 v1.3.0 PR #7:Media Manager 「Export CSV」按钮 —
+        构造 `MediaExportRequest`(透传 widget 当前 filter / sort / offset),
+        调 `vm.export_media_list` 走 ExportService 异步生成器;完成 / 失败
+        通过既有 `vm.export_done` 信号在 `_on_export_done` 弹消息框。
+        """
+        from tgmonitor.core.dto import MediaExportRequest
+
+        f = self.media_manager.current_filters()
+        req = MediaExportRequest(
+            channel_id=f.get("channel_id"),
+            status=f.get("status"),
+            media_type=f.get("media_type"),
+            search=f.get("search", ""),
+            sort=f.get("sort"),
+            sort_dir=f.get("sort_dir"),
+            out_path=out_path,
+        )
+        self._vm.export_media_list(req)
 
     def _on_open_media_failed(
         self, channel_id: int, telegram_msg_id: int, media_idx: int, reason: str,
