@@ -16,10 +16,38 @@
   `OpenMediaResult(success, error)` dataclass + `AppService.open_media_with_result`,
   `AppService.open_media` 退化为 1 行 wrapper 保留 `bool` 返值(向后兼容,
   老测试零改动)
+- **Media Manager 排序与分页(PR #6)**:filter bar 新增 `[Sort ▼] [Dir ▼]
+  [Page ◀ N/M ▶]` 三件套 — SortKey ∈ {Date, Size, Status} × SortDir ∈
+  {Asc, Desc},默认 Date / Desc(v1.2.0「最新优先」行为保留)。
+  `StorageRepository.list_media` 新增可选 `sort` / `sort_dir` kwargs,
+  新增 abstract `count_media(*, channel_ids, status, media_type, search) -> int`
+  给分页 UI 用 total — 4 存储后端全部 parity:
+  - InMemory / Jsonl:filter 后整体 sort(共享 `_sort_media_rows` helper,DATE
+    / SIZE / STATUS 三种 key + tie-breaker `(msg_id DESC, idx ASC)`)
+  - Postgres:`_MEDIA_SORT_COLUMN` 映射 SortKey → SQL 列,`ORDER BY <col>
+    <DIR>, m.id DESC, me.media_idx ASC`;`count_media` 复用 `_media_where_clause`
+  - Mongo:`_MEDIA_SORT_FIELD` 映射 SortKey → `$sort` 字段,`count_media`
+    走独立 `$count` aggregate pipeline
+  `AppService.list_media` 返 `tuple[rows, total]`(老调用方通过解构改 1 行);
+  `MonitorViewModel.load_media_list` 透传 sort / dir / offset;
+  `MediaManagerWidget` filter bar 翻页按钮在边界自动 disabled,`lbl_page`
+  显示 `current / total_pages`,sort/dir 变化自动 reset page=0
+
+### 🚀 Changed
+- `StorageRepository.list_media` 签名新增 `sort: SortKey = SortKey.DATE,
+  sort_dir: SortDir = SortDir.DESC` 可选 kwargs(默认值与 v1.2.0 既有
+  行为对齐,既有调用方零改动)
 
 ### 🧪 Tests
-- `test_media_manager.py`(+4)— `open_media_with_result` missing message /
-  FAILED media / S3 stage tmp + 调 openUrl / openUrl 失败时 tmp unlink
+- `test_media_manager.py`(+4)— `list_media_returns_total_for_pagination` /
+  `sort_default_unchanged_when_omitted` / `offset_pagination` /
+  `count_matches_total_independent_of_pagination`
+- `test_storage_backends.py`(+12 parity)— `sort_by_size_desc` × 2 /
+  `sort_by_status_asc` × 2 / `sort_by_date_desc_default` × 2 /
+  `count_media_no_filter` × 2 / `count_media_with_filter` × 2 /
+  `count_media_pagination_consistency` × 2
+- `tests/test_media_manager_widget.py`(NEW,+10)— widget 排序 / 翻页 /
+  signal 透传
 
 ---
 

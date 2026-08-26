@@ -20,6 +20,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 
 
@@ -177,17 +179,40 @@ class StorageRepository(ABC):
         search: str = "",
         limit: int = 1000,
         offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """列媒体(2026-08-25 PR #3)— 应用层扁平 + 后端下沉到此处。
 
         返回 `(msg, idx, media)` 三元组 list;`idx` 是 media 在 message.media 数组
         中的位置(0-based)。所有 filter 都是 AND 关系,空值视作不过滤。
 
-        排序:不强制,各后端自己定(目前统一按 message 落库顺序的逆序,
-        InMemory / Jsonl 顺序扫,Postgres / Mongo 按 message.date DESC)。
+        排序(2026-08-25 v1.3.0 PR #6 新增):`sort` 选 3 key(`DATE`/`SIZE`/
+        `STATUS`),`sort_dir` 选 `ASC`/`DESC`。默认 `DATE DESC`(v1.2.0 行为)。
+        tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
 
         分页:`offset` 跳过 N 条;`limit` 限制返数。MVP 阶段各后端实现可简化
         (InMemory / Jsonl 顺序扫 + slice;Postgres / Mongo 用 SQL/aggregate 偏移)。
+        """
+        ...
+
+    @abstractmethod
+    async def count_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+    ) -> int:
+        """数媒体(2026-08-25 v1.3.0 PR #6)— 与 list_media 用同一组 filter,
+        但不带 sort/limit/offset。供分页 UI 显示 "total"。
+
+        各后端实现要点:
+        - InMemory / Jsonl:复用 list_media 的 filter helper,只数不取
+        - Postgres:同样 JOIN,去掉 ORDER/LIMIT/OFFSET,换 `SELECT count(*)`
+        - Mongo:独立 aggregate,同 match 条件但无 `$sort`/`$skip`/`$limit`,
+          末尾 `$count`
         """
         ...
 

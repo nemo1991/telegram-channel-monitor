@@ -31,6 +31,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
@@ -158,6 +160,37 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
             if d.get("last_synced_at") else None
         ),
     )
+
+
+def _sort_media_rows(
+    rows: list[tuple[MessageDTO, int, MediaDTO]],
+    sort: SortKey,
+    sort_dir: SortDir,
+) -> list[tuple[MessageDTO, int, MediaDTO]]:
+    """2026-08-25 v1.3.0 PR #6:media row 排序 helper(Jsonl / InMemory 共用)。
+
+    - DATE → `msg.date`,同 date 时 tie-breaker 走 `msg.id DESC, idx ASC`
+      与 Postgres / Mongo 默认行为对齐
+    - SIZE → `med.file_size or 0`(None 视为 0,排在末尾)
+    - STATUS → `med.download_status.value`(枚举字符串字典序,
+      `done` < `failed` < `pending` < `downloading`)
+    """
+    reverse = sort_dir == SortDir.DESC
+
+    def _key(row: tuple[MessageDTO, int, MediaDTO]):
+        msg, idx, med = row
+        if sort == SortKey.DATE:
+            primary = msg.date
+            # tie-breaker:(msg.id DESC, idx ASC)— 与 SQL ORDER BY m.id DESC, idx ASC 对齐
+            return (primary, -int(msg.id), idx)
+        if sort == SortKey.SIZE:
+            return (med.file_size or 0,)
+        if sort == SortKey.STATUS:
+            return (med.download_status.value,)
+        # 默认 DATE
+        return (msg.date, -int(msg.id), idx)
+
+    return sorted(rows, key=_key, reverse=reverse)
 
 
 class JsonlFileStore(StorageRepository):
@@ -527,24 +560,68 @@ class JsonlFileStore(StorageRepository):
         search: str = "",
         limit: int = 1000,
         offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """2026-08-25 PR #3:Jsonl 后端的 list_media。
 
         MVP 不加 per-channel 之外的索引,扫订阅 channel 的 jsonl 文件顺序读
         + 过滤;数据规模万级消息内 < 100ms。Postgres / Mongo 不需要这条路径。
+
+        排序(2026-08-25 v1.3.0 PR #6 新增):filter 后整体 sort,key 由
+        `sort`/`sort_dir` 决定;tie-breaker 走 `(msg_id DESC, media_idx ASC)`
+        保证稳定。DATE 走 msg.date;SIZE 走 med.file_size(无 file_size 视为 0);
+        STATUS 走 med.download_status.value(枚举字符串字典序)。
+        """
+        rows = await self._filter_media_rows(
+            channel_ids=channel_ids, status=status,
+            media_type=media_type, search=search,
+        )
+        rows = _sort_media_rows(rows, sort, sort_dir)
+        if offset:
+            rows = rows[offset:]
+        return rows[:limit]
+
+    async def count_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+    ) -> int:
+        """2026-08-25 v1.3.0 PR #6:与 list_media 用同一组 filter 但不带 sort/limit/offset。
+
+        复用 `_filter_media_rows` helper(只过滤不取,Python len 即可)。
+        """
+        rows = await self._filter_media_rows(
+            channel_ids=channel_ids, status=status,
+            media_type=media_type, search=search,
+        )
+        return len(rows)
+
+    async def _filter_media_rows(
+        self,
+        *,
+        channel_ids: list[int] | None,
+        status: MediaDownloadStatus | None,
+        media_type: MediaType | None,
+        search: str,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """Jsonl 后端 list_media / count_media 共用的 filter helper(2026-08-25 PR #6)。
+
+        返回未排序、未分页的 `(msg, idx, med)` 列表 — 排序 / 切片由 caller
+        处理(`list_media` 走 sort + slice;`count_media` 只数)。
         """
         ch_ids = (
             channel_ids
             if channel_ids
             else [c.id for c in await self.list_subscribed_channels()]
         )
-        # 按 channel_id 顺序读每个 channel_file(每文件内按写入顺序 = 时间顺序)
         msgs: list[MessageDTO] = []
         for cid in ch_ids:
             cf = await self._file_for(cid)
             for row in cf.rows:
-                # `cf.rows` 是 dict 列表(每行 = 一条 message 的 JSON 反序列化);
-                # 同 `list_messages` 的扫描路径(L490-494),用 `_dict_to_message` 转 DTO。
                 msgs.append(_dict_to_message(row))
         search_lo = search.lower()
         rows: list[tuple[MessageDTO, int, MediaDTO]] = []
@@ -557,9 +634,7 @@ class JsonlFileStore(StorageRepository):
                 if search_lo and search_lo not in (med.file_name or "").lower():
                     continue
                 rows.append((msg, idx, med))
-        if offset:
-            rows = rows[offset:]
-        return rows[:limit]
+        return rows
 
     async def count_media_by_object_key(self, object_key: str) -> int:
         """2026-08-25 PR #3:refcount — 扫订阅 channel jsonl,数同 object_key。"""

@@ -19,10 +19,21 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
+
+# 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
+# DATE 走 m.date;SIZE 走 me.file_size(可能 NULL → NULLS LAST 让 NULL 落到末尾);
+# STATUS 走 me.download_status(枚举字符串字典序 = done<failed<pending<downloading)。
+_MEDIA_SORT_COLUMN: dict[SortKey, str] = {
+    SortKey.DATE: "m.date",
+    SortKey.SIZE: "me.file_size NULLS LAST",
+    SortKey.STATUS: "me.download_status",
+}
 
 
 def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
@@ -471,14 +482,21 @@ class PostgresRepository(StorageRepository):
         search: str = "",
         limit: int = 1000,
         offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """2026-08-25 PR #3:Postgres 后端的 list_media — `messages m JOIN media` + filter。
 
-        SQL `JOIN` 在 PG 里走 `idx_media_*` 索引;`ORDER BY m.date DESC, m.id DESC`
-        保证结果顺序稳定。`search` 用 `LOWER(file_name) LIKE LOWER('%...%')` 简单
-        substring match(MVP,后续用 pg_trgm 优化)。
+        SQL `JOIN` 在 PG 里走 `idx_media_*` 索引;`ORDER BY <sort> <dir>, m.id DESC`
+        保证结果顺序稳定(2026-08-25 v1.3.0 PR #6:`sort`/`sort_dir` 可切)。
+        `search` 用 `LOWER(file_name) LIKE LOWER('%...%')` 简单 substring
+        match(MVP,后续用 pg_trgm 优化)。
         """
         assert self._pool is not None
+        where_sql, params, next_idx = self._media_where_clause(
+            channel_ids, status, media_type, search,
+        )
+        sort_col = _MEDIA_SORT_COLUMN[sort]
         sql = [
             "SELECT m.*, me.id AS media_id, me.type AS media_type,",
             "       me.mime_type, me.file_name, me.file_size, me.width, me.height,",
@@ -487,29 +505,11 @@ class PostgresRepository(StorageRepository):
             "       me.download_status AS media_dl_status, me.download_error,",
             "       me.media_idx",
             "FROM messages m JOIN media me ON me.message_id = m.id",
-            "WHERE 1=1",
+            f"WHERE {where_sql}",
+            f"ORDER BY {sort_col} {sort_dir.value.upper()}, m.id DESC, me.media_idx ASC",
         ]
-        params: list[Any] = []
-        idx = 1
-        if channel_ids:
-            sql.append(f"AND m.channel_id = ANY(${idx})")
-            params.append(channel_ids)
-            idx += 1
-        if status is not None:
-            sql.append(f"AND me.download_status = ${idx}")
-            params.append(status.value)
-            idx += 1
-        if media_type is not None:
-            sql.append(f"AND me.type = ${idx}")
-            params.append(media_type.value)
-            idx += 1
-        if search:
-            sql.append(f"AND LOWER(COALESCE(me.file_name, '')) LIKE ${idx}")
-            params.append(f"%{search.lower()}%")
-            idx += 1
-        sql.append("ORDER BY m.date DESC, m.id DESC, me.media_idx ASC")
         if limit:
-            sql.append(f"LIMIT ${idx} OFFSET ${idx + 1}")
+            sql.append(f"LIMIT ${next_idx} OFFSET ${next_idx + 1}")
             params.extend([limit, offset])
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("\n".join(sql), *params)
@@ -545,6 +545,64 @@ class PostgresRepository(StorageRepository):
             )
             for r in rows
         ]
+
+    async def count_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+    ) -> int:
+        """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,数总数供分页 UI 用。
+
+        复用 `_media_where_clause` 拼同 WHERE 子句,主查询去掉 ORDER/LIMIT/OFFSET,
+        `SELECT count(*)::int`。Postgres 走 `JOIN + WHERE` 同索引,O(log N)。
+        """
+        assert self._pool is not None
+        where_sql, params, _ = self._media_where_clause(
+            channel_ids, status, media_type, search,
+        )
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                f"SELECT count(*)::int FROM messages m "
+                f"JOIN media me ON me.message_id = m.id WHERE {where_sql}",
+                *params,
+            )
+
+    def _media_where_clause(
+        self,
+        channel_ids: list[int] | None,
+        status: MediaDownloadStatus | None,
+        media_type: MediaType | None,
+        search: str,
+    ) -> tuple[str, list[Any], int]:
+        """2026-08-25 v1.3.0 PR #6:Postgres `list_media` / `count_media` 共用的 WHERE 拼装。
+
+        返回 `(where_sql, params, next_param_idx)` — caller 接到后可继续
+        追加 `ORDER BY` / `LIMIT` / `OFFSET`(注意 next_idx 用)。`WHERE 1=1`
+        占位保留,后续 AND 条件直接拼字符串。
+        """
+        clauses: list[str] = ["1=1"]
+        params: list[Any] = []
+        idx = 1
+        if channel_ids:
+            clauses.append(f"m.channel_id = ANY(${idx})")
+            params.append(channel_ids)
+            idx += 1
+        if status is not None:
+            clauses.append(f"me.download_status = ${idx}")
+            params.append(status.value)
+            idx += 1
+        if media_type is not None:
+            clauses.append(f"me.type = ${idx}")
+            params.append(media_type.value)
+            idx += 1
+        if search:
+            clauses.append(f"LOWER(COALESCE(me.file_name, '')) LIKE ${idx}")
+            params.append(f"%{search.lower()}%")
+            idx += 1
+        return " AND ".join(clauses), params, idx
 
     async def count_media_by_object_key(self, object_key: str) -> int:
         """2026-08-25 PR #3:refcount — `SELECT count(*)` 走索引 O(log N)。"""

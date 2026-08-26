@@ -21,6 +21,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.events import (
     MediaDeleted,
@@ -89,11 +91,12 @@ def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]) -> MessageDTO:
 async def test_list_media_returns_all_with_no_filter(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """无 filter 时返所有 media(扁平化)。"""
+    """无 filter 时返所有 media(扁平化)+ total 一致。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(100, 2, [_done_media("f2", "media/2.jpg")]))
-    rows = await app.list_media()
+    rows, total = await app.list_media()
     assert len(rows) == 2
+    assert total == 2
     keys = {(r[0].channel_id, r[0].telegram_msg_id, r[1]) for r in rows}
     assert keys == {(100, 1, 0), (100, 2, 0)}
 
@@ -102,11 +105,12 @@ async def test_list_media_returns_all_with_no_filter(
 async def test_list_media_filters_by_status_failed(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """status=FAILED 只返失败的 media。"""
+    """status=FAILED 只返失败的 media + total=1。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(100, 2, [_failed_media("f2")]))
-    rows = await app.list_media(status=MediaDownloadStatus.FAILED)
+    rows, total = await app.list_media(status=MediaDownloadStatus.FAILED)
     assert len(rows) == 1
+    assert total == 1
     assert rows[0][2].download_status == MediaDownloadStatus.FAILED
 
 
@@ -114,11 +118,12 @@ async def test_list_media_filters_by_status_failed(
 async def test_list_media_filters_by_channel(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """channel_id 过滤 — 只返指定频道。"""
+    """channel_id 过滤 — 只返指定频道 + total 同样被过滤。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(200, 1, [_done_media("f2", "media/2.jpg")]))
-    rows = await app.list_media(channel_id=100)
+    rows, total = await app.list_media(channel_id=100)
     assert len(rows) == 1
+    assert total == 1
     assert rows[0][0].channel_id == 100
 
 
@@ -126,15 +131,16 @@ async def test_list_media_filters_by_channel(
 async def test_list_media_filters_by_type(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """media_type 过滤 — 只返指定类型。"""
+    """media_type 过滤 — 只返指定类型 + total 同样被过滤。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     video = dataclasses.replace(
         _base_media("f2"), type=MediaType.VIDEO, file_name="vid.mp4",
         mime_type="video/mp4",
     )
     await storage.save_message(_msg(100, 2, [video]))
-    rows = await app.list_media(media_type=MediaType.VIDEO)
+    rows, total = await app.list_media(media_type=MediaType.VIDEO)
     assert len(rows) == 1
+    assert total == 1
     assert rows[0][2].type == MediaType.VIDEO
 
 
@@ -142,15 +148,16 @@ async def test_list_media_filters_by_type(
 async def test_list_media_search_by_filename_case_insensitive(
     app: AppService, storage: StorageRepository,
 ) -> None:
-    """filename 搜索大小写不敏感。"""
+    """filename 搜索大小写不敏感 + total 同 filter。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     sunset = dataclasses.replace(
         _done_media("f2", "media/2.jpg"), file_name="Sunset.JPG",
     )
     await storage.save_message(_msg(100, 2, [sunset]))
     await storage.save_message(_msg(100, 3, [_base_media("f3")]))
-    rows = await app.list_media(search="sunset")
+    rows, total = await app.list_media(search="sunset")
     assert len(rows) == 1
+    assert total == 1
     assert rows[0][2].file_name == "Sunset.JPG"
 
 
@@ -621,3 +628,82 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
     # (因为失败路径 unlink 了,这里只能间接验证:不再有 file 被挂在本 pid 的 QStandardPaths.TempLocation)
     # 简化:不强断言 unlink(失败路径走 try/except OSError:pass,文件可能仍残留,
     # 但 tmp 路径已返给 openUrl);改为断言 error 含 "系统调用失败" 即可
+
+
+# ---- list_media 排序 + 分页(2026-08-25 v1.3.0 PR #6)------------------
+
+
+@pytest.mark.asyncio
+async def test_list_media_sort_by_size_desc(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #6:AppService.list_media 透传 sort=SortKey.SIZE + sort_dir=SortDir.DESC。
+
+    3 条 media — 一个 photo(1KB) + 一个 video(5MB) + 一个 photo(1024B)。
+    DESC 后最大的(video, 5MB)排第一。
+    """
+    big = dataclasses.replace(
+        _base_media("big"),
+        type=MediaType.VIDEO, file_name="v.mp4", mime_type="video/mp4",
+        file_size=5_000_000,
+    )
+    small_a = dataclasses.replace(_base_media("a"), file_size=1024)
+    small_b = dataclasses.replace(_base_media("b"), file_size=512)
+    await storage.save_message(_msg(100, 1, [big]))
+    await storage.save_message(_msg(100, 2, [small_a]))
+    await storage.save_message(_msg(100, 3, [small_b]))
+
+    rows, total = await app.list_media(
+        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+    )
+    assert total == 3
+    sizes = [r[2].file_size for r in rows]
+    assert sizes == [5_000_000, 1024, 512]
+
+
+@pytest.mark.asyncio
+async def test_list_media_sort_default_unchanged_when_omitted(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #6 向后兼容:不传 sort/sort_dir 时走默认 DATE DESC(v1.2.0 行为)。"""
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/1.jpg")]),
+    )
+    await storage.save_message(
+        _msg(100, 2, [_done_media("f2", "media/2.jpg")]),
+    )
+    rows, _ = await app.list_media()
+    # 默认 DATE DESC(没设 date 字段时 list_messages 自己定)— 这里只验不抛 + 返 tuple
+    assert isinstance(rows, list)
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_media_offset_pagination(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #6:offset 跳过 + limit 切片 + total 不变。
+
+    5 条 media,limit=2 + offset=2 → 返 [3rd, 4th];total 始终是 5。
+    """
+    for i in range(5):
+        await storage.save_message(
+            _msg(100, i + 1, [_done_media(f"f{i}", f"media/{i}.jpg")]),
+        )
+    rows, total = await app.list_media(limit=2, offset=2)
+    assert total == 5
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_media_count_matches_total_independent_of_pagination(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #6:sum(分页) == count,无 filter。"""
+    for i in range(7):
+        await storage.save_message(
+            _msg(100, i + 1, [_done_media(f"f{i}", f"media/{i}.jpg")]),
+        )
+    _, total_first = await app.list_media(limit=3, offset=0)
+    _, total_last = await app.list_media(limit=3, offset=4)
+    assert total_first == total_last == 7

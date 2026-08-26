@@ -67,6 +67,26 @@ class MediaDownloadStatus(str, Enum):
     FAILED = "failed"
 
 
+class SortKey(str, Enum):
+    """Media Manager 排序键(2026-08-25 v1.3.0 PR #6)。
+
+    - `DATE`  : 按 message.date — 默认,UI 显示"最新优先"
+    - `SIZE`  : 按 media.file_size — 找大文件 / 找小文件
+    - `STATUS`: 按 download_status — 把失败 / 下载中聚到一起看
+    """
+
+    DATE = "date"
+    SIZE = "size"
+    STATUS = "status"
+
+
+class SortDir(str, Enum):
+    """Media Manager 排序方向(2026-08-25 v1.3.0 PR #6)。"""
+
+    ASC = "asc"
+    DESC = "desc"
+
+
 @dataclass
 class MediaDTO:
     """一条消息附带的媒体。

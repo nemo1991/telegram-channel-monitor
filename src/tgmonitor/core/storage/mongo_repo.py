@@ -17,6 +17,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
 
@@ -98,6 +100,15 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
         media=[_doc_to_media(m) for m in d.get("media", [])],
         raw=d.get("raw"),
     )
+
+
+# 2026-08-25 v1.3.0 PR #6:SortKey → Mongo `$sort` 字段映射。
+# DATE:顶层 `date`;SIZE / STATUS:在 `media.*` 子文档(已 unwind)。
+_MEDIA_SORT_FIELD: dict[SortKey, str] = {
+    SortKey.DATE: "date",
+    SortKey.SIZE: "media.file_size",
+    SortKey.STATUS: "media.download_status",
+}
 
 
 class MongoRepository(StorageRepository):
@@ -360,6 +371,8 @@ class MongoRepository(StorageRepository):
         search: str = "",
         limit: int = 1000,
         offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """2026-08-25 PR #3:Mongo 后端 list_media — `$unwind messages.media` + `$match`。
 
@@ -368,26 +381,72 @@ class MongoRepository(StorageRepository):
         再用 `$match` 应用 status / type / search 过滤。`search` 走
         `file_name` 简单 substring(mongo 后续可上 text index)。
 
-        排序:`m.date DESC, m._id DESC, m.media[]._idx ASC` — 与 Postgres 对齐,
+        排序(2026-08-25 v1.3.0 PR #6 新增):`$sort` 字段由 `sort`/`sort_dir`
+        决定;tie-breaker `_id DESC, media_idx ASC` 与 Postgres 对齐,
         同 message 内 media 按数组顺序(`idx` 由 `$unwind` 的 includeArrayIndex
         提供)。
 
         分页:`$skip offset` + `$limit limit`。MVP 不上 cursor-based,offset 在
         Mongo 上对小数据集足够,UI 也没用上 deep paging。
         """
-        match_q: dict[str, Any] = {}
-        if channel_ids:
-            match_q["channel_id"] = {"$in": channel_ids}
-        if status is not None:
-            match_q["media.download_status"] = status.value
-        if media_type is not None:
-            match_q["media.type"] = media_type.value
-        if search:
-            # 简单 substring:文件名为 null 也算未命中,regex 转义防注入。
-            match_q["media.file_name"] = {
-                "$regex": _escape_regex(search),
-                "$options": "i",
-            }
+        pipeline = self._build_media_pipeline(
+            channel_ids=channel_ids, status=status,
+            media_type=media_type, search=search,
+            sort=sort, sort_dir=sort_dir,
+            offset=offset, limit=limit,
+        )
+        cursor = self.db.messages.aggregate(pipeline)
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        async for d in cursor:
+            med = _doc_to_media(d["media"])
+            # 把媒体子文档从 messages.media 数组临时抽掉,避免 MessageDTO 重复
+            d_no_media = {k: v for k, v in d.items() if k != "media"}
+            msg = _doc_to_message({**d_no_media, "media": [med]})
+            rows.append((msg, int(d["media_idx"]), med))
+        return rows
+
+    async def count_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+    ) -> int:
+        """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,数总数供分页 UI 用。
+
+        走独立 aggregate,同 match / unwind 路径但无 `$sort` / `$skip` /
+        `$limit`,末尾 `$count` 取值(Mongo 5+ 原生支持)。
+        """
+        pipeline = self._build_media_pipeline(
+            channel_ids=channel_ids, status=status,
+            media_type=media_type, search=search,
+            sort=SortKey.DATE, sort_dir=SortDir.DESC,
+            offset=0, limit=0,
+        )
+        # 去掉末尾的 $sort / $skip / $limit(已在 limit=0 时不追加),改 `$count`
+        pipeline.append({"$count": "total"})
+        async for d in self.db.messages.aggregate(pipeline):
+            return int(d.get("total", 0))
+        return 0
+
+    def _build_media_pipeline(
+        self,
+        *,
+        channel_ids: list[int] | None,
+        status: MediaDownloadStatus | None,
+        media_type: MediaType | None,
+        search: str,
+        sort: SortKey,
+        sort_dir: SortDir,
+        offset: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """2026-08-25 v1.3.0 PR #6:list_media / count_media 共用的 pipeline 拼装。
+
+        返回 `[{$match}, {$unwind}, {$match media}, {$sort?}, {$skip?}, {$limit?}]`
+        — count_media 在此基础上再 append `{$count: total}`。
+        """
         pipeline: list[dict[str, Any]] = []
         # 1) 先按 channel 过滤 message(减少 unwind 前集大小)
         if channel_ids:
@@ -412,22 +471,18 @@ class MongoRepository(StorageRepository):
             }
         if media_match:
             pipeline.append({"$match": media_match})
-        # 4) 排序:日期新→旧,同 message 内 media 顺序
-        pipeline.append({"$sort": {"date": -1, "_id": -1, "media_idx": 1}})
+        # 4) 排序(SortKey → $sort 字段映射;direction 1=ASC, -1=DESC)
+        direction = 1 if sort_dir == SortDir.ASC else -1
+        sort_field = _MEDIA_SORT_FIELD[sort]
+        pipeline.append({
+            "$sort": {sort_field: direction, "_id": -1, "media_idx": 1},
+        })
         # 5) 偏移 + 限制
         if offset:
             pipeline.append({"$skip": offset})
         if limit:
             pipeline.append({"$limit": limit})
-        cursor = self.db.messages.aggregate(pipeline)
-        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
-        async for d in cursor:
-            med = _doc_to_media(d["media"])
-            # 把媒体子文档从 messages.media 数组临时抽掉,避免 MessageDTO 重复
-            d_no_media = {k: v for k, v in d.items() if k != "media"}
-            msg = _doc_to_message({**d_no_media, "media": [med]})
-            rows.append((msg, int(d["media_idx"]), med))
-        return rows
+        return pipeline
 
     async def count_media_by_object_key(self, object_key: str) -> int:
         """2026-08-25 PR #3:refcount — `$unwind` + `$match` + `$count`。

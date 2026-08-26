@@ -47,6 +47,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.ui.widgets.thumbnail_cache import ThumbnailCache, cache_key_for
 
@@ -131,6 +133,11 @@ class MediaManagerWidget(QWidget):
         self._known_channels: dict[int, ChannelDTO] = {}
         self._rows: list[tuple[MessageDTO, int, MediaDTO]] = []
         self._last_keys: list[_RowKey] = []  # 与 _rows 一一对应,row → key
+        # 分页(2026-08-25 v1.3.0 PR #6)— `_total` 从 VM payload 拿;
+        # `_page` 0-based,`_page_size` 默认 50(单页足够大,大表分批看)。
+        self._total: int = 0
+        self._page: int = 0
+        self._page_size: int = 50
 
         # 缩略图缓存(2026-08-25 PR #1)— 进程内 LRU,200 条
         self._thumb_cache = ThumbnailCache()
@@ -169,7 +176,7 @@ class MediaManagerWidget(QWidget):
         root.addLayout(self._build_toolbar())
 
     def _build_filter_bar(self) -> QHBoxLayout:
-        """[Channel ▼] [Type ▼] [Status ▼] [Search🔍] [Refresh]。"""
+        """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search🔍] [◀ Page N/M ▶] [Refresh]。"""
         hbox = QHBoxLayout()
         hbox.setSpacing(8)
 
@@ -192,11 +199,52 @@ class MediaManagerWidget(QWidget):
             self.cmb_status.addItem(st.value, st)
         hbox.addWidget(self.cmb_status)
 
+        # 2026-08-25 v1.3.0 PR #6:排序键 + 方向 + 分页 — 与 storage.list_media 的
+        # sort / sort_dir / offset 透传
+        self.cmb_sort = QComboBox()
+        self.cmb_sort.setMinimumWidth(110)
+        self.cmb_sort.setToolTip("排序键")
+        for sk in SortKey:
+            label = {"date": "Date", "size": "Size", "status": "Status"}[sk.value]
+            self.cmb_sort.addItem(label, sk)
+        hbox.addWidget(self.cmb_sort)
+
+        self.cmb_dir = QComboBox()
+        self.cmb_dir.setMinimumWidth(90)
+        self.cmb_dir.setToolTip("排序方向")
+        # 显式按 DESC, ASC 顺序加入,index 0 = DESC(DATE 的"最新优先"
+        # 是 v1.2.0 既有行为;SortDir 枚举的 .value 字典序是 ASC 在前,但
+        # UI 默认走 DESC)。
+        for sd in (SortDir.DESC, SortDir.ASC):
+            label = "↓ Desc" if sd == SortDir.DESC else "↑ Asc"
+            self.cmb_dir.addItem(label, sd)
+        hbox.addWidget(self.cmb_dir)
+
         self.edit_search = QLineEdit()
         self.edit_search.setPlaceholderText("Search filename…")
         self.edit_search.setClearButtonEnabled(True)
         self.edit_search.setMinimumWidth(220)
         hbox.addWidget(self.edit_search, 1)
+
+        # 2026-08-25 v1.3.0 PR #6:分页导航 — 由 VM payload 的 total 计算 page count
+        self.btn_prev = QPushButton("◀")
+        self.btn_prev.setCursor(Qt.PointingHandCursor)
+        self.btn_prev.setFixedWidth(32)
+        self.btn_prev.setToolTip("上一页")
+        self.btn_prev.clicked.connect(self._on_page_prev)
+        hbox.addWidget(self.btn_prev)
+
+        self.lbl_page = QLabel("1 / 1")
+        self.lbl_page.setMinimumWidth(60)
+        self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hbox.addWidget(self.lbl_page)
+
+        self.btn_next = QPushButton("▶")
+        self.btn_next.setCursor(Qt.PointingHandCursor)
+        self.btn_next.setFixedWidth(32)
+        self.btn_next.setToolTip("下一页")
+        self.btn_next.clicked.connect(self._on_page_next)
+        hbox.addWidget(self.btn_next)
 
         self.btn_refresh = QPushButton("🔄 Refresh")
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
@@ -263,18 +311,60 @@ class MediaManagerWidget(QWidget):
     # ---- filter 联动 ----
 
     def _wire_filter(self) -> None:
-        """filter 变化 → 自动 emit refresh_requested;search 加 300ms debounce。"""
-        self.cmb_channel.currentIndexChanged.connect(lambda _: self.refresh_requested.emit())
-        self.cmb_type.currentIndexChanged.connect(lambda _: self.refresh_requested.emit())
-        self.cmb_status.currentIndexChanged.connect(lambda _: self.refresh_requested.emit())
-        # search 不立刻触发(用户连续输入),用 debounce timer
+        """filter 变化 → 自动 emit refresh_requested;search 加 300ms debounce。
+
+        2026-08-25 v1.3.0 PR #6:sort / dir combo 变化 → 触发刷新;分页按钮
+        不在这里接,各 click handler 单独绑。filter 变化(sort/dir/channel/type/
+        status/search)重置 `_page=0`,避免「筛选翻页后切筛选仍跳老 offset」。
+        """
         from PySide6.QtCore import QTimer
 
+        def _reset_and_refresh() -> None:
+            self._page = 0
+            self.refresh_requested.emit()
+
+        self.cmb_channel.currentIndexChanged.connect(lambda _: _reset_and_refresh())
+        self.cmb_type.currentIndexChanged.connect(lambda _: _reset_and_refresh())
+        self.cmb_status.currentIndexChanged.connect(lambda _: _reset_and_refresh())
+        self.cmb_sort.currentIndexChanged.connect(lambda _: _reset_and_refresh())
+        self.cmb_dir.currentIndexChanged.connect(lambda _: _reset_and_refresh())
+        # search 不立刻触发(用户连续输入),用 debounce timer
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(300)
-        self._search_timer.timeout.connect(self.refresh_requested.emit)
+        self._search_timer.timeout.connect(_reset_and_refresh)
         self.edit_search.textChanged.connect(lambda _: self._search_timer.start())
+
+    # ---- 分页(2026-08-25 v1.3.0 PR #6)----
+
+    def _render_page_info(self) -> None:
+        """更新 `lbl_page` 文字 + btn_prev/btn_next enabled 状态。"""
+        total_pages = max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        # 当前 page 不能超 total_pages(极端 case:total 变小后,_page 还在旧 max)
+        if self._page >= total_pages:
+            self._page = max(0, total_pages - 1)
+        self.lbl_page.setText(f"{self._page + 1} / {total_pages}")
+        self.btn_prev.setEnabled(self._page > 0)
+        self.btn_next.setEnabled(self._page + 1 < total_pages)
+
+    def _on_page_prev(self) -> None:
+        """上一页 — 触发 refresh,VM 会带新 offset。"""
+        if self._page <= 0:
+            return
+        self._page -= 1
+        # 立刻同步 UI(乐观)— VM 拉回数据后 `on_media_loaded` 会再校准
+        self._render_page_info()
+        self.refresh_requested.emit()
+
+    def _on_page_next(self) -> None:
+        """下一页 — 触发 refresh,VM 会带新 offset。"""
+        total_pages = max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        if self._page + 1 >= total_pages:
+            return
+        self._page += 1
+        # 立刻同步 UI(乐观)— VM 拉回数据后 `on_media_loaded` 会再校准
+        self._render_page_info()
+        self.refresh_requested.emit()
 
     # ---- 公共槽(MainWindow 调) ----
 
@@ -338,18 +428,40 @@ class MediaManagerWidget(QWidget):
         self.cmb_channel.blockSignals(False)
 
     def current_filters(self) -> dict[str, Any]:
-        """导出当前 filter 字典 — VM.load_media_list 用。"""
+        """导出当前 filter 字典 — VM.load_media_list 用。
+
+        2026-08-25 v1.3.0 PR #6 新增 `sort` / `sort_dir` / `offset` — 与
+        `storage.list_media` 透传。
+        """
+        # sort / dir combo 的 currentData 可能是 None(刚构造时)→ 用 fallback
+        sort = self.cmb_sort.currentData() if hasattr(self, "cmb_sort") else None
+        sort_dir = self.cmb_dir.currentData() if hasattr(self, "cmb_dir") else None
         return {
             "channel_id": self.cmb_channel.currentData(),
             "media_type": self.cmb_type.currentData(),
             "status": self.cmb_status.currentData(),
             "search": self.edit_search.text().strip(),
+            "sort": sort if isinstance(sort, SortKey) else SortKey.DATE,
+            "sort_dir": sort_dir if isinstance(sort_dir, SortDir) else SortDir.DESC,
+            "offset": self._page * self._page_size,
+            "total": self._total,
         }
 
-    def on_media_loaded(self, rows: object) -> None:
-        """VM.media_list_loaded 接到 → 渲染 list + 更新 footer。"""
-        # rows 是 list[tuple[MessageDTO, int, MediaDTO]];UI 层不强校验
+    def on_media_loaded(self, payload: object) -> None:
+        """VM.media_list_loaded 接到 → 渲染 list + 更新分页 + footer。
+
+        2026-08-25 v1.3.0 PR #6:payload 改成 `(rows, total)` tuple —
+        total 驱动 `lbl_page` / `btn_prev` / `btn_next`。
+        """
+        if isinstance(payload, tuple) and len(payload) == 2:
+            rows, total = payload
+        elif isinstance(payload, list):  # 旧版只发 list — 兜底
+            rows, total = payload, len(payload)
+        else:
+            rows, total = [], 0
         self._rows = list(rows) if isinstance(rows, list) else []  # type: ignore[arg-type]
+        self._total = int(total) if isinstance(total, int) else len(self._rows)
+        self._render_page_info()
         self._render_list()
 
     def on_reconcile_done(self, evt: object) -> None:

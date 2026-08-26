@@ -38,6 +38,8 @@ from tgmonitor.core.dto import (
     MediaType,
     MessageDTO,
     OpenMediaResult,
+    SortDir,
+    SortKey,
     SyncOptions,
     SyncResult,
 )
@@ -287,22 +289,38 @@ class AppService:
         media_type: MediaType | None = None,
         search: str = "",
         limit: int = 1000,
-    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-        """列出已下载 / 失败 / 下载中媒体(2026-08-25 PR #3 下沉)— 单行转发 storage。
+        offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
+    ) -> tuple[list[tuple[MessageDTO, int, MediaDTO]], int]:
+        """列出已下载 / 失败 / 下载中媒体(2026-08-25 PR #3 下沉)— 转发 storage。
 
         filter 全部下沉到 `StorageRepository.list_media` 后端(InMemory /
         Jsonl 顺序扫 + slice,Postgres SQL JOIN,Mongo aggregate),UI 不再
-        触碰应用层 flatten。`offset` 暂不暴露给 UI(VM 一律默认 0)。
+        触碰应用层 flatten。
+
+        2026-08-25 v1.3.0 PR #6:返 `(rows, total)` — `total` 来自
+        `storage.count_media` 走同一组 filter 但不带 sort/limit/offset,
+        供 Media Manager 状态栏显示「Page N/M · total」。
         """
         channel_ids = [channel_id] if channel_id is not None else None
-        return await self.storage.list_media(
+        rows = await self.storage.list_media(
             channel_ids=channel_ids,
             status=status,
             media_type=media_type,
             search=search,
             limit=limit,
-            offset=0,
+            offset=offset,
+            sort=sort,
+            sort_dir=sort_dir,
         )
+        total = await self.storage.count_media(
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+        )
+        return rows, total
 
     async def delete_media(
         self, channel_id: int, telegram_msg_id: int, media_idx: int,

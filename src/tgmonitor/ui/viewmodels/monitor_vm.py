@@ -9,7 +9,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
 
 from tgmonitor.core.config import Settings
-from tgmonitor.core.dto import ChannelDTO, ExportRequest, MediaDownloadStatus, MediaType
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    ExportRequest,
+    MediaDownloadStatus,
+    MediaType,
+    SortDir,
+    SortKey,
+)
 from tgmonitor.core.events import (
     ChannelSubscribed,
     ChannelSyncDone,
@@ -223,20 +230,32 @@ class MonitorViewModel(QObject):
         media_type: MediaType | None = None,
         search: str = "",
         limit: int = 1000,
+        offset: int = 0,
+        sort: SortKey | None = None,
+        sort_dir: SortDir | None = None,
     ) -> None:
-        """后台 fire app.list_media → emit media_list_loaded(rows)。"""
+        """后台 fire app.list_media → emit media_list_loaded(rows, total)。
+
+        2026-08-25 v1.3.0 PR #6 新增 sort / sort_dir / offset kwargs;不传
+        走默认(DATE DESC,offset=0),向后兼容旧调用方。
+        """
         async def _go() -> None:
             # 默认 None 透传(None 视作 "all",不过滤)
             st = status if isinstance(status, MediaDownloadStatus) else None
             mt = media_type if isinstance(media_type, MediaType) else None
-            rows = await self.app.list_media(
+            sk = sort if isinstance(sort, SortKey) else SortKey.DATE
+            sd = sort_dir if isinstance(sort_dir, SortDir) else SortDir.DESC
+            rows, total = await self.app.list_media(
                 channel_id=channel_id,
                 status=st,
                 media_type=mt,
                 search=search,
                 limit=limit,
+                offset=offset,
+                sort=sk,
+                sort_dir=sd,
             )
-            self.media_list_loaded.emit(rows)
+            self.media_list_loaded.emit((rows, total))
 
         run_coro(self.loop, _go(), error_label="load_media_list")
 

@@ -19,6 +19,8 @@ from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 
@@ -233,3 +235,125 @@ async def test_in_mem_count_refcount_empty_key(in_mem_repo):
 
 async def test_jsonl_count_refcount_empty_key(jsonl_repo):
     assert await jsonl_repo.count_media_by_object_key("") == 0
+
+
+# ---- 2026-08-25 v1.3.0 PR #6:排序 + 分页 + count_media parity ----------
+
+
+async def test_in_mem_list_media_sort_by_size_desc(in_mem_repo):
+    """PR #6:SortKey.SIZE + SortDir.DESC — 大文件优先。"""
+    rows = await in_mem_repo.list_media(
+        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+    )
+    sizes = [r[2].file_size for r in rows]
+    assert sizes == sorted(sizes, reverse=True)
+    # 第一个是 video(5MB),后面是 photo(1KB)
+    assert rows[0][2].type == MediaType.VIDEO
+
+
+async def test_jsonl_list_media_sort_by_size_desc(jsonl_repo):
+    """PR #6:Jsonl 后端 SortKey.SIZE + DESC parity。"""
+    rows = await jsonl_repo.list_media(
+        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+    )
+    sizes = [r[2].file_size for r in rows]
+    assert sizes == sorted(sizes, reverse=True)
+    assert rows[0][2].type == MediaType.VIDEO
+
+
+async def test_in_mem_list_media_sort_by_status_asc(in_mem_repo):
+    """PR #6:SortKey.STATUS + SortDir.ASC — 字典序排序(do<fa<pe<do w/loading)。"""
+    rows = await in_mem_repo.list_media(
+        sort=SortKey.STATUS, sort_dir=SortDir.ASC,
+    )
+    statuses = [r[2].download_status.value for r in rows]
+    # 字典序 ASC:done<failed<pending
+    assert statuses == sorted(statuses)
+    assert rows[0][2].download_status == MediaDownloadStatus.DONE
+
+
+async def test_jsonl_list_media_sort_by_status_asc(jsonl_repo):
+    """PR #6:Jsonl SortKey.STATUS parity。"""
+    rows = await jsonl_repo.list_media(
+        sort=SortKey.STATUS, sort_dir=SortDir.ASC,
+    )
+    statuses = [r[2].download_status.value for r in rows]
+    assert statuses == sorted(statuses)
+
+
+async def test_in_mem_list_media_sort_by_date_desc_default(in_mem_repo):
+    """PR #6:默认 sort=DATE / sort_dir=DESC(与 v1.2.0 既有行为对齐)。"""
+    rows_default = await in_mem_repo.list_media()
+    rows_explicit = await in_mem_repo.list_media(
+        sort=SortKey.DATE, sort_dir=SortDir.DESC,
+    )
+    assert [r[2].object_key for r in rows_default] == [
+        r[2].object_key for r in rows_explicit
+    ]
+
+
+async def test_jsonl_list_media_sort_by_date_desc_default(jsonl_repo):
+    """PR #6:Jsonl 默认 DATE DESC 与显式 DATE DESC 等价。"""
+    rows_default = await jsonl_repo.list_media()
+    rows_explicit = await jsonl_repo.list_media(
+        sort=SortKey.DATE, sort_dir=SortDir.DESC,
+    )
+    assert [r[2].object_key for r in rows_default] == [
+        r[2].object_key for r in rows_explicit
+    ]
+
+
+async def test_in_mem_count_media_no_filter(in_mem_repo):
+    """PR #6:无 filter 数全部 media — fixture 含 5 条。"""
+    # msg1=1 photo + msg2=2(video + photo) + msg10=1 photo + msg5=1 video = 5
+    n = await in_mem_repo.count_media()
+    assert n == 5
+
+
+async def test_jsonl_count_media_no_filter(jsonl_repo):
+    """PR #6:Jsonl count_media 无 filter — fixture parity。"""
+    n = await jsonl_repo.count_media()
+    assert n == 5
+
+
+async def test_in_mem_count_media_with_filter(in_mem_repo):
+    """PR #6:count_media 应用 filter — status=DONE 只数下载完的。"""
+    n = await in_mem_repo.count_media(status=MediaDownloadStatus.DONE)
+    # DONE: photo_a(msg1) + clip_a(msg2) + photo_a(msg10) = 3
+    assert n == 3
+
+
+async def test_jsonl_count_media_with_filter(jsonl_repo):
+    """PR #6:Jsonl count_media filter parity。"""
+    n = await jsonl_repo.count_media(status=MediaDownloadStatus.DONE)
+    assert n == 3
+
+
+async def test_in_mem_count_media_pagination_consistency(in_mem_repo):
+    """PR #6:sum(分页的 len) == count_media 总数。"""
+    total = await in_mem_repo.count_media()
+    seen = 0
+    offset = 0
+    limit = 2
+    while True:
+        rows = await in_mem_repo.list_media(limit=limit, offset=offset)
+        if not rows:
+            break
+        seen += len(rows)
+        offset += limit
+    assert seen == total
+
+
+async def test_jsonl_count_media_pagination_consistency(jsonl_repo):
+    """PR #6:Jsonl 分页一致性 parity。"""
+    total = await jsonl_repo.count_media()
+    seen = 0
+    offset = 0
+    limit = 2
+    while True:
+        rows = await jsonl_repo.list_media(limit=limit, offset=offset)
+        if not rows:
+            break
+        seen += len(rows)
+        offset += limit
+    assert seen == total

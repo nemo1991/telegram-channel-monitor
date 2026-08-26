@@ -11,7 +11,15 @@ import pytest_asyncio
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MediaDTO, MediaType, MessageDTO
+from tgmonitor.core.dto import (
+    ChannelDTO,
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+    SortDir,
+    SortKey,
+)
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -190,11 +198,17 @@ class InMemoryRepository(StorageRepository):
         search: str = "",
         limit: int = 1000,
         offset: int = 0,
+        sort: SortKey = SortKey.DATE,
+        sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """2026-08-25 PR #3:list_media 下沉 — flatten + filter 全在这里。
 
         顺序按 message.date 升序 / message.id(同 channel + date);offset/limit
         在 filter 后切片。MVP 数据规模 < 50ms,无索引。
+
+        排序(2026-08-25 v1.3.0 PR #6 新增):filter 后整体 sort,key 由
+        `sort`/`sort_dir` 决定;tie-breaker `(msg_id DESC, idx ASC)` 与
+        Postgres / Mongo 默认行为对齐。
         """
         # 1) 先按 message.date 排序(与 list_messages 一致)
         msgs = await self.list_messages(
@@ -212,9 +226,63 @@ class InMemoryRepository(StorageRepository):
                 if search_lo and search_lo not in (med.file_name or "").lower():
                     continue
                 rows.append((msg, idx, med))
+        rows = self._sort_media_rows(rows, sort, sort_dir)
         if offset:
             rows = rows[offset:]
         return rows[:limit]
+
+    async def count_media(
+        self,
+        *,
+        channel_ids: list[int] | None = None,
+        status: MediaDownloadStatus | None = None,
+        media_type: MediaType | None = None,
+        search: str = "",
+    ) -> int:
+        """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,但不带 sort/limit/offset,数总数。"""
+        msgs = await self.list_messages(
+            channel_ids if channel_ids else [c.id for c in self.channels.values()],
+            limit=None,
+        )
+        search_lo = search.lower()
+        rows: list[tuple[MessageDTO, int, MediaDTO]] = []
+        for msg in msgs:
+            for idx, med in enumerate(msg.media):
+                if status is not None and med.download_status != status:
+                    continue
+                if media_type is not None and med.type != media_type:
+                    continue
+                if search_lo and search_lo not in (med.file_name or "").lower():
+                    continue
+                rows.append((msg, idx, med))
+        return len(rows)
+
+    def _sort_media_rows(
+        self,
+        rows: list[tuple[MessageDTO, int, MediaDTO]],
+        sort: SortKey,
+        sort_dir: SortDir,
+    ) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        """2026-08-25 v1.3.0 PR #6:InMemory 与 Jsonl 用同一个排序语义 —
+        DATE=`msg.date`;SIZE=`med.file_size or 0`;STATUS=`med.download_status.value`;
+        tie-breaker `(msg_id DESC, idx ASC)`。
+
+        这里用 method 不复用 Jsonl 的私有 helper 是因为 conftest 是测试
+        fixture,跨模块引用私有名比较脆弱。
+        """
+        reverse = sort_dir == SortDir.DESC
+
+        def _key(row: tuple[MessageDTO, int, MediaDTO]):
+            msg, idx, med = row
+            if sort == SortKey.DATE:
+                return (msg.date, -int(msg.id), idx)
+            if sort == SortKey.SIZE:
+                return (med.file_size or 0,)
+            if sort == SortKey.STATUS:
+                return (med.download_status.value,)
+            return (msg.date, -int(msg.id), idx)
+
+        return sorted(rows, key=_key, reverse=reverse)
 
     async def count_media_by_object_key(self, object_key: str) -> int:
         """2026-08-25 PR #3:refcount — 顺序扫 messages 数同 object_key。"""
