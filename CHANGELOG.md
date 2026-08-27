@@ -22,6 +22,26 @@
   - **测试覆盖**:500 / 501 / 1001 三档边界,parity 测试 InMemory + Jsonl 各 2 个
     offset 场景 + 回归保护(offset=0 与 v1.3.0 完全一致)
 
+### 🔒 Security
+- **导出器 XSS / CSV 公式注入修复(PR #17)** — Telegram 用户/频道内容是
+  「半可信」输入,导出器渲染层若直接写入会被攻击者利用:
+  - **Markdown 注入 (CWE-79)**:`markdown_exporter` 直接写 `m.text` /
+    `med.file_name` / `channel.title` raw,`## ` / `[text](javascript:...)` /
+    `![alt](tracker)` 被 Markdown 渲染器解析。新增 `core/export/guards.py`:
+    `_scrub_markdown()` 转义行首 `#` / `>` / `*` / ```` ``` ```` + 剥离
+    `javascript:` 协议 + 转义图片语法
+  - **CSV 公式注入 (CWE-1236)**:Excel / LibreOffice 把 `=` / `+` / `-` /
+    `@` / Tab / CR 开头的 cell 当公式执行。`csv_exporter` /
+    `media_list_csv_exporter` 的 `text` / `file_name` / `download_error` /
+    `channel_title` 走 `_guard_csv_cell()` 加 `'` 前缀
+  - **HTML 巨缩略图冻死浏览器**:`html_exporter` 的 `data:` URI 无大小上限,
+    一张 50MB 缩略图会让浏览器渲染卡死。新增 `MAX_THUMB_DATA_URI_BYTES =
+    256 KB`,超出不内嵌,模板自动 fallback 到占位 `<span>`
+  - **测试覆盖**:单元级 6 个(`_guard_csv_cell` / `_scrub_markdown` 各分支)
+    + 端到端 3 个(CsvExporter / MarkdownExporter / HtmlExporter),恶意
+    fixture 覆盖 `=cmd|'/c calc'!A1` / `## 假冒系统公告` / `![tracker]` /
+    `MAX_THUMB_DATA_URI_BYTES + 1024` 大缩略图
+
 ## [1.3.0] - 2026-08-25
 
 ### ✨ Added

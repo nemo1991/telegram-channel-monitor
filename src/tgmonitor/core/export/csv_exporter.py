@@ -2,6 +2,8 @@
 
 - 一行 = 一条消息;媒体计数与首图类型入列
 - 所有列展开平铺,无嵌套
+- 2026-08-27 v1.4.0 PR #17:`text` / `author` / `channel_title` 等用户/频道
+  内容走 `_guard_csv_cell` 防 Excel 公式注入(CWE-1236)
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from tgmonitor.core.dto import ChannelDTO, ExportFormat, MessageDTO
 from tgmonitor.core.export.base import Exporter, exporter
+from tgmonitor.core.export.guards import _guard_csv_cell
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
@@ -59,11 +62,11 @@ class CsvExporter(Exporter):
                 w.writerow(
                     {
                         "channel_id": m.channel_id,
-                        "channel_title": ch.title if ch else "",
+                        "channel_title": _guard_csv_cell(ch.title if ch else ""),
                         "telegram_msg_id": m.telegram_msg_id,
                         "date": m.date.isoformat() if m.date else "",
-                        "author": m.author or "",
-                        "text": m.text,
+                        "author": _guard_csv_cell(m.author or ""),
+                        "text": _guard_csv_cell(m.text),
                         "views": m.views if m.views is not None else "",
                         "forwards": m.forwards if m.forwards is not None else "",
                         "edited": m.edited,

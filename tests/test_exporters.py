@@ -307,3 +307,163 @@ async def test_export_pagination_emits_progress_per_batch(tmp_path):
     # 至少出现 500(第一页)和 1001(终态)两个 written
     assert 500 in progress_written
     assert progress_written[-1] == 1001
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #17:导出器注入修复 — 单元级 + 端到端测试
+# ---------------------------------------------------------------------------
+
+
+def test_guard_csv_cell_formula_prefix():
+    """PR #17:`=+-@` / Tab / CR 开头 → 加 `'` 前缀。"""
+    from tgmonitor.core.export.guards import _guard_csv_cell
+
+    # 公式注入前缀都加单引号
+    for bad in ("=cmd|'/c calc'!A1", "+sum(a1:a2)", "-1+1", "@SUM(1+1)*cmd|'/c calc'!A0"):
+        out = _guard_csv_cell(bad)
+        assert out.startswith("'"), f"prefix not guarded: {bad!r} → {out!r}"
+        assert out == "'" + bad
+    # Tab / CR 也是 Excel 4.0 宏触发链
+    for bad in ("\tcmd", "\rcmd"):
+        out = _guard_csv_cell(bad)
+        assert out.startswith("'")
+    # 正常内容原样
+    assert _guard_csv_cell("hello.jpg") == "hello.jpg"
+    assert _guard_csv_cell("照片_2026.jpg") == "照片_2026.jpg"
+    assert _guard_csv_cell(None) == ""
+    assert _guard_csv_cell("") == ""
+
+
+def test_scrub_markdown_heading_injection():
+    """PR #17:行首 `## ` / `> ` / `* ` / ``` 转义为 Markdown 字面文本。"""
+    from tgmonitor.core.export.guards import _scrub_markdown
+
+    # heading:行首 N 个 `#` 加 `\` 前缀。Markdown 把 `\##` 视为字面文本。
+    assert _scrub_markdown("## 假冒公告") == "\\## 假冒公告"
+    # 单个 # 也转义
+    assert _scrub_markdown("# title") == "\\# title"
+    # 6 个 # 也转义
+    assert _scrub_markdown("###### deep") == "\\###### deep"
+    # blockquote
+    assert _scrub_markdown("> quoted") == "\\> quoted"
+    # list item
+    assert _scrub_markdown("* item") == "\\* item"
+    # 普通文本原样
+    assert _scrub_markdown("普通文本") == "普通文本"
+    # 空字符串安全
+    assert _scrub_markdown("") == ""
+
+
+def test_scrub_markdown_javascript_link():
+    """PR #17:`[text](javascript:...)` → 协议前缀移除,链接变普通文本。"""
+    from tgmonitor.core.export.guards import _scrub_markdown
+
+    out = _scrub_markdown("[click](javascript:alert(1))")
+    # `javascript:` 协议被剥离,链接变成普通 `[click](alert(1))`
+    # Markdown 渲染器不会再把括号内当 JS 协议执行
+    assert "javascript:" not in out
+    assert out.startswith("[click](")
+    # 普通 https 链接保持
+    assert _scrub_markdown("[ok](https://example.com)") == "[ok](https://example.com)"
+
+
+def test_scrub_markdown_image_tracker():
+    """PR #17:`![alt](url)` 完整图片语法 → 转义为字面文本。"""
+    from tgmonitor.core.export.guards import _scrub_markdown
+
+    out = _scrub_markdown("![tracker](http://evil.example.com/pixel.gif)")
+    # 关键:`!` 被转义,Markdown 不再当图片解析
+    assert out.startswith("\\!\\")
+    # 也确认 URL 没有「裸」出现在 `[` 之后(即未构成图片语法 `![alt](url)`)
+    assert "(http://evil.example.com/pixel.gif)" in out  # URL 仍可见
+
+
+def test_scrub_markdown_multi_line():
+    """PR #17:多行文本中每行行首 `#` 都独立转义。"""
+    from tgmonitor.core.export.guards import _scrub_markdown
+
+    text = "## 标题\n\n普通段落\n\n### 子标题"
+    out = _scrub_markdown(text)
+    # 行首 ## 和 ### 都加了 `\`(以反斜杠 + 连续 # 开头)
+    assert "\\## 标题" in out
+    assert "\\### 子标题" in out
+    assert "普通段落" in out
+
+
+async def test_csv_exporter_guards_formula_prefix(tmp_path):
+    """PR #17 端到端:CsvExporter 写出的 file_name / text 以 `=` 开头会被加 `'`。"""
+    import csv as csv_mod
+    from dataclasses import replace
+
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    svc = ExportService(storage, objects, bus)
+    # fixture 上追加一条带危险文本的 message(make_message 不接受 author,用 replace)
+    from tests.conftest import make_message
+    base = make_message(
+        channel_id=100, msg_id=99, date=datetime(2026, 1, 5, 12),
+    )
+    await storage.save_message(replace(
+        base, text="=cmd|'/c calc'!A1", author="@SUM(1+1)",
+    ))
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(channel_ids=[100, 200], format=ExportFormat.CSV, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    # 找到 msg 99 那行
+    msg99 = next(r for r in rows if int(r["telegram_msg_id"]) == 99)
+    assert msg99["text"].startswith("'"), f"text not guarded: {msg99['text']!r}"
+    assert msg99["author"].startswith("'"), f"author not guarded: {msg99['author']!r}"
+
+
+async def test_markdown_exporter_scrubs_user_text(tmp_path):
+    """PR #17 端到端:MarkdownExporter 把 channel title / text 里的 `## ` 转义。"""
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    svc = ExportService(storage, objects, bus)
+    # 加一条带 `## ` 文本的 message
+    from tests.conftest import make_message
+    await storage.save_message(make_message(
+        channel_id=100, msg_id=99,
+        text="## 假冒系统公告:请尽快操作",
+        date=datetime(2026, 1, 5, 12),
+    ))
+    out = tmp_path / "msg.md"
+    req = ExportRequest(channel_ids=[100, 200], format=ExportFormat.MARKDOWN, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+    content = out.read_text(encoding="utf-8")
+    # 原 `## ` 在 message text 里出现必须被转义(不能直接当 heading 渲染)
+    # 行首 ## 加 `\` 后:`\## 假冒系统公告:...`(以 `\##` 开头)
+    assert "\\## 假冒系统公告" in content, f"## not escaped:\n{content}"
+
+
+async def test_html_exporter_skips_oversized_thumb(tmp_path):
+    """PR #17:thumb bytes > MAX_THUMB_DATA_URI_BYTES → 不内嵌,thumb_data_uri=None。
+
+    模板 fallback 走 `<span class="ph">` 占位文,避免冻死浏览器。
+    """
+    from tgmonitor.core.dto import ExportFormat
+    from tgmonitor.core.export.guards import MAX_THUMB_DATA_URI_BYTES
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    # 换一张 > 256KB 的假缩略图
+    big = b"\xff" * (MAX_THUMB_DATA_URI_BYTES + 1024)
+    await objects.put("media/abc.jpg.thumb", big, None)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.html"
+    req = ExportRequest(
+        channel_ids=[100, 200], format=ExportFormat.HTML,
+        out_path=str(out), include_thumbnails=True,
+    )
+    async for _ in svc.run(req):
+        pass
+    content = out.read_text(encoding="utf-8")
+    # data URI 不应该出现在输出里(模板走占位 span)
+    assert "data:image/jpeg;base64," not in content
+    # 占位文出现在(消息详情 span)
+    assert "📎" in content
