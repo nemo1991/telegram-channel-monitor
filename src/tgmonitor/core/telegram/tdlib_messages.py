@@ -30,6 +30,7 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    ReactionDTO,
 )
 
 log = logging.getLogger(__name__)
@@ -466,3 +467,71 @@ def _normalize_forward_origin(fo: Any) -> dict[str, Any] | None:
         if v is not None:
             out[attr] = v
     return out
+
+
+# 2026-08-27 v1.4.0 PR #10:TDLib MessageReaction 扁平化为 ReactionDTO。
+# TDLib 区分 reactionEmoji(普通 emoji)vs reactionCustomEmoji(自定义
+# emoji — 需要登录态才能下载的 webp 缩略图);我们只记 type + emoji 文本,
+# 自定义 emoji 没图源就显示占位符。
+_REACTION_TYPES = {
+    "reactionEmoji": "emoji",
+    "reactionCustomEmoji": "custom_emoji",
+}
+
+
+def _map_reaction(r: Any) -> ReactionDTO | None:
+    """TDLib MessageReaction → ReactionDTO;无法识别的 type 返 None 让上层过滤。"""
+    type_name = getattr(r, "type_name", None) or type(r).__name__
+    if type_name not in _REACTION_TYPES:
+        return None
+    # TDLib 不同 reaction type 暴露不同字段:
+    # - reactionEmoji.emoji: str("😀")
+    # - reactionCustomEmoji.custom_emoji_id: int(需要 getCustomEmojiStickers
+    #   才能渲染;我们没存,记占位符 "🖼 <id>")
+    if type_name == "reactionEmoji":
+        emoji = getattr(r, "emoji", "") or ""
+        return ReactionDTO(
+            type="emoji", emoji=emoji,
+            count=int(getattr(r, "total_count", 0) or 0),
+            is_chosen=bool(getattr(r, "is_chosen", False)),
+        )
+    # reactionCustomEmoji
+    cid = getattr(r, "custom_emoji_id", 0) or 0
+    return ReactionDTO(
+        type="custom_emoji",
+        emoji=f"🖼 {cid}",  # 占位符;UI 显示为带 ID 的图,无需 emoji 文本
+        count=int(getattr(r, "total_count", 0) or 0),
+        is_chosen=bool(getattr(r, "is_chosen", False)),
+    )
+
+
+def _map_reactions(reactions: Any) -> list[ReactionDTO]:
+    """TDLib MessageInteractionInfo.interactions.reactions[] → `list[ReactionDTO]`。
+
+    输入为 None → 空 list(TDLib 推 reactions 字段缺失);空 list 也是合法
+    "所有 reaction 被清空" 信号。无法识别的 reaction type 静默过滤。
+    """
+    if reactions is None:
+        return []
+    out: list[ReactionDTO] = []
+    for r in reactions:
+        dto = _map_reaction(r)
+        if dto is not None:
+            out.append(dto)
+    return out
+
+
+def _map_interaction_info(info: Any) -> tuple[int | None, list[ReactionDTO]]:
+    """TDLib MessageInteractionInfo → (views, reactions)。
+
+    返回:
+    - views: 新 view 数;None = 本 update 没推送(views 字段缺失)
+    - reactions: `list[ReactionDTO]` — 空 list 表示清空
+
+    实际监控经验:TDLib 偶发 view_count 推送会附带巨大值(频道刷新),无
+    防回退;UI 自己显示。
+    """
+    if info is None:
+        return None, []
+    views = getattr(info, "view_count", None)
+    return views, _map_reactions(getattr(info, "reactions", None))

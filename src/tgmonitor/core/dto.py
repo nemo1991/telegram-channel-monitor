@@ -131,6 +131,8 @@ class MessageDTO:
 
     2026-08-27 v1.4.0 PR #9:补 5 个 TDLib Message 字段,详情面板 / 转发
     链 / via bot / 相册 / 置顶 一直空白,本次映射对齐。
+    2026-08-27 v1.4.0 PR #10:加 reactions — TDLib
+    `updateMessageInteractionInfo` 推 reactions 增量时使用。
     """
 
     id: int                                 # 自增主键,DB 分配
@@ -150,11 +152,51 @@ class MessageDTO:
     via_bot_user_id: int | None = None              # 通过 inline bot 发送时的 bot id
     media_album_id: int | None = None               # 同一相册的多张图共享,UI 用来分组
     is_pinned: bool = False                         # 是否被频道置顶
+    # 2026-08-27 v1.4.0 PR #10:reactions — TDLib
+    # updateMessageInteractionInfo.interactions.reactions[] 扁平为 `ReactionDTO` 列表。
+    # None = 没推送过(老消息);空 list = 推过但已被撤回干净。
+    reactions: list[ReactionDTO] | None = None
 
     @property
     def has_media(self) -> bool:
         """消息是否带媒体(`media` 列表非空)。"""
         return bool(self.media)
+
+
+@dataclass
+class ReactionDTO:
+    """TDLib reaction 单条 → 扁平 dataclass。
+
+    2026-08-27 v1.4.0 PR #10:
+    - `type`:emoji 自定义 emoji(TDLib 区分 `reactionEmoji` /
+      `reactionCustomEmoji`,本字段统一记 `@type` 字符串)
+    - `count`:投该 reaction 的人数
+    - `is_chosen`:当前用户(我)是否也投了 — UI 高亮用
+    """
+
+    type: str = ""                # 'emoji' | 'custom_emoji' | '@type' raw 字符串
+    emoji: str = ""               # 标准 emoji 文本("😀")或自定义 emoji 占位符
+    count: int = 0
+    is_chosen: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """导出 / 落库序列化格式。"""
+        return {
+            "type": self.type,
+            "emoji": self.emoji,
+            "count": self.count,
+            "is_chosen": self.is_chosen,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ReactionDTO:
+        """导出 / 落库反序列化。"""
+        return cls(
+            type=d.get("type", ""),
+            emoji=d.get("emoji", ""),
+            count=int(d.get("count", 0)),
+            is_chosen=bool(d.get("is_chosen", False)),
+        )
 
 
 # ---------- 导出 ----------

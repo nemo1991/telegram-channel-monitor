@@ -19,6 +19,7 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    ReactionDTO,
     SortDir,
     SortKey,
 )
@@ -102,6 +103,16 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
     raw = row["raw"]
     if isinstance(raw, str):
         raw = json.loads(raw)
+    # 2026-08-27 v1.4.0 PR #10:reactions 是 JSONB list[dict];读时 None 表示从未
+    # 推送(老库),[] 表示已清空。每条 dict 转 ReactionDTO。
+    reactions_raw = row.get("reactions")
+    reactions: list[ReactionDTO] | None
+    if reactions_raw is None:
+        reactions = None
+    elif isinstance(reactions_raw, str):
+        reactions = [ReactionDTO.from_dict(d) for d in json.loads(reactions_raw)]
+    else:
+        reactions = [ReactionDTO.from_dict(d) for d in reactions_raw]
     return MessageDTO(
         id=row["id"],
         channel_id=row["channel_id"],
@@ -121,6 +132,7 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
         via_bot_user_id=row.get("via_bot_user_id"),
         media_album_id=row.get("media_album_id"),
         is_pinned=bool(row.get("is_pinned", False)),
+        reactions=reactions,
     )
 
 
@@ -321,15 +333,22 @@ class PostgresRepository(StorageRepository):
         forward_origin_json = (
             json.dumps(message.forward_origin) if message.forward_origin is not None else None
         )
+        # 2026-08-27 v1.4.0 PR #10:reactions 序列化为 JSONB list[dict]。
+        reactions_json = (
+            json.dumps([r.to_dict() for r in message.reactions])
+            if message.reactions is not None else None
+        )
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 """
                     INSERT INTO messages
                         (channel_id, telegram_msg_id, author, date, text,
                          views, forwards, reply_to_msg_id, edited, raw,
-                         forward_origin, via_bot_user_id, media_album_id, is_pinned)
+                         forward_origin, via_bot_user_id, media_album_id, is_pinned,
+                         reactions)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
-                            $11::jsonb, $12, $13, $14)
+                            $11::jsonb, $12, $13, $14,
+                            $15::jsonb)
                     ON CONFLICT (channel_id, telegram_msg_id) DO UPDATE SET
                         author = EXCLUDED.author,
                         date = EXCLUDED.date,
@@ -342,7 +361,8 @@ class PostgresRepository(StorageRepository):
                         forward_origin = EXCLUDED.forward_origin,
                         via_bot_user_id = EXCLUDED.via_bot_user_id,
                         media_album_id = EXCLUDED.media_album_id,
-                        is_pinned = EXCLUDED.is_pinned
+                        is_pinned = EXCLUDED.is_pinned,
+                        reactions = EXCLUDED.reactions
                     RETURNING id
                     """,
                 message.channel_id,
@@ -359,6 +379,7 @@ class PostgresRepository(StorageRepository):
                 message.via_bot_user_id,
                 message.media_album_id,
                 message.is_pinned,
+                reactions_json,
             )
             msg_pk = row["id"]
             # 媒体:先清后插(简化语义;真实场景可改为按 stable id 合并)
@@ -383,6 +404,59 @@ class PostgresRepository(StorageRepository):
     async def update_message(self, message: MessageDTO) -> None:
         """代理到 save_message(upsert 语义一致)。"""
         await self.save_message(message)  # upsert 语义一致
+
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #10:Postgres 走单条 UPDATE + COALESCE 增量更新。
+
+        views / reactions 各自有 nullable 语义:
+        - views=None   → 不动
+        - reactions=None → 不动
+        - reactions=[] → 清空(JSONB `[]`)
+
+        不存在消息 idempotent 不抛(0 rows updated 是合法的)。
+        """
+        assert self._pool is not None
+        # 序列化 reactions → list[dict] → JSONB;None 跳过,[] 写空数组
+        if reactions is None:
+            reactions_clause = ""  # 不动
+            reactions_arg: Any = None
+        else:
+            reactions_clause = "reactions = $4::jsonb"
+            reactions_arg = json.dumps([r.to_dict() if isinstance(r, ReactionDTO) else r
+                                        for r in reactions])
+        if views is None:
+            views_clause = ""
+            views_arg: Any = None
+        else:
+            views_clause = "views = $5" if reactions_clause else "views = $4"
+            views_arg = views
+
+        set_parts: list[str] = []
+        args: list[Any] = []
+        if views_clause:
+            set_parts.append(views_clause)
+            args.append(views_arg)
+        if reactions_clause:
+            set_parts.append(reactions_clause)
+            args.append(reactions_arg)
+        if not set_parts:
+            return  # 两边都 None → no-op
+        set_sql = ", ".join(set_parts)
+        args.extend([channel_id, telegram_msg_id])
+        sql = f"""
+            UPDATE messages SET {set_sql}
+            WHERE channel_id = ${len(args) - 1}
+              AND telegram_msg_id = ${len(args)}
+        """
+        async with self._pool.acquire() as conn:
+            await conn.execute(sql, *args)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;media 行通过 FK CASCADE 自动删。"""

@@ -27,6 +27,7 @@ from tgmonitor.core.events import (
     MediaDownloaded,
     MessageDeleted,
     MessageEdited,
+    MessageInteractionsChanged,
     MessageReceived,
 )
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
@@ -158,6 +159,10 @@ class MonitorService:
         self._backfill_task = asyncio.create_task(
             self._backfill_loop(), name="MonitorService.backfill"
         )
+        # 2026-08-27 v1.4.0 PR #10:订阅 reactions / views 增量更新事件。
+        # TDLib 高频推 updateMessageInteractionInfo,落库走 bus → 单点 +
+        # 订阅者异常被吞,比 stream 更安全。
+        self.bus.subscribe(MessageInteractionsChanged, self._handle_interactions_changed)
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
         if self.downloader is not None:
             self._download_queue = asyncio.Queue()
@@ -575,6 +580,41 @@ class MonitorService:
         await self.bus.publish(
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
+
+    async def _handle_interactions_changed(
+        self, event: MessageInteractionsChanged,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #10:TDLib `updateMessageInteractionInfo`
+        → storage `update_message_interactions`(views / reactions 增量)。
+
+        落库后**不再 republish**(避免无限循环:EventBus.subscribe 自己是
+        反模式);详情面板直接订阅 `MessageInteractionsChanged` 即可,
+        落库前/落库后两条事件同 payload,UI 自取所需时点。
+        """
+        try:
+            await self.storage.update_message_interactions(
+                event.channel_id,
+                event.telegram_msg_id,
+                views=event.views,
+                # event.reactions 已是 list[ReactionDTO](TDLib 映射层保证),
+                # storage 实现负责 list/dict 双形态容错
+                reactions=event.reactions,
+            )
+            log.debug(
+                "interactions updated: channel=%s msg=%s views=%s reactions=%d",
+                event.channel_id, event.telegram_msg_id,
+                event.views,
+                len(event.reactions) if event.reactions else 0,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("update interactions failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.interactions",
+                    message=str(e),
+                    exception=e,
+                )
+            )
 
     # ---- helpers ----
 

@@ -226,6 +226,11 @@ class TdlibTelegramClient(_AiClient):
             self._on_connection_state,
             update_type="updateConnectionState",
         )
+        # 互动增量(reactions / views)— 2026-08-27 v1.4.0 PR #10
+        self.add_event_handler(
+            self._on_message_interactions,
+            update_type="updateMessageInteractionInfo",
+        )
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
         async def _on_any_update(client_self, update) -> None:
@@ -470,6 +475,54 @@ class TdlibTelegramClient(_AiClient):
                 asyncio.create_task(self._safe_publish_conn_state(new_state))
         except Exception:  # noqa: BLE001
             log.exception("connection state handling failed")
+
+    async def _on_message_interactions(self, client_self, update) -> None:
+        """TDLib `updateMessageInteractionInfo`(2026-08-27 v1.4.0 PR #10)
+        — views 增量 + reactions 列表(可能空 list 表示被清空)。
+
+        直接通过 bus 发 `MessageInteractionsChanged` 事件,MonitorService
+        订阅并落库。**不**复用 `_streams`(那是 MessageDTO 流);高频
+        增量走事件更轻 — 反正 storage 写入和 UI 刷新都要 bus 来通知。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            msg_id = getattr(update, "message_id", None)
+            if chat_id is None or msg_id is None:
+                log.debug(
+                    "updateMessageInteractionInfo missing identifiers: %r",
+                    getattr(update, "@type", type(update).__name__),
+                )
+                return
+            from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+            new_views, new_reactions = _map_interaction_info(
+                getattr(update, "interaction_info", None),
+            )
+            log.debug(
+                "updateMessageInteractionInfo: chat=%s msg=%s views=%s reactions=%d",
+                chat_id, msg_id, new_views, len(new_reactions),
+            )
+            if self._bus is not None:
+                asyncio.create_task(self._safe_publish_interactions(
+                    chat_id, msg_id, new_views, new_reactions,
+                ))
+        except Exception:  # noqa: BLE001
+            log.exception("updateMessageInteractionInfo handling failed")
+
+    async def _safe_publish_interactions(
+        self, chat_id: int, msg_id: int,
+        views: int | None, reactions: list,
+    ) -> None:
+        try:
+            from tgmonitor.core.events import MessageInteractionsChanged
+            assert self._bus is not None
+            await self._bus.publish(MessageInteractionsChanged(
+                channel_id=int(chat_id),
+                telegram_msg_id=int(msg_id),
+                views=views,
+                reactions=reactions,
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("publish MessageInteractionsChanged failed")
 
     async def _safe_publish_conn_state(self, state: str) -> None:
         try:

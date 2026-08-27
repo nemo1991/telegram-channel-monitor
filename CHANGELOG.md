@@ -8,6 +8,23 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **TDLib `updateMessageInteractionInfo` 处理器(PR #10)** —
+  reactions + views 增量更新此前不订阅,UI 永远显示陈年数据。本次落地:
+  - 新 DTO `ReactionDTO`(type / emoji / count / is_chosen)+ `MessageDTO.reactions`
+    默认 `None`,空 list = 已推送过但已被清空
+  - `tdlib_client._on_message_interactions` 注册 `updateMessageInteractionInfo`
+    派发,经 `bus.publish(MessageInteractionsChanged(...))` 单向事件通道
+  - `MonitorService._handle_interactions_changed` 订阅事件 → 调
+    `storage.update_message_interactions` 落库;异常吞 + `ErrorOccurred`
+  - 4 后端实现 `update_message_interactions(views=None, reactions=None)`:
+    Postgres `UPDATE ... SET ... WHERE ...`(只写传入字段);Mongo `$set`
+    子集;Jsonl + InMemory 直持 DTO,字段直接赋值
+  - 详情面板 `_format_reactions()` 把 reactions 列表转单行展示
+    `[❤️ 1]  🎉 5  👍 3`(自己投的用 `[]` 包起来高亮)
+  - **测试覆盖**:20 个(`_map_reaction` 4 type / `_map_reactions` 列表过滤
+    / `_map_interaction_info` 4 场景 / 4 后端 parity × views-only / reactions-only /
+    双向 / 空 list / 不存在消息 silent / dict 格式兼容 / monitor 路由 + 异常吞)
+
 - **TDLib Message 5 个 v1.3.0 丢弃字段补齐(PR #9)** — `_map_message`
   (`tdlib_messages.py`) 之前只读 7 个字段,详情面板的「回复」「转发链」
   「via bot」一直空白。本次补齐:

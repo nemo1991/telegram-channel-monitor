@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 
 from tgmonitor.core.dto import (
     ChannelDTO,
@@ -237,6 +238,32 @@ class StorageRepository(ABC):
         用途:`ClearChannelPreview.media_count`。比 `list_media(
         channel_ids=[id]) + len()` 更便宜,4 后端各自走 SQL/aggregate count
         而非把 row 拉回内存。
+        """
+        ...
+
+    # ---- 互动增量(2026-08-27 v1.4.0 PR #10) ----
+
+    @abstractmethod
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """增量更新一条消息的 views / reactions(2026-08-27 PR #10)。
+
+        TDLib `updateMessageInteractionInfo` 推送的字段可能只更新一部分
+        (比如只有 reactions 没新 view) — `views=None` 表示不动 views,
+        `reactions=None` 表示不动 reactions。`reactions=[]` 表示清空
+        (推了空 list 表示该消息所有 reaction 都被撤回)。
+
+        不存在消息 idempotent 不抛 — TDLib 偶尔会推陈年历史消息的 view
+        更新,落库时机早于本 update,跳过即可,UI 不感知。
+
+        `reactions` 元素类型:可以是 `ReactionDTO`(新代码)或 dict(兼容老
+        序列化格式);实现内部统一 `ReactionDTO.from_dict()` 处理。
         """
         ...
 

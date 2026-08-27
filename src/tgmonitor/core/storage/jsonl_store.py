@@ -60,6 +60,11 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
         "media_album_id": m.media_album_id,
         "is_pinned": m.is_pinned,
         "edited": m.edited,
+        # 2026-08-27 v1.4.0 PR #10:reactions 列表 → dict 列表;
+        # None 不写 key(老 jsonl 兼容),[] 写空 list(语义:已推送过但当前空)。
+        "reactions": (
+            [r.to_dict() for r in m.reactions] if m.reactions is not None else None
+        ),
         "media": [
             {
                 "type": med.type.value,
@@ -87,7 +92,7 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
 
 
 def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
-    from tgmonitor.core.dto import MediaDTO, MediaType
+    from tgmonitor.core.dto import MediaDTO, MediaType, ReactionDTO
 
     media = []
     for md in d.get("media", []):
@@ -137,6 +142,12 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         via_bot_user_id=d.get("via_bot_user_id"),
         media_album_id=d.get("media_album_id"),
         is_pinned=bool(d.get("is_pinned", False)),
+        # 2026-08-27 v1.4.0 PR #10:reactions 读时 None → None(从未推送);
+        # list → [ReactionDTO.from_dict(...)]。
+        reactions=(
+            [ReactionDTO.from_dict(r) for r in d["reactions"]]
+            if d.get("reactions") is not None else None
+        ),
         media=media,
         raw=d.get("raw"),
     )
@@ -508,6 +519,37 @@ class JsonlFileStore(StorageRepository):
                         self._media_by_fid.pop(fid, None)
                     else:
                         self._media_by_fid[fid] = best
+
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #10:Jsonl 走读 → 改 → 写磁盘更新模式。
+
+        高频 reactions 路径用 read-modify-write 比 SQL UPSERT 慢,但 Jsonl
+        文件数与 channel 等量级,顺序读单 channel 极快(几十条消息级)。
+        写盘 flush 仍走 `_write_lock` 防并发覆盖。
+        """
+        from tgmonitor.core.dto import ReactionDTO
+
+        async with self._write_lock:
+            msg = await self.get_message(channel_id, telegram_msg_id)
+            if msg is None:
+                return
+            if views is not None:
+                msg.views = views
+            if reactions is not None:
+                msg.reactions = [
+                    r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r)
+                    for r in reactions
+                ]
+            cf = await self._file_for(channel_id)
+            await cf.upsert(_message_to_dict(msg))
+            await cf.flush()
 
     async def get_message(
         self, channel_id: int, telegram_msg_id: int

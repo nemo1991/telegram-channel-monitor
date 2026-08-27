@@ -93,6 +93,23 @@ class MessageDeleted(Event):
 
 
 @dataclass
+class MessageInteractionsChanged(Event):
+    """2026-08-27 v1.4.0 PR #10:reactions / views 增量更新。
+
+    TDLib `updateMessageInteractionInfo` 推送时,只携带 changed 的字段
+    (可能是新 views、可能删/加 reaction),`views=None` 表示本次 update
+    没新 view,`reactions=None` 表示没动 reactions。
+
+    UI 订阅后实时刷新详情面板的 reactions badge / views 数字。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    views: int | None = None
+    reactions: object = None        # list[ReactionDTO] | None(避免循环 import,object 占位)
+
+
+@dataclass
 class MediaDownloaded(Event):
     """一条媒体下载结束(成功或失败都发;`media.download_status` 区分)。
 

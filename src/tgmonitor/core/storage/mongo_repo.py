@@ -17,6 +17,7 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    ReactionDTO,
     SortDir,
     SortKey,
 )
@@ -86,6 +87,13 @@ def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
 
 
 def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
+    # 2026-08-27 v1.4.0 PR #10:reactions 字段 dict 列表 → ReactionDTO;
+    # 缺省 None 表示从未推送。
+    reactions_raw = d.get("reactions")
+    reactions: list[ReactionDTO] | None = (
+        [ReactionDTO.from_dict(r) for r in reactions_raw]
+        if reactions_raw is not None else None
+    )
     return MessageDTO(
         id=int(str(d["_id"])),
         channel_id=int(d["channel_id"]),
@@ -105,6 +113,7 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
         via_bot_user_id=d.get("via_bot_user_id"),
         media_album_id=d.get("media_album_id"),
         is_pinned=bool(d.get("is_pinned", False)),
+        reactions=reactions,
     )
 
 
@@ -282,6 +291,12 @@ class MongoRepository(StorageRepository):
             "via_bot_user_id": message.via_bot_user_id,
             "media_album_id": message.media_album_id,
             "is_pinned": message.is_pinned,
+            # 2026-08-27 v1.4.0 PR #10:reactions dict 列表;None 不写 key,
+            # [] 写空 list(语义:已推送过但当前空)。
+            "reactions": (
+                [r.to_dict() for r in message.reactions]
+                if message.reactions is not None else None
+            ),
         }
         result = await self.db.messages.find_one_and_update(
             {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id},
@@ -300,6 +315,34 @@ class MongoRepository(StorageRepository):
     async def update_message(self, message: MessageDTO) -> None:
         """代理到 save_message(upsert 语义一致)。"""
         await self.save_message(message)
+
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #10:Mongo `$set` 部分更新。
+
+        缺省 None 的字段不进 `$set`(保留旧值);空 list reactions 显式
+        set 为 `[]` 表示清空。不存在消息 idempotent 不抛(0 matched 是合法的)。
+        """
+        update: dict[str, Any] = {}
+        if views is not None:
+            update["views"] = views
+        if reactions is not None:
+            update["reactions"] = [
+                r.to_dict() if isinstance(r, ReactionDTO) else r
+                for r in reactions
+            ]
+        if not update:
+            return
+        await self.db.messages.update_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
+            {"$set": update},
+        )
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;media 子文档随父 doc 一同删。"""

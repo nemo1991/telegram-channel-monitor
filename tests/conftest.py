@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
@@ -310,6 +310,32 @@ class InMemoryRepository(StorageRepository):
             len(m.media) for m in self.messages.values()
             if m.channel_id == channel_id
         )
+
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #10:InMemory 直持 DTO,字段直接覆盖式赋值。
+
+        views=None 不动,reactions=None 不动(空 list 视作清空)。
+        """
+        from tgmonitor.core.dto import ReactionDTO
+
+        key = (channel_id, telegram_msg_id)
+        msg = self.messages.get(key)
+        if msg is None:
+            return  # 不存在 idempotent 不抛
+        if views is not None:
+            msg.views = views
+        if reactions is not None:
+            msg.reactions = [
+                r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r)
+                for r in reactions
+            ]
 
     async def ping(self) -> bool:
         return True

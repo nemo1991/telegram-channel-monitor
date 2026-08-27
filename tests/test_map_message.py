@@ -460,3 +460,100 @@ def test_pr9_missing_extra_fields_default_none():
     assert dto.via_bot_user_id is None
     assert dto.media_album_id is None
     assert dto.is_pinned is False
+
+
+# ============================================================
+# 2026-08-27 v1.4.0 PR #10:reactions 映射
+# (`_map_reaction` / `_map_reactions` / `_map_interaction_info`)
+# ============================================================
+
+
+def _reaction(emoji_type: str, **kwargs) -> SimpleNamespace:
+    """构造 TDLib MessageReaction-like SimpleNamespace,type_name 走 dispatch。"""
+    obj = SimpleNamespace(**kwargs)
+    obj.type_name = emoji_type
+    return obj
+
+
+def test_pr10_reaction_emoji_mapped():
+    """PR #10:`reactionEmoji` 扁平化 emoji 文本 + count + is_chosen。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_reaction
+    r = _reaction("reactionEmoji", emoji="😀", total_count=5, is_chosen=True)
+    dto = _map_reaction(r)
+    assert dto is not None
+    assert dto.type == "emoji"
+    assert dto.emoji == "😀"
+    assert dto.count == 5
+    assert dto.is_chosen is True
+
+
+def test_pr10_reaction_custom_emoji_mapped():
+    """PR #10:`reactionCustomEmoji` 记占位符 `🖼 <id>`(无图源)。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_reaction
+    r = _reaction("reactionCustomEmoji", custom_emoji_id=1234567890,
+                  total_count=3, is_chosen=False)
+    dto = _map_reaction(r)
+    assert dto is not None
+    assert dto.type == "custom_emoji"
+    assert dto.emoji == "🖼 1234567890"
+    assert dto.count == 3
+    assert dto.is_chosen is False
+
+
+def test_pr10_reaction_unknown_type_returns_none():
+    """PR #10:TDLib 推未知 reaction type → None(上层过滤,不让 UI 渲染坏数据)。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_reaction
+    r = _reaction("reactionFutureType", emoji="?", total_count=1)
+    assert _map_reaction(r) is None
+
+
+def test_pr10_reactions_list_filters_unknown():
+    """PR #10:reactions 列表里混入未知 type 时静默过滤。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_reactions
+    rxns = [
+        _reaction("reactionEmoji", emoji="❤️", total_count=2, is_chosen=True),
+        _reaction("reactionUnknown", emoji="?", total_count=99),
+        _reaction("reactionEmoji", emoji="👍", total_count=4, is_chosen=False),
+    ]
+    out = _map_reactions(rxns)
+    assert len(out) == 2
+    assert out[0].emoji == "❤️"
+    assert out[1].emoji == "👍"
+
+
+def test_pr10_reactions_none_yields_empty_list():
+    """PR #10:reactions 字段为 None → 空 list(语义:无 reaction)。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_reactions
+    assert _map_reactions(None) == []
+
+
+def test_pr10_interaction_info_views_only():
+    """PR #10:`MessageInteractionInfo` 只推 view_count 时,reactions=[]。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+    info = SimpleNamespace(view_count=42, reactions=None)
+    views, reactions = _map_interaction_info(info)
+    assert views == 42
+    assert reactions == []
+
+
+def test_pr10_interaction_info_none_returns_none_views():
+    """PR #10:`interaction_info=None` → views=None, reactions=[]。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+    views, reactions = _map_interaction_info(None)
+    assert views is None
+    assert reactions == []
+
+
+def test_pr10_interaction_info_full_payload():
+    """PR #10:reactions + view_count 同时推时两者都正常返回。"""
+    from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+    info = SimpleNamespace(
+        view_count=100,
+        reactions=[
+            _reaction("reactionEmoji", emoji="🎉", total_count=10, is_chosen=False),
+        ],
+    )
+    views, reactions = _map_interaction_info(info)
+    assert views == 100
+    assert len(reactions) == 1
+    assert reactions[0].emoji == "🎉"

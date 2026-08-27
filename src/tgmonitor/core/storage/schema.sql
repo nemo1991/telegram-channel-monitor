@@ -39,6 +39,11 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS via_bot_user_id  BIGINT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_album_id   BIGINT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned        BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- 2026-08-27 v1.4.0 PR #10:reactions 列表 — TDLib MessageInteractionInfo 推 reactions
+-- 时落库用。JSONB 存 `list[ReactionDTO.to_dict()]`;空 list 也存 `[]` 表示已
+-- 清空(与 None 区分 → None 表示从未推送过)。
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date
     ON messages (channel_id, date);
 

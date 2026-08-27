@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ReactionDTO
 
 
 def _to_local_str(dt: datetime | None) -> str:
@@ -39,6 +39,27 @@ def _to_local_str(dt: datetime | None) -> str:
         # 假设是 naive UTC(项目里 _map_message 行为)
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_reactions(reactions: list[ReactionDTO]) -> str:
+    """PR #10:reactions 列表 → 单行展示 `😀 5  👍 3  ...`。
+
+    自己投的用方括号包起来,例如 `[❤️ 1] 😀 5`;空 list 返 None(让 caller
+    跳过本行)。
+    """
+    if not reactions:
+        return ""
+    parts: list[str] = []
+    for r in reactions:
+        # count=0 跳过(TDLib 偶尔推送空 reaction 占位)
+        if r.count <= 0:
+            continue
+        body = f"{r.emoji} {r.count}"
+        if r.is_chosen:
+            parts.append(f"[{body}]")
+        else:
+            parts.append(body)
+    return "  ".join(parts)
 
 
 class _FieldRow(QWidget):
@@ -144,6 +165,11 @@ class MessageDetail(QScrollArea):
             meta_layout.addWidget(_FieldRow("回复", f"#{m.reply_to_msg_id}"))
         if m.edited:
             meta_layout.addWidget(_FieldRow("已编辑", "✓"))
+        # 2026-08-27 v1.4.0 PR #10:reactions 列表(emoji + count + 自己投了高亮)
+        if m.reactions:
+            rx_label = self._format_reactions(m.reactions)
+            if rx_label:
+                meta_layout.addWidget(_FieldRow("反应", rx_label))
         v.addWidget(meta_group)
 
         # ---- 正文 ----

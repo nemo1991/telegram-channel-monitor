@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import AsyncIterator
 
 import pytest
 
 from tests.conftest import make_message
-from tgmonitor.core.dto import MediaDTO, MessageDTO
+from tgmonitor.core.dto import MediaDTO, MessageDTO, ReactionDTO
+from tgmonitor.core.events import MessageInteractionsChanged
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
@@ -1156,3 +1158,73 @@ def test_edited_message_ui_replace_message_renders_new_text():
     assert dto_after.text == "v2-edited"
     # 显示文本含 "v2-edited"
     assert "v2-edited" in item.text()
+
+
+# ============================================================
+# 2026-08-27 v1.4.0 PR #10:MessageInteractionsChanged → monitor 落库路由
+# (reactions + views 增量)。不依赖真实 TDLib,直接 publish bus 事件。
+# ============================================================
+
+
+async def test_monitor_routes_interactions_changed_to_storage(
+    monitor, storage, client, bus
+) -> None:
+    """PR #10:publish MessageInteractionsChanged → storage.update_message_interactions
+    被调,字段一致写入。
+
+    不调真实 update_message_interactions(那是 storage 单测职责);这里只
+    断言 storage 收到了正确 (channel_id, msg_id, views, reactions)。
+    """
+    monitor.set_whitelist([100])
+    # start() 才会订阅 bus — 否则 handler 不会触发
+    await monitor.start()
+    try:
+        # 先存一条消息让 update 落到真实对象上
+        base = MessageDTO(
+            id=0, channel_id=100, telegram_msg_id=42,
+            date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            text="hi", author="alice", media=[],
+        )
+        await storage.save_message(base)
+
+        new_rxns = [
+            ReactionDTO(type="emoji", emoji="🎉", count=5, is_chosen=True),
+        ]
+        await bus.publish(MessageInteractionsChanged(
+            channel_id=100, telegram_msg_id=42,
+            views=999, reactions=new_rxns,
+        ))
+        # bus.publish 是 async,handler 也是 async → 让 event loop 跑一轮
+        await asyncio.sleep(0)
+        rows = await storage.list_messages(channel_ids=[100])
+        got = next(r for r in rows if r.telegram_msg_id == 42)
+        assert got.views == 999
+        assert got.reactions is not None
+        assert got.reactions[0].emoji == "🎉"
+        assert got.reactions[0].is_chosen is True
+    finally:
+        await monitor.stop()
+
+
+async def test_monitor_interactions_handler_swallows_errors(
+    monitor, storage, client, bus, caplog
+) -> None:
+    """PR #10:storage 抛异常时 handler 不抛回 bus(其它订阅者不感知)。
+
+    用 None storage 来强制异常。
+    """
+    await monitor.start()
+    class BoomStorage:
+        async def update_message_interactions(self, *a, **kw):
+            raise RuntimeError("simulated")
+    original = monitor.storage
+    monitor.storage = BoomStorage()
+    try:
+        # handler 抛异常被 bus 吞,不冒泡到 publish 调用者
+        await bus.publish(MessageInteractionsChanged(
+            channel_id=100, telegram_msg_id=1, views=10, reactions=[],
+        ))
+        await asyncio.sleep(0)
+    finally:
+        monitor.storage = original
+        await monitor.stop()

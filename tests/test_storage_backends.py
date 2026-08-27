@@ -19,6 +19,7 @@ from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
+    ReactionDTO,
     SortDir,
     SortKey,
 )
@@ -553,3 +554,172 @@ async def test_jsonl_roundtrip_pr9_extra_fields_default_none(jsonl_repo):
     assert got.via_bot_user_id is None
     assert got.media_album_id is None
     assert got.is_pinned is False
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #10:`update_message_interactions` 增量更新(views /
+# reactions)—— InMemory + Jsonl parity。reactions 可以是 ReactionDTO 或 dict。
+# ---------------------------------------------------------------------------
+
+
+async def test_in_mem_update_views_only(in_mem_repo):
+    """PR #10:只传 views → views 更新,reactions 不动。"""
+    import dataclasses
+
+    base = make_message(channel_id=100, msg_id=5500)
+    msg = dataclasses.replace(base, views=10)
+    await in_mem_repo.save_message(msg)
+    await in_mem_repo.update_message_interactions(100, 5500, views=99)
+    got = next(
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
+        if r.telegram_msg_id == 5500
+    )
+    assert got.views == 99
+    # reactions 字段未初始化(原 save_message 时没设)→ 仍 None
+    assert got.reactions is None
+
+
+async def test_jsonl_update_views_only(jsonl_repo):
+    """PR #10:Jsonl 只更新 views。"""
+    import dataclasses
+
+    base = make_message(channel_id=200, msg_id=2600)
+    msg = dataclasses.replace(base, views=10)
+    await jsonl_repo.save_message(msg)
+    await jsonl_repo.update_message_interactions(200, 2600, views=88)
+    got = next(
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
+        if r.telegram_msg_id == 2600
+    )
+    assert got.views == 88
+    assert got.reactions is None
+
+
+async def test_in_mem_update_reactions_only(in_mem_repo):
+    """PR #10:只传 reactions → reactions 更新,views 不动。"""
+    import dataclasses
+
+    base = make_message(channel_id=100, msg_id=5501)
+    msg = dataclasses.replace(base, views=42)
+    await in_mem_repo.save_message(msg)
+    new_rxns = [
+        ReactionDTO(type="emoji", emoji="🎉", count=5, is_chosen=True),
+        ReactionDTO(type="emoji", emoji="👍", count=3, is_chosen=False),
+    ]
+    await in_mem_repo.update_message_interactions(100, 5501, reactions=new_rxns)
+    got = next(
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
+        if r.telegram_msg_id == 5501
+    )
+    assert got.views == 42  # 未动
+    assert got.reactions is not None
+    assert len(got.reactions) == 2
+    assert got.reactions[0].emoji == "🎉"
+    assert got.reactions[0].is_chosen is True
+    assert got.reactions[1].count == 3
+
+
+async def test_jsonl_update_reactions_only(jsonl_repo):
+    """PR #10:Jsonl 只更新 reactions(views 不动)。"""
+    import dataclasses
+
+    base = make_message(channel_id=200, msg_id=2601)
+    msg = dataclasses.replace(base, views=42)
+    await jsonl_repo.save_message(msg)
+    new_rxns = [
+        ReactionDTO(type="emoji", emoji="❤️", count=7, is_chosen=False),
+    ]
+    await jsonl_repo.update_message_interactions(200, 2601, reactions=new_rxns)
+    got = next(
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
+        if r.telegram_msg_id == 2601
+    )
+    assert got.views == 42
+    assert got.reactions is not None
+    assert len(got.reactions) == 1
+    assert got.reactions[0].emoji == "❤️"
+
+
+async def test_in_mem_update_reactions_empty_list_clears(in_mem_repo):
+    """PR #10:`reactions=[]` 显式清空(不是不动)。"""
+    import dataclasses
+
+    base = make_message(channel_id=100, msg_id=5502)
+    msg = dataclasses.replace(
+        base,
+        reactions=[ReactionDTO(type="emoji", emoji="😢", count=1, is_chosen=False)],
+    )
+    await in_mem_repo.save_message(msg)
+    # reactions=None 不动 → 仍有反应;reactions=[] 清空
+    await in_mem_repo.update_message_interactions(100, 5502, reactions=[])
+    got = next(
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
+        if r.telegram_msg_id == 5502
+    )
+    assert got.reactions == []
+
+
+async def test_jsonl_update_reactions_empty_list_clears(jsonl_repo):
+    """PR #10:Jsonl `reactions=[]` 显式清空。"""
+    import dataclasses
+
+    base = make_message(channel_id=200, msg_id=2602)
+    msg = dataclasses.replace(
+        base,
+        reactions=[ReactionDTO(type="emoji", emoji="🎉", count=2, is_chosen=False)],
+    )
+    await jsonl_repo.save_message(msg)
+    await jsonl_repo.update_message_interactions(200, 2602, reactions=[])
+    got = next(
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
+        if r.telegram_msg_id == 2602
+    )
+    assert got.reactions == []
+
+
+async def test_in_mem_update_both_views_and_reactions(in_mem_repo):
+    """PR #10:同时传 views 和 reactions 都更新。"""
+    await in_mem_repo.save_message(make_message(channel_id=100, msg_id=5503))
+    rxns = [ReactionDTO(type="emoji", emoji="🚀", count=10, is_chosen=False)]
+    await in_mem_repo.update_message_interactions(
+        100, 5503, views=500, reactions=rxns,
+    )
+    got = next(
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
+        if r.telegram_msg_id == 5503
+    )
+    assert got.views == 500
+    assert got.reactions is not None and got.reactions[0].count == 10
+
+
+async def test_in_mem_update_nonexistent_message_silent(in_mem_repo):
+    """PR #10:消息不存在 idempotent 不抛(TDLib 偶尔推陈年 view 更新)。"""
+    # 不 save,直接 update
+    await in_mem_repo.update_message_interactions(999, 9999, views=100)
+    # 落库后仍查不到(没保存这条消息)
+    rows = await in_mem_repo.list_messages(channel_ids=[999])
+    assert rows == []
+
+
+async def test_jsonl_update_nonexistent_message_silent(jsonl_repo):
+    """PR #10:Jsonl 消息不存在 idempotent 不抛。"""
+    await jsonl_repo.update_message_interactions(888, 8888, views=100)
+    rows = await jsonl_repo.list_messages(channel_ids=[888])
+    assert rows == []
+
+
+async def test_jsonl_update_reactions_accepts_dict_format(jsonl_repo):
+    """PR #10:reactions 元素可以是 dict(老序列化格式兼容)→ 内部 to ReactionDTO。"""
+    msg = make_message(channel_id=200, msg_id=2603)
+    await jsonl_repo.save_message(msg)
+    rxns_dict = [
+        {"type": "emoji", "emoji": "😀", "count": 5, "is_chosen": False},
+    ]
+    await jsonl_repo.update_message_interactions(200, 2603, reactions=rxns_dict)
+    got = next(
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
+        if r.telegram_msg_id == 2603
+    )
+    assert got.reactions is not None
+    assert got.reactions[0].emoji == "😀"
+    assert got.reactions[0].count == 5
