@@ -115,6 +115,12 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
         edited=row["edited"],
         media=media,
         raw=raw,
+        # 2026-08-27 v1.4.0 PR #9:forward_origin 是 JSONB,asyncpg 已解;老库
+        # ALTER TABLE 加的列,新库建表即有。其它 3 字段新列默认 False / NULL。
+        forward_origin=json.loads(row["forward_origin"]) if isinstance(row.get("forward_origin"), str) else row.get("forward_origin"),
+        via_bot_user_id=row.get("via_bot_user_id"),
+        media_album_id=row.get("media_album_id"),
+        is_pinned=bool(row.get("is_pinned", False)),
     )
 
 
@@ -310,13 +316,20 @@ class PostgresRepository(StorageRepository):
         """幂等 upsert:返回 messages.id。"""
         assert self._pool is not None
         raw_json = json.dumps(message.raw) if message.raw is not None else None
+        # 2026-08-27 v1.4.0 PR #9:forward_origin 序列化为 JSONB;
+        # asyncpg 自动解 dict,所以读出来不需要二次 json.loads。
+        forward_origin_json = (
+            json.dumps(message.forward_origin) if message.forward_origin is not None else None
+        )
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 """
                     INSERT INTO messages
                         (channel_id, telegram_msg_id, author, date, text,
-                         views, forwards, reply_to_msg_id, edited, raw)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                         views, forwards, reply_to_msg_id, edited, raw,
+                         forward_origin, via_bot_user_id, media_album_id, is_pinned)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
+                            $11::jsonb, $12, $13, $14)
                     ON CONFLICT (channel_id, telegram_msg_id) DO UPDATE SET
                         author = EXCLUDED.author,
                         date = EXCLUDED.date,
@@ -325,7 +338,11 @@ class PostgresRepository(StorageRepository):
                         forwards = EXCLUDED.forwards,
                         reply_to_msg_id = EXCLUDED.reply_to_msg_id,
                         edited = EXCLUDED.edited,
-                        raw = EXCLUDED.raw
+                        raw = EXCLUDED.raw,
+                        forward_origin = EXCLUDED.forward_origin,
+                        via_bot_user_id = EXCLUDED.via_bot_user_id,
+                        media_album_id = EXCLUDED.media_album_id,
+                        is_pinned = EXCLUDED.is_pinned
                     RETURNING id
                     """,
                 message.channel_id,
@@ -338,6 +355,10 @@ class PostgresRepository(StorageRepository):
                 message.reply_to_msg_id,
                 message.edited,
                 raw_json,
+                forward_origin_json,
+                message.via_bot_user_id,
+                message.media_album_id,
+                message.is_pinned,
             )
             msg_pk = row["id"]
             # 媒体:先清后插(简化语义;真实场景可改为按 stable id 合并)

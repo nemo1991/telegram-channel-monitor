@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS messages (
     UNIQUE (channel_id, telegram_msg_id)
 );
 
+-- 2026-08-27 v1.4.0 PR #9:补 4 个 TDLib Message 字段(老库迁移 IF NOT EXISTS 幂等)。
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS forward_origin   JSONB;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS via_bot_user_id  BIGINT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_album_id   BIGINT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned        BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date
     ON messages (channel_id, date);
 

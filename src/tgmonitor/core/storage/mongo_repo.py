@@ -99,6 +99,12 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
         edited=bool(d.get("edited", False)),
         media=[_doc_to_media(m) for m in d.get("media", [])],
         raw=d.get("raw"),
+        # 2026-08-27 v1.4.0 PR #9:4 个新字段 — Mongo schema-less,旧 doc
+        # 没这些 key,默认 None / False 兜底。
+        forward_origin=d.get("forward_origin"),
+        via_bot_user_id=d.get("via_bot_user_id"),
+        media_album_id=d.get("media_album_id"),
+        is_pinned=bool(d.get("is_pinned", False)),
     )
 
 
@@ -270,6 +276,12 @@ class MongoRepository(StorageRepository):
             "edited": message.edited,
             "media": [_media_to_doc(m) for m in message.media],
             "raw": message.raw,
+            # 2026-08-27 v1.4.0 PR #9:4 个新字段。Mongo schema-less,
+            # 不需要 migration;旧 doc 没有这些 key,读时 None 兜底。
+            "forward_origin": message.forward_origin,
+            "via_bot_user_id": message.via_bot_user_id,
+            "media_album_id": message.media_album_id,
+            "is_pinned": message.is_pinned,
         }
         result = await self.db.messages.find_one_and_update(
             {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id},

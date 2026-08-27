@@ -333,3 +333,130 @@ def test_message_video_caption_preserved():
     msg = _msg("MessageVideo", video=video, caption=cap)
     dto = _map_message(msg)
     assert dto.text == "watch this"
+
+
+# ============================================================
+# 2026-08-27 v1.4.0 PR #9:5 个 TDLib Message 字段映射
+# (reply_to_msg_id / forward_origin / via_bot_user_id /
+# media_album_id / is_pinned)
+# ============================================================
+
+
+def test_pr9_reply_to_message_id_mapped():
+    """PR #9:reply_to_message_id(legacy 0 值会规范化成 None)。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="reply"), caption=None)
+    msg.reply_to_message_id = 42
+    dto = _map_message(msg)
+    assert dto.reply_to_msg_id == 42
+
+
+def test_pr9_reply_to_message_id_zero_normalized_to_none():
+    """PR #9:reply_to_message_id=0 应规范成 None(0 是 TDLib 的 sentinel)。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.reply_to_message_id = 0
+    dto = _map_message(msg)
+    assert dto.reply_to_msg_id is None
+
+
+def test_pr9_forward_origin_user_flattened():
+    """PR #9:messageOriginUser 扁平化为 dict。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="fwd"), caption=None)
+    fo = SimpleNamespace(
+        sender_user_id=999, date=1700000000,
+    )
+    fo.type_name = "messageOriginUser"  # tdlib_json 暴露为 property
+    msg.forward_origin = fo
+    dto = _map_message(msg)
+    assert dto.forward_origin == {
+        "@type": "messageOriginUser",
+        "sender_user_id": 999,
+        "date": 1700000000,
+    }
+
+
+def test_pr9_forward_origin_channel_flattened():
+    """PR #9:messageOriginChannel 展开发送 chat / msg / 签名。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    fo = SimpleNamespace(
+        chat_id=-1001234567890, message_id=5, author_signature="Anon",
+    )
+    fo.type_name = "messageOriginChannel"
+    msg.forward_origin = fo
+    dto = _map_message(msg)
+    assert dto.forward_origin == {
+        "@type": "messageOriginChannel",
+        "chat_id": -1001234567890,
+        "message_id": 5,
+        "author_signature": "Anon",
+    }
+
+
+def test_pr9_forward_origin_unknown_type_safe_fallback():
+    """PR #9:TDLib 加新 origin type 时,降级保留 @type 不展开 — 不 leak 其他字段。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    fo = SimpleNamespace(sender_user_id=123, date=456)
+    fo.type_name = "messageOriginFutureUnknown"
+    msg.forward_origin = fo
+    dto = _map_message(msg)
+    # 只有 @type,不带其他私有字段,避免 leak
+    assert dto.forward_origin == {"@type": "messageOriginFutureUnknown"}
+
+
+def test_pr9_forward_origin_none_yields_none():
+    """PR #9:无 forward_origin → DTO 字段 None(默认)。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.forward_origin = None
+    dto = _map_message(msg)
+    assert dto.forward_origin is None
+
+
+def test_pr9_via_bot_user_id_mapped():
+    """PR #9:via_bot_user_id 非零时映射。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="bot"), caption=None)
+    msg.via_bot_user_id = 12345
+    dto = _map_message(msg)
+    assert dto.via_bot_user_id == 12345
+
+
+def test_pr9_via_bot_user_id_zero_normalized_to_none():
+    """PR #9:via_bot_user_id=0 规范成 None。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.via_bot_user_id = 0
+    dto = _map_message(msg)
+    assert dto.via_bot_user_id is None
+
+
+def test_pr9_media_album_id_mapped():
+    """PR #9:media_album_id(同一相册的不同消息共享此 ID)映射。"""
+    msg = _msg("MessagePhoto", photo=SimpleNamespace(sizes=[], minithumbnail=None, has_stickers=False), caption=None)
+    msg.media_album_id = 8888
+    dto = _map_message(msg)
+    assert dto.media_album_id == 8888
+
+
+def test_pr9_is_pinned_mapped():
+    """PR #9:is_pinned(bool)映射。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="pinned"), caption=None)
+    msg.is_pinned = True
+    dto = _map_message(msg)
+    assert dto.is_pinned is True
+
+
+def test_pr9_default_is_pinned_false():
+    """PR #9:未设 is_pinned / 缺字段时默认 False。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    # is_pinned 缺省
+    dto = _map_message(msg)
+    assert dto.is_pinned is False
+
+
+def test_pr9_missing_extra_fields_default_none():
+    """PR #9:整 5 个字段都没设(老 TDLib 对象)时,默认值一致 — reply_to_msg_id
+    / forward_origin / via_bot_user_id / media_album_id = None,is_pinned = False。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    dto = _map_message(msg)
+    assert dto.reply_to_msg_id is None
+    assert dto.forward_origin is None
+    assert dto.via_bot_user_id is None
+    assert dto.media_album_id is None
+    assert dto.is_pinned is False

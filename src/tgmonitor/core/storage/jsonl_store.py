@@ -53,6 +53,12 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
         "views": m.views,
         "forwards": m.forwards,
         "reply_to_msg_id": m.reply_to_msg_id,
+        # 2026-08-27 v1.4.0 PR #9:4 个新字段(老 jsonl 文件无这些 key,
+        # _dict_to_message 默认 None / False 兜底)。
+        "forward_origin": m.forward_origin,
+        "via_bot_user_id": m.via_bot_user_id,
+        "media_album_id": m.media_album_id,
+        "is_pinned": m.is_pinned,
         "edited": m.edited,
         "media": [
             {
@@ -125,6 +131,12 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         forwards=d.get("forwards"),
         reply_to_msg_id=d.get("reply_to_msg_id"),
         edited=bool(d.get("edited", False)),
+        # 2026-08-27 v1.4.0 PR #9:4 个新字段 — 老 jsonl 文件没这些 key,
+        # 默认 None / False 兜底。
+        forward_origin=d.get("forward_origin"),
+        via_bot_user_id=d.get("via_bot_user_id"),
+        media_album_id=d.get("media_album_id"),
+        is_pinned=bool(d.get("is_pinned", False)),
         media=media,
         raw=d.get("raw"),
     )

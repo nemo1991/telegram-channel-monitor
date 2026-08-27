@@ -428,4 +428,41 @@ def _map_message(msg: Any) -> MessageDTO:
         forwards=getattr(msg, "forwards", None),
         edited=getattr(msg, "edit_date", 0) > 0,
         media=media_list,
+        # 2026-08-27 v1.4.0 PR #9:补 TDLib Message 5 个 v1.3.0 丢弃的字段。
+        reply_to_msg_id=getattr(msg, "reply_to_message_id", None) or None,
+        forward_origin=_normalize_forward_origin(
+            getattr(msg, "forward_origin", None),
+        ),
+        via_bot_user_id=getattr(msg, "via_bot_user_id", None) or None,
+        media_album_id=getattr(msg, "media_album_id", None) or None,
+        is_pinned=bool(getattr(msg, "is_pinned", False)),
     )
+
+
+# 2026-08-27 v1.4.0 PR #9:把 TDLib messageOrigin* 对象扁平化。
+# TDLib 经常加新 origin type,我们只展开常见 4 种,其余保留 type_name 不展。
+_FORWARD_ORIGIN_TYPES = {
+    "messageOriginUser", "messageOriginChannel",
+    "messageOriginHiddenUser", "messageOriginChat",
+}
+
+
+def _normalize_forward_origin(fo: Any) -> dict[str, Any] | None:
+    """把 TDLib messageOrigin* TDLibObject 扁平化为 dict,UI 渲染用。
+
+    只展开常见 4 种;新 type 出现时降级保留 `@type` 不展,避免 leak 私有
+    字段。返回 None 当 fo 为 None。
+    """
+    if fo is None:
+        return None
+    type_name = getattr(fo, "type_name", None) or type(fo).__name__
+    if type_name not in _FORWARD_ORIGIN_TYPES:
+        return {"@type": type_name}
+    out: dict[str, Any] = {"@type": type_name}
+    # 提取常见字段;tdlib_json 把字段暴露为属性。
+    for attr in ("sender_user_id", "sender_chat_id", "author_signature",
+                 "chat_id", "message_id", "date"):
+        v = getattr(fo, attr, None)
+        if v is not None:
+            out[attr] = v
+    return out

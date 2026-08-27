@@ -127,7 +127,11 @@ class MediaDTO:
 
 @dataclass
 class MessageDTO:
-    """一条已落库(或即将落库)的消息。"""
+    """一条已落库(或即将落库)的消息。
+
+    2026-08-27 v1.4.0 PR #9:补 5 个 TDLib Message 字段,详情面板 / 转发
+    链 / via bot / 相册 / 置顶 一直空白,本次映射对齐。
+    """
 
     id: int                                 # 自增主键,DB 分配
     channel_id: int                         # FK → channels.id
@@ -141,6 +145,11 @@ class MessageDTO:
     edited: bool = False
     media: list[MediaDTO] = field(default_factory=list)
     raw: dict[str, Any] | None = None       # 可选:原始 TDLib payload 摘要(供高级导出)
+    # 2026-08-27 v1.4.0 PR #9:TDLib Message 暴露但 v1.3.0 丢弃的字段。
+    forward_origin: dict[str, Any] | None = None  # messageOrigin* 扁平 dict(`{"@type": "messageOriginUser", ...}`)
+    via_bot_user_id: int | None = None              # 通过 inline bot 发送时的 bot id
+    media_album_id: int | None = None               # 同一相册的多张图共享,UI 用来分组
+    is_pinned: bool = False                         # 是否被频道置顶
 
     @property
     def has_media(self) -> bool:

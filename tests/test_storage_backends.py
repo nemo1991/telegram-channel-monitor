@@ -443,3 +443,113 @@ async def test_jsonl_list_messages_offset_zero_unchanged(jsonl_repo):
         channel_ids=[100, 200, 300], limit=2, offset=0,
     )
     assert [m.telegram_msg_id for m in rows] == [10, 5]
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #9:MessageDTO 加 forward_origin / via_bot_user_id /
+# media_album_id / is_pinned(reply_to_msg_id 已存在)— 后端 roundtrip parity。
+# 只覆盖能跑的 InMemory + Jsonl 两后端,PG/Mongo 走自己 backend unit test。
+# ---------------------------------------------------------------------------
+
+
+async def test_in_mem_roundtrip_pr9_extra_fields(in_mem_repo):
+    """PR #9:5 个 TDLib Message 字段 InMemory roundtrip 不丢。
+
+    InMemory 直接持 DTO 对象,字段在内存中天然保留 —— 但用真实构造 + save +
+    list 全链路确保 mock 不到任何东西。msg_id 用 4242 避开 fixture 已有消息。
+    """
+    import dataclasses
+
+    base = make_message(channel_id=100, msg_id=4242)
+    msg = dataclasses.replace(
+        base,
+        reply_to_msg_id=10,
+        forward_origin={
+            "@type": "messageOriginUser",
+            "sender_user_id": 999,
+            "date": 1700000000,
+        },
+        via_bot_user_id=12345,
+        media_album_id=8888,
+        is_pinned=True,
+    )
+    await in_mem_repo.save_message(msg)
+    rows = await in_mem_repo.list_messages(channel_ids=[100])
+    got = next(r for r in rows if r.telegram_msg_id == 4242)
+    assert got.reply_to_msg_id == 10
+    assert got.forward_origin == {
+        "@type": "messageOriginUser",
+        "sender_user_id": 999,
+        "date": 1700000000,
+    }
+    assert got.via_bot_user_id == 12345
+    assert got.media_album_id == 8888
+    assert got.is_pinned is True
+
+
+async def test_jsonl_roundtrip_pr9_extra_fields(jsonl_repo):
+    """PR #9:Jsonl roundtrip 把 forward_origin / via_bot_user_id /
+    media_album_id / is_pinned 写盘再读回必须一致。"""
+    import dataclasses
+
+    base = make_message(channel_id=200, msg_id=2024)
+    msg = dataclasses.replace(
+        base,
+        reply_to_msg_id=99,
+        forward_origin={
+            "@type": "messageOriginChannel",
+            "chat_id": -1001234567890,
+            "message_id": 5,
+            "author_signature": "Anon",
+        },
+        via_bot_user_id=777,
+        media_album_id=1234567890,
+        is_pinned=False,
+    )
+    await jsonl_repo.save_message(msg)
+    rows = await jsonl_repo.list_messages(channel_ids=[200])
+    got = next(r for r in rows if r.telegram_msg_id == 2024)
+    assert got.reply_to_msg_id == 99
+    assert got.forward_origin == {
+        "@type": "messageOriginChannel",
+        "chat_id": -1001234567890,
+        "message_id": 5,
+        "author_signature": "Anon",
+    }
+    assert got.via_bot_user_id == 777
+    assert got.media_album_id == 1234567890
+    assert got.is_pinned is False
+
+
+async def test_in_mem_roundtrip_pr9_extra_fields_default_none(in_mem_repo):
+    """PR #9:旧数据(无新字段)读出来 4 个新字段都默认 None / False。
+
+    msg_id 用 4242 避开 fixture 已有消息。模拟 v1.3.0 时代的旧消息。
+    """
+    msg = make_message(channel_id=100, msg_id=4243)
+    # make_message 用 base,没设新字段,默认值 = None / False
+    await in_mem_repo.save_message(msg)
+    rows = await in_mem_repo.list_messages(channel_ids=[100])
+    got = next(r for r in rows if r.telegram_msg_id == 4243)
+    assert got.reply_to_msg_id is None
+    assert got.forward_origin is None
+    assert got.via_bot_user_id is None
+    assert got.media_album_id is None
+    assert got.is_pinned is False
+
+
+async def test_jsonl_roundtrip_pr9_extra_fields_default_none(jsonl_repo):
+    """PR #9:Jsonl 旧数据读出来 4 个新字段都默认 None / False。
+
+    backward-compat 测试 —— 如果 v1.3.0 的 .jsonl 文件被新代码读,
+    新字段必须静默回退到默认值,不能 raise KeyError。
+    """
+    msg = make_message(channel_id=200, msg_id=2025)
+    await jsonl_repo.save_message(msg)
+    rows = await jsonl_repo.list_messages(channel_ids=[200])
+    got = next(r for r in rows if r.telegram_msg_id == 2025)
+    assert got.reply_to_msg_id is None
+    assert got.forward_origin is None
+    assert got.via_bot_user_id is None
+    assert got.media_album_id is None
+    assert got.is_pinned is False

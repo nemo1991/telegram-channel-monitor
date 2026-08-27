@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+### ✨ Added
+- **TDLib Message 5 个 v1.3.0 丢弃字段补齐(PR #9)** — `_map_message`
+  (`tdlib_messages.py`) 之前只读 7 个字段,详情面板的「回复」「转发链」
+  「via bot」一直空白。本次补齐:
+  - `reply_to_msg_id`(已存在,仅是 mapping + 后端 roundtrip 校验)
+  - `forward_origin`(TDLib `messageOrigin*` TDLibObject 扁平化为 dict;
+    `_normalize_forward_origin()` 只展开 4 个常见 type
+    `messageOriginUser`/`Channel`/`HiddenUser`/`Chat`,未知 type
+    降级保留 `@type` 不展开 — 防 leak 私有字段)
+  - `via_bot_user_id` / `media_album_id` / `is_pinned`
+  - **DTO 默认值**:`reply_to_msg_id` / `forward_origin` /
+    `via_bot_user_id` / `media_album_id = None`,`is_pinned = False`
+  - **4 后端持久化**:Jsonl + InMemory 直接加 key;Drizzle SQL
+    `ALTER TABLE messages ADD COLUMN IF NOT EXISTS forward_origin JSONB`
+    `via_bot_user_id BIGINT` `media_album_id BIGINT`
+    `is_pinned BOOLEAN NOT NULL DEFAULT FALSE`(`init_schema()` 启动时执行)
+  - **Mongo 无迁移**(schema-less,doc 直接加 key)
+  - **测试覆盖**:12 个(`_map_message` 单测覆盖 5 字段 × 老数据默认 +
+    `forward_origin` 4 种 type + unknown fallback + 后端 roundtrip
+    InMemory + Jsonl 各 4 个 — 默认值 / populated 双向 + 老数据兼容)
+
 ### 🐛 Fixed
 - **导出分页 bug:>500 条消息静默截断(PR #12)** — `ExportService._run_messages`
   之前硬编码 `break` 在第一页 500 行后,任何大频道导出(10k+ 消息)都只看到前
