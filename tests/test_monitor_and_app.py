@@ -8,8 +8,14 @@ from typing import AsyncIterator
 import pytest
 
 from tests.conftest import make_message
-from tgmonitor.core.dto import MediaDTO, MessageDTO, ReactionDTO
-from tgmonitor.core.events import MessageInteractionsChanged
+from tgmonitor.core.dto import (
+    MediaDownloadStatus,
+    MediaDTO,
+    MediaType,
+    MessageDTO,
+    ReactionDTO,
+)
+from tgmonitor.core.events import MessageDeleted, MessageInteractionsChanged
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
@@ -1227,4 +1233,121 @@ async def test_monitor_interactions_handler_swallows_errors(
         await asyncio.sleep(0)
     finally:
         monitor.storage = original
+        await monitor.stop()
+
+
+# ============================================================
+# 2026-08-27 v1.4.0 PR #11:`MessageDeleted` 路由 → monitor 删 row + 清孤儿
+# bytes。`delete_message` 已存在(用户主动删);新增 `_handle_message_deleted`
+# 订阅总线事件,语义同但**不** republish(避免无限循环)。
+# ============================================================
+
+
+async def test_monitor_handles_message_deleted_removes_row(
+    monitor, storage, client, bus
+) -> None:
+    """PR #11:publish MessageDeleted → storage.delete_message 被调,row 真删。"""
+    monitor.set_whitelist([100])
+    await monitor.start()
+    try:
+        base = MessageDTO(
+            id=0, channel_id=100, telegram_msg_id=99,
+            date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            text="x", author="alice", media=[],
+        )
+        await storage.save_message(base)
+        # 确认初始存在
+        assert await storage.get_message(100, 99) is not None
+        await bus.publish(MessageDeleted(channel_id=100, telegram_msg_id=99))
+        await asyncio.sleep(0)
+        # row 已删
+        assert await storage.get_message(100, 99) is None
+    finally:
+        await monitor.stop()
+
+
+async def test_monitor_delete_handler_swallows_errors(
+    monitor, storage, client, bus
+) -> None:
+    """PR #11:storage 抛异常时 handler 不抛回 bus。"""
+    await monitor.start()
+
+    class BoomStorage:
+        async def get_message(self, *a, **kw):
+            raise RuntimeError("simulated")
+
+    original = monitor.storage
+    monitor.storage = BoomStorage()
+    try:
+        await bus.publish(MessageDeleted(channel_id=100, telegram_msg_id=1))
+        await asyncio.sleep(0)
+        # 异常被吞,不冒泡;后续其它订阅者继续工作
+    finally:
+        monitor.storage = original
+        await monitor.stop()
+
+
+async def test_monitor_delete_handler_does_not_republish(
+    monitor, storage, client, bus
+) -> None:
+    """PR #11:`_handle_message_deleted` 不 republish MessageDeleted(防无限循环)。
+
+    监听总线计数 publish 次数 — 只能有我们主动 publish 的那 1 次。
+    """
+    await monitor.start()
+    published: list = []
+
+    async def _listener(event):
+        published.append(event)
+
+    bus.subscribe(MessageDeleted, _listener)
+    try:
+        # 注意:listener 在 monitor 之前 subscribe(EventBus 按订阅顺序执行);
+        # monitor 自己用 _handle_message_deleted 也订阅,publish 次数不叠加 ——
+        # 因为 monitor 的 handler 不调 publish。
+        await bus.publish(MessageDeleted(channel_id=100, telegram_msg_id=1))
+        await asyncio.sleep(0)
+        # 仅 1 次(我们 publish 的那 1 次)
+        assert len(published) == 1
+    finally:
+        bus.unsubscribe(MessageDeleted, _listener)
+        await monitor.stop()
+
+
+async def test_monitor_delete_handler_clears_orphan_bytes(
+    monitor, storage, client, objectstore, bus
+) -> None:
+    """PR #11:删消息时,refcount=0 的 object_key 同步删 bytes。
+
+    只有该 message 引用该 key → refcount 归 0 → objectstore 真删。
+    """
+    monitor.set_whitelist([100])
+    await monitor.start()
+    try:
+        # 直接写一个 object key 到 objectstore
+        med = MediaDTO(
+            type=MediaType.PHOTO,
+            mime_type="image/jpeg",
+            file_name="orphan.jpg",
+            file_size=10,
+            object_key="media/orphan.jpg",
+            object_backend="local",
+            download_status=MediaDownloadStatus.DONE,
+        )
+        msg = MessageDTO(
+            id=0, channel_id=100, telegram_msg_id=77,
+            date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+            text="x", author="alice", media=[med],
+        )
+        await storage.save_message(msg)
+        # objectstore 里存一份
+        await objectstore.put("media/orphan.jpg", b"orphan-bytes")
+        assert await objectstore.exists("media/orphan.jpg")
+        # 删消息
+        await bus.publish(MessageDeleted(channel_id=100, telegram_msg_id=77))
+        await asyncio.sleep(0)
+        # row 没了,bytes 也没了
+        assert await storage.get_message(100, 77) is None
+        assert not await objectstore.exists("media/orphan.jpg")
+    finally:
         await monitor.stop()

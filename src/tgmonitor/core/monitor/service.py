@@ -163,6 +163,9 @@ class MonitorService:
         # TDLib 高频推 updateMessageInteractionInfo,落库走 bus → 单点 +
         # 订阅者异常被吞,比 stream 更安全。
         self.bus.subscribe(MessageInteractionsChanged, self._handle_interactions_changed)
+        # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
+        # 减 object_key refcount,与 `delete_message` 路径同语义。
+        self.bus.subscribe(MessageDeleted, self._handle_message_deleted)
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
         if self.downloader is not None:
             self._download_queue = asyncio.Queue()
@@ -550,36 +553,62 @@ class MonitorService:
         做一次 refcount 检查(`_count_media_with_object_key`),refcount=0 时
         才 `objects.delete(key)`,避免误删跨消息去重场景下其它 message 还在
         用的 bytes。清理失败只 log,不阻断删除。
+
+        2026-08-27 PR #11:走 `_delete_with_orphan_check` 复用;publish 仍在
+        这里(AppService 用户触发的删除需要通知 UI)。
         """
-        old = await self.storage.get_message(channel_id, telegram_msg_id)
-        await self.storage.delete_message(channel_id, telegram_msg_id)
-        if old:
-            for med in old.media:
-                key = med.object_key
-                if not key:
-                    continue
-                try:
-                    # 2026-08-25 PR #3:refcount 下沉到 storage 后端
-                    # (SQL count / Mongo aggregate / InMemory / Jsonl 顺序扫)。
-                    n = await self.storage.count_media_by_object_key(key)
-                except Exception:  # noqa: BLE001
-                    log.exception("count media by key failed: %s", key)
-                    continue
-                if n == 0 and self.objects is not None:
-                    try:
-                        await self.objects.delete(key)
-                        log.info(
-                            "monitor delete orphan bytes: channel=%s msg=%s key=%s",
-                            channel_id, telegram_msg_id, key,
-                        )
-                    except Exception:  # noqa: BLE001
-                        log.warning(
-                            "monitor delete bytes %s failed (already gone?)", key,
-                            exc_info=True,
-                        )
+        await self._delete_with_orphan_check(channel_id, telegram_msg_id)
         await self.bus.publish(
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
+
+    async def _handle_message_deleted(self, event: MessageDeleted) -> None:
+        """2026-08-27 v1.4.0 PR #11:TDLib `updateDeleteMessages` → 落库删 row +
+        清孤儿 bytes。**不**再 publish(避免与发布者形成无限循环)。
+        """
+        try:
+            await self._delete_with_orphan_check(event.channel_id, event.telegram_msg_id)
+        except Exception as e:  # noqa: BLE001
+            log.exception("handle MessageDeleted failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.delete",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _delete_with_orphan_check(
+        self, channel_id: int, telegram_msg_id: int,
+    ) -> None:
+        """PR #11:删 row + 清孤儿 bytes 核心逻辑,与 AppService.delete_message 共享。"""
+        old = await self.storage.get_message(channel_id, telegram_msg_id)
+        await self.storage.delete_message(channel_id, telegram_msg_id)
+        if not old:
+            return
+        for med in old.media:
+            key = med.object_key
+            if not key:
+                continue
+            try:
+                # 2026-08-25 PR #3:refcount 下沉到 storage 后端
+                # (SQL count / Mongo aggregate / InMemory / Jsonl 顺序扫)。
+                n = await self.storage.count_media_by_object_key(key)
+            except Exception:  # noqa: BLE001
+                log.exception("count media by key failed: %s", key)
+                continue
+            if n == 0 and self.objects is not None:
+                try:
+                    await self.objects.delete(key)
+                    log.info(
+                        "monitor delete orphan bytes: channel=%s msg=%s key=%s",
+                        channel_id, telegram_msg_id, key,
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "monitor delete bytes %s failed (already gone?)", key,
+                        exc_info=True,
+                    )
 
     async def _handle_interactions_changed(
         self, event: MessageInteractionsChanged,

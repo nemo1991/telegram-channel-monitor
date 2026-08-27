@@ -8,6 +8,20 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **TDLib `updateDeleteMessages` 处理器(PR #11)** — TG 端撤回 / 删除
+  消息此前不订阅,落库消息永远存在,LIVE view / dashboard 计数被污染。
+  本次落地:
+  - `tdlib_client._on_delete_messages` 注册 `updateDeleteMessages` 派发,
+    经 `bus.publish(MessageDeleted(...))` 每条 msg_id 单独 publish
+    (UI 订阅端粒度更细)
+  - `MonitorService` 订阅 `MessageDeleted` → `_handle_message_deleted` →
+    `_delete_with_orphan_check`(删 row + 减 object_key refcount,refcount=0
+    才清孤儿 bytes)复用 `delete_message` 已有的清理逻辑
+  - `_handle_message_deleted` **不** republish(防无限循环);
+    用户主动删走 `delete_message` 仍按原流程 publish(发 UI toast)
+  - **测试覆盖**:4 个(`MessageDeleted` → row 删除 / 异常被吞 /
+    不 republish 防回环 / refcount=0 时同步清 bytes)
+
 - **TDLib `updateMessageInteractionInfo` 处理器(PR #10)** —
   reactions + views 增量更新此前不订阅,UI 永远显示陈年数据。本次落地:
   - 新 DTO `ReactionDTO`(type / emoji / count / is_chosen)+ `MessageDTO.reactions`

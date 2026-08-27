@@ -231,6 +231,11 @@ class TdlibTelegramClient(_AiClient):
             self._on_message_interactions,
             update_type="updateMessageInteractionInfo",
         )
+        # 消息撤回 / 删除(2026-08-27 v1.4.0 PR #11)— TG 端删消息也同步落库
+        self.add_event_handler(
+            self._on_delete_messages,
+            update_type="updateDeleteMessages",
+        )
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
         async def _on_any_update(client_self, update) -> None:
@@ -523,6 +528,48 @@ class TdlibTelegramClient(_AiClient):
             ))
         except Exception:  # noqa: BLE001
             log.exception("publish MessageInteractionsChanged failed")
+
+    async def _on_delete_messages(self, client_self, update) -> None:
+        """TDLib `updateDeleteMessages`(2026-08-27 v1.4.0 PR #11)
+        — TG 端撤回 / 删除消息推送;目前无 handler,落库消息永远存在,
+        LIVE view / dashboard 计数被污染。
+
+        通过 bus 发 `MessageDeleted`(循环发布,每条 msg_id 一条)。MonitorService
+        订阅并落库删 row + 减 object_key refcount。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            msg_ids = getattr(update, "message_ids", None)
+            if chat_id is None or not msg_ids:
+                log.debug(
+                    "updateDeleteMessages missing identifiers: %r",
+                    getattr(update, "@type", type(update).__name__),
+                )
+                return
+            log.info(
+                "updateDeleteMessages: chat=%s count=%d", chat_id, len(msg_ids),
+            )
+            if self._bus is not None:
+                # 每条 msg_id 单独 publish — UI 订阅端粒度更细。
+                asyncio.create_task(self._safe_publish_bulk_delete(
+                    int(chat_id), [int(m) for m in msg_ids],
+                ))
+        except Exception:  # noqa: BLE001
+            log.exception("updateDeleteMessages handling failed")
+
+    async def _safe_publish_bulk_delete(
+        self, chat_id: int, msg_ids: list[int],
+    ) -> None:
+        try:
+            from tgmonitor.core.events import MessageDeleted
+            assert self._bus is not None
+            for mid in msg_ids:
+                await self._bus.publish(MessageDeleted(
+                    channel_id=chat_id,
+                    telegram_msg_id=mid,
+                ))
+        except Exception:  # noqa: BLE001
+            log.exception("publish bulk MessageDeleted failed")
 
     async def _safe_publish_conn_state(self, state: str) -> None:
         try:
