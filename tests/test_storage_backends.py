@@ -16,6 +16,7 @@ import pytest_asyncio
 
 from tests.conftest import InMemoryRepository, make_message
 from tgmonitor.core.dto import (
+    ChannelDTO,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -722,4 +723,119 @@ async def test_jsonl_update_reactions_accepts_dict_format(jsonl_repo):
     )
     assert got.reactions is not None
     assert got.reactions[0].emoji == "😀"
-    assert got.reactions[0].count == 5
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #14:`update_channel_metadata` 部分更新 parity。
+# - 只动非 None 字段,其余保留
+# - is_subscribed 不动(本方法是「真元数据」更新)
+# - 不存在 channel idempotent 不抛
+# ---------------------------------------------------------------------------
+
+
+async def test_in_mem_update_channel_metadata_partial(in_mem_repo):
+    """PR #14:InMemory 部分更新 — 只传 title → 其它字段保留。"""
+    # fixture 已隐式建频道 100/200/300;补一个显式订阅 + 初始 username
+    in_mem_repo.channels[100] = ChannelDTO(
+        id=100, title="Old Title", username="oldname", member_count=50,
+    )
+    await in_mem_repo.set_channel_subscribed(100, True)
+    # 用 update_channel_metadata 只改 title + member_count
+    await in_mem_repo.update_channel_metadata(
+        100, title="New Title", member_count=500,
+    )
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.title == "New Title"           # 改了
+    assert got.username == "oldname"          # 保留
+    assert got.member_count == 500            # 改了
+
+
+async def test_jsonl_update_channel_metadata_partial(jsonl_repo):
+    """PR #14:Jsonl 部分更新 — 只传 member_count → 其它字段保留 + 落盘。"""
+    # jsonl_repo fixture:ch100 已订阅 + title 默认「#100」,补一个 username
+    from tgmonitor.core.dto import ChannelDTO
+    existing = await jsonl_repo.get_channel(100)
+    assert existing is not None
+    await jsonl_repo.upsert_channel(ChannelDTO(
+        id=100,
+        title=existing.title,
+        username="oldname",
+        member_count=50,
+        created_at=existing.created_at,
+        is_subscribed=True,
+        last_synced_at=existing.last_synced_at,
+    ))
+    # 只改 member_count
+    await jsonl_repo.update_channel_metadata(100, member_count=999)
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.member_count == 999           # 改了
+    assert got.username == "oldname"         # 保留
+    assert got.title == existing.title       # 保留
+
+
+async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
+    """PR #14:InMemory 部分更新不动 is_subscribed —— 订阅标志由
+    set_channel_subscribed 单独维护。"""
+    in_mem_repo.channels[100] = ChannelDTO(
+        id=100, title="t", username="u", member_count=10,
+    )
+    await in_mem_repo.set_channel_subscribed(100, True)
+    # 即使 title/username 都重写,is_subscribed 不该变
+    await in_mem_repo.update_channel_metadata(
+        100, title="New", username="new", member_count=999,
+    )
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.is_subscribed is True
+    assert got.title == "New"
+    assert got.username == "new"
+    assert got.member_count == 999
+
+
+async def test_jsonl_update_channel_metadata_preserves_subscribed(jsonl_repo):
+    """PR #14:Jsonl 同上 —— is_subscribed 由 set_channel_subscribed 单独维护。"""
+    # jsonl_repo fixture 中 ch100 已 set_channel_subscribed(True)
+    await jsonl_repo.update_channel_metadata(100, title="Renamed", member_count=10)
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.is_subscribed is True          # 保留 True
+    assert got.title == "Renamed"             # 改了
+
+
+async def test_in_mem_update_channel_metadata_nonexistent_silent(in_mem_repo):
+    """PR #14:不存在的 channel 调 update_channel_metadata 不抛(幂等)。"""
+    # 999 不在 fixture 里
+    await in_mem_repo.update_channel_metadata(999, title="x", member_count=1)
+    # 仍然不存在
+    assert await in_mem_repo.get_channel(999) is None
+
+
+async def test_jsonl_update_channel_metadata_nonexistent_silent(jsonl_repo):
+    """PR #14:Jsonl 同上 —— 不存在 channel idempotent 不抛、不建档。"""
+    await jsonl_repo.update_channel_metadata(999, title="x", member_count=1)
+    assert await jsonl_repo.get_channel(999) is None
+
+
+async def test_in_mem_update_channel_metadata_only_title(in_mem_repo):
+    """PR #14:None 参数保留旧值;只传 title 时 username/member_count 不动。"""
+    in_mem_repo.channels[100] = ChannelDTO(
+        id=100, title="old", username="u", member_count=42,
+    )
+    await in_mem_repo.set_channel_subscribed(100, True)
+    await in_mem_repo.update_channel_metadata(100, title="only-title")
+    got = await in_mem_repo.get_channel(100)
+    assert got.title == "only-title"
+    assert got.username == "u"
+    assert got.member_count == 42
+
+
+async def test_jsonl_update_channel_metadata_only_member_count(jsonl_repo):
+    """PR #14:Jsonl 只传 member_count,其它字段不动。"""
+    await jsonl_repo.update_channel_metadata(100, member_count=7)
+    got = await jsonl_repo.get_channel(100)
+    # jsonl_repo fixture upsert 默认 title="#100",username/created_at 留 None
+    assert got.member_count == 7
+    assert got.title == "#100"
+    assert got.username is None

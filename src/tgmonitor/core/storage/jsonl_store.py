@@ -348,6 +348,35 @@ class JsonlFileStore(StorageRepository):
         self._channels[channel.id] = merged
         self._flush_registry()
 
+    async def update_channel_metadata(
+        self,
+        channel_id: int,
+        *,
+        title: str | None = None,
+        username: str | None = None,
+        member_count: int | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #14:Jsonl 部分更新 — 只动非 None 字段,
+        其余保留旧值。is_subscribed 不动(本方法是「真元数据」更新)。"""
+        existing = self._channels.get(channel_id)
+        if existing is None:
+            return  # 不存在 idempotent 不抛
+        merged = ChannelDTO(
+            id=existing.id,
+            title=title if title is not None else existing.title,
+            username=username if username is not None else existing.username,
+            kind=existing.kind,
+            member_count=(
+                member_count if member_count is not None
+                else existing.member_count
+            ),
+            created_at=existing.created_at,
+            is_subscribed=existing.is_subscribed,
+            last_synced_at=existing.last_synced_at,
+        )
+        self._channels[channel_id] = merged
+        self._flush_registry()
+
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:

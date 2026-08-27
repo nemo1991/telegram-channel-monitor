@@ -238,6 +238,25 @@ class ChannelSyncDone(Event):
     result: object = None        # SyncResult(避免循环 import,用 object 占位)
 
 
+@dataclass
+class ChannelMetadataChanged(Event):
+    """2026-08-27 v1.4.0 PR #14:TDLib `updateChannel` / `updateSupergroup`
+    → 频道元数据变更(title / username / member_count)。
+
+    部分字段语义:
+    - 任一字段为 None 表示本 update 没动该字段(只更新其它字段)
+    - `supergroup_id`:TG 内部 supergroup id(对应 TDLib `updateSupergroup`),
+      MonitorService 据此查 `channels.username` 拿到 channel_id
+    """
+    channel_id: int = 0
+    title: str | None = None
+    username: str | None = None
+    member_count: int | None = None
+    # 2026-08-27 PR #14:`updateSupergroup` 推送时只有 supergroup_id,
+    # channel_id 由 monitor 通过 username 关联得到。
+    supergroup_id: int | None = None
+
+
 # ---------- Bus ----------
 
 Subscriber = Callable[[Any], Awaitable[None]]

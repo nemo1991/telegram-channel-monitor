@@ -22,6 +22,8 @@ from typing import Iterable
 from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.core.events import (
+    ChannelMetadataChanged,
+    ConnectionStateChanged,
     ErrorOccurred,
     EventBus,
     MediaDownloaded,
@@ -166,6 +168,10 @@ class MonitorService:
         # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
         # 减 object_key refcount,与 `delete_message` 路径同语义。
         self.bus.subscribe(MessageDeleted, self._handle_message_deleted)
+        # 2026-08-27 v1.4.0 PR #14:订阅频道元数据变更事件。`updateChannel`
+        # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
+        self.bus.subscribe(ChannelMetadataChanged, self._handle_channel_metadata)
+        self.bus.subscribe(ConnectionStateChanged, self._handle_connection_state)
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
         if self.downloader is not None:
             self._download_queue = asyncio.Queue()
@@ -640,6 +646,87 @@ class MonitorService:
             await self.bus.publish(
                 ErrorOccurred(
                     source="monitor.interactions",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _handle_channel_metadata(
+        self, event: ChannelMetadataChanged,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #14:频道元数据增量更新落库。
+
+        `updateChannel` 推时 `channel_id` 已就绪,直接落库;`updateSupergroup`
+        推时只有 `supergroup_id`,需通过 username 反查 channel_id
+        (storage 现存 — InMemory/Jsonl/Postgres/Mongo 都按 username 找)。
+        """
+        try:
+            if event.channel_id == 0 and event.supergroup_id is not None:
+                # supergroup_id → username(由 storage 反查)。无图源,
+                # 实际生效路径:username 相同 → 找到 channel → 落库。
+                # 这里走简单策略:用 storage.list_channels() 扫描找匹配的
+                # username。生产可加索引;MVP 接受 O(N) 扫。
+                # v1.4.0 MVP:仅 username 不为 None 时反查。
+                if event.username:
+                    for c in await self.storage.list_channels():
+                        if c.username == event.username:
+                            await self.storage.update_channel_metadata(
+                                c.id,
+                                title=event.title,
+                                username=event.username,
+                                member_count=event.member_count,
+                            )
+                            log.debug(
+                                "channel metadata updated via supergroup: "
+                                "channel=%s member_count=%s",
+                                c.id, event.member_count,
+                            )
+                            return
+                # 没找到匹配 username → 静默(可能 TDLib 推了陌生 supergroup)
+                return
+            if event.channel_id == 0:
+                return  # 无 channel_id 又无 username,跳过
+            await self.storage.update_channel_metadata(
+                event.channel_id,
+                title=event.title,
+                username=event.username,
+                member_count=event.member_count,
+            )
+            log.debug(
+                "channel metadata updated: channel=%s title=%r username=%r "
+                "member_count=%s",
+                event.channel_id, event.title, event.username,
+                event.member_count,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("handle ChannelMetadataChanged failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.channel_metadata",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _handle_connection_state(
+        self, event: ConnectionStateChanged,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #14:reconnect → 立即触发 backfill,不等 30s tick。
+
+        state=`ready` 时 kick `_backfill_all_subscribed`,并设 `_skip_next_tick`
+        避免 tick 紧接着又跑一次造成回拉重复。
+        """
+        if event.state != "ready":
+            return
+        try:
+            log.info("connection ready — kicking immediate backfill")
+            self._skip_next_tick = True
+            await self._backfill_all()
+        except Exception as e:  # noqa: BLE001
+            log.exception("immediate backfill on reconnect failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.backfill_kick",
                     message=str(e),
                     exception=e,
                 )

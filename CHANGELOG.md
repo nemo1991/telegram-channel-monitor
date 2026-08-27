@@ -8,6 +8,29 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **TDLib `updateChannel` / `updateSupergroup` 处理器 + reconnect 立即
+  backfill(PR #14)** — 频道 metadata 改后永远停在首次 sync;reconnect
+  后最长等 30s 数据 gap。本次落地:
+  - 新事件 `ChannelMetadataChanged(channel_id, title, username, member_count, supergroup_id)`
+    + 新 abstract `StorageRepository.update_channel_metadata(channel_id, *, title=None,
+    username=None, member_count=None)` — 部分更新语义(只动非 None 字段,
+    `is_subscribed` 由 `set_channel_subscribed` 单独维护保持不变)
+  - `tdlib_client` 注册 `updateChannel` + `updateSupergroup` 派发:
+    `_on_channel_updated` / `_on_supergroup_updated` → `_safe_publish_*`
+    → `bus.publish(ChannelMetadataChanged(...))`
+  - `MonitorService._handle_channel_metadata`:有 `channel_id` → 直接落库;
+    仅 `supergroup_id`(TDLib 推送常用形态)+ `username` → 扫描
+    `list_channels()` 找匹配的 username 反查 channel_id;未匹配静默 skip
+  - `MonitorService._handle_connection_state`:state == `ready` →
+    立即 `_backfill_all()` + 设 `_skip_next_tick = True`,避免 30s
+    tick 紧接着又跑一次造成回拉重复;非 ready state 不动 backfill
+  - 4 后端 partial update 实现:Postgres `COALESCE($N, 列名)` 形式,
+    Mongo `$set` 子集 dict,Jsonl + InMemory 在内存里保留旧字段只 override
+    非 None 项
+  - **测试覆盖**:8 个 parity(InMemory + Jsonl 各 4 个:部分更新保留 /
+    保留 subscribed / 不存在 silent / 单字段更新)+ 6 个 monitor 路由
+    (ChannelMetadataChanged 落库 / 空 payload skip / 异常吞 /
+    不 republish 防回环 / `ready` kick backfill / 非 ready 不 kick)
 - **TDLib `updateDeleteMessages` 处理器(PR #11)** — TG 端撤回 / 删除
   消息此前不订阅,落库消息永远存在,LIVE view / dashboard 计数被污染。
   本次落地:

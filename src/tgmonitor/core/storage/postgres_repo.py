@@ -237,6 +237,30 @@ class PostgresRepository(StorageRepository):
                 channel.last_synced_at,
             )
 
+    async def update_channel_metadata(
+        self,
+        channel_id: int,
+        *,
+        title: str | None = None,
+        username: str | None = None,
+        member_count: int | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #14:Postgres 部分更新 — `COALESCE($N, 列名)`
+        把 None 映射成「保留旧值」,只动传入字段。
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE channels SET
+                    title        = COALESCE($1, title),
+                    username     = COALESCE($2, username),
+                    member_count = COALESCE($3, member_count)
+                WHERE id = $4
+                """,
+                title, username, member_count, channel_id,
+            )
+
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:

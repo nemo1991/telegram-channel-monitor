@@ -236,6 +236,15 @@ class TdlibTelegramClient(_AiClient):
             self._on_delete_messages,
             update_type="updateDeleteMessages",
         )
+        # 频道元数据增量更新(2026-08-27 v1.4.0 PR #14)
+        self.add_event_handler(
+            self._on_channel_updated,
+            update_type="updateChannel",
+        )
+        self.add_event_handler(
+            self._on_supergroup_updated,
+            update_type="updateSupergroup",
+        )
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
         async def _on_any_update(client_self, update) -> None:
@@ -570,6 +579,94 @@ class TdlibTelegramClient(_AiClient):
                 ))
         except Exception:  # noqa: BLE001
             log.exception("publish bulk MessageDeleted failed")
+
+    async def _on_channel_updated(self, client_self, update) -> None:
+        """TDLib `updateChannel`(2026-08-27 v1.4.0 PR #14):频道元数据
+        增量更新(title / username)。TDLib 推 channel chat 完整对象,
+        `chat.id` = `channel_id`(Telegram chat_id)。
+
+        直接通过 bus 发 `ChannelMetadataChanged`,MonitorService 订阅
+        落库 + UI 实时刷新。
+        """
+        try:
+            channel = getattr(update, "channel", None)
+            if channel is None:
+                return
+            cid = getattr(channel, "id", None)
+            if cid is None:
+                return
+            new_title = getattr(channel, "title", None)
+            new_username = getattr(channel, "username", None)
+            log.debug(
+                "updateChannel: id=%s title=%r username=%r",
+                cid, new_title, new_username,
+            )
+            if self._bus is not None:
+                asyncio.create_task(self._safe_publish_channel_metadata(
+                    channel_id=int(cid),
+                    title=new_title, username=new_username,
+                    member_count=None,
+                ))
+        except Exception:  # noqa: BLE001
+            log.exception("updateChannel handling failed")
+
+    async def _on_supergroup_updated(self, client_self, update) -> None:
+        """TDLib `updateSupergroup`(2026-08-27 v1.4.0 PR #14):supergroup
+        元数据增量更新(member_count 改、username 改等)。
+
+        注意:`updateSupergroup` 只携带 supergroup_id,**不**含 channel_id —
+        monitor 端要做 supergroup_id ↔ channel_id 映射落库。这一层只在
+        bus 上 publish `(supergroup_id=, member_count=, username=)`;具体
+        落到哪个 channel_id 由 MonitorService 决定。
+        """
+        try:
+            supergroup = getattr(update, "supergroup", None)
+            if supergroup is None:
+                return
+            sid = getattr(supergroup, "id", None)
+            if sid is None:
+                return
+            member_count = getattr(supergroup, "member_count", None)
+            username = getattr(supergroup, "username", None)
+            log.debug(
+                "updateSupergroup: id=%s member_count=%s username=%r",
+                sid, member_count, username,
+            )
+            if self._bus is not None:
+                asyncio.create_task(self._safe_publish_supergroup_metadata(
+                    supergroup_id=int(sid),
+                    member_count=member_count, username=username,
+                ))
+        except Exception:  # noqa: BLE001
+            log.exception("updateSupergroup handling failed")
+
+    async def _safe_publish_channel_metadata(
+        self, channel_id: int, title: str | None, username: str | None,
+        member_count: int | None,
+    ) -> None:
+        try:
+            from tgmonitor.core.events import ChannelMetadataChanged
+            assert self._bus is not None
+            await self._bus.publish(ChannelMetadataChanged(
+                channel_id=channel_id,
+                title=title, username=username, member_count=member_count,
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("publish ChannelMetadataChanged failed")
+
+    async def _safe_publish_supergroup_metadata(
+        self, supergroup_id: int, member_count: int | None, username: str | None,
+    ) -> None:
+        try:
+            from tgmonitor.core.events import ChannelMetadataChanged
+            assert self._bus is not None
+            await self._bus.publish(ChannelMetadataChanged(
+                channel_id=0,  # 0 = monitor 通过 supergroup_id 解析
+                supergroup_id=supergroup_id,
+                title=None, username=username, member_count=member_count,
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("publish supergroup ChannelMetadataChanged failed")
 
     async def _safe_publish_conn_state(self, state: str) -> None:
         try:

@@ -267,6 +267,30 @@ class StorageRepository(ABC):
         """
         ...
 
+    # ---- 频道元数据(2026-08-27 v1.4.0 PR #14) ----
+
+    @abstractmethod
+    async def update_channel_metadata(
+        self,
+        channel_id: int,
+        *,
+        title: str | None = None,
+        username: str | None = None,
+        member_count: int | None = None,
+    ) -> None:
+        """部分更新频道元数据(2026-08-27 PR #14)。
+
+        TDLib `updateChannel` / `updateSupergroup` 推送可能只动 1 个字段
+        (如 member_count 改、title 不变);`title=None` 表示不动 title。
+
+        与 `upsert_channel_metadata` 不同:本方法**只**动传入字段(其它字段
+        保留旧值);`upsert_channel_metadata` 是覆盖式写入全字段。
+
+        不存在频道 idempotent 不抛(TDLib 偶发对陈年 channel 推 metadata
+        update,落库时机晚于本 update 时跳过即可)。
+        """
+        ...
+
     # ---- 健康检查 ----
 
     @abstractmethod

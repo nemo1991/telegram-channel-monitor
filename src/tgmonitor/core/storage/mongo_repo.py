@@ -211,6 +211,31 @@ class MongoRepository(StorageRepository):
             upsert=True,
         )
 
+    async def update_channel_metadata(
+        self,
+        channel_id: int,
+        *,
+        title: str | None = None,
+        username: str | None = None,
+        member_count: int | None = None,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #14:Mongo `$set` 子集 — 只在传入字段上 $set,
+        缺省 None 字段不进 dict(保留旧值)。0 rows matched 是合法的
+        (TDLib 偶发对陈年 channel 推 metadata update)。"""
+        update: dict[str, Any] = {}
+        if title is not None:
+            update["title"] = title
+        if username is not None:
+            update["username"] = username
+        if member_count is not None:
+            update["member_count"] = member_count
+        if not update:
+            return
+        await self.db.channels.update_one(
+            {"_id": channel_id},
+            {"$set": update},
+        )
+
     async def set_channel_subscribed(
         self, channel_id: int, subscribed: bool
     ) -> None:
