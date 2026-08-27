@@ -160,6 +160,7 @@ class InMemoryRepository(StorageRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[MessageDTO]:
         out = []
         for m in self.messages.values():
@@ -176,8 +177,18 @@ class InMemoryRepository(StorageRepository):
         # 它们各自处理 tzinfo,不在 conftest 范围。
         out.sort(key=lambda m: (m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC), m.id))
         # `limit` = 最近 N 条:取排序尾部,仍按时间升序返回(与各存储后端对齐)。
+        # `offset` (v1.4.0 PR #12):从尾部跳过 offset 再取 limit。
         if limit is not None and limit > 0:
-            out = out[-limit:]
+            if offset > 0:
+                # offset 超过数据长度 → 整页空;否则取 [end-limit, end) 区间。
+                if offset >= len(out):
+                    out = []
+                else:
+                    end = len(out) - offset
+                    start = max(0, end - limit)
+                    out = out[start:end]
+            else:
+                out = out[-limit:]
         return out
 
     async def count_messages(self, channel_id: int) -> int:

@@ -94,6 +94,11 @@ class ExportService:
             channels = all_channels
 
         # 流式分页拉取(分页上限 PAGE_SIZE,累加并按时间排序)
+        #
+        # 2026-08-27 v1.4.0 PR #12:list_messages `limit` 语义是「最近 N 条」
+        # (取排序尾部);要向前翻历史页就靠 `offset` 从尾部继续跳过。
+        # 翻页方向:offset 0 → PAGE_SIZE → 2*PAGE_SIZE → ...
+        # 翻页终止:batch < PAGE_SIZE(到顶了)/ offset 超 10M 兜底。
         all_messages: list = []
         offset = 0
         channel_ids = list(channels.keys())
@@ -103,6 +108,7 @@ class ExportService:
                 date_from=request.date_from,
                 date_to=request.date_to,
                 limit=PAGE_SIZE,
+                offset=offset,
             )
             if not batch:
                 break
@@ -112,12 +118,13 @@ class ExportService:
                 ExportProgress(request_id=req_id, written=offset, total=None)
             )
             yield
-            # 防死循环:batch 未推进则退出
+            # 最后一页:不足 PAGE_SIZE 说明数据耗尽。
             if len(batch) < PAGE_SIZE:
                 break
-            # 简化:本次实现拉完一批即停止(后续可扩展真分页游标)
-            # 注:`list_messages` 当前实现未原生支持 offset/after-id,留待仓储扩展
-            break
+            # 死循环兜底:offset 已超数据上限(防 storage 端 race / bug)。
+            if offset > 10_000_000:
+                log.error("export pagination 超 10M 退出,channel_ids=%s", channel_ids)
+                break
 
         all_messages.sort(key=lambda m: (m.date or datetime.min, str(m.id)))
 

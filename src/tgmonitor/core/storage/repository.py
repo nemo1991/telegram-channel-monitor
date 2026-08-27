@@ -141,10 +141,14 @@ class StorageRepository(ABC):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[MessageDTO]:
         """按时间升序返回。两实现必须排序一致。
 
         `limit`:只返回**最近** N 条(取排序尾部,仍按时间升序)。
+        `offset`:跳过前 N 条(2026-08-27 v1.4.0 PR #12 — export 真分页)。
+        `offset` 与 `limit` 组合:跳过 offset 后取 limit 条(从尾取仍升序)。
+        注意:`offset` 是相对排序后的位置,与 channel_ids 顺序无关。
         """
         ...
 

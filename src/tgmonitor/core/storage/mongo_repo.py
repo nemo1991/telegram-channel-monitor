@@ -310,10 +310,14 @@ class MongoRepository(StorageRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[MessageDTO]:
         """按 (date ASC, _id ASC) 排序 — 与 Postgres / JSONL 对齐;`$in` 走 channel_ids。
 
         `limit` = 最近 N 条(倒序取前 N 后在内存反转为升序)。
+        `offset` (v1.4.0 PR #12):从尾部跳过 offset 条再取 limit — 与
+        Postgres / JSONL 一致;大 offset 下 `$skip` 是 O(N),docstring
+        写明建议收窄 date 过滤。
         """
         if not channel_ids:
             return []
@@ -327,7 +331,13 @@ class MongoRepository(StorageRepository):
             q["date"] = date_q
         if limit is not None:
             # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres / JSONL 对齐)。
-            cursor = self.db.messages.find(q).sort([("date", -1), ("_id", -1)]).limit(limit)
+            # v1.4.0 PR #12:`offset > 0` 时先 `$skip offset` 再 `$limit limit`。
+            cursor = (
+                self.db.messages.find(q)
+                .sort([("date", -1), ("_id", -1)])
+                .skip(offset)
+                .limit(limit)
+            )
             docs = [d async for d in cursor]
             docs.reverse()
             return [_doc_to_message(d) for d in docs]

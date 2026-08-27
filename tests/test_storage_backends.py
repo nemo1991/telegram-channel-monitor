@@ -380,3 +380,66 @@ async def test_jsonl_count_media_by_channel_matches_fixture(jsonl_repo):
     assert await jsonl_repo.count_media_by_channel(200) == 1
     assert await jsonl_repo.count_media_by_channel(300) == 1
     assert await jsonl_repo.count_media_by_channel(999) == 0
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #12:list_messages 加 offset(导出真分页)— parity 测试
+# ---------------------------------------------------------------------------
+
+
+async def test_in_mem_list_messages_limit_offset_tail_pagination(in_mem_repo):
+    """PR #12:offset 从尾部跳过 N 条再取 limit。
+
+    fixture 4 条消息按 date asc 是 [msg1@1/1, msg2@1/2, msg10@1/3, msg5@1/4]。
+    limit=2 offset=0 → 尾 2 条(升序)= [msg10, msg5]
+    limit=2 offset=2 → 再往前 2 条(升序)= [msg1, msg2]
+    limit=2 offset=4 → 空(数据耗尽)
+    """
+    page0 = await in_mem_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=0,
+    )
+    assert [m.telegram_msg_id for m in page0] == [10, 5]
+    page1 = await in_mem_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=2,
+    )
+    assert [m.telegram_msg_id for m in page1] == [1, 2]
+    page2 = await in_mem_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=4,
+    )
+    assert page2 == []
+
+
+async def test_jsonl_list_messages_limit_offset_tail_pagination(jsonl_repo):
+    """PR #12:Jsonl parity — 与 InMemory 完全一致的 tail pagination 语义。"""
+    page0 = await jsonl_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=0,
+    )
+    assert [m.telegram_msg_id for m in page0] == [10, 5]
+    page1 = await jsonl_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=2,
+    )
+    assert [m.telegram_msg_id for m in page1] == [1, 2]
+    page2 = await jsonl_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=4,
+    )
+    assert page2 == []
+
+
+async def test_in_mem_list_messages_offset_zero_unchanged(in_mem_repo):
+    """PR #12:offset=0 必须与 v1.3.0 行为完全一致(向后兼容)。
+
+    v1.3.0 list_messages 走 `out[-limit:]` —— fixture 4 条尾 2 条升序 =
+    [msg10, msg5]。这条是基线回归保护。
+    """
+    rows = await in_mem_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=0,
+    )
+    assert [m.telegram_msg_id for m in rows] == [10, 5]
+
+
+async def test_jsonl_list_messages_offset_zero_unchanged(jsonl_repo):
+    """PR #12:Jsonl offset=0 向后兼容。"""
+    rows = await jsonl_repo.list_messages(
+        channel_ids=[100, 200, 300], limit=2, offset=0,
+    )
+    assert [m.telegram_msg_id for m in rows] == [10, 5]

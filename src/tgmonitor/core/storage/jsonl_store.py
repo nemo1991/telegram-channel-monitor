@@ -513,10 +513,13 @@ class JsonlFileStore(StorageRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[MessageDTO]:
         """按时间升序;两实现必须排序一致(date asc, id asc 兜底)。
 
         `limit` = 只返回**最近** N 条(取排序尾部,仍按时间升序);损坏行 skip 不抛。
+        `offset` (v1.4.0 PR #12):从尾部往前数 offset 条再开始取 limit
+        — 例 limit=2 offset=2 倒数 [3,4] 条;offset=0 等同原行为。
         """
         out: list[MessageDTO] = []
         for cid in channel_ids:
@@ -532,9 +535,18 @@ class JsonlFileStore(StorageRepository):
                     continue
                 out.append(d)
         out.sort(key=lambda m: (m.date or datetime.min, m.id or 0))
-        # `limit` = 最近 N 条:取排序尾部(仍保持升序返回)。
+        # `limit` = 最近 N 条:取排序尾部(仍按时间升序)。
         if limit is not None and limit > 0:
-            out = out[-limit:]
+            if offset > 0:
+                # offset 超过数据长度 → 整页空;否则取 [end-limit, end) 区间。
+                if offset >= len(out):
+                    out = []
+                else:
+                    end = len(out) - offset
+                    start = max(0, end - limit)
+                    out = out[start:end]
+            else:
+                out = out[-limit:]
         return out
 
     async def count_messages(self, channel_id: int) -> int:

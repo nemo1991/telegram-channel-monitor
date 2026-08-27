@@ -397,11 +397,15 @@ class PostgresRepository(StorageRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[MessageDTO]:
         """按时间升序 + id 升序(与 Mongo / JSONL 对齐);media 二次查询拼回。
 
         `channel_ids` 走 ANY($1::bigint[]);`limit` = 最近 N 条(倒序取前 N
         后在内存反转为升序,LIMIT 在 SQL 层)。
+        `offset` (v1.4.0 PR #12):从尾部跳过 offset 条再取 limit — 例
+        limit=2 offset=2 倒数 [3,4] 条。SQL 用 `LIMIT $limit OFFSET $offset`
+        配合 date DESC,再 reverse 转升序。
         """
         assert self._pool is not None
         if not channel_ids:
@@ -424,6 +428,11 @@ class PostgresRepository(StorageRepository):
         if limit is not None:
             params.append(limit)
             sql += f" LIMIT ${len(params)}"
+            if offset > 0:
+                # 2026-08-27 v1.4.0 PR #12:从尾部跳过 offset 再取 limit。
+                # 大 offset 下 OFFSET 是 O(N),docstring 写明建议收窄 date 过滤。
+                params.append(offset)
+                sql += f" OFFSET ${len(params)}"
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
             if limit is not None:

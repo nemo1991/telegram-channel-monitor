@@ -7,6 +7,21 @@
 
 ## [Unreleased]
 
+### 🐛 Fixed
+- **导出分页 bug:>500 条消息静默截断(PR #12)** — `ExportService._run_messages`
+  之前硬编码 `break` 在第一页 500 行后,任何大频道导出(10k+ 消息)都只看到前
+  500。修复:
+  - `StorageRepository.list_messages` ABC 加 `offset: int = 0`(默认 0 → 向后兼容)
+  - 4 存储后端全部实现 offset 语义:**从尾部跳过 offset 条再取 limit**(配合
+    既有 `limit` 语义)。Postgres 用 `LIMIT $N OFFSET $N2`,Mongo 用 `$skip`,
+    Jsonl + InMemory 在内存切片(>= offset → 空页,否则 `[end-limit, end)`)
+  - `ExportService._run_messages` 删硬 `break`,真游标循环:`offset += len(batch)`,
+    `batch < PAGE_SIZE` 时退出(到顶了),加 `offset > 10M` 死循环兜底
+  - 大 offset 下 OFFSET 是 O(N),docstring 写明「>100k 消息建议收窄 date 过滤」;
+    后续 keyset pagination(`(date, id) > (last_date, last_id)`)优化留 v1.5.0
+  - **测试覆盖**:500 / 501 / 1001 三档边界,parity 测试 InMemory + Jsonl 各 2 个
+    offset 场景 + 回归保护(offset=0 与 v1.3.0 完全一致)
+
 ## [1.3.0] - 2026-08-25
 
 ### ✨ Added

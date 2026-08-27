@@ -218,3 +218,92 @@ async def test_export_service_run_messages_unchanged(tmp_path):
     rows = list(reader)
     # fixture 3 messages(1 photo + 2 plain)→ per-message 行数 = 3
     assert len(rows) == 3
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #12:导出分页 bug(>500 静默截断)— 加 4 个回归测试
+# ---------------------------------------------------------------------------
+
+
+async def _bulk_seed_messages(storage, channel_id: int, count: int) -> None:
+    """批量塞 count 条 message 到 storage;时间从 2026-01-01 开始,id 1..count。
+
+    用来触发 ExportService 的 PAGE_SIZE=500 分页边界。
+    """
+    from tests.conftest import make_message
+
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for i in range(1, count + 1):
+        await storage.save_message(
+            make_message(
+                channel_id=channel_id, msg_id=i, text=f"m{i}", date=base,
+            )
+        )
+
+
+async def test_export_pagination_500_messages_complete(tmp_path):
+    """PR #12:恰好 500 条 → 一次 PAGE_SIZE 拉完,不丢。"""
+    import csv as csv_mod
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _bulk_seed_messages(storage, 100, 500)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.CSV, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    assert len(rows) == 500
+
+
+async def test_export_pagination_501_messages_full(tmp_path):
+    """PR #12:501 条 → 第二页拉 1 条,凑齐不丢(老实现只 500)。"""
+    import csv as csv_mod
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _bulk_seed_messages(storage, 100, 501)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.CSV, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    # 老 bug 是「拉完一页 break」 → len == 500;新分页必须 == 501。
+    assert len(rows) == 501
+
+
+async def test_export_pagination_1001_messages_full(tmp_path):
+    """PR #12:1001 条跨 3 页,sum == 1001。"""
+    import csv as csv_mod
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _bulk_seed_messages(storage, 100, 1001)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.CSV, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    assert len(rows) == 1001
+
+
+async def test_export_pagination_emits_progress_per_batch(tmp_path):
+    """PR #12:1001 条 → ExportProgress 至少发 2 次(written=500, 1001)。"""
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _bulk_seed_messages(storage, 100, 1001)
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "msg.csv"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.CSV, out_path=str(out))
+
+    progress_written: list[int] = []
+    async def on_event(event) -> None:
+        from tgmonitor.core.events import ExportProgress
+        if isinstance(event, ExportProgress):
+            progress_written.append(event.written)
+    bus.subscribe_all(on_event)
+
+    async for _ in svc.run(req):
+        pass
+    # 至少出现 500(第一页)和 1001(终态)两个 written
+    assert 500 in progress_written
+    assert progress_written[-1] == 1001
