@@ -5,7 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.4.0] - 2026-08-29
+
+主题:**Telegram 能力补齐 v1** — 围绕「数据真实性 / 视图陈旧 / 边界 case
+卡死」三大痛点,主线深推 5 个 Telegram 能力 PR + 3 个主题 quick win
+(性能 / UX / 工程化各 1)。共 8 PR / ~1180 LOC / +58 测试。
+
+PR 清单:
+- **#9** reply_to / forward_origin / via_bot_id / media_album_id / is_pinned 映射
+- **#10** updateMessageInteractionInfo(reactions + view deltas)
+- **#11** updateDeleteMessages 处理器
+- **#12** 修复 export pagination bug(>500 静默截断)— **P0 BUG**
+- **#13** email / registration 鉴权流
+- **#14** reconnect 立即 backfill + channel metadata 增量更新
+- **#15** Dashboard N+1 → 单次聚合 `aggregate_per_channel`(性能 quick win)
+- **#16** Media Manager 行加「Reveal in Folder / Copy 路径」按钮(UX quick win)
+- **#17** 导出器 Markdown / CSV 注入修复(工程化 quick win,**安全**)
 
 ### ✨ Added
 - **Dashboard N+1 → 单次聚合 `aggregate_per_channel`(PR #15,性能 quick win)** —
@@ -181,6 +196,29 @@
     + 端到端 3 个(CsvExporter / MarkdownExporter / HtmlExporter),恶意
     fixture 覆盖 `=cmd|'/c calc'!A1` / `## 假冒系统公告` / `![tracker]` /
     `MAX_THUMB_DATA_URI_BYTES + 1024` 大缩略图
+
+### 🧪 Tests
+- **PR #9–17 测试覆盖总览**:
+  - `test_telegram_mapping`:新增 6(reply_to / forward_origin 4 type /
+    is_pinned / media_album_id)
+  - `test_storage_backends`:新增 12(parity:InMemory + Jsonl 各 6 — DTO 新
+    字段 roundtrip / update_message_interactions / update_channel_metadata /
+    aggregate_per_channel / list_messages offset)
+  - `test_monitor_service`:新增 7(routing:interactions → storage + bus /
+    delete → refcount / connection_state → backfill kick / channel metadata
+    → storage)
+  - `test_export_service`:新增 3(500 / 501 / 1001 边界)
+  - `test_exporters`:新增 9(Markdown scrub / CSV guard / HTML thumb 上限
+    × 4 文件 × 恶意 fixture)
+  - `test_auth_service`:8 / `test_login_dialog`:9 / `test_fake_client`:8
+    (email / registration 完整流)
+  - `test_media_manager`(AppService 层):13 新增(open_s3 5 + reveal/copy 9
+    加 PR #16,replace_pagination 边界)
+  - `test_media_manager_widget`:4 新增(PR #16 reveal/copy 按钮 click →
+    signal 发射 / 非 DONE disabled)
+  - `test_main_window_channels`:新增 3(reveal 失败 → QMessageBox / copy
+    成功 → clipboard / 按钮 click 接 signal)
+- **测试总计**:~535 → ~593(v1.4.0 净增 +58)
 
 ## [1.3.0] - 2026-08-25
 

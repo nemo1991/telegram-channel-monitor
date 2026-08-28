@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for tgmonitor — Stage D v1.3.0 release.
+"""PyInstaller spec for tgmonitor — Stage D v1.4.0 release.
 
 Cross-platform:
   - Linux  → onedir(dist/tgmonitor/),后续 scripts/build_appimage.sh 包成 AppImage
@@ -144,8 +144,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "tgmonitor",
             "CFBundleDisplayName": "Telegram Channel Monitor",
-            "CFBundleShortVersionString": "1.3.0",
-            "CFBundleVersion": "1.3.0",
+            "CFBundleShortVersionString": "1.4.0",
+            "CFBundleVersion": "1.4.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "13.0",
             # 不申请 Developer ID,Info.plist 不带 LSApplicationCategoryType,
