@@ -4,9 +4,9 @@
 ┌────────────────────────────────────────────────────┐
 │  [Channel ▼] [Type ▼] [Status ▼] [Search🔍] [Refresh]
 ├────────────────────────────────────────────────────┤
-│  🖼 [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Retry][Delete]
-│  🎬 [Dev]  #msg17 video clip.mp4 5.4MB ❌ [Open][Retry][Delete]
-│  🎵 [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Retry][Delete]
+│  🖼 [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Reveal][Copy][Retry][Delete]
+│  🎬 [Dev]  #msg17 video clip.mp4 5.4MB ❌ [Open][Reveal][Copy][Retry][Delete]
+│  🎵 [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Reveal][Copy][Retry][Delete]
 ├────────────────────────────────────────────────────┤
 │  [Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans]
 │  Storage: 142 MB / 23 files · 1 failed
@@ -108,6 +108,9 @@ class MediaManagerWidget(QWidget):
     open_requested = Signal(int, int, int)
     retry_requested = Signal(int, int, int)
     delete_requested = Signal(int, int, int)
+    # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 — 走相同的 (cid, mid, idx) 协议。
+    reveal_requested = Signal(int, int, int)
+    copy_requested = Signal(int, int, int)
 
     # 批量操作 — payload 是 list[_RowKey]
     batch_retry_requested = Signal(list)
@@ -661,6 +664,31 @@ class MediaManagerWidget(QWidget):
             )
         )
         hbox.addWidget(btn_open)
+
+        # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 — 仅 DONE 媒体可点。
+        # S3 后端下 Reveal 自动 disable(S3 无本地路径);Copy 仍可用(URI 复制)。
+        btn_reveal = QPushButton("Reveal")
+        btn_reveal.setFixedHeight(26)
+        btn_reveal.setCursor(Qt.PointingHandCursor)
+        is_done = med.download_status == MediaDownloadStatus.DONE
+        btn_reveal.setEnabled(is_done)
+        btn_reveal.clicked.connect(
+            lambda _checked=False, k=key: self.reveal_requested.emit(
+                k.channel_id, k.telegram_msg_id, k.media_idx,
+            )
+        )
+        hbox.addWidget(btn_reveal)
+
+        btn_copy = QPushButton("Copy")
+        btn_copy.setFixedHeight(26)
+        btn_copy.setCursor(Qt.PointingHandCursor)
+        btn_copy.setEnabled(is_done)
+        btn_copy.clicked.connect(
+            lambda _checked=False, k=key: self.copy_requested.emit(
+                k.channel_id, k.telegram_msg_id, k.media_idx,
+            )
+        )
+        hbox.addWidget(btn_copy)
 
         # Retry 按钮 — FAILED 才可点
         btn_retry = QPushButton("Retry")

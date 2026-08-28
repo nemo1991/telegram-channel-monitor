@@ -707,3 +707,151 @@ async def test_list_media_count_matches_total_independent_of_pagination(
     _, total_first = await app.list_media(limit=3, offset=0)
     _, total_last = await app.list_media(limit=3, offset=4)
     assert total_first == total_last == 7
+
+
+# ---- reveal_in_folder / copy_media_path(2026-08-27 v1.4.0 PR #16)----
+
+
+@pytest.mark.asyncio
+async def test_reveal_in_folder_local_success(
+    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+) -> None:
+    """PR #16:Local 后端 + 文件存在 → spawn 子进程成功 → RevealResult(True)。
+
+    monkeypatch 掉 `_spawn_reveal` 验证被调 1 次,参数含 abs_path。
+    """
+    await objectstore.put("media/p.jpg", b"jpeg", None)
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
+    )
+
+    spawn_calls: list[tuple[object, str]] = []
+
+    def _fake_spawn(abs_path, platform):  # noqa: ANN001 — sync static method
+        spawn_calls.append((abs_path, platform))
+
+    app._spawn_reveal = staticmethod(_fake_spawn)  # type: ignore[assignment]
+
+    result = await app.reveal_in_folder(100, 1, 0)
+    assert result.success is True
+    assert result.error is None
+    assert len(spawn_calls) == 1
+    abs_path_arg, platform_arg = spawn_calls[0]
+    assert str(abs_path_arg).endswith("media/p.jpg")
+    # platform 来自 sys.platform,可能是 darwin / linux / win32;只断言是 str
+    assert isinstance(platform_arg, str)
+
+
+@pytest.mark.asyncio
+async def test_reveal_in_folder_s3_returns_error(
+    app: AppService, storage: StorageRepository, monkeypatch,
+) -> None:
+    """PR #16:S3 后端 → RevealResult(False, "S3 后端无本地路径:请使用「Copy 路径」...")。"""
+    saved_objects, _fake = _make_s3_backend(app, monkeypatch)
+    await app.objects.connect()  # type: ignore[attr-defined]
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
+    )
+
+    result = await app.reveal_in_folder(100, 1, 0)
+
+    app.objects = saved_objects  # type: ignore[assignment]
+
+    assert result.success is False
+    assert result.error is not None
+    assert "S3" in result.error
+
+
+@pytest.mark.asyncio
+async def test_reveal_in_folder_missing_message_returns_error(
+    app: AppService,
+) -> None:
+    """PR #16:message 不存在 → RevealResult(False, '消息或媒体不存在')。"""
+    result = await app.reveal_in_folder(999, 1, 0)
+    assert result.success is False
+    assert result.error == "消息或媒体不存在"
+
+
+@pytest.mark.asyncio
+async def test_reveal_in_folder_pending_media_returns_error(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #16:media 未 DONE → RevealResult(False, '媒体未下载完成')。"""
+    await storage.save_message(_msg(100, 1, [_base_media("f1")]))  # PENDING
+    result = await app.reveal_in_folder(100, 1, 0)
+    assert result.success is False
+    assert result.error == "媒体未下载完成"
+
+
+@pytest.mark.asyncio
+async def test_reveal_in_folder_missing_file_returns_error(
+    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+) -> None:
+    """PR #16:DONE 但文件不在磁盘上(可能被外部删) → RevealResult(False, 含 '文件不存在')。"""
+    # 仅写 storage 元数据,不实际 put 文件
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/ghost.jpg")]),
+    )
+    result = await app.reveal_in_folder(100, 1, 0)
+    assert result.success is False
+    assert result.error is not None and "文件不存在" in result.error
+
+
+@pytest.mark.asyncio
+async def test_copy_media_path_local_returns_absolute_path(
+    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+) -> None:
+    """PR #16:Local 后端 → CopyResult(True, copied_value=绝对路径)。"""
+    await objectstore.put("media/p.jpg", b"jpeg", None)
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
+    )
+    result = await app.copy_media_path(100, 1, 0)
+    assert result.success is True
+    assert result.error is None
+    assert result.copied_value is not None
+    assert result.copied_value.endswith("media/p.jpg")
+    # 必须是绝对路径
+    from pathlib import Path
+    assert Path(result.copied_value).is_absolute()
+
+
+@pytest.mark.asyncio
+async def test_copy_media_path_s3_returns_uri(
+    app: AppService, storage: StorageRepository, monkeypatch,
+) -> None:
+    """PR #16:S3 后端 → CopyResult(True, copied_value='s3://<bucket>/<key>')。"""
+    saved_objects, _fake = _make_s3_backend(app, monkeypatch)
+    await app.objects.connect()  # type: ignore[attr-defined]
+    await storage.save_message(
+        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
+    )
+
+    result = await app.copy_media_path(100, 1, 0)
+
+    app.objects = saved_objects  # type: ignore[assignment]
+
+    assert result.success is True
+    assert result.copied_value == "s3://t/media/p.jpg"
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_copy_media_path_missing_message_returns_error(
+    app: AppService,
+) -> None:
+    """PR #16:message 不存在 → CopyResult(False, error='消息或媒体不存在')。"""
+    result = await app.copy_media_path(999, 1, 0)
+    assert result.success is False
+    assert result.error == "消息或媒体不存在"
+
+
+@pytest.mark.asyncio
+async def test_copy_media_path_pending_media_returns_error(
+    app: AppService, storage: StorageRepository,
+) -> None:
+    """PR #16:media 未 DONE → CopyResult(False, error='媒体未下载完成')。"""
+    await storage.save_message(_msg(100, 1, [_base_media("f1")]))
+    result = await app.copy_media_path(100, 1, 0)
+    assert result.success is False
+    assert result.error == "媒体未下载完成"

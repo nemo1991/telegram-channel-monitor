@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -387,6 +388,9 @@ class MainWindow(QMainWindow):
         self.media_manager.open_requested.connect(
             lambda cid, mid, idx: self._vm.open_media(cid, mid, idx)
         )
+        # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 wire。
+        self.media_manager.reveal_requested.connect(self._on_media_reveal)
+        self.media_manager.copy_requested.connect(self._on_media_copy)
         self.media_manager.retry_requested.connect(
             lambda cid, mid, idx: self._vm.retry_media(cid, mid, idx)
         )
@@ -758,6 +762,58 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(
             self, "打开媒体失败",
             f"无法打开频道 #{channel_id} 消息 #{telegram_msg_id} 第 {media_idx + 1} 个媒体:\n\n{reason}",
+        )
+
+    def _on_media_reveal(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #16:Reveal in Folder — 调 AppService.reveal_in_folder,
+        失败弹 QMessageBox.warning(同 Open 失败模式)。
+        """
+        async def _go():
+            return await self._app.reveal_in_folder(
+                channel_id, telegram_msg_id, media_idx,
+            )
+
+        def _after(result):
+            if result.success:
+                return
+            QMessageBox.warning(
+                self, "Reveal 失败",
+                f"无法在文件管理器中显示:\n\n{result.error}",
+            )
+
+        run_coro(
+            self._qloop, _go(),
+            on_success=lambda r: _after(r),
+            error_label="reveal_in_folder",
+        )
+
+    def _on_media_copy(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> None:
+        """2026-08-27 v1.4.0 PR #16:Copy 路径 / URI — 调 AppService.copy_media_path,
+        成功写剪贴板,失败弹 QMessageBox.warning。
+        """
+        async def _go():
+            return await self._app.copy_media_path(
+                channel_id, telegram_msg_id, media_idx,
+            )
+
+        def _after(result):
+            if not result.success:
+                QMessageBox.warning(
+                    self, "Copy 失败",
+                    f"无法复制路径:\n\n{result.error}",
+                )
+                return
+            # 写剪贴板
+            QApplication.clipboard().setText(result.copied_value or "")
+
+        run_coro(
+            self._qloop, _go(),
+            on_success=lambda r: _after(r),
+            error_label="copy_media_path",
         )
 
     async def _on_bus_message_deleted(self, e) -> None:

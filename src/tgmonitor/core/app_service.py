@@ -32,6 +32,7 @@ from tgmonitor.core.auth_service import AuthService
 from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
+    CopyResult,
     DeleteChannelPreview,
     ExportRequest,
     MediaDownloadStatus,
@@ -40,6 +41,7 @@ from tgmonitor.core.dto import (
     MediaType,
     MessageDTO,
     OpenMediaResult,
+    RevealResult,
     SortDir,
     SortKey,
     SyncOptions,
@@ -678,6 +680,113 @@ class AppService:
             )
         except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
             return OpenMediaResult(False, f"{type(exc).__name__}: {exc}")
+
+    async def reveal_in_folder(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> RevealResult:
+        """2026-08-27 v1.4.0 PR #16:在文件管理器中高亮 media 文件(macOS
+        Finder / Windows Explorer / Linux xdg-open 父目录)。
+
+        仅 Local / Folder 后端有效:S3 无本地文件,S3 路径应走 `copy_media_path`
+        拿 URI。失败原因以 `RevealResult.error` 返回,UI 据此弹 QMessageBox。
+        """
+        import sys
+
+        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
+        from tgmonitor.core.objectstore.local_store import LocalObjectStore
+        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
+
+        msg = await self.storage.get_message(channel_id, telegram_msg_id)
+        if msg is None or media_idx >= len(msg.media):
+            return RevealResult(False, "消息或媒体不存在")
+        med = msg.media[media_idx]
+        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
+            return RevealResult(False, "媒体未下载完成")
+        if isinstance(self.objects, S3ObjectStore):
+            return RevealResult(
+                False, "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
+            )
+        if not isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
+            return RevealResult(
+                False, f"不支持的对象存储后端: {type(self.objects).__name__}",
+            )
+
+        try:
+            abs_path = self.objects._path(med.object_key)  # noqa: SLF001
+            if not abs_path.exists():
+                return RevealResult(False, f"文件不存在: {abs_path}")
+            # OS-specific 唤起文件管理器(macOS `open -R` 高亮 / Windows
+            # `explorer /select,` / Linux `xdg-open <parent_dir>`)
+            await asyncio.to_thread(
+                self._spawn_reveal, abs_path, sys.platform,
+            )
+            return RevealResult(True)
+        except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
+            return RevealResult(False, f"{type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _spawn_reveal(abs_path, platform: str) -> None:
+        """2026-08-27 v1.4.0 PR #16:同步 spawn 子进程唤起 OS 文件管理器。
+
+        - macOS:`open -R <abs_path>`(在 Finder 高亮该文件)
+        - Windows:`explorer /select,<abs_path>`(在 Explorer 高亮)
+        - Linux / 其它:`xdg-open <abs_path.parent>`(打开父目录,Linux 无
+          标准「高亮」API,降级开父目录)
+        """
+        import subprocess
+        if platform == "darwin":
+            subprocess.Popen(["open", "-R", str(abs_path)])
+        elif platform == "win32":
+            subprocess.Popen(["explorer", f"/select,{abs_path}"])
+        else:
+            subprocess.Popen(["xdg-open", str(abs_path.parent)])
+
+    async def copy_media_path(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+    ) -> CopyResult:
+        """2026-08-27 v1.4.0 PR #16:把 media 路径 / URI 写入剪贴板。
+
+        - Local / Folder:绝对路径(`<root>/<object_key>`)
+        - S3:`s3://<bucket>/<object_key>`(URI 字符串,不是本地路径)
+        - 其它后端:失败 + 不支持提示
+        """
+        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
+        from tgmonitor.core.objectstore.local_store import LocalObjectStore
+        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
+
+        msg = await self.storage.get_message(channel_id, telegram_msg_id)
+        if msg is None or media_idx >= len(msg.media):
+            return CopyResult(False, error="消息或媒体不存在")
+        med = msg.media[media_idx]
+        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
+            return CopyResult(False, error="媒体未下载完成")
+        if isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
+            try:
+                abs_path = self.objects._path(med.object_key)  # noqa: SLF001
+            except Exception as exc:  # noqa: BLE001
+                return CopyResult(
+                    False, error=f"{type(exc).__name__}: {exc}",
+                )
+            return CopyResult(True, copied_value=str(abs_path))
+        if isinstance(self.objects, S3ObjectStore):
+            # S3ObjectStore 通常有 bucket / key 拼接;s3a URI 也可,这里用 s3://
+            try:
+                bucket = (
+                    getattr(self.objects, "bucket_name", None)
+                    or getattr(self.objects, "bucket", None)
+                    or getattr(self.objects, "_bucket", None)
+                )
+            except Exception:  # noqa: BLE001
+                bucket = None
+            if not bucket:
+                return CopyResult(
+                    False, error="S3 后端未暴露 bucket 字段",
+                )
+            uri = f"s3://{bucket}/{med.object_key}"
+            return CopyResult(True, copied_value=uri)
+        return CopyResult(
+            False, error=f"不支持的对象存储后端: {type(self.objects).__name__}",
+        )
 
     async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
         """2026-08-25 v1.3.0 PR #5:把 S3 media bytes 写到本地 tmp 文件用于

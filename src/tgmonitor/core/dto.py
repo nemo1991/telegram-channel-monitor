@@ -273,6 +273,35 @@ class OpenMediaResult:
 
 
 @dataclass(frozen=True)
+class RevealResult:
+    """2026-08-27 v1.4.0 PR #16:Reveal in Folder 操作结果。
+
+    - `success=True`:成功发起 OS 文件管理器(在 Finder/Explorer 中高亮该文件)
+    - `success=False`:S3 后端 / 文件不存在 / OS 调用失败
+
+    与 OpenMediaResult 同结构(便于复用 UI 失败提示),单独定义以保留未来
+    字段扩展空间(revealed_path 等)。
+    """
+
+    success: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class CopyResult:
+    """2026-08-27 v1.4.0 PR #16:Copy 路径 / URI 操作结果。
+
+    - `success=True`:`copied_value` 是已写入剪贴板的字符串(Local/Folder:
+      绝对路径;S3:`s3://<bucket>/<object_key>`)
+    - `success=False`:`error` 描述失败原因(媒体未下载 / 不支持后端)
+    """
+
+    success: bool
+    copied_value: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class DeleteChannelPreview:
     """Clear Channel 操作预览 — 2026-08-25 v1.3.0 PR #8。
 

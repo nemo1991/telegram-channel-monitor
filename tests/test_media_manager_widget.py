@@ -241,5 +241,99 @@ def test_export_csv_does_nothing_when_dialog_cancelled(
     assert captured == []
 
 
+# ---- reveal / copy 按钮(2026-08-27 v1.4.0 PR #16)-------------------
+
+
+from PySide6.QtWidgets import QListWidgetItem, QPushButton  # noqa: E402
+
+
+def _row_button(widget: MediaManagerWidget, row: int, label: str) -> QPushButton:
+    """拿 row 内指定 label 的按钮(reveal/copy 测试用)。"""
+    item: QListWidgetItem = widget.list.item(row)
+    assert item is not None, f"row {row} not rendered"
+    row_widget = widget.list.itemWidget(item)
+    assert row_widget is not None
+    for btn in row_widget.findChildren(QPushButton):
+        if btn.text() == label:
+            return btn
+    raise AssertionError(f"button '{label}' not found in row {row}")
+
+
+def test_reveal_button_emits_signal_with_correct_args(
+    widget: MediaManagerWidget, qt_app: QApplication,
+) -> None:
+    """PR #16:Reveal 按钮 click → reveal_requested.emit(channel_id, msg_id, media_idx)。"""
+    msg = _msg(100, 7, [_done()])
+    widget.on_media_loaded(([(msg, 0, _done())], 1))
+    qt_app.processEvents()
+
+    captured: list[tuple[int, int, int]] = []
+    widget.reveal_requested.connect(
+        lambda c, m, i: captured.append((c, m, i)),
+    )
+
+    btn = _row_button(widget, 0, "Reveal")
+    assert btn.isEnabled()  # DONE → 可点
+    btn.click()
+    qt_app.processEvents()
+
+    assert captured == [(100, 7, 0)]
+
+
+def test_copy_button_emits_signal_with_correct_args(
+    widget: MediaManagerWidget, qt_app: QApplication,
+) -> None:
+    """PR #16:Copy 按钮 click → copy_requested.emit(channel_id, msg_id, media_idx)。"""
+    msg = _msg(200, 42, [_done()])
+    widget.on_media_loaded(([(msg, 0, _done())], 1))
+    qt_app.processEvents()
+
+    captured: list[tuple[int, int, int]] = []
+    widget.copy_requested.connect(
+        lambda c, m, i: captured.append((c, m, i)),
+    )
+
+    btn = _row_button(widget, 0, "Copy")
+    assert btn.isEnabled()  # DONE → 可点
+    btn.click()
+    qt_app.processEvents()
+
+    assert captured == [(200, 42, 0)]
+
+
+def test_reveal_button_disabled_when_not_done(
+    widget: MediaManagerWidget, qt_app: QApplication,
+) -> None:
+    """PR #16:非 DONE 媒体 → Reveal 按钮 disabled(防误点 → OS 文件管理器失败)。"""
+    pending = MediaDTO(
+        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="x.jpg",
+        file_size=1024, telegram_file_id="fid",
+        download_status=MediaDownloadStatus.PENDING,
+    )
+    msg = _msg(100, 1, [pending])
+    widget.on_media_loaded(([(msg, 0, pending)], 1))
+    qt_app.processEvents()
+
+    btn = _row_button(widget, 0, "Reveal")
+    assert not btn.isEnabled()
+
+
+def test_copy_button_disabled_when_not_done(
+    widget: MediaManagerWidget, qt_app: QApplication,
+) -> None:
+    """PR #16:非 DONE 媒体 → Copy 按钮 disabled。"""
+    pending = MediaDTO(
+        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="x.jpg",
+        file_size=1024, telegram_file_id="fid",
+        download_status=MediaDownloadStatus.PENDING,
+    )
+    msg = _msg(100, 1, [pending])
+    widget.on_media_loaded(([(msg, 0, pending)], 1))
+    qt_app.processEvents()
+
+    btn = _row_button(widget, 0, "Copy")
+    assert not btn.isEnabled()
+
+
 # 显式 import,避免 ruff F401
 _ = Qt

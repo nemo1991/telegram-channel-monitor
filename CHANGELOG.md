@@ -124,6 +124,29 @@
     `forward_origin` 4 种 type + unknown fallback + 后端 roundtrip
     InMemory + Jsonl 各 4 个 — 默认值 / populated 双向 + 老数据兼容)
 
+- **Media Manager 行加「Reveal in Folder / Copy 路径」按钮(PR #16,
+  UX quick win)** — v1.3.0 PR #5 补了 Open 流程,但常见下一步是「文件
+  在 Finder 哪」/「S3 URI 是什么 / 怎么发给别人」。本次落地:
+  - 新 DTO:`RevealResult(success, error)` / `CopyResult(success, copied_value,
+    error)` frozen dataclass(同 PR #5 OpenMediaResult 结构对齐)
+  - `AppService.reveal_in_folder(channel_id, msg_id, idx)`:Local / Folder
+    后端 → 唤起 OS 文件管理器(macOS `open -R` 高亮 / Windows
+    `explorer /select,` / Linux `xdg-open <parent_dir>`);S3 后端 → 返
+    `RevealResult(False, 'S3 后端无本地路径:请使用「Copy 路径」...')`
+  - `AppService.copy_media_path(channel_id, msg_id, idx)`:Local / Folder
+    → 绝对路径(`str(abs_path)`);S3 → `s3://<bucket>/<object_key>` URI
+  - `MediaManagerWidget` 新信号 `reveal_requested = Signal(int, int, int)` /
+    `copy_requested = Signal(int, int, int)`;每行 Open / Retry / Delete 之间
+    加 **Reveal** + **Copy** 两个按钮,**DONE 才可点**(防误点 spawn OS)
+  - `MainWindow` 接 signal:`_on_media_reveal` → `app.reveal_in_folder` → 失败
+    弹 `QMessageBox.warning`;`_on_media_copy` → `app.copy_media_path` → 成功
+    `QApplication.clipboard().setText(...)`,失败弹 QMessageBox
+  - `AppService._spawn_reveal` 静态方法用 `asyncio.to_thread` 包,主循环不阻塞
+  - **测试覆盖**:9 个(`test_media_manager` reveal/copy 各 backend × 状态:
+    Local 成功 / S3 拒绝 / 消息不存在 / PENDING / 文件被删 / Local 路径 /
+    S3 URI 格式 / missing message / PENDING)+ 4 个 widget(button 发射
+    `(channel_id, msg_id, media_idx)` / 非 DONE 时 disabled)
+
 ### 🐛 Fixed
 - **导出分页 bug:>500 条消息静默截断(PR #12)** — `ExportService._run_messages`
   之前硬编码 `break` 在第一页 500 行后,任何大频道导出(10k+ 消息)都只看到前
