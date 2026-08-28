@@ -839,3 +839,68 @@ async def test_jsonl_update_channel_metadata_only_member_count(jsonl_repo):
     assert got.member_count == 7
     assert got.title == "#100"
     assert got.username is None
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 v1.4.0 PR #15:`aggregate_per_channel` Dashboard N+1 → 单查询 parity。
+# - 4 字段聚合:messages / media / done_media / last_date
+# - 缺失 channel_id 不在返 dict 里
+# - 空 channel_ids 返 {}
+# ---------------------------------------------------------------------------
+
+
+async def test_in_mem_aggregate_per_channel(in_mem_repo):
+    """PR #15:InMemory 一次聚合 4 字段。
+
+    fixture 已有 ch100 (msg1=1 photo done, msg2=2 media [video done, photo failed])
+    + ch200 (msg10=1 photo done) + ch300 (msg5=1 video pending)。
+    """
+    bucket = await in_mem_repo.aggregate_per_channel([100, 200, 300])
+    # ch100:2 msgs, 3 media, 2 done (video+photo)
+    assert bucket[100].messages == 2
+    assert bucket[100].media == 3
+    assert bucket[100].done_media == 2
+    assert bucket[100].last_date == datetime(2026, 1, 2, 10)
+    # ch200:1 msg, 1 media, 1 done
+    assert bucket[200].messages == 1
+    assert bucket[200].media == 1
+    assert bucket[200].done_media == 1
+    # ch300:1 msg, 1 media, 0 done (pending)
+    assert bucket[300].messages == 1
+    assert bucket[300].media == 1
+    assert bucket[300].done_media == 0
+
+
+async def test_jsonl_aggregate_per_channel(jsonl_repo):
+    """PR #15:Jsonl 一次聚合 4 字段。"""
+    bucket = await jsonl_repo.aggregate_per_channel([100, 200, 300])
+    assert bucket[100].messages == 2
+    assert bucket[100].media == 3
+    assert bucket[100].done_media == 2
+    assert bucket[100].last_date == datetime(2026, 1, 2, 10)
+    assert bucket[200].messages == 1
+    assert bucket[200].done_media == 1
+
+
+async def test_in_mem_aggregate_missing_channel_omitted(in_mem_repo):
+    """PR #15:缺失 channel(无消息)不在返 dict 里。"""
+    bucket = await in_mem_repo.aggregate_per_channel([999])
+    assert bucket == {}
+
+
+async def test_jsonl_aggregate_missing_channel_omitted(jsonl_repo):
+    """PR #15:Jsonl 同上 — 缺失 channel 不在返 dict 里。"""
+    bucket = await jsonl_repo.aggregate_per_channel([999])
+    assert bucket == {}
+
+
+async def test_in_mem_aggregate_empty_input(in_mem_repo):
+    """PR #15:channel_ids=[] → 返 {}。"""
+    bucket = await in_mem_repo.aggregate_per_channel([])
+    assert bucket == {}
+
+
+async def test_jsonl_aggregate_empty_input(jsonl_repo):
+    """PR #15:Jsonl 同上。"""
+    bucket = await jsonl_repo.aggregate_per_channel([])
+    assert bucket == {}

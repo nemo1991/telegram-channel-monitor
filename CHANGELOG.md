@@ -8,6 +8,22 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **Dashboard N+1 → 单次聚合 `aggregate_per_channel`(PR #15,性能 quick win)** —
+  `_refresh_per_channel_stats`(`dashboard_widget.py`)此前对每个订阅频道
+  串行调 `count_messages(cid)`,N 个订阅 = N 次 round-trip。本次落地:
+  - 新 DTO `ChannelStats(messages, media, done_media, last_date)` frozen dataclass
+  - 新 abstract `StorageRepository.aggregate_per_channel(channel_ids) -> dict[int, ChannelStats]`
+  - **4 后端实现**:Postgres `GROUP BY channel_id` + `FILTER (download_status='done')`
+    + `LEFT JOIN media`(PG 9.4+ 语法);Mongo `$match + $unwind + $group + $project`
+    `$addToSet` 算 messages;Jsonl + InMemory 单轮扫 + bucket 累加
+  - 缺失 channel(无消息)在返 dict 里**不**包含(契约统一,调用方按需
+    default zero) — 之前 caller 隐式 `bucket[cid].messages` 会 KeyError,改后
+    `bucket.get(cid)` 默认 0
+  - `dashboard_widget._refresh_per_channel_stats` 改单 `aggregate_per_channel`
+    调用;按 `monitor.subscribed_ids` 顺序遍历,缺 bucket 项计 0
+  - **测试覆盖**:parity 6 个(InMemory + Jsonl 各 3:聚合 4 字段 / 缺失 channel
+    omitted / 空 input 返 {})
+
 - **Email / Registration 鉴权流(PR #13)** — `_AUTH_STATE_MAP`(`tdlib_proxy.py`)
   早定义 `email_required` / `email_code_required` / `registration_required`
   三个状态,但此前 UI / Service 都把它们当 `phone_required` fallback ——

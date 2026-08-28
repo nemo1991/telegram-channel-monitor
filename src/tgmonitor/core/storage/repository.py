@@ -17,6 +17,7 @@ from typing import Any
 
 from tgmonitor.core.dto import (
     ChannelDTO,
+    ChannelStats,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -156,6 +157,24 @@ class StorageRepository(ABC):
     @abstractmethod
     async def count_messages(self, channel_id: int) -> int:
         """该频道已落库消息数(忽略 date_from/to)。"""
+        ...
+
+    @abstractmethod
+    async def aggregate_per_channel(
+        self, channel_ids: list[int]
+    ) -> dict[int, ChannelStats]:
+        """2026-08-27 v1.4.0 PR #15:一次拉多频道聚合统计(messages / media /
+        done_media / last_date),消除 Dashboard N+1 round-trip。
+
+        实现要点:
+        - Postgres:`GROUP BY channel_id` 单 SELECT + JOIN media
+        - Mongo:`$match + $group` aggregate pipeline
+        - InMemory / Jsonl:扫订阅 channel 一次,聚合 4 个 count
+        - 缺失 channel_id 在返 dict 里**不**存在(调用方按需 default zero)
+
+        大 channel_ids 列表(>1000)性能:Postgres `channel_id = ANY($1)`
+        是 O(1),Mongo `$in` 仍是 O(N) scan;MVP 不优化,docstring 注明。
+        """
         ...
 
     @abstractmethod

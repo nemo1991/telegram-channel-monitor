@@ -329,3 +329,23 @@ class SyncResult:
     total_messages_added: int = 0
     rate_limited_seconds: float | None = None
     cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class ChannelStats:
+    """2026-08-27 v1.4.0 PR #15:单频道聚合统计 — 替代 Dashboard 的 N+1
+    `count_messages` + `count_media_by_channel` 循环。
+
+    由 `StorageRepository.aggregate_per_channel(channel_ids)` 一次性返
+    `{channel_id: ChannelStats}`,消除 N+1 round-trip。
+
+    字段:
+    - `messages`:已落库消息数(忽略 date_from/to)
+    - `media`:所有 media 数(含 PENDING / FAILED / DONE)
+    - `done_media`:download_status == DONE 的 media 数
+    - `last_date`:最近一条消息的 date(无消息则为 None)
+    """
+    messages: int = 0
+    media: int = 0
+    done_media: int = 0
+    last_date: datetime | None = None

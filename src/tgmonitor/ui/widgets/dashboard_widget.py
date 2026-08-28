@@ -396,6 +396,9 @@ class DashboardWidget(QWidget):
     def _refresh_per_channel_stats(self, total_subscribed: int) -> None:
         """后台 fetch 每频道消息数 → 填表格。
 
+        2026-08-27 v1.4.0 PR #15:N+1 → 单 `aggregate_per_channel` 调用
+        替代原来对每个订阅频道串行调 `count_messages`。
+
         `subscribed_count` 是本参数,实际从 monitor.subscribed_ids 拿列表。
         """
         subscribed_ids = list(self._monitor.subscribed_ids)
@@ -409,13 +412,16 @@ class DashboardWidget(QWidget):
 
         async def _go() -> None:
             storage = self._app.storage
+            try:
+                bucket = await storage.aggregate_per_channel(subscribed_ids)
+            except Exception:  # noqa: BLE001
+                bucket = {}
             rows: list[tuple[str, str, int]] = []
             total = 0
             for cid in subscribed_ids:
-                try:
-                    count = await storage.count_messages(cid)
-                except Exception:  # noqa: BLE001
-                    count = 0
+                stats = bucket.get(cid)
+                # 缺省 → ChannelStats() 全 0
+                count = stats.messages if stats else 0
                 total += count
                 rows.append((f"#{cid}", "—", count))
             self._apply_stats_table(rows, total)

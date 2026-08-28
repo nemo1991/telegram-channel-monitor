@@ -13,6 +13,7 @@ from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
+    ChannelStats,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -219,6 +220,37 @@ class InMemoryRepository(StorageRepository):
 
     async def count_messages(self, channel_id: int) -> int:
         return sum(1 for m in self.messages.values() if m.channel_id == channel_id)
+
+    async def aggregate_per_channel(
+        self, channel_ids: list[int]
+    ) -> dict[int, ChannelStats]:
+        """2026-08-27 v1.4.0 PR #15:InMemory 实现 — 单轮扫所有 message,
+        按 channel_id 聚合 4 个字段。无订阅过滤(调用方负责)。
+
+        缺失 channel(无任何消息匹配)在返 dict 里**不**包含 — 与 Jsonl 行为
+        对齐,调用方按需 default zero。
+        """
+        bucket: dict[int, ChannelStats] = {}
+        for m in self.messages.values():
+            cid = m.channel_id
+            if cid not in channel_ids:
+                continue
+            cur = bucket.get(cid)
+            last = cur.last_date if cur else None
+            new_last = max(last, m.date) if last else m.date
+            new_messages = (cur.messages if cur else 0) + 1
+            new_media = (cur.media if cur else 0) + len(m.media)
+            new_done = (cur.done_media if cur else 0) + sum(
+                1 for md in m.media
+                if md.download_status == MediaDownloadStatus.DONE
+            )
+            bucket[cid] = ChannelStats(
+                messages=new_messages,
+                media=new_media,
+                done_media=new_done,
+                last_date=new_last,
+            )
+        return bucket
 
     async def find_media_by_file_id(
         self, telegram_file_id: str

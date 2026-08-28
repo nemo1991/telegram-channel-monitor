@@ -15,6 +15,7 @@ import asyncpg
 
 from tgmonitor.core.dto import (
     ChannelDTO,
+    ChannelStats,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -575,6 +576,47 @@ class PostgresRepository(StorageRepository):
             return await conn.fetchval(
                 "SELECT count(*)::int FROM messages WHERE channel_id = $1", channel_id
             )
+
+    async def aggregate_per_channel(
+        self, channel_ids: list[int]
+    ) -> dict[int, ChannelStats]:
+        """2026-08-27 v1.4.0 PR #15:Postgres 单 GROUP BY 查询,一次性拿所有
+        channel 的 messages / media / done_media / last_date。
+
+        SQL plan:`messages LEFT JOIN media ON me.message_id = m.id` + `GROUP BY
+        channel_id` + `FILTER (download_status = 'done')`。PostgreSQL 9.4+ 语法。
+
+        缺失 channel_id(没消息)在返回 dict 里**不**存在 — 调用方按需 default。
+        """
+        if not channel_ids:
+            return {}
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT m.channel_id,
+                       count(DISTINCT m.id) AS messages,
+                       count(me.id) AS media,
+                       count(me.id) FILTER (
+                           WHERE me.download_status = 'done'
+                       ) AS done_media,
+                       max(m.date) AS last_date
+                FROM messages m
+                LEFT JOIN media me ON me.message_id = m.id
+                WHERE m.channel_id = ANY($1::bigint[])
+                GROUP BY m.channel_id
+                """,
+                channel_ids,
+            )
+        out: dict[int, ChannelStats] = {}
+        for r in rows:
+            out[int(r["channel_id"])] = ChannelStats(
+                messages=int(r["messages"]),
+                media=int(r["media"]),
+                done_media=int(r["done_media"]),
+                last_date=r["last_date"],
+            )
+        return out
 
     async def find_media_by_file_id(
         self, telegram_file_id: str

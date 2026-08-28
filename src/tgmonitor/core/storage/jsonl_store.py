@@ -27,6 +27,7 @@ from typing import Any
 
 from tgmonitor.core.dto import (
     ChannelDTO,
+    ChannelStats,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -636,6 +637,51 @@ class JsonlFileStore(StorageRepository):
         """该频道已落库消息数;不应用 date 过滤。"""
         cf = await self._file_for(channel_id)
         return len(cf.rows)
+
+    async def aggregate_per_channel(
+        self, channel_ids: list[int]
+    ) -> dict[int, ChannelStats]:
+        """2026-08-27 v1.4.0 PR #15:Jsonl 实现 — 单轮扫每个 channel 的 jsonl
+        文件,聚合 4 字段。N+1 → 1,实际就是 file 维度的 1 次读取。
+
+        与 InMemory 实现区别:不需要 `set_subscribed_channel` 守卫 — Jsonl
+        实现直接按 channel_id 扫文件,与 subscription 无关。
+
+        缺失 channel(文件不存在 / 0 行)在返 dict 里**不**包含 — 与 InMemory
+        行为一致(契约统一)。
+        """
+        bucket: dict[int, ChannelStats] = {}
+        for cid in channel_ids:
+            cf = await self._file_for(cid)
+            if not cf.rows:
+                continue
+            last_date = None
+            n_msgs = 0
+            n_media = 0
+            n_done = 0
+            for row in cf.rows:
+                n_msgs += 1
+                md = row.get("media", [])
+                n_media += len(md)
+                n_done += sum(
+                    1 for x in md
+                    if x.get("download_status") == MediaDownloadStatus.DONE.value
+                )
+                # `row["date"]` 是 ISO str → 解析
+                d_raw = row.get("date")
+                if d_raw:
+                    try:
+                        d = datetime.fromisoformat(d_raw)
+                        last_date = max(last_date, d) if last_date else d
+                    except (ValueError, TypeError):
+                        pass
+            bucket[cid] = ChannelStats(
+                messages=n_msgs,
+                media=n_media,
+                done_media=n_done,
+                last_date=last_date,
+            )
+        return bucket
 
     async def find_media_by_file_id(
         self, telegram_file_id: str

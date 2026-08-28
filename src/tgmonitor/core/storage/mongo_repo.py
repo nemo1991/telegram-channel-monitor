@@ -13,6 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from tgmonitor.core.dto import (
     ChannelDTO,
+    ChannelStats,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -427,6 +428,55 @@ class MongoRepository(StorageRepository):
     async def count_messages(self, channel_id: int) -> int:
         """该频道已落库消息数(走 count_documents,不应用 date 过滤)。"""
         return await self.db.messages.count_documents({"channel_id": channel_id})
+
+    async def aggregate_per_channel(
+        self, channel_ids: list[int]
+    ) -> dict[int, ChannelStats]:
+        """2026-08-27 v1.4.0 PR #15:Mongo $group 单 pipeline 聚合 4 字段。
+
+        注意:本实现 media 是 messages 子文档(2026-08-25 PR #3 决策),
+        不在 db.media 集合。`$unwind` + `$group` + `$cond` 数 done_media。
+        """
+        if not channel_ids:
+            return {}
+        pipeline = [
+            {"$match": {"channel_id": {"$in": channel_ids}}},
+            {"$unwind": {
+                "path": "$media",
+                "preserveNullAndEmptyArrays": True,
+            }},
+            {"$group": {
+                "_id": "$channel_id",
+                "messages": {"$addToSet": "$_id"},
+                "media": {"$sum": {
+                    "$cond": [{"$ifNull": ["$media", False]}, 1, 0],
+                }},
+                "done_media": {"$sum": {
+                    "$cond": [
+                        {"$eq": ["$media.download_status", "done"]}, 1, 0,
+                    ],
+                }},
+                "last_date": {"$max": "$date"},
+            }},
+            {"$project": {
+                "_id": 0,
+                "channel_id": "$_id",
+                "messages": {"$size": "$messages"},
+                "media": 1,
+                "done_media": 1,
+                "last_date": 1,
+            }},
+        ]
+        out: dict[int, ChannelStats] = {}
+        async for doc in self.db.messages.aggregate(pipeline):
+            cid = int(doc["channel_id"])
+            out[cid] = ChannelStats(
+                messages=int(doc.get("messages", 0)),
+                media=int(doc.get("media", 0)),
+                done_media=int(doc.get("done_media", 0)),
+                last_date=doc.get("last_date"),
+            )
+        return out
 
     async def find_media_by_file_id(
         self, telegram_file_id: str
