@@ -8,6 +8,32 @@
 ## [Unreleased]
 
 ### ✨ Added
+- **Email / Registration 鉴权流(PR #13)** — `_AUTH_STATE_MAP`(`tdlib_proxy.py`)
+  早定义 `email_required` / `email_code_required` / `registration_required`
+  三个状态,但此前 UI / Service 都把它们当 `phone_required` fallback ——
+  邮箱注册的用户卡死。本次落地:
+  - `TelegramClient` Protocol 新增 3 个抽象方法:
+    `submit_email` / `submit_email_code` / `submit_registration(first, last)`
+  - `TdlibJsonClient` 实现:每个方法同步发对应 TDLib 请求
+    (`setAuthenticationEmailAddress` / `checkAuthenticationEmailCode` /
+    `registerUser`)+ 等 `_state_event` 推进;邮箱格式预检 + `first_name`
+    非空预检,失败 → `AuthErrorOccurred` 事件,不改顶层状态
+  - `AuthService` 新增 3 个 submit 方法:沿用 `_fail()` 模板收敛错误路径
+  - `AppService` 委托转发
+  - `FakeTelegramClient` 状态机扩展:`submit_email` 含 `+new` 子串 →
+    `registration_required`(新账号),否则 → `email_code_required`(已有账号);
+    `submit_email_code` / `submit_registration` → `ready` + me 写入
+  - `LoginDialog` UI 加 3 个 page:邮箱地址(`page 3`)/ 邮箱验证码(`page 4`)/
+    注册(`page 5`,含 first_name / last_name 两输入框);`_render` 按 state
+    自动切换 page,`_on_submit` 分发到对应 `_submit_*`
+  - **测试覆盖**:`test_fake_client` 8 个(状态机分支 / 完整 email 流程两种
+    路径 / registration 空 last_name OK)+ `test_auth_service` 8 个(输入校验
+    / 委托语义 / client 异常 → ErrorOccurred)+ `test_login_dialog` 9 个
+    (page 切换 / busy 锁 / dispatch)
+
+- **TDLib `updateChannel` / `updateSupergroup` 处理器 + reconnect 立即
+  backfill(PR #14)** — 频道 metadata 改后永远停在首次 sync;reconnect
+  后最长等 30s 数据 gap。本次落地:
 - **TDLib `updateChannel` / `updateSupergroup` 处理器 + reconnect 立即
   backfill(PR #14)** — 频道 metadata 改后永远停在首次 sync;reconnect
   后最长等 30s 数据 gap。本次落地:

@@ -177,3 +177,106 @@ def test_submit_exception_shows_error(qapp, qloop):
     assert "提交手机号失败" in dlg.status_label.text()
     assert "boom" in dlg.status_label.text()
     assert dlg.btn_submit.isEnabled() is True
+
+
+# ============================================================
+# 2026-08-27 v1.4.0 PR #13:email / registration 步骤页 routing。
+# ============================================================
+
+
+def _make_email_dlg(qloop, *, initial_state="email_required"):
+    """构造 email/registration 测试用的 LoginDialog(mock app 注入对应 submit 方法)。"""
+    mock_app = Mock()
+    mock_app.settings.phone = ""
+    mock_app.client.state = initial_state
+    mock_app.submit_email = AsyncMock(return_value=("email_code_required", None))
+    mock_app.submit_email_code = AsyncMock(return_value=("ready", None))
+    mock_app.submit_registration = AsyncMock(return_value=("ready", None))
+    dlg = LoginDialog(app=mock_app, loop=qloop)
+    dlg._expected_state = initial_state  # 强制 _render 路径走对应 page
+    dlg._render(initial_state)
+    return dlg, mock_app
+
+
+def test_email_required_state_shows_email_page(qapp, qloop):
+    """PR #13:state=email_required → 切到 page 3 (邮箱地址) + focus。"""
+    dlg, _ = _make_email_dlg(qloop, initial_state="email_required")
+    assert dlg.stack.currentIndex() == 3
+    assert "邮箱" in dlg.status_label.text()
+
+
+def test_email_code_required_state_shows_code_page(qapp, qloop):
+    """PR #13:state=email_code_required → page 4。"""
+    dlg, _ = _make_email_dlg(qloop, initial_state="email_code_required")
+    assert dlg.stack.currentIndex() == 4
+
+
+def test_registration_required_state_shows_reg_page(qapp, qloop):
+    """PR #13:state=registration_required → page 5。"""
+    dlg, _ = _make_email_dlg(qloop, initial_state="registration_required")
+    assert dlg.stack.currentIndex() == 5
+    assert "注册" in dlg.status_label.text()
+
+
+def test_submit_email_invokes_app_and_unlocks(qapp, qloop):
+    """PR #13:state=email_required → _submit_email → 调 app.submit_email。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
+    dlg.in_email.setText("user@example.com")
+    dlg._submit_email()
+
+    _wait_until(lambda: mock_app.submit_email.await_count == 1)
+    assert dlg._busy is False
+    assert dlg.stack.currentIndex() == 4  # 推到 email_code_required
+
+
+def test_submit_email_busy_blocks_reentry(qapp, qloop):
+    """PR #13:busy 期间重复 _submit_email → 不触发第二次。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
+    dlg.in_email.setText("user@example.com")
+    dlg._submit_email()
+    # 立即第二次 — busy=True 直接 return
+    dlg._submit_email()
+    _wait_until(lambda: dlg._busy is False)
+    assert mock_app.submit_email.await_count == 1
+
+
+def test_submit_email_code_invokes_app(qapp, qloop):
+    """PR #13:_submit_email_code → app.submit_email_code。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="email_code_required")
+    dlg.in_email_code.setText("123456")
+    dlg._submit_email_code()
+    _wait_until(lambda: mock_app.submit_email_code.await_count == 1)
+    assert dlg._busy is False
+
+
+def test_submit_registration_invokes_app(qapp, qloop):
+    """PR #13:_submit_registration → app.submit_registration(first, last)。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="registration_required")
+    dlg.in_reg_first.setText("Alice")
+    dlg.in_reg_last.setText("Wonder")
+    dlg._submit_registration()
+    _wait_until(lambda: mock_app.submit_registration.await_count == 1)
+    assert dlg._busy is False
+    mock_app.submit_registration.assert_awaited_once_with("Alice", "Wonder")
+
+
+def test_submit_registration_empty_first_name_blocks(qapp, qloop):
+    """PR #13:first_name 空 → 不发请求,显示错误,不解锁(用户重输)。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="registration_required")
+    dlg.in_reg_first.setText("")
+    dlg._submit_registration()
+    assert mock_app.submit_registration.await_count == 0
+    assert "first_name" in dlg.status_label.text() or "必填" in dlg.status_label.text()
+
+
+def test_on_submit_dispatches_to_email_methods(qapp, qloop):
+    """PR #13:_on_submit 根据 _expected_state 分发到正确的 submit 方法。"""
+    dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
+    dlg.in_email.setText("user@example.com")
+    dlg._on_submit()  # 应走 _submit_email
+    _wait_until(lambda: mock_app.submit_email.await_count == 1)
+    # Mock 默认会建 submit_code 属性 — 用 side_effect 标记其**未被**调用
+    # 简单做法:确保 _submit_email_code / _submit_password 都没被触发。
+    assert dlg._busy is False
+    # email flow 推进后应该到 email_code_required page
+    assert dlg.stack.currentIndex() == 4

@@ -121,6 +121,37 @@ class FakeTelegramClient(TelegramClient):
         self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
         return self._state, None
 
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:Fake email 提交 → `email_code_required`(模拟
+        已有账号)或 `registration_required`(模拟新账号)。
+
+        测试约定:含 `+new` 子串 → `registration_required`(模拟新用户),
+        否则 → `email_code_required`(模拟已存在账号)。
+        """
+        if "+new" in email:
+            self._state = "registration_required"
+        else:
+            self._state = "email_code_required"
+        return self._state, None
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:Fake 邮箱验证码永远成功 → `ready`。"""
+        self._state = "ready"
+        self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
+        return self._state, None
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = ""
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:Fake 注册永远成功 → `ready`。"""
+        self._state = "ready"
+        self._me = {
+            "id": 1, "username": "fake_new",
+            "first_name": first_name or "Fake",
+            "last_name": last_name or "",
+        }
+        return self._state, None
+
     async def logout(self) -> None:
         """Fake 登出:state 回到 `phone_required` + 清 me。"""
         self._state = "phone_required"

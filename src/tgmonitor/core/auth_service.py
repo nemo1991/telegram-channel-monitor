@@ -83,3 +83,48 @@ class AuthService:
             return await self._client.submit_password(password)
         except Exception as e:  # noqa: BLE001
             return await self._fail("submit_password", e)
+
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailAddress` 时
+        提交邮箱地址。TDLib 会推到 `email_code_required`(已有账号)或
+        `registration_required`(新账号)。
+        """
+        email = (email or "").strip()
+        if "@" not in email or len(email) > 100:
+            return await self._fail(
+                "submit_email", "邮箱格式不正确",
+            )
+        try:
+            return await self._client.submit_email(email)
+        except Exception as e:  # noqa: BLE001
+            return await self._fail("submit_email", e)
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailCode` 时
+        提交邮箱验证码。错误走 ErrorOccurred。
+        """
+        code = (code or "").strip()
+        if not code:
+            return await self._fail(
+                "submit_email_code", "验证码不能为空",
+            )
+        try:
+            return await self._client.submit_email_code(code)
+        except Exception as e:  # noqa: BLE001
+            return await self._fail("submit_email_code", e)
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = ""
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitRegistration` 时
+        注册新账号。错误走 ErrorOccurred。
+        """
+        first_name = (first_name or "").strip()
+        if not first_name:
+            return await self._fail(
+                "submit_registration", "first_name 不能为空",
+            )
+        try:
+            return await self._client.submit_registration(first_name, last_name)
+        except Exception as e:  # noqa: BLE001
+            return await self._fail("submit_registration", e)

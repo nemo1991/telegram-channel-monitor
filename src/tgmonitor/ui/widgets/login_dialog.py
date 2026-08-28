@@ -106,6 +106,41 @@ class LoginDialog(QDialog):
         self.stack.addWidget(p_pwd)
         self.in_pwd.returnPressed.connect(self._submit_password)
 
+        # page 3: 邮箱地址(2026-08-27 v1.4.0 PR #13:`email_required`)
+        p_email = QWidget()
+        el = QVBoxLayout(p_email)
+        self.in_email = QLineEdit()
+        self.in_email.setPlaceholderText("you@example.com")
+        self.in_email.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        el.addWidget(self.in_email)
+        self.stack.addWidget(p_email)
+        self.in_email.returnPressed.connect(self._submit_email)
+
+        # page 4: 邮箱验证码(`email_code_required`)
+        p_email_code = QWidget()
+        ecl = QVBoxLayout(p_email_code)
+        self.in_email_code = QLineEdit()
+        self.in_email_code.setPlaceholderText("邮箱 6 位验证码")
+        self.in_email_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ecl.addWidget(self.in_email_code)
+        self.stack.addWidget(p_email_code)
+        self.in_email_code.returnPressed.connect(self._submit_email_code)
+
+        # page 5: 注册(`registration_required`)
+        p_reg = QWidget()
+        rl = QVBoxLayout(p_reg)
+        self.in_reg_first = QLineEdit()
+        self.in_reg_first.setPlaceholderText("first name")
+        self.in_reg_first.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rl.addWidget(self.in_reg_first)
+        self.in_reg_last = QLineEdit()
+        self.in_reg_last.setPlaceholderText("last name(可选)")
+        self.in_reg_last.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rl.addWidget(self.in_reg_last)
+        self.stack.addWidget(p_reg)
+        self.in_reg_first.returnPressed.connect(self._submit_registration)
+        self.in_reg_last.returnPressed.connect(self._submit_registration)
+
         # 按钮
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
@@ -137,6 +172,19 @@ class LoginDialog(QDialog):
             self.status_label.setText("二步验证 2FA 密码")
             self.stack.setCurrentIndex(2)
             self.in_pwd.setFocus()
+        elif state == "email_required":
+            # 2026-08-27 v1.4.0 PR #13:邮箱地址页
+            self.status_label.setText("输入邮箱地址")
+            self.stack.setCurrentIndex(3)
+            self.in_email.setFocus()
+        elif state == "email_code_required":
+            self.status_label.setText("邮箱验证码")
+            self.stack.setCurrentIndex(4)
+            self.in_email_code.setFocus()
+        elif state == "registration_required":
+            self.status_label.setText("注册新账号(需 first_name)")
+            self.stack.setCurrentIndex(5)
+            self.in_reg_first.setFocus()
         elif state in ("phone_required", "closed", "uninit", "tdlib_parameters"):
             self.status_label.setText("输入手机号(含 + 国家区号)")
             self.stack.setCurrentIndex(0)
@@ -167,6 +215,12 @@ class LoginDialog(QDialog):
             self._submit_code()
         elif self._expected_state == "password_required":
             self._submit_password()
+        elif self._expected_state == "email_required":
+            self._submit_email()
+        elif self._expected_state == "email_code_required":
+            self._submit_email_code()
+        elif self._expected_state == "registration_required":
+            self._submit_registration()
         else:
             self._submit_phone()
 
@@ -217,6 +271,57 @@ class LoginDialog(QDialog):
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error("提交 2FA 密码失败", exc),
             error_label="submit_password",
+        )
+        fut.add_done_callback(lambda _f: self._set_busy(False))
+
+    def _submit_email(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:提交邮箱地址。"""
+        if self._busy:
+            return
+        email = self.in_email.text().strip()
+        if not email:
+            return
+        self._set_busy(True, "正在提交邮箱…")
+        fut = run_coro(
+            self.loop, self.app.submit_email(email),
+            on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("提交邮箱失败", exc),
+            error_label="submit_email",
+        )
+        fut.add_done_callback(lambda _f: self._set_busy(False))
+
+    def _submit_email_code(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:提交邮箱验证码。"""
+        if self._busy:
+            return
+        code = self.in_email_code.text().strip()
+        if not code:
+            return
+        self.in_email_code.clear()
+        self._set_busy(True, "正在验证邮箱…")
+        fut = run_coro(
+            self.loop, self.app.submit_email_code(code),
+            on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("提交邮箱验证码失败", exc),
+            error_label="submit_email_code",
+        )
+        fut.add_done_callback(lambda _f: self._set_busy(False))
+
+    def _submit_registration(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:注册新账号。"""
+        if self._busy:
+            return
+        first = self.in_reg_first.text().strip()
+        if not first:
+            self.status_label.setText("first_name 必填")
+            return
+        last = self.in_reg_last.text().strip()
+        self._set_busy(True, "正在注册…")
+        fut = run_coro(
+            self.loop, self.app.submit_registration(first, last),
+            on_success=lambda res: self._render(res[0], res[1] or ""),
+            on_error=lambda exc: self._show_submit_error("注册失败", exc),
+            error_label="submit_registration",
         )
         fut.add_done_callback(lambda _f: self._set_busy(False))
 

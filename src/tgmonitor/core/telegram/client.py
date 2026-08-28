@@ -38,6 +38,24 @@ class TelegramClient(Protocol):
         """提交 2FA 密码。返回 (state, detail)。"""
         ...
 
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailAddress` 时
+        提交邮箱地址。TDLib 会推到 `email_code_required`(已有账号)或
+        `registration_required`(新账号)。"""
+        ...
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailCode` 时
+        提交邮箱验证码 → 通常推到 `ready`。"""
+        ...
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = ""
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitRegistration` 时
+        注册新账号;TDLib 推 → `ready`。"""
+        ...
+
     async def logout(self) -> None:
         """登出 — 清掉 session;caller 重建 client。"""
         ...

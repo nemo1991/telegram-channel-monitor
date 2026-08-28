@@ -171,6 +171,20 @@ class AppService:
         """委托给 `AuthService.submit_password`。"""
         return await self.auth.submit_password(password)
 
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_email`。"""
+        return await self.auth.submit_email(email)
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_email_code`。"""
+        return await self.auth.submit_email_code(code)
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = ""
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_registration`。"""
+        return await self.auth.submit_registration(first_name, last_name)
+
     # ---------- 频道 ----------
 
     async def list_joined_channels(self) -> list[ChannelDTO]:

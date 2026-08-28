@@ -155,6 +155,10 @@ class TdlibTelegramClient(_AiClient):
         # 鉴权输入队列(super().__init__ 之前必须建好 — TdlibJsonClient 内部某些路径会读)
         self._code_queue: asyncio.Queue[str] = asyncio.Queue()
         self._password_queue: asyncio.Queue[str] = asyncio.Queue()
+        # 2026-08-27 v1.4.0 PR #13:email / registration 鉴权队列
+        self._email_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._email_code_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._registration_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
         # 顶层状态机当前值。初值是 "uninit" — 真值由 `start()` 后的
         # `updateAuthorizationState` 决定。在 `start()` 调用之前,
@@ -381,6 +385,42 @@ class TdlibTelegramClient(_AiClient):
             detail_prefix="2FA 密码错误: ",
         )
 
+    async def _check_authentication_email_code(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:邮箱验证码注入。"""
+        await self._submit_auth_step(
+            source="email_code",
+            queue=self._email_code_queue,
+            request_factory=lambda code: {"@type": "checkAuthenticationEmailCode", "code": {"@type": "emailAddressAuthenticationCode", "code": code}},
+            error_label="CheckAuthenticationEmailCode",
+            detail_prefix="邮箱验证码错误: ",
+        )
+
+    async def _register_user(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:注册新账号。从 `_registration_queue` 收
+        `(first_name, last_name)` 后调 `registerUser`。
+        """
+        first_name, last_name = await self._registration_queue.get()
+        log.info(
+            "registering new user (first=%r, last=%r)", first_name, last_name,
+        )
+        try:
+            await self.request({
+                "@type": "registerUser",
+                "first_name": first_name,
+                "last_name": last_name,
+            }, request_timeout=30)
+        except TdlibError as e:
+            detail = _extract_error_detail(e)
+            log.warning("registerUser failed: %s", e)
+            await self._publish_auth_error(
+                "registration", f"注册失败: {detail}", e,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("registerUser unexpected failure")
+            await self._publish_auth_error(
+                "registration", f"注册失败: {e}", e,
+            )
+
     async def _ask_for_code(self) -> None:
         """TDLib 进入 authorizationStateWaitCode 时由基类分发调用 — 接到队列消费链路上。"""
         await self._check_authentication_code()
@@ -388,6 +428,18 @@ class TdlibTelegramClient(_AiClient):
     async def _ask_for_password(self) -> None:
         """TDLib 进入 authorizationStateWaitPassword 时由基类分发调用 — 接到队列消费链路上。"""
         await self._check_authentication_password()
+
+    async def _ask_for_email_code(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailCode` 时
+        由基类分发调用。
+        """
+        await self._check_authentication_email_code()
+
+    async def _ask_for_registration(self) -> None:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitRegistration` 时
+        由基类分发调用。
+        """
+        await self._register_user()
 
     async def _on_authorization_state_update(self, authorization_state) -> None:
         """tdlib_json 的 `_updates_loop` 自己截胡 `updateAuthorizationState`,直接
@@ -916,6 +968,87 @@ class TdlibTelegramClient(_AiClient):
             await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
         except TimeoutError:
             log.warning("submit_password: timeout (state=%s)", self._state)
+        return self._state, self._state_detail
+
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailAddress` 时
+        提交邮箱地址。同步发 `setAuthenticationEmailAddress`,等状态推进到
+        `email_code_required`(已有账号)或 `registration_required`(新账号)。
+        """
+        self._check_alive()
+        if not getattr(self, "_running", False):
+            return self._state, self._state_detail
+        email = (email or "").strip()
+        if "@" not in email or len(email) > 100:
+            await self._publish_auth_error(
+                "email", "邮箱格式不正确",
+            )
+            return self._state, self._state_detail
+        # 等 TDLib 进入 email_required(最多 5s)
+        if self._state != "email_required":
+            self._state_event.clear()
+            try:
+                await asyncio.wait_for(self._state_event.wait(), timeout=5.0)
+            except TimeoutError:
+                pass
+        if self._state != "email_required":
+            log.warning(
+                "submit_email: state=%s,非 email_required 无法发邮箱", self._state,
+            )
+            return self._state, self._state_detail
+        log.info("submitting email → setAuthenticationEmailAddress")
+        try:
+            await self.request({
+                "@type": "setAuthenticationEmailAddress",
+                "email_address": email,
+            }, request_timeout=30)
+        except TdlibError as e:
+            detail = _extract_error_detail(e)
+            log.warning("submit_email failed: %s", e)
+            await self._publish_auth_error("email", f"邮箱提交失败: {detail}", e)
+            return self._state, self._state_detail
+        self._state_event.clear()
+        try:
+            await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
+        except TimeoutError:
+            log.warning(
+                "submit_email: 发邮箱后 15s 未推进 (state=%s)", self._state,
+            )
+        return self._state, self._state_detail
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:UI 提交邮箱验证码。push 进队列 + 等状态变更。
+        错误经 `AuthErrorOccurred` 传出。
+        """
+        self._check_alive()
+        await self._email_code_queue.put(code)
+        self._state_event.clear()
+        try:
+            await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
+        except TimeoutError:
+            log.warning("submit_email_code: timeout (state=%s)", self._state)
+        return self._state, self._state_detail
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = ""
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitRegistration` 时
+        注册新账号。push 进队列 + 等状态变更。
+        """
+        self._check_alive()
+        first_name = (first_name or "").strip()
+        last_name = (last_name or "").strip()
+        if not first_name:
+            await self._publish_auth_error(
+                "registration", "注册需提供 first_name",
+            )
+            return self._state, self._state_detail
+        await self._registration_queue.put((first_name, last_name))
+        self._state_event.clear()
+        try:
+            await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
+        except TimeoutError:
+            log.warning("submit_registration: timeout (state=%s)", self._state)
         return self._state, self._state_detail
 
     async def logout(self) -> None:
