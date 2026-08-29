@@ -42,10 +42,17 @@
    ```bash
    uv sync --all-extras --group dev
    ```
-4. 跑测试确保基线绿:
+4. **可选**(强烈推荐)启用 pre-commit 钩子 — 本地 commit 前自动跑 ruff /
+   trailing-whitespace / gitleaks,与 CI 门控完全一致,免去「本地过 → CI 红」往返:
+   ```bash
+   uv run pre-commit install
+   uv run pre-commit run --all-files  # 首次手动跑一遍,之后自动
+   ```
+5. 跑测试确保基线绿:
    ```bash
    PYTHONPATH=src uv run pytest
    uv run ruff check src tests
+   uv run ruff format --check src tests
    ```
 
 ### 开发
@@ -85,7 +92,8 @@
   ```
   `type` ∈ {`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`}
 - 一个 PR 一个主题;避免巨型 diff
-- 跑过 `pytest` + `ruff check` 再 push
+- 跑过 `pytest` + `ruff check` + `ruff format --check` 再 push
+- pre-commit install 后本地 commit 前自动跑同一套检查
 
 ### PR 流程
 

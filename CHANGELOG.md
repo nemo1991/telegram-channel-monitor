@@ -5,6 +5,33 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased] - v1.5.0
+
+主题:**架构 + UX 双线推进** — 主线 3 个架构 / 性能 PR + 3 个主题 quick
+win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成测试
++ Lightbox UX 收官。共 8 PR / ~2300 LOC / +45-47 测试。
+
+> 本段为 v1.5.0 累积 changelog,各 PR 合入时**就近追加**到对应分类下,
+> 发版时统一转 `[1.5.0] - 2026-XX-XX` + bump 版本号。
+
+### 🔧 Changed
+- **`ruff format` 门控落地(PR #A1)** — `pyproject.toml` 新增
+  `[tool.ruff.format]`(`quote-style="double"` / `line-ending="lf"` /
+  `indent-style="space"`);CI `lint` job 加 `ruff format --check src tests`
+  步骤,与 `ruff check` 平行;首次 `ruff format` 已一次性落地 97 文件
+  (commit `38a657a`,3032+/1679-,纯空白 / quote-style / 缩进,无逻辑变化)。
+  后续任何「该格式化未格式化」CI 红,杜绝「改一行空格 → 再 CI」循环
+
+### 📦 Build / Tooling
+- **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
+  (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /
+  check-toml / check-merge-conflict / check-added-large-files /
+  gitleaks 机密扫描;`pyproject.toml [dependency-groups].dev` 加
+  `pre-commit>=3.7`(可选依赖,不强制);启用方法见
+  `CONTRIBUTING.md`「准备」段:`uv run pre-commit install` + 首次
+  `pre-commit run --all-files`。CI 仍跑 ruff 双步骤作为兜底,pre-commit
+  本地钩子与 CI 门控完全等价
+
 ## [1.4.0] - 2026-08-29
 
 主题:**Telegram 能力补齐 v1** — 围绕「数据真实性 / 视图陈旧 / 边界 case

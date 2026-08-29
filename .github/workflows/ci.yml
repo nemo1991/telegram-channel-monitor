@@ -145,8 +145,14 @@ jobs:
       # 0 容忍:任何 E/F/I/B/UP/N/SIM/ASYNC 警告都让本 job 红,见 pyproject.toml
       # [tool.ruff.lint].select 配置。`uv tool run` 临时拉 ruff(~10MB)不污染
       # 主 venv — lint 不需要 PySide6 等 700MB+ 的大包
-      - name: Run ruff
+      - name: Run ruff check
         run: uv tool run --from "ruff>=0.5" ruff check src tests
+
+      # 2026-08-29 v1.5.0 PR #A1:format 门控 — 与 check 平行。任何「该格式化未格式化」
+      # 都让本 job 红,杜绝"CI 红 → 改一行空格 → 再 CI"循环。配置见
+      # pyproject.toml [tool.ruff.format]。一次性 reformat 已落 commit 38a657a。
+      - name: Run ruff format check
+        run: uv tool run --from "ruff>=0.5" ruff format --check src tests
 
   mypy:
     # 2026-08-03 新增 — 配 pyproject.toml [tool.mypy] 后跟 ruff 平行跑,

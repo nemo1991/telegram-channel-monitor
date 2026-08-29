@@ -69,6 +69,15 @@ target-version = "py313"
 # 备份的 aiotdlib 参考源码不参与 lint
 extend-exclude = ["packages/tdlib_json/_vendor_ref"]
 
+[tool.ruff.format]
+# 2026-08-29 v1.5.0 PR #A1:加 format 配置 — 与 ruff check 平行门控,
+# 杜绝"CI 红 → 改一行空格 → 再 CI"循环。quote-style / line-ending 与
+# 既有用法保持一致(已 97 文件一次性 reformat 落地,见 38a657a)。
+quote-style = "double"
+line-ending = "lf"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC"]
 ignore = [
@@ -144,4 +153,6 @@ dev = [
     "coverage>=7.15.4",
     "pyinstaller>=6.21.0",
     "moto[s3]>=5",
+    # 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子(可选用,CI 不依赖)
+    "pre-commit>=3.7",
 ]

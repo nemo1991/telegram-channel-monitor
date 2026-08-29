@@ -1,0 +1,52 @@
+# 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子配置
+#
+# 启用方法(本地开发,CI 不依赖):
+#   uv sync --all-extras --group dev
+#   uv run pre-commit install
+#   # 手动跑一次(可选):
+#   uv run pre-commit run --all-files
+#
+# 钩子清单:
+#   - pre-commit-hooks:通用 hygiene(trailing-whitespace / end-of-file / yaml / toml / merge-conflict)
+#   - ruff:lint(与 CI ruff check 一致)+ format(与 CI ruff format --check 一致)
+#   - gitleaks:机密扫描(防止 TG_API_ID / TG_PHONE / session 文件误 commit)
+#
+# CI 兜底:即便本地没装 pre-commit,CI 的 ruff check + format --check
+# 步骤也会拦下同一类问题。两层防护。
+#
+# 安装 pre-commit 后,首次 commit 会跑全栈(~10s),后续 commit 只跑
+# 改动的文件(~1s)。`pre-commit.ci` 也可对接 GitHub PR,但本仓库默认
+# 不开 — 避免与本地钩子双跑浪费 CI 配额。
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown 末尾两个空格 = 强制换行符,保留
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        # tgmonitor.spec 内嵌长 docstring 不算大文件,阈值 500KB
+        args: [--maxkb=500]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      # 与 CI `ruff check src tests` 一致(读 pyproject.toml [tool.ruff.lint])
+      - id: ruff
+        args: [check, --fix]
+        types_or: [python, pyi]
+      # 与 CI `ruff format --check src tests` 一致(读 pyproject.toml [tool.ruff.format])
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.23.3
+    hooks:
+      # 主动扫描 commit 内容,拦截 TG_API_ID / TG_API_HASH / TG_PHONE /
+      # 验证码 / 2FA 密码 / session 文件等敏感字符串,见 CONTRIBUTING.md
+      # 「🔐 安全」段。CI 侧由 secret-scanning.yml 兜底。
+      - id: gitleaks
