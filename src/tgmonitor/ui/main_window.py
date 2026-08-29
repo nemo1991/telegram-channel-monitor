@@ -70,6 +70,7 @@ from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
+from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
@@ -511,7 +512,13 @@ class MainWindow(QMainWindow):
         ids = sorted(int(cid) for cid in self.monitor.subscribed_ids)
         dlg = ExportDialog(self.app, ids, self)
         if dlg.exec():
-            self._vm.start_export(dlg.request())
+            req = dlg.request()
+            # 2026-08-30 v1.5.0 PR #A3:导出参数敲定后弹进度对话框 +
+            # 后台 start_export。dialog 自身订阅 vm.export_progress +
+            # 完成后由 _on_export_done 关闭。
+            self._export_dialog = ExportProgressDialog(self._vm, parent=self)
+            self._export_dialog.show()
+            self._vm.start_export(req)
 
     def _on_sync_all_channels(self) -> None:
         """大盘快速操作:全量同步所有已订阅频道。"""
@@ -590,6 +597,14 @@ class MainWindow(QMainWindow):
         self._conn_label.setText(text)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
+        # 2026-08-30 v1.5.0 PR #A3:关闭进度对话框(如有)— dialog 自身
+        # 已解 signal 连接,accept() 安全
+        dlg = getattr(self, "_export_dialog", None)
+        if dlg is not None:
+            dlg.accept()
+            # del 而非 = None:避免 ExportProgressDialog | None 注解变化
+            # 蔓延全文件;此字段本来就只在 export 期间有值
+            del self._export_dialog
         if error:
             QMessageBox.critical(self, "导出失败", error)
         elif result:

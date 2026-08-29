@@ -30,6 +30,7 @@ from tgmonitor.core.events import (
     Event,
     EventBus,
     ExportDone,
+    ExportProgress,
     LoginStateChanged,
     MediaDeleted,
     MediaDownloaded,
@@ -74,6 +75,14 @@ class MonitorViewModel(QObject):
     )  # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
     channels_changed = Signal()
     export_done = Signal(object, object)  # (result_dict | None, error | None)
+    # 导出进度(2026-08-30 v1.5.0 PR #A3)— payload ExportProgress
+    # (request_id, written, total)。`total=None` 表示流式分页
+    # (`service.py:_run_messages` 只在最后一批写完时才能确定总数)。
+    export_progress = Signal(object)
+    # 导出任务取消回调(2026-08-30 v1.5.0 PR #A3)— ExportProgressDialog
+    # 取消按钮 → vm.cancel_current_export() → 取消当前 asyncio.Task。
+    # payload (request_id,)
+    export_cancelled = Signal(object)
     error = Signal(str)
     settings_changed = Signal(
         str, bool, bool, str
@@ -106,12 +115,21 @@ class MonitorViewModel(QObject):
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop,
     ) -> None:
-        """存 3 个子系统引用 + 立即订阅 EventBus 所有相关事件。"""
+        """存 3 个子系统引用 + 立即订阅 EventBus 所有相关事件。
+
+        2026-08-30 v1.5.0 PR #A3:`_export_task` 持当前导出 asyncio.Task —
+        `start_export` 创建,`cancel_current_export` 取消。`ExportDone`
+        / 取消成功 / 异常结束都会清空此引用,避免下一次 export 误取消
+        上一轮残留 task。
+        """
         super().__init__()
         self.app = app
         self.monitor = monitor
         self.loop = loop
         self.known_channels: dict[int, ChannelDTO] = {}
+        # 2026-08-30 v1.5.0 PR #A3:当前导出 future — UI 取消时 cancel 此 future
+        # (run_coro 返 asyncio.Future,Future.cancel() 等同 Task.cancel())
+        self._export_task: asyncio.Future[None] | None = None
         self._wire_bus()
 
     def _wire_bus(self) -> None:
@@ -124,6 +142,9 @@ class MonitorViewModel(QObject):
         b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
         b.subscribe(ChannelUnsubscribed, self._on_channel_unsubscribed)
         b.subscribe(ExportDone, self._on_export_done)
+        # 2026-08-30 v1.5.0 PR #A3:导出进度订阅 — ExportService 每页写完
+        # 发一次,UI 侧 ExportProgressDialog 接到 signal 刷新 QProgressBar。
+        b.subscribe(ExportProgress, self._on_export_progress)
         b.subscribe(ErrorOccurred, self._on_error)
         b.subscribe(SettingsChanged, self._on_settings_changed)
         b.subscribe(ChannelSyncProgress, self._on_sync_progress)
@@ -186,6 +207,20 @@ class MonitorViewModel(QObject):
             self.export_done.emit(None, e.error)
         elif e.result is not None:
             self.export_done.emit(asdict(e.result), None)
+        # 2026-08-30 v1.5.0 PR #A3:导出结束清空 task 引用 — 否则下一次
+        # cancel_current_export 会误取消一个已完成 / 已抛错的 task
+        # (asyncio 取消已完成 task 是 no-op,但日志噪音 + 引用悬挂)。
+        self._export_task = None
+
+    async def _on_export_progress(self, e: Event) -> None:
+        """2026-08-30 v1.5.0 PR #A3:转发 ExportService 进度 → Qt signal。
+
+        `total=None` 表示分页中(总数未知,QProgressBar 用 indeterminate);
+        `total=int` 表示流式写盘结束,UI 收尾。
+        """
+        if not isinstance(e, ExportProgress):
+            return
+        self.export_progress.emit(e)
 
     async def _on_error(self, e: Event) -> None:
         if not isinstance(e, ErrorOccurred):
@@ -466,17 +501,35 @@ class MonitorViewModel(QObject):
 
         run_coro(self.loop, _go(), error_label="load_recent_messages")
 
-    def start_export(self, req: ExportRequest) -> None:
+    def start_export(self, req: ExportRequest) -> asyncio.Future[None]:
         """后台 fire `app.export(req)` 异步生成器,UI 不阻塞。
 
-        `app.export` 内部 yield 心跳,这里只消耗掉(进度走 ExportProgress 事件)。
+        `app.export` 内部 yield 心跳,这里只消耗掉(进度走 ExportProgress
+        事件)。2026-08-30 v1.5.0 PR #A3:返回 future 引用,存到
+        `self._export_task` 供 `cancel_current_export` 用。返回 future
+        而非 None 让 caller(本例 main_window)也能取句柄。
         """
 
         async def _go() -> None:
             async for _ in self.app.export(req):
                 pass
 
-        run_coro(self.loop, _go(), error_label="start_export")
+        self._export_task = run_coro(self.loop, _go(), error_label="start_export")
+        return self._export_task
+
+    def cancel_current_export(self) -> None:
+        """2026-08-30 v1.5.0 PR #A3:取消当前导出 — `asyncio.Task.cancel()`。
+
+        走 CancelledError 路径,ExportService._run_messages 的 `async for`
+        让出点会抛 CancelledError,ExportDone 仍发(带 error)。多次取消安全:
+        第二次以后 task 已结束,no-op。
+        """
+        task = self._export_task
+        if task is not None and not task.done():
+            task.cancel()
+            # 不立即清 _export_task — 让 _on_export_done 在 export 真正
+            # 结束(CancelledError 被 run_coro 捕获)后清。避免下一次
+            # start_export 进来时被 UI 误标「上一轮已取消」。
 
     def export_media_list(self, req: MediaExportRequest) -> None:
         """Media Manager 当前视图 → per-media CSV 导出 — 2026-08-25 v1.3.0 PR #7。

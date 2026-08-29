@@ -52,6 +52,39 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     `unittest.mock.AsyncMock` patch 子 service 验证 facade 真的只 forward;
     同时验证 `app.storage` / `app.objects` setter 同步子 service
 
+- **PR #A2 hotfix(架构收口)** — `app_service.py` 类型注解 hotfix:
+  子 service `self._sub` / `self._media` 构造时必建(生命周期 =
+  AppService),不再 `| None`;`self._storage` / `self._objects` 显式非 None
+  注解;property 返回类型对齐(`objects` 返非 None,`storage` 同);
+  `objects.setter` 接受 `| None` 但 None 是历史兼容路径(运行时不再触发);
+  `shutdown` 不再清空 `_sub` / `_media` 引用(同生命周期,清反而让 mypy
+  报 union-attr);`export*` 入口加 `assert storage/objects 非 None`;
+  两处 `dataclasses.replace(media=tuple(...))` 改不转 tuple,DTO 字段
+  是 list。**净 mypy 错 66 → 41**,与 baseline 持平(顺手清 baseline
+  2 个 tuple→list 错),零新错
+
+- **导出进度 UI 接线(PR #A3,UX 收口)** — `ExportService._run_messages`
+  流式分页(v1.4.0 PR #12 已落地)每 PAGE_SIZE=500 发 `ExportProgress`
+  事件,但 VM 不订阅、UI 无 progress bar,体感是「按按钮 → 黑洞 →
+  弹结果」。本 PR 只做 UI 接线:
+  - `MonitorViewModel` 新增 `export_progress` Signal(object) +
+    `_on_export_progress` handler(转 `ExportProgress` 事件)+ 订阅 +
+    `cancel_current_export()` API(调 future.cancel())
+  - `start_export` 返回 `asyncio.Future[None]` + 存 `self._export_task`
+    供 cancel 用;`_on_export_done` 清空 `_export_task`(防下次
+    start_export 误取消)
+  - 新增 `ui/widgets/export_progress_dialog.py` — `QDialog` 非模态 +
+    `QProgressBar`(total=None 走 indeterminate,total=int 走确定模式 +
+    设值)+ 取消按钮 + `cancelled` Signal;`closeEvent` / `done` 双路径
+    解 signal 连接,防 dangling 引用
+  - `MainWindow._on_export` 改:ExportDialog OK 后弹
+    `ExportProgressDialog`,绑 `vm.export_progress`,`_on_export_done`
+    自动 `dlg.accept()`
+  - 新增 `tests/test_export_progress_vm.py`(+10 测试:VM signal 转发 /
+    其他事件类型忽略 / `_export_task` 生命周期 / cancel 行为)
+  - 新增 `tests/test_export_progress_dialog.py`(+7 测试:dialog
+    connect/disconnect + 进度条 max/value + 取消按钮)
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /
