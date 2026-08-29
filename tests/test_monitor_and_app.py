@@ -1,4 +1,5 @@
 """Monitor + AppService + EventBus 端到端(无网络)。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -45,8 +46,10 @@ async def test_monitor_receives_and_dedupes(monitor, storage, client, bus):
 
 async def test_message_received_event_published(monitor, client, bus):
     seen: list = []
-    bus.subscribe(__import__("tgmonitor.core.events", fromlist=["MessageReceived"]).MessageReceived,
-                  lambda e: seen.append(e) or _noop())
+    bus.subscribe(
+        __import__("tgmonitor.core.events", fromlist=["MessageReceived"]).MessageReceived,
+        lambda e: seen.append(e) or _noop(),
+    )
     monitor.set_whitelist([100])
     await monitor.start()
     try:
@@ -233,11 +236,20 @@ async def test_iter_chat_history_warms_up_chat_then_yields():
     """预热 getChat 成功后照常分页 yield MessageDTO(旧行为不回归)。"""
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 
-    raw = type("Message", (), {
-        "id": 5, "chat_id": 100, "date": 0, "author_signature": None,
-        "content": type("MessageText", (), {"text": "hi"})(),
-        "views": None, "forwards": None, "edit_date": 0,
-    })()
+    raw = type(
+        "Message",
+        (),
+        {
+            "id": 5,
+            "chat_id": 100,
+            "date": 0,
+            "author_signature": None,
+            "content": type("MessageText", (), {"text": "hi"})(),
+            "views": None,
+            "forwards": None,
+            "edit_date": 0,
+        },
+    )()
     client = _ChatHistoryClient(history=[raw])
     api = ChannelsApi(client)
     msgs = [m async for m in api.iter_chat_history(100)]
@@ -315,9 +327,13 @@ async def test_app_login_without_credentials_fails(tmp_path):
 
     s = Settings(  # type: ignore[call-arg]
         # 故意留空
-        api_id=0, api_hash="", phone="",
-        db_backend=DBBackend.JSONL, db_root=tmp_path / "m",
-        objectstore_backend=ObjectStoreBackend.LOCAL, objectstore_root=tmp_path / "o",
+        api_id=0,
+        api_hash="",
+        phone="",
+        db_backend=DBBackend.JSONL,
+        db_root=tmp_path / "m",
+        objectstore_backend=ObjectStoreBackend.LOCAL,
+        objectstore_root=tmp_path / "o",
         media_policy=MediaPolicy.METADATA,
     )
     bus = EventBus()
@@ -325,8 +341,10 @@ async def test_app_login_without_credentials_fails(tmp_path):
     bus.subscribe(ErrorOccurred, lambda e: errs.append(e))
     from tests.conftest import InMemoryRepository
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
+
     app = AppService(
-        bus, FakeTelegramClient(),
+        bus,
+        FakeTelegramClient(),
         InMemoryRepository(),
         LocalObjectStore(root=tmp_path / "o"),
         s,
@@ -413,9 +431,7 @@ async def test_unsubscribe_failure_does_not_publish_event(app, bus):
     finally:
         app.storage.set_channel_subscribed = real  # type: ignore[method-assign]
 
-    assert captured == [], (
-        f"storage 失败不应 publish ChannelUnsubscribed;got {captured}"
-    )
+    assert captured == [], f"storage 失败不应 publish ChannelUnsubscribed;got {captured}"
 
 
 async def test_list_messages_falls_back_to_storage_truth(app, storage):
@@ -432,10 +448,15 @@ async def test_list_messages_falls_back_to_storage_truth(app, storage):
     # 同时确认 storage.list_subscribed_channels 包含该频道
     ch = ChannelDTO(id=200, title="c200", is_subscribed=True)
     await storage.upsert_channel(ch)
-    await storage.save_message(MessageDTO(
-        id=0, channel_id=200, telegram_msg_id=1, text="from-sub",
-        date=datetime(2026, 7, 15, 13, 0, tzinfo=UTC),
-    ))
+    await storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=200,
+            telegram_msg_id=1,
+            text="from-sub",
+            date=datetime(2026, 7, 15, 13, 0, tzinfo=UTC),
+        )
+    )
 
     msgs = await app.list_messages(channel_ids=None)
     assert any(m.text == "from-sub" for m in msgs), (
@@ -470,12 +491,11 @@ async def test_monitor_heartbeat_logs_when_stream_idle(monitor, caplog) -> None:
         await asyncio.sleep(0.08)
         await monitor.stop()
     assert any(
-        "monitor heartbeat" in r.message and "stream alive" in r.message
-        for r in caplog.records
+        "monitor heartbeat" in r.message and "stream alive" in r.message for r in caplog.records
     ), f"心跳日志缺失;records={[r.message for r in caplog.records]}"
-    assert all(
-        r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message
-    ), f"心跳应为 INFO 级别;records={[r.message for r in caplog.records]}"
+    assert all(r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message), (
+        f"心跳应为 INFO 级别;records={[r.message for r in caplog.records]}"
+    )
 
 
 async def test_monitor_logs_update_received_and_stored(monitor, client, caplog) -> None:
@@ -497,9 +517,7 @@ async def test_monitor_logs_update_received_and_stored(monitor, client, caplog) 
     assert any("monitor stored message" in m and "handled=1" in m for m in messages), messages
 
 
-async def test_monitor_heartbeat_logs_when_stream_active(
-    monitor, client, caplog
-) -> None:
+async def test_monitor_heartbeat_logs_when_stream_active(monitor, client, caplog) -> None:
     """活跃频道(消息不断)下心跳也周期打 — 不是只在静默时。
 
     用户反馈「启动 10 分钟没看到心跳日志」:若频道 30s 内一直有新消息,
@@ -523,13 +541,13 @@ async def test_monitor_heartbeat_logs_when_stream_active(
     finally:
         await monitor.stop()
     messages = [r.message for r in caplog.records]
-    assert any(
-        "monitor heartbeat" in m and "stream alive" in m for m in messages
-    ), f"活跃流下心跳缺失;records={messages}"
+    assert any("monitor heartbeat" in m and "stream alive" in m for m in messages), (
+        f"活跃流下心跳缺失;records={messages}"
+    )
     assert any("monitor update received" in m for m in messages), messages
-    assert all(
-        r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message
-    ), f"心跳应为 INFO 级别;records={messages}"
+    assert all(r.levelname == "INFO" for r in caplog.records if "monitor heartbeat" in r.message), (
+        f"心跳应为 INFO 级别;records={messages}"
+    )
 
 
 # ============================================================
@@ -563,9 +581,7 @@ class _SlowDownloadClient(FakeTelegramClient):
         return await super().download_file(file_id)
 
 
-async def test_full_policy_downloads_media_async(
-    bus, storage, objectstore, settings
-) -> None:
+async def test_full_policy_downloads_media_async(bus, storage, objectstore, settings) -> None:
     """FULL 策略 + MediaDownloader:新消息先落库(DOWNLOADING)→ 后台下载 →
     回写 DONE + object_key → 发 MediaDownloaded 事件;消息不阻塞落库。
 
@@ -581,7 +597,11 @@ async def test_full_policy_downloads_media_async(
     client.set_download("fid-1", b"image-bytes")
     full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
     mon = MonitorService(
-        bus, client, storage, objectstore, full,
+        bus,
+        client,
+        storage,
+        objectstore,
+        full,
         downloader=MediaDownloader(client, storage, objectstore),
     )
     mon.set_whitelist([100])
@@ -600,7 +620,9 @@ async def test_full_policy_downloads_media_async(
     bus.subscribe(MediaDownloaded, _on_downloaded)
 
     msg = make_message(
-        channel_id=100, msg_id=10, text="media!",
+        channel_id=100,
+        msg_id=10,
+        text="media!",
         media=[_media_with_file_id("fid-1")],
     )
     await mon.start()
@@ -609,9 +631,7 @@ async def test_full_policy_downloads_media_async(
         # 下载未完成(假 client 睡 0.2s)→ 此刻应已落库且 media 是 DOWNLOADING
         await asyncio.sleep(0.05)
         assert len(received) == 1, "MessageReceived 应先行发布"
-        assert received[0].message.media[0].download_status == (
-            MediaDownloadStatus.DOWNLOADING
-        )
+        assert received[0].message.media[0].download_status == (MediaDownloadStatus.DOWNLOADING)
         stored = await storage.get_message(100, 10)
         assert stored is not None
         assert stored.media[0].download_status == MediaDownloadStatus.DOWNLOADING
@@ -645,7 +665,11 @@ async def test_full_policy_download_failure_marks_failed(
 
     full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
     mon = MonitorService(
-        bus, client, storage, objectstore, full,
+        bus,
+        client,
+        storage,
+        objectstore,
+        full,
         downloader=MediaDownloader(client, storage, objectstore),
     )
     mon.set_whitelist([100])
@@ -660,7 +684,9 @@ async def test_full_policy_download_failure_marks_failed(
 
     client.set_download("fid-2", None)  # 注入 None = 下载失败
     msg = make_message(
-        channel_id=100, msg_id=11, text="broken",
+        channel_id=100,
+        msg_id=11,
+        text="broken",
         media=[_media_with_file_id("fid-2")],
     )
     await mon.start()
@@ -686,9 +712,7 @@ async def test_full_policy_download_failure_marks_failed(
 # ============================================================
 
 
-async def test_live_monitor_re_arrival_routes_to_edit_path(
-    monitor, client, bus, storage
-) -> None:
+async def test_live_monitor_re_arrival_routes_to_edit_path(monitor, client, bus, storage) -> None:
     """同 id 重推(session 内)_seen_ids 命中 → 走 _handle_edited 而非 _handle。
 
     行为:
@@ -706,9 +730,11 @@ async def test_live_monitor_re_arrival_routes_to_edit_path(
 
     async def _on_recv(e: MessageReceived) -> None:
         received.append(e)
+
     async def _on_edit(e: MessageEdited) -> None:
         edited.append(e)
         edited_evt.set()
+
     bus.subscribe(MessageReceived, _on_recv)
     bus.subscribe(MessageEdited, _on_edit)
 
@@ -749,17 +775,17 @@ async def test_live_monitor_silent_skip_when_message_in_storage(
 
     async def _on_recv(e: MessageReceived) -> None:
         received.append(e)
+
     async def _on_edit(e: MessageEdited) -> None:
         edited.append(e)
+
     bus.subscribe(MessageReceived, _on_recv)
     bus.subscribe(MessageEdited, _on_edit)
 
     await monitor.start()
     try:
         for i in range(3):
-            await client.simulate_incoming(
-                make_message(channel_id=100, msg_id=1, text=f"v{i}")
-            )
+            await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text=f"v{i}"))
         await asyncio.sleep(0.2)
         # 仅 1 条 MessageReceived
         assert len(received) == 1
@@ -787,7 +813,11 @@ async def test_full_policy_skips_download_when_storage_has_prior(
     client.set_download("fid-X", b"shared-bytes")
     full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
     mon = MonitorService(
-        bus, client, storage, objectstore, full,
+        bus,
+        client,
+        storage,
+        objectstore,
+        full,
         downloader=MediaDownloader(client, storage, objectstore),
     )
     mon.set_whitelist([100])
@@ -801,15 +831,20 @@ async def test_full_policy_skips_download_when_storage_has_prior(
     async def _on_downloaded(e: MediaDownloaded) -> None:
         downloaded.append(e)
         downloaded_evt.set()
+
     bus.subscribe(MessageReceived, _on_received)
     bus.subscribe(MediaDownloaded, _on_downloaded)
 
     msg1 = make_message(
-        channel_id=100, msg_id=10, text="first",
+        channel_id=100,
+        msg_id=10,
+        text="first",
         media=[_media_with_file_id("fid-X")],
     )
     msg2 = make_message(
-        channel_id=100, msg_id=11, text="second",
+        channel_id=100,
+        msg_id=11,
+        text="second",
         media=[_media_with_file_id("fid-X")],
     )
     await mon.start()
@@ -850,7 +885,11 @@ async def test_full_policy_dedup_cross_messages_via_storage(
     client.set_download("fid-Y", b"only-once")
     full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
     mon = MonitorService(
-        bus, client, storage, objectstore, full,
+        bus,
+        client,
+        storage,
+        objectstore,
+        full,
         downloader=MediaDownloader(client, storage, objectstore),
     )
     mon.set_whitelist([100])
@@ -860,10 +899,13 @@ async def test_full_policy_dedup_cross_messages_via_storage(
     async def _on_dl(e):
         downloaded.append(e)
         downloaded_evt.set()
+
     bus.subscribe(MediaDownloaded, _on_dl)
 
     msg1 = make_message(
-        channel_id=100, msg_id=20, text="a",
+        channel_id=100,
+        msg_id=20,
+        text="a",
         media=[_media_with_file_id("fid-Y")],
     )
     await mon.start()
@@ -903,23 +945,21 @@ async def test_live_monitor_emits_message_edited_on_content_change(
     async def _on_edited(e: MessageEdited) -> None:
         edited.append(e)
         edited_evt.set()
+
     async def _on_recv(e: MessageReceived) -> None:
         received.append(e)
+
     bus.subscribe(MessageReceived, _on_recv)
     bus.subscribe(MessageEdited, _on_edited)
 
     await monitor.start()
     try:
         # 第 1 条:v1
-        await client.simulate_incoming(
-            make_message(channel_id=100, msg_id=1, text="v1")
-        )
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v1"))
         await asyncio.sleep(0.2)
         assert len(received) == 1
         # 第 2 条:同 id,text v2 — _seen_ids 命中 → 走 _handle_edited
-        await client.simulate_incoming(
-            make_message(channel_id=100, msg_id=1, text="v2")
-        )
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v2"))
         await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
         # 仍仅 1 条 MessageReceived(编辑不发)
         assert len(received) == 1
@@ -952,13 +992,16 @@ async def test_edit_path_overwrites_text_views_forwards_edited_media(
     async def _on_edited(e: MessageEdited) -> None:
         edited.append(e)
         edited_evt.set()
+
     bus.subscribe(MessageEdited, _on_edited)
 
     # 第 1 条:initial
     initial = make_message(channel_id=100, msg_id=1, text="v1")
     # 第 2 条:edit,改 text + views + forwards + edited + media
     edited_dto = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
         date=datetime(2026, 1, 1, tzinfo=UTC),
         text="v2-edited",
         author="alice",
@@ -990,9 +1033,7 @@ async def test_edit_path_overwrites_text_views_forwards_edited_media(
         await monitor.stop()
 
 
-async def test_edit_path_when_storage_empty_saves_as_new(
-    monitor, client, bus, storage
-) -> None:
+async def test_edit_path_when_storage_empty_saves_as_new(monitor, client, bus, storage) -> None:
     """编辑路径 + storage 空(罕见)→ 当作新增保存,仍发 MessageEdited。
 
     模拟:手动往 _seen_ids 注入 key(假装已见过),然后推 (100,1)
@@ -1007,8 +1048,10 @@ async def test_edit_path_when_storage_empty_saves_as_new(
 
     async def _on_edited(e: MessageEdited) -> None:
         edited.append(e)
+
     async def _on_recv(e: MessageReceived) -> None:
         received.append(e)
+
     bus.subscribe(MessageEdited, _on_edited)
     bus.subscribe(MessageReceived, _on_recv)
 
@@ -1016,9 +1059,7 @@ async def test_edit_path_when_storage_empty_saves_as_new(
     try:
         # 手动在 _seen_ids 塞 (100, 1),但 storage 没这条消息
         monitor._seen_ids[(100, 1)] = None
-        await client.simulate_incoming(
-            make_message(channel_id=100, msg_id=1, text="edit-on-empty")
-        )
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="edit-on-empty"))
         await asyncio.sleep(0.2)
         # MessageReceived 不发(编辑路径走 MessageEdited)
         assert received == []
@@ -1032,9 +1073,7 @@ async def test_edit_path_when_storage_empty_saves_as_new(
         await monitor.stop()
 
 
-async def test_seen_ids_cache_evicts_when_over_limit(
-    monitor, client, bus
-) -> None:
+async def test_seen_ids_cache_evicts_when_over_limit(monitor, client, bus) -> None:
     """推 10001 条不同 id → _seen_ids 收敛到 10000(OrderedDict LRU)。"""
     monitor.set_whitelist([100])
     await monitor.start()
@@ -1113,12 +1152,22 @@ async def test_delete_message_keeps_bytes_when_referenced(
         download_status=MediaDownloadStatus.DONE,
         file_size=len(b"shared-bytes"),
     )
-    await storage.save_message(make_message(
-        channel_id=100, msg_id=10, text="first", media=[med],
-    ))
-    await storage.save_message(make_message(
-        channel_id=100, msg_id=11, text="second", media=[med],
-    ))
+    await storage.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=10,
+            text="first",
+            media=[med],
+        )
+    )
+    await storage.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=11,
+            text="second",
+            media=[med],
+        )
+    )
     mon = MonitorService(bus, client, storage, objectstore, settings)
     # 删其中一条
     await mon.delete_message(100, 10)
@@ -1134,8 +1183,10 @@ def test_edited_message_ui_replace_message_renders_new_text():
     """UI 层:MessageView.replace_message 按 (channel_id, telegram_msg_id) 找 row,
     调 _format 重渲,row 数不变,文本更新到 v2。"""
     import os
+
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance() or QApplication([])  # noqa: F841 — keep alive
     from datetime import UTC, datetime
 
@@ -1147,17 +1198,25 @@ def test_edited_message_ui_replace_message_renders_new_text():
     view.set_channel_titles({100: "TNews"})
     # 先 append 一条 v1
     msg1 = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
         date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
-        text="v1", author="alice", media=[],
+        text="v1",
+        author="alice",
+        media=[],
     )
     view.append(msg1)
     assert view.count() == 1
     # 编辑事件触发 replace_message(v2)
     msg2 = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
         date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
-        text="v2-edited", author="alice", media=[],
+        text="v2-edited",
+        author="alice",
+        media=[],
     )
     view.replace_message(msg2)
     # row 数不变
@@ -1193,19 +1252,27 @@ async def test_monitor_routes_interactions_changed_to_storage(
     try:
         # 先存一条消息让 update 落到真实对象上
         base = MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=42,
+            id=0,
+            channel_id=100,
+            telegram_msg_id=42,
             date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
-            text="hi", author="alice", media=[],
+            text="hi",
+            author="alice",
+            media=[],
         )
         await storage.save_message(base)
 
         new_rxns = [
             ReactionDTO(type="emoji", emoji="🎉", count=5, is_chosen=True),
         ]
-        await bus.publish(MessageInteractionsChanged(
-            channel_id=100, telegram_msg_id=42,
-            views=999, reactions=new_rxns,
-        ))
+        await bus.publish(
+            MessageInteractionsChanged(
+                channel_id=100,
+                telegram_msg_id=42,
+                views=999,
+                reactions=new_rxns,
+            )
+        )
         # bus.publish 是 async,handler 也是 async → 让 event loop 跑一轮
         await asyncio.sleep(0)
         rows = await storage.list_messages(channel_ids=[100])
@@ -1226,16 +1293,23 @@ async def test_monitor_interactions_handler_swallows_errors(
     用 None storage 来强制异常。
     """
     await monitor.start()
+
     class BoomStorage:
         async def update_message_interactions(self, *a, **kw):
             raise RuntimeError("simulated")
+
     original = monitor.storage
     monitor.storage = BoomStorage()
     try:
         # handler 抛异常被 bus 吞,不冒泡到 publish 调用者
-        await bus.publish(MessageInteractionsChanged(
-            channel_id=100, telegram_msg_id=1, views=10, reactions=[],
-        ))
+        await bus.publish(
+            MessageInteractionsChanged(
+                channel_id=100,
+                telegram_msg_id=1,
+                views=10,
+                reactions=[],
+            )
+        )
         await asyncio.sleep(0)
     finally:
         monitor.storage = original
@@ -1249,17 +1323,19 @@ async def test_monitor_interactions_handler_swallows_errors(
 # ============================================================
 
 
-async def test_monitor_handles_message_deleted_removes_row(
-    monitor, storage, client, bus
-) -> None:
+async def test_monitor_handles_message_deleted_removes_row(monitor, storage, client, bus) -> None:
     """PR #11:publish MessageDeleted → storage.delete_message 被调,row 真删。"""
     monitor.set_whitelist([100])
     await monitor.start()
     try:
         base = MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=99,
+            id=0,
+            channel_id=100,
+            telegram_msg_id=99,
             date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
-            text="x", author="alice", media=[],
+            text="x",
+            author="alice",
+            media=[],
         )
         await storage.save_message(base)
         # 确认初始存在
@@ -1272,9 +1348,7 @@ async def test_monitor_handles_message_deleted_removes_row(
         await monitor.stop()
 
 
-async def test_monitor_delete_handler_swallows_errors(
-    monitor, storage, client, bus
-) -> None:
+async def test_monitor_delete_handler_swallows_errors(monitor, storage, client, bus) -> None:
     """PR #11:storage 抛异常时 handler 不抛回 bus。"""
     await monitor.start()
 
@@ -1293,9 +1367,7 @@ async def test_monitor_delete_handler_swallows_errors(
         await monitor.stop()
 
 
-async def test_monitor_delete_handler_does_not_republish(
-    monitor, storage, client, bus
-) -> None:
+async def test_monitor_delete_handler_does_not_republish(monitor, storage, client, bus) -> None:
     """PR #11:`_handle_message_deleted` 不 republish MessageDeleted(防无限循环)。
 
     监听总线计数 publish 次数 — 只能有我们主动 publish 的那 1 次。
@@ -1341,9 +1413,13 @@ async def test_monitor_delete_handler_clears_orphan_bytes(
             download_status=MediaDownloadStatus.DONE,
         )
         msg = MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=77,
+            id=0,
+            channel_id=100,
+            telegram_msg_id=77,
             date=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
-            text="x", author="alice", media=[med],
+            text="x",
+            author="alice",
+            media=[med],
         )
         await storage.save_message(msg)
         # objectstore 里存一份
@@ -1378,28 +1454,33 @@ async def test_monitor_routes_channel_metadata_changed_to_storage(
     await monitor.start()
     try:
         # 预存频道
-        await storage.upsert_channel(ChannelDTO(
-            id=100, title="Old Title", username="oldname", member_count=10,
-        ))
-        await bus.publish(ChannelMetadataChanged(
-            channel_id=100,
-            title="New Title",
-            username=None,           # None → username 不变
-            member_count=500,
-        ))
+        await storage.upsert_channel(
+            ChannelDTO(
+                id=100,
+                title="Old Title",
+                username="oldname",
+                member_count=10,
+            )
+        )
+        await bus.publish(
+            ChannelMetadataChanged(
+                channel_id=100,
+                title="New Title",
+                username=None,  # None → username 不变
+                member_count=500,
+            )
+        )
         await asyncio.sleep(0)
         got = await storage.get_channel(100)
         assert got is not None
-        assert got.title == "New Title"        # 改了
-        assert got.member_count == 500         # 改了
-        assert got.username == "oldname"       # 保留(None → 不动)
+        assert got.title == "New Title"  # 改了
+        assert got.member_count == 500  # 改了
+        assert got.username == "oldname"  # 保留(None → 不动)
     finally:
         await monitor.stop()
 
 
-async def test_monitor_channel_metadata_handler_skips_empty_payload(
-    monitor, storage, bus
-) -> None:
+async def test_monitor_channel_metadata_handler_skips_empty_payload(monitor, storage, bus) -> None:
     """PR #14:event 全 None(channel_id=0 且无 username)时静默 skip,不抛异常。"""
     await monitor.start()
     try:
@@ -1411,20 +1492,24 @@ async def test_monitor_channel_metadata_handler_skips_empty_payload(
         await monitor.stop()
 
 
-async def test_monitor_channel_metadata_swallows_errors(
-    monitor, storage, bus
-) -> None:
+async def test_monitor_channel_metadata_swallows_errors(monitor, storage, bus) -> None:
     """PR #14:storage 抛异常时 handler 不冒泡到 publish 调用者。"""
     await monitor.start()
+
     class BoomStorage:
         async def update_channel_metadata(self, *a, **kw):
             raise RuntimeError("simulated")
+
     original = monitor.storage
     monitor.storage = BoomStorage()
     try:
-        await bus.publish(ChannelMetadataChanged(
-            channel_id=999, title="x", member_count=1,
-        ))
+        await bus.publish(
+            ChannelMetadataChanged(
+                channel_id=999,
+                title="x",
+                member_count=1,
+            )
+        )
         await asyncio.sleep(0)
         # 无异常冒泡即成功
     finally:
@@ -1432,9 +1517,7 @@ async def test_monitor_channel_metadata_swallows_errors(
         await monitor.stop()
 
 
-async def test_monitor_connection_state_ready_kicks_backfill(
-    monitor, client, bus
-) -> None:
+async def test_monitor_connection_state_ready_kicks_backfill(monitor, client, bus) -> None:
     """PR #14:ConnectionStateChanged(state='ready') → 立即触发 backfill,
     设 _skip_next_tick=True,不让 30s tick 紧接着再跑一次。
 
@@ -1448,6 +1531,7 @@ async def test_monitor_connection_state_ready_kicks_backfill(
 
         async def _count_backfill():
             call_count["n"] += 1
+
         monitor._backfill_all = _count_backfill  # type: ignore[assignment]
 
         await bus.publish(ConnectionStateChanged(state="ready"))
@@ -1459,9 +1543,7 @@ async def test_monitor_connection_state_ready_kicks_backfill(
         await monitor.stop()
 
 
-async def test_monitor_connection_state_non_ready_does_not_kick(
-    monitor, client, bus
-) -> None:
+async def test_monitor_connection_state_non_ready_does_not_kick(monitor, client, bus) -> None:
     """PR #14:state != 'ready'(connecting/updating/...)时不动 backfill。"""
     await monitor.start()
     try:
@@ -1469,6 +1551,7 @@ async def test_monitor_connection_state_non_ready_does_not_kick(
 
         async def _count_backfill():
             call_count["n"] += 1
+
         monitor._backfill_all = _count_backfill  # type: ignore[assignment]
 
         await bus.publish(ConnectionStateChanged(state="connecting"))
@@ -1480,9 +1563,7 @@ async def test_monitor_connection_state_non_ready_does_not_kick(
         await monitor.stop()
 
 
-async def test_monitor_channel_metadata_does_not_republish(
-    monitor, storage, bus
-) -> None:
+async def test_monitor_channel_metadata_does_not_republish(monitor, storage, bus) -> None:
     """PR #14:_handle_channel_metadata 落库后**不** republish
     ChannelMetadataChanged(避免无限循环,与 PR #10/_handle_interactions_changed
     同规则)。"""
@@ -1497,9 +1578,13 @@ async def test_monitor_channel_metadata_does_not_republish(
         bus.subscribe(ChannelMetadataChanged, _count)
         try:
             await storage.upsert_channel(ChannelDTO(id=200, title="t"))
-            await bus.publish(ChannelMetadataChanged(
-                channel_id=200, title="t2", member_count=2,
-            ))
+            await bus.publish(
+                ChannelMetadataChanged(
+                    channel_id=200,
+                    title="t2",
+                    member_count=2,
+                )
+            )
             await asyncio.sleep(0)
             # 我们自己 + handler 落库(若 republish 会变成 2)
             assert seen["n"] == 1

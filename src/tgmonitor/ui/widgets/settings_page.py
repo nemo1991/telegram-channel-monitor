@@ -13,6 +13,7 @@
   6. 🔄 同步参数   — chat_delay / page_delay / resume_from_saved
   7. 储存按钮栏
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -131,11 +132,18 @@ class SettingsPage(QWidget):
         f.setSpacing(6)
 
         self.in_api_id = spin_field(
-            f, "API ID:", min=0, max=2_000_000_000, value=0,
+            f,
+            "API ID:",
+            min=0,
+            max=2_000_000_000,
+            value=0,
         )
 
         self.in_api_hash = text_field(
-            f, "API Hash:", "32 位 hash · my.telegram.org", echo_password=True,
+            f,
+            "API Hash:",
+            "32 位 hash · my.telegram.org",
+            echo_password=True,
         )
 
         self.in_phone = text_field(f, "手机号:", "+8613800000000")
@@ -236,9 +244,12 @@ class SettingsPage(QWidget):
         self.cmb_media = combo_field(f, "媒体下载:", MediaPolicy)
 
         self.in_media_max = spin_field(
-            f, "单文件大小上限:",
-            min=0, max=10240,                  # 0 = 无限制,10 GB 上限
-            suffix=" MB", single_step=10,
+            f,
+            "单文件大小上限:",
+            min=0,
+            max=10240,  # 0 = 无限制,10 GB 上限
+            suffix=" MB",
+            single_step=10,
             tooltip="单文件下载上限。0 = 无限制(慎用,可能下载 GB 级视频把磁盘占满)。",
         )
 
@@ -259,13 +270,21 @@ class SettingsPage(QWidget):
         f.setSpacing(6)
 
         self.in_chat_delay = spin_field(
-            f, "频道间间隔:",
-            min=50, max=60000, suffix=" ms", single_step=50,
+            f,
+            "频道间间隔:",
+            min=50,
+            max=60000,
+            suffix=" ms",
+            single_step=50,
         )
 
         self.in_page_delay = spin_field(
-            f, "分页间隔:",
-            min=100, max=60000, suffix=" ms", single_step=100,
+            f,
+            "分页间隔:",
+            min=100,
+            max=60000,
+            suffix=" ms",
+            single_step=100,
         )
 
         self.chk_resume = QCheckBox("续拉(从已保存位置继续)")
@@ -289,7 +308,10 @@ class SettingsPage(QWidget):
             self._set_form_row_visible(g, idx, is_jsonl)
 
     def _on_os_backend_changed(self) -> None:
-        is_local = self.cmb_os.currentData() in (ObjectStoreBackend.LOCAL, ObjectStoreBackend.FOLDER)
+        is_local = self.cmb_os.currentData() in (
+            ObjectStoreBackend.LOCAL,
+            ObjectStoreBackend.FOLDER,
+        )
         is_s3 = self.cmb_os.currentData() == ObjectStoreBackend.S3
         # 本地目录:local/folder 时显示
         hit = self._find_form_row(self.in_os_root)
@@ -297,8 +319,14 @@ class SettingsPage(QWidget):
             g, idx = hit
             self._set_form_row_visible(g, idx, is_local)
         # S3 字段 + 提示:S3 时显示
-        for w in (self.in_os_endpoint, self.in_os_region, self.in_os_access_key,
-                  self.in_os_secret_key, self.in_os_bucket, self.lbl_os_s3_hint):
+        for w in (
+            self.in_os_endpoint,
+            self.in_os_region,
+            self.in_os_access_key,
+            self.in_os_secret_key,
+            self.in_os_bucket,
+            self.lbl_os_s3_hint,
+        ):
             hit = self._find_form_row(w)
             if hit is not None:
                 g, idx = hit
@@ -451,13 +479,15 @@ class SettingsPage(QWidget):
                 QMessageBox.critical(self, ".env 写入失败", str(exc))
                 return
             QMessageBox.critical(
-                self, "保存失败",
+                self,
+                "保存失败",
                 f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
                 "请检查数据库 / 对象存储配置与对应服务是否可达后重试。",
             )
 
         run_coro(
-            self._loop, _validate_and_save(),
+            self._loop,
+            _validate_and_save(),
             on_success=_saved,
             on_error=_save_failed,
             error_label="validate_backends",
@@ -497,13 +527,15 @@ class SettingsPage(QWidget):
                 QMessageBox.critical(self, ".env 写入失败", str(exc))
                 return
             QMessageBox.critical(
-                self, "保存失败",
+                self,
+                "保存失败",
                 f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
                 "请检查数据库 / 对象存储配置与对应服务是否可达后重试。",
             )
 
         run_coro(
-            self._loop, _validate_and_apply(),
+            self._loop,
+            _validate_and_apply(),
             on_success=_applied,
             on_error=_apply_failed,
             error_label="reconfigure",
@@ -521,11 +553,13 @@ class SettingsPage(QWidget):
         async def _test() -> str:
             try:
                 from urllib.parse import urlparse
+
                 parsed = urlparse(url)
                 host = parsed.hostname or "127.0.0.1"
                 port = parsed.port or 1080
                 _, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port), timeout=3.0,
+                    asyncio.open_connection(host, port),
+                    timeout=3.0,
                 )
                 writer.close()
                 await writer.wait_closed()
@@ -542,7 +576,8 @@ class SettingsPage(QWidget):
             QMessageBox.information(self, "测试结果", msg)
 
         run_coro(
-            self._loop, _test(),
+            self._loop,
+            _test(),
             on_success=_show,
             on_error=lambda e: _show(f"❌ 异常: {e}"),
             error_label="test_proxy",

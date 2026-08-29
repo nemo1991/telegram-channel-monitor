@@ -4,6 +4,7 @@
 - 唯一索引 `{channel_id, telegram_msg_id}`
 - 查询语义与 PostgresRepository 对齐(按 `date ASC, _id ASC` 排序)
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -92,8 +93,7 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
     # 缺省 None 表示从未推送。
     reactions_raw = d.get("reactions")
     reactions: list[ReactionDTO] | None = (
-        [ReactionDTO.from_dict(r) for r in reactions_raw]
-        if reactions_raw is not None else None
+        [ReactionDTO.from_dict(r) for r in reactions_raw] if reactions_raw is not None else None
     )
     return MessageDTO(
         id=int(str(d["_id"])),
@@ -201,14 +201,16 @@ class MongoRepository(StorageRepository):
         """只更元数据字段;subscribed 保持旧值。"""
         await self.db.channels.update_one(
             {"_id": channel.id},
-            {"$set": {
-                "title": channel.title,
-                "username": channel.username,
-                "kind": channel.kind,
-                "member_count": channel.member_count,
-                "created_at": channel.created_at,
-                "last_synced_at": channel.last_synced_at,
-            }},
+            {
+                "$set": {
+                    "title": channel.title,
+                    "username": channel.username,
+                    "kind": channel.kind,
+                    "member_count": channel.member_count,
+                    "created_at": channel.created_at,
+                    "last_synced_at": channel.last_synced_at,
+                }
+            },
             upsert=True,
         )
 
@@ -237,17 +239,17 @@ class MongoRepository(StorageRepository):
             {"$set": update},
         )
 
-    async def set_channel_subscribed(
-        self, channel_id: int, subscribed: bool
-    ) -> None:
+    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
         """只设订阅标志;频道未建档时 upsert 一条 stub(后续会被 metadata 覆盖)。"""
         await self.db.channels.update_one(
             {"_id": channel_id},
-            {"$set": {
-                "subscribed": subscribed,
-                # 首次建档时给个 title,后续会被 metadata 覆盖
-                "title": f"#{channel_id}",
-            }},
+            {
+                "$set": {
+                    "subscribed": subscribed,
+                    # 首次建档时给个 title,后续会被 metadata 覆盖
+                    "title": f"#{channel_id}",
+                }
+            },
             upsert=True,
         )
 
@@ -320,8 +322,7 @@ class MongoRepository(StorageRepository):
             # 2026-08-27 v1.4.0 PR #10:reactions dict 列表;None 不写 key,
             # [] 写空 list(语义:已推送过但当前空)。
             "reactions": (
-                [r.to_dict() for r in message.reactions]
-                if message.reactions is not None else None
+                [r.to_dict() for r in message.reactions] if message.reactions is not None else None
             ),
         }
         result = await self.db.messages.find_one_and_update(
@@ -360,8 +361,7 @@ class MongoRepository(StorageRepository):
             update["views"] = views
         if reactions is not None:
             update["reactions"] = [
-                r.to_dict() if isinstance(r, ReactionDTO) else r
-                for r in reactions
+                r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions
             ]
         if not update:
             return
@@ -376,9 +376,7 @@ class MongoRepository(StorageRepository):
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
 
-    async def get_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None:
+    async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息(media 子文档自动展开);不存在返 None。"""
         d = await self.db.messages.find_one(
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
@@ -414,10 +412,7 @@ class MongoRepository(StorageRepository):
             # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres / JSONL 对齐)。
             # v1.4.0 PR #12:`offset > 0` 时先 `$skip offset` 再 `$limit limit`。
             cursor = (
-                self.db.messages.find(q)
-                .sort([("date", -1), ("_id", -1)])
-                .skip(offset)
-                .limit(limit)
+                self.db.messages.find(q).sort([("date", -1), ("_id", -1)]).skip(offset).limit(limit)
             )
             docs = [d async for d in cursor]
             docs.reverse()
@@ -429,9 +424,7 @@ class MongoRepository(StorageRepository):
         """该频道已落库消息数(走 count_documents,不应用 date 过滤)。"""
         return await self.db.messages.count_documents({"channel_id": channel_id})
 
-    async def aggregate_per_channel(
-        self, channel_ids: list[int]
-    ) -> dict[int, ChannelStats]:
+    async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:Mongo $group 单 pipeline 聚合 4 字段。
 
         注意:本实现 media 是 messages 子文档(2026-08-25 PR #3 决策),
@@ -441,31 +434,43 @@ class MongoRepository(StorageRepository):
             return {}
         pipeline = [
             {"$match": {"channel_id": {"$in": channel_ids}}},
-            {"$unwind": {
-                "path": "$media",
-                "preserveNullAndEmptyArrays": True,
-            }},
-            {"$group": {
-                "_id": "$channel_id",
-                "messages": {"$addToSet": "$_id"},
-                "media": {"$sum": {
-                    "$cond": [{"$ifNull": ["$media", False]}, 1, 0],
-                }},
-                "done_media": {"$sum": {
-                    "$cond": [
-                        {"$eq": ["$media.download_status", "done"]}, 1, 0,
-                    ],
-                }},
-                "last_date": {"$max": "$date"},
-            }},
-            {"$project": {
-                "_id": 0,
-                "channel_id": "$_id",
-                "messages": {"$size": "$messages"},
-                "media": 1,
-                "done_media": 1,
-                "last_date": 1,
-            }},
+            {
+                "$unwind": {
+                    "path": "$media",
+                    "preserveNullAndEmptyArrays": True,
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$channel_id",
+                    "messages": {"$addToSet": "$_id"},
+                    "media": {
+                        "$sum": {
+                            "$cond": [{"$ifNull": ["$media", False]}, 1, 0],
+                        }
+                    },
+                    "done_media": {
+                        "$sum": {
+                            "$cond": [
+                                {"$eq": ["$media.download_status", "done"]},
+                                1,
+                                0,
+                            ],
+                        }
+                    },
+                    "last_date": {"$max": "$date"},
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "channel_id": "$_id",
+                    "messages": {"$size": "$messages"},
+                    "media": 1,
+                    "done_media": 1,
+                    "last_date": 1,
+                }
+            },
         ]
         out: dict[int, ChannelStats] = {}
         async for doc in self.db.messages.aggregate(pipeline):
@@ -478,9 +483,7 @@ class MongoRepository(StorageRepository):
             )
         return out
 
-    async def find_media_by_file_id(
-        self, telegram_file_id: str
-    ) -> MediaDTO | None:
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
         """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
 
         命中条件 `object_key 非 None AND download_status == 'done'`。返回最新写入
@@ -530,10 +533,14 @@ class MongoRepository(StorageRepository):
         Mongo 上对小数据集足够,UI 也没用上 deep paging。
         """
         pipeline = self._build_media_pipeline(
-            channel_ids=channel_ids, status=status,
-            media_type=media_type, search=search,
-            sort=sort, sort_dir=sort_dir,
-            offset=offset, limit=limit,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            sort=sort,
+            sort_dir=sort_dir,
+            offset=offset,
+            limit=limit,
         )
         cursor = self.db.messages.aggregate(pipeline)
         rows: list[tuple[MessageDTO, int, MediaDTO]] = []
@@ -559,10 +566,14 @@ class MongoRepository(StorageRepository):
         `$limit`,末尾 `$count` 取值(Mongo 5+ 原生支持)。
         """
         pipeline = self._build_media_pipeline(
-            channel_ids=channel_ids, status=status,
-            media_type=media_type, search=search,
-            sort=SortKey.DATE, sort_dir=SortDir.DESC,
-            offset=0, limit=0,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            sort=SortKey.DATE,
+            sort_dir=SortDir.DESC,
+            offset=0,
+            limit=0,
         )
         # 去掉末尾的 $sort / $skip / $limit(已在 limit=0 时不追加),改 `$count`
         pipeline.append({"$count": "total"})
@@ -592,12 +603,14 @@ class MongoRepository(StorageRepository):
         if channel_ids:
             pipeline.append({"$match": {"channel_id": {"$in": channel_ids}}})
         # 2) unwind media 子文档数组,includeArrayIndex 给 $idx 用于排序/返回
-        pipeline.append({
-            "$unwind": {
-                "path": "$media",
-                "includeArrayIndex": "media_idx",
-            },
-        })
+        pipeline.append(
+            {
+                "$unwind": {
+                    "path": "$media",
+                    "includeArrayIndex": "media_idx",
+                },
+            }
+        )
         # 3) media 字段过滤(无 media 的不会被 unwind,自然空)
         media_match: dict[str, Any] = {}
         if status is not None:
@@ -614,9 +627,11 @@ class MongoRepository(StorageRepository):
         # 4) 排序(SortKey → $sort 字段映射;direction 1=ASC, -1=DESC)
         direction = 1 if sort_dir == SortDir.ASC else -1
         sort_field = _MEDIA_SORT_FIELD[sort]
-        pipeline.append({
-            "$sort": {sort_field: direction, "_id": -1, "media_idx": 1},
-        })
+        pipeline.append(
+            {
+                "$sort": {sort_field: direction, "_id": -1, "media_idx": 1},
+            }
+        )
         # 5) 偏移 + 限制
         if offset:
             pipeline.append({"$skip": offset})
@@ -657,4 +672,5 @@ class MongoRepository(StorageRepository):
 def _escape_regex(s: str) -> str:
     """转义 Mongo `$regex` 注入(2026-08-25 PR #3)。"""
     import re
+
     return re.escape(s)

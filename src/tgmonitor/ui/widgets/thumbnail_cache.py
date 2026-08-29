@@ -16,6 +16,7 @@ QPixmap.fromData 会卡(尤其大缩略图 + 多媒体同时出现)。进程内 
 - 不做 cross-process 共享 / 文件系统缓存。
 - 不在 list scroll 时做 LRU eviction 策略优化(可视行优先)。
 """
+
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -85,7 +86,9 @@ def cache_key_for(media: MediaDTO) -> tuple[str, str] | None:
 
 
 def render_pixmap(
-    data: bytes, *, max_size: int = 64,
+    data: bytes,
+    *,
+    max_size: int = 64,
 ) -> QPixmap | None:
     """bytes → 缩放后的 QPixmap;失败(非图像格式)返 None。
 
@@ -102,8 +105,8 @@ def render_pixmap(
     if pix.width() <= max_size and pix.height() <= max_size:
         return pix
     return pix.scaled(
-        max_size, max_size,
+        max_size,
+        max_size,
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
-

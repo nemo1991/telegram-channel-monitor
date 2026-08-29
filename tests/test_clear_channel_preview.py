@@ -8,6 +8,7 @@
 - preview 是只读:不调 storage.delete_* / objects.delete
 - dialog:必勾 ack checkbox 才 enable OK;Cancel → Rejected;OK → Accepted
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -31,17 +32,27 @@ from tgmonitor.core.objectstore.local_store import LocalObjectStore
 
 def _msg(msg_id: int, media: list[MediaDTO]) -> MessageDTO:
     return MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=msg_id,
-        date=datetime(2026, 1, 1, 12), text="x", media=media,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=msg_id,
+        date=datetime(2026, 1, 1, 12),
+        text="x",
+        media=media,
     )
 
 
-def _photo(file_size: int = 1024, status: MediaDownloadStatus = MediaDownloadStatus.DONE,
-           object_key: str | None = "media/p.jpg") -> MediaDTO:
+def _photo(
+    file_size: int = 1024,
+    status: MediaDownloadStatus = MediaDownloadStatus.DONE,
+    object_key: str | None = "media/p.jpg",
+) -> MediaDTO:
     return MediaDTO(
-        type=MediaType.PHOTO, mime_type="image/jpeg",
-        file_name="p.jpg", file_size=file_size,
-        object_key=object_key, object_backend="local",
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="p.jpg",
+        file_size=file_size,
+        object_key=object_key,
+        object_backend="local",
         download_status=status,
     )
 
@@ -60,8 +71,11 @@ async def svc(tmp_path):
     bus = EventBus()
     from tgmonitor.core.config import MediaPolicy, Settings
     from tgmonitor.core.telegram.fake_client import FakeTelegramClient
+
     settings = Settings(  # type: ignore[call-arg]
-        api_id=1, api_hash="x" * 32, phone="+10000000000",
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+10000000000",
         session_dir=tmp_path / "session",
         objectstore_root=tmp_path / "media",
         data_root=tmp_path,
@@ -73,19 +87,31 @@ async def svc(tmp_path):
 
 async def test_preview_basic_counts(svc: AppService):
     """PR #8:preview_delete_by_channel → message_count / media_count / orphan_bytes。"""
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
-        ],
-    ))
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=2,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(2048, MediaDownloadStatus.DONE, "media/b.jpg"),
-            _photo(512, MediaDownloadStatus.DONE, "media/c.jpg"),
-        ],
-    ))
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
+            ],
+        )
+    )
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=2,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(2048, MediaDownloadStatus.DONE, "media/b.jpg"),
+                _photo(512, MediaDownloadStatus.DONE, "media/c.jpg"),
+            ],
+        )
+    )
 
     pv = await svc.preview_delete_by_channel(100)
     assert isinstance(pv, DeleteChannelPreview)
@@ -107,18 +133,30 @@ async def test_preview_empty_channel_returns_zero(svc: AppService):
 async def test_preview_shared_object_key_excluded(svc: AppService):
     """PR #8:跨频道共享 object_key → preview 时不计入 orphan_bytes。"""
     # ch 100 + ch 200 共用 object_key="media/shared.jpg"
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(1024, MediaDownloadStatus.DONE, "media/shared.jpg"),
-        ],
-    ))
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=200, telegram_msg_id=1,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(1024, MediaDownloadStatus.DONE, "media/shared.jpg"),
-        ],
-    ))
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(1024, MediaDownloadStatus.DONE, "media/shared.jpg"),
+            ],
+        )
+    )
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=200,
+            telegram_msg_id=1,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(1024, MediaDownloadStatus.DONE, "media/shared.jpg"),
+            ],
+        )
+    )
 
     pv = await svc.preview_delete_by_channel(100)
     # refcount("media/shared.jpg") = 2 → 不应计入 orphan
@@ -127,14 +165,20 @@ async def test_preview_shared_object_key_excluded(svc: AppService):
 
 async def test_preview_pending_status_excluded(svc: AppService):
     """PR #8:preview 只数 DONE media 的 bytes(跟 delete_by_channel 一致)。"""
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(1024, MediaDownloadStatus.DONE, "media/done.jpg"),
-            _photo(9999, MediaDownloadStatus.PENDING, None),
-            _photo(8888, MediaDownloadStatus.FAILED, None),
-        ],
-    ))
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(1024, MediaDownloadStatus.DONE, "media/done.jpg"),
+                _photo(9999, MediaDownloadStatus.PENDING, None),
+                _photo(8888, MediaDownloadStatus.FAILED, None),
+            ],
+        )
+    )
 
     pv = await svc.preview_delete_by_channel(100)
     # 只算 DONE 1024 — PENDING / FAILED 不计
@@ -143,12 +187,18 @@ async def test_preview_pending_status_excluded(svc: AppService):
 
 async def test_preview_does_not_mutate_storage(svc: AppService):
     """PR #8:preview 是严格只读 — storage / objects 状态不变。"""
-    await svc.storage.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        date=datetime(2026, 1, 1), text="", media=[
-            _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
-        ],
-    ))
+    await svc.storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            date=datetime(2026, 1, 1),
+            text="",
+            media=[
+                _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
+            ],
+        )
+    )
     msg_count_before = await svc.storage.count_messages(100)
     media_count_before = await svc.storage.count_media_by_channel(100)
 
@@ -161,6 +211,7 @@ async def test_preview_does_not_mutate_storage(svc: AppService):
 @pytest.fixture
 def qt_app():
     from PySide6.QtWidgets import QApplication
+
     return QApplication.instance() or QApplication([])
 
 
@@ -173,7 +224,9 @@ def test_dialog_ok_disabled_until_checked(qt_app):
     )
 
     pv = DeleteChannelPreview(
-        channel_id=100, message_count=5, media_count=10,
+        channel_id=100,
+        message_count=5,
+        media_count=10,
         potential_orphan_bytes=1024,
     )
     dlg = ClearChannelPreviewDialog(pv, "Test")
@@ -198,7 +251,9 @@ def test_dialog_cancel_returns_rejected(qt_app):
     )
 
     pv = DeleteChannelPreview(
-        channel_id=100, message_count=1, media_count=1,
+        channel_id=100,
+        message_count=1,
+        media_count=1,
         potential_orphan_bytes=0,
     )
     dlg = ClearChannelPreviewDialog(pv, "Test")
@@ -216,7 +271,9 @@ def test_dialog_shows_counts_in_labels(qt_app):
     )
 
     pv = DeleteChannelPreview(
-        channel_id=100, message_count=42, media_count=17,
+        channel_id=100,
+        message_count=42,
+        media_count=17,
         potential_orphan_bytes=5_242_880,  # 5 MB
     )
     dlg = ClearChannelPreviewDialog(pv, "My Channel")

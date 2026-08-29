@@ -1,4 +1,5 @@
 """共用 fixtures:InMemoryRepository + LocalObjectStore + FakeTelegramClient。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -51,8 +52,11 @@ class InMemoryRepository(StorageRepository):
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
         existing = self.channels.get(channel.id)
         self.channels[channel.id] = ChannelDTO(
-            id=channel.id, title=channel.title, username=channel.username,
-            kind=channel.kind, member_count=channel.member_count,
+            id=channel.id,
+            title=channel.title,
+            username=channel.username,
+            kind=channel.kind,
+            member_count=channel.member_count,
             created_at=channel.created_at,
             is_subscribed=(existing.is_subscribed if existing else False),
             last_synced_at=channel.last_synced_at,
@@ -75,18 +79,13 @@ class InMemoryRepository(StorageRepository):
             title=title if title is not None else existing.title,
             username=username if username is not None else existing.username,
             kind=existing.kind,
-            member_count=(
-                member_count if member_count is not None
-                else existing.member_count
-            ),
+            member_count=(member_count if member_count is not None else existing.member_count),
             created_at=existing.created_at,
             is_subscribed=existing.is_subscribed,
             last_synced_at=existing.last_synced_at,
         )
 
-    async def set_channel_subscribed(
-        self, channel_id: int, subscribed: bool
-    ) -> None:
+    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
         existing = self.channels.get(channel_id)
         if existing is None:
             self.channels[channel_id] = ChannelDTO(
@@ -94,8 +93,11 @@ class InMemoryRepository(StorageRepository):
             )
         else:
             self.channels[channel_id] = ChannelDTO(
-                id=existing.id, title=existing.title, username=existing.username,
-                kind=existing.kind, member_count=existing.member_count,
+                id=existing.id,
+                title=existing.title,
+                username=existing.username,
+                kind=existing.kind,
+                member_count=existing.member_count,
                 created_at=existing.created_at,
                 is_subscribed=subscribed,
                 last_synced_at=existing.last_synced_at,
@@ -139,7 +141,9 @@ class InMemoryRepository(StorageRepository):
             message.id = self._msg_pk
         # 2026-08-24:re-evaluate 索引 — DONE→PENDING 切换时旧 fid 索引条目该清。
         old_msg = self.messages.get(key)
-        old_fids = {m.telegram_file_id for m in (old_msg.media if old_msg else []) if m.telegram_file_id}
+        old_fids = {
+            m.telegram_file_id for m in (old_msg.media if old_msg else []) if m.telegram_file_id
+        }
         self.messages[key] = message
         new_fids = {m.telegram_file_id for m in message.media if m.telegram_file_id}
         for fid in old_fids | new_fids:
@@ -154,9 +158,11 @@ class InMemoryRepository(StorageRepository):
         """与 JsonlFileStore 同步(2026-08-24):返第一个同 fid 且 DONE+object_key 的 media。"""
         for m in self.messages.values():
             for med in m.media:
-                if (med.telegram_file_id == telegram_file_id
-                        and med.download_status == MediaDownloadStatus.DONE
-                        and med.object_key):
+                if (
+                    med.telegram_file_id == telegram_file_id
+                    and med.download_status == MediaDownloadStatus.DONE
+                    and med.object_key
+                ):
                     return med
         return None
 
@@ -176,9 +182,7 @@ class InMemoryRepository(StorageRepository):
                     else:
                         self._media_by_fid[fid] = best
 
-    async def get_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None:
+    async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         return self.messages.get((channel_id, telegram_msg_id))
 
     async def list_messages(
@@ -221,9 +225,7 @@ class InMemoryRepository(StorageRepository):
     async def count_messages(self, channel_id: int) -> int:
         return sum(1 for m in self.messages.values() if m.channel_id == channel_id)
 
-    async def aggregate_per_channel(
-        self, channel_ids: list[int]
-    ) -> dict[int, ChannelStats]:
+    async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:InMemory 实现 — 单轮扫所有 message,
         按 channel_id 聚合 4 个字段。无订阅过滤(调用方负责)。
 
@@ -241,8 +243,7 @@ class InMemoryRepository(StorageRepository):
             new_messages = (cur.messages if cur else 0) + 1
             new_media = (cur.media if cur else 0) + len(m.media)
             new_done = (cur.done_media if cur else 0) + sum(
-                1 for md in m.media
-                if md.download_status == MediaDownloadStatus.DONE
+                1 for md in m.media if md.download_status == MediaDownloadStatus.DONE
             )
             bucket[cid] = ChannelStats(
                 messages=new_messages,
@@ -252,9 +253,7 @@ class InMemoryRepository(StorageRepository):
             )
         return bucket
 
-    async def find_media_by_file_id(
-        self, telegram_file_id: str
-    ) -> MediaDTO | None:
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
         """跨消息去重:任一 prior 已 DONE 的同 file_id media → 返 DTO。"""
         return self._media_by_fid.get(telegram_file_id)
 
@@ -364,10 +363,7 @@ class InMemoryRepository(StorageRepository):
 
     async def count_media_by_channel(self, channel_id: int) -> int:
         """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。"""
-        return sum(
-            len(m.media) for m in self.messages.values()
-            if m.channel_id == channel_id
-        )
+        return sum(len(m.media) for m in self.messages.values() if m.channel_id == channel_id)
 
     async def update_message_interactions(
         self,
@@ -391,8 +387,7 @@ class InMemoryRepository(StorageRepository):
             msg.views = views
         if reactions is not None:
             msg.reactions = [
-                r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r)
-                for r in reactions
+                r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r) for r in reactions
             ]
 
     async def ping(self) -> bool:

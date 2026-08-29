@@ -40,6 +40,7 @@ Qt 默认字体 "Sans Serif" 的解析不同 → 相同 OS/arch/Qt 下 widget si
 同一个字体文件 + 固定像素尺寸,metrics 完全由字体二进制决定,与系统
 字体数据库 / DPI 无关,本地与 CI 字节级一致。
 """
+
 from __future__ import annotations
 
 import os
@@ -174,6 +175,7 @@ def _compare(name: str, current: QImage) -> None:
 # Widget 测试用例
 # ============================================================
 
+
 def test_message_view_empty(qapp):
     """空 MessageView(首启 / 没订阅 / 还没消息)— 居中显示「暂无消息」overlay。"""
     view = MessageView()
@@ -186,15 +188,17 @@ def test_message_view_with_messages(qapp):
     view = MessageView()
     base = datetime(2026, 8, 3, 14, 23, 10, tzinfo=UTC)
     for i in range(3):
-        view.append(MessageDTO(
-            id=i,
-            channel_id=1001,
-            telegram_msg_id=900 + i,
-            date=base.replace(minute=base.minute + i),
-            text=f"测试消息 #{i} — 来自 fixture",
-            author=f"author_{i}",
-            media=[],
-        ))
+        view.append(
+            MessageDTO(
+                id=i,
+                channel_id=1001,
+                telegram_msg_id=900 + i,
+                date=base.replace(minute=base.minute + i),
+                text=f"测试消息 #{i} — 来自 fixture",
+                author=f"author_{i}",
+                media=[],
+            )
+        )
     img = _grab(view)
     _compare("message_view_with_messages", img)
 
@@ -206,12 +210,12 @@ def test_channel_widget_with_channels(qapp):
     视觉布局,不接 EventBus / Telegram,用 `Mock()` 占位即可。
     """
     from unittest.mock import Mock
+
     mock_app = Mock()
     mock_loop = Mock()
     widget = ChannelWidget(app=mock_app, loop=mock_loop)
     channels = [
-        ChannelDTO(id=cid, title=f"频道 {cid}", username=f"ch{cid}")
-        for cid in (1001, 1002, 1003)
+        ChannelDTO(id=cid, title=f"频道 {cid}", username=f"ch{cid}") for cid in (1001, 1002, 1003)
     ]
     widget.set_joined(channels)
     widget.set_subscribed(channels)
@@ -233,15 +237,21 @@ def test_settings_page_default(qapp, tmp_path):
         ObjectStoreBackend,
         Settings,
     )
+
     mock_app = Mock()
     mock_loop = Mock()
     mock_app.settings = Settings(
-        api_id=1, api_hash="a" * 32, phone="+1",
+        api_id=1,
+        api_hash="a" * 32,
+        phone="+1",
         session_dir=tmp_path / "session",
-        db_backend=DBBackend.JSONL, db_dsn="", db_root=tmp_path / "m",
+        db_backend=DBBackend.JSONL,
+        db_dsn="",
+        db_root=tmp_path / "m",
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=tmp_path / "media",
-        media_policy=MediaPolicy.METADATA, data_root=tmp_path,
+        media_policy=MediaPolicy.METADATA,
+        data_root=tmp_path,
     )
     widget = SettingsPage(app=mock_app, loop=mock_loop, env_path=tmp_path / ".env")
     # 240 宽太窄,SettingsPage 是 scroll area,设 480 看主表单
@@ -257,6 +267,7 @@ def test_dashboard_widget_empty(qapp):
     `loop=None` 是测试路径(`__init__` docstring 明确);`app` + `monitor` 用 Mock。
     """
     from unittest.mock import Mock
+
     mock_app = Mock()
     mock_monitor = Mock()
     widget = DashboardWidget(app=mock_app, monitor=mock_monitor, loop=None)
@@ -272,6 +283,7 @@ def test_export_dialog_default(qapp, tmp_path):
     固定串,保证 golden 稳定(否则每次跑时间戳都不一样)。
     """
     from unittest.mock import Mock
+
     mock_app = Mock()
     dlg = ExportDialog(app=mock_app, channel_ids=[1001, 1002])
     # 覆盖默认时间戳文件名 → 固定串,golden 可重现
@@ -288,6 +300,7 @@ def test_login_dialog_initial(qapp):
     `client.state` 通过 Mock 返 `phone_required`;`app` Mock,`loop` Mock。
     """
     from unittest.mock import Mock
+
     mock_app = Mock()
     mock_loop = Mock()
     mock_app.client.state = "phone_required"
@@ -316,14 +329,20 @@ def test_main_window_initial(qapp, tmp_path):
         ObjectStoreBackend,
         Settings,
     )
+
     mock_app = Mock()
     mock_app.settings = Settings(
-        api_id=1, api_hash="a" * 32, phone="+1",
+        api_id=1,
+        api_hash="a" * 32,
+        phone="+1",
         session_dir=tmp_path / "session",
-        db_backend=DBBackend.JSONL, db_dsn="", db_root=tmp_path / "m",
+        db_backend=DBBackend.JSONL,
+        db_dsn="",
+        db_root=tmp_path / "m",
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=tmp_path / "media",
-        media_policy=MediaPolicy.METADATA, data_root=tmp_path,
+        media_policy=MediaPolicy.METADATA,
+        data_root=tmp_path,
     )
     mock_app.client.state = "phone_required"
     mock_app.list_joined_channels = AsyncMock(return_value=[])
@@ -333,7 +352,9 @@ def test_main_window_initial(qapp, tmp_path):
     loop = asyncio.new_event_loop()
     try:
         win = MainWindow(
-            app=mock_app, monitor=mock_monitor, loop=loop,
+            app=mock_app,
+            monitor=mock_monitor,
+            loop=loop,
             env_path=tmp_path / ".env",
         )
         QApplication.processEvents()

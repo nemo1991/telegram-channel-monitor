@@ -27,6 +27,7 @@
 
 `_sleep_or_cancel` / `_emit_progress` 保持 module-private 不动。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -116,7 +117,10 @@ class ChannelSyncService:
         # 顶部 init 事件(2026-08-24):让 UI 提前显示总频道数,避免空白 N 秒
         if channel_ids:
             await self._emit_progress(
-                0, "init", progress=0, total=len(channel_ids),
+                0,
+                "init",
+                progress=0,
+                total=len(channel_ids),
                 detail=f"{len(channel_ids)} 频道待同步",
             )
 
@@ -136,10 +140,15 @@ class ChannelSyncService:
             if rate_limited_seconds is not None:
                 result.rate_limited_seconds = rate_limited_seconds
             await self._emit_progress(
-                cid, "done", progress=1, total=1,
-                detail=(f"meta={'✓' if ch_result.metadata_updated else '—'} "
-                        f"new={ch_result.messages_added} "
-                        f"skipped={ch_result.messages_skipped}"),
+                cid,
+                "done",
+                progress=1,
+                total=1,
+                detail=(
+                    f"meta={'✓' if ch_result.metadata_updated else '—'} "
+                    f"new={ch_result.messages_added} "
+                    f"skipped={ch_result.messages_skipped}"
+                ),
             )
 
         log.info(
@@ -177,7 +186,11 @@ class ChannelSyncService:
         ch_result = ChannelSyncResult(channel_id=cid)
         # 频道开始事件(2026-08-24):让 UI 在 metadata 之前就先知道这个频道在动了
         await self._emit_progress(
-            cid, "channel_start", progress=0, total=0, detail="开始同步",
+            cid,
+            "channel_start",
+            progress=0,
+            total=0,
+            detail="开始同步",
         )
         # 限流 → 把 retry_after 透传到 outer result(供 UI 进度条展示整体退避)
         rate_limited_seconds: float | None = None
@@ -196,13 +209,17 @@ class ChannelSyncService:
         except TelegramRateLimitError as e:
             rate_limited_seconds = e.retry_after_seconds
             log.warning(
-                "channel %d rate-limited, backing off %.0fs", cid,
+                "channel %d rate-limited, backing off %.0fs",
+                cid,
                 e.retry_after_seconds,
             )
             ch_result.rate_limited = True
             ch_result.error = f"FLOOD_WAIT {e.retry_after_seconds:.0f}s"
             await self._emit_progress(
-                cid, "backoff", progress=0, total=0,
+                cid,
+                "backoff",
+                progress=0,
+                total=0,
                 detail=f"等待 {e.retry_after_seconds:.0f}s",
             )
             # 等准确时间(可取消);不取消的话继续下一个频道
@@ -213,7 +230,10 @@ class ChannelSyncService:
             log.exception("sync channel %d failed", cid)
             ch_result.error = f"{type(e).__name__}: {e}"
             await self._emit_progress(
-                cid, "failed", progress=0, total=0,
+                cid,
+                "failed",
+                progress=0,
+                total=0,
                 detail=ch_result.error or "",
             )
         return ch_result, rate_limited_seconds
@@ -229,7 +249,10 @@ class ChannelSyncService:
         异常由 `_sync_one_channel` 的 try 块捕获,这里不写 error。
         """
         await self._emit_progress(
-            cid, "metadata", progress=0, total=1,
+            cid,
+            "metadata",
+            progress=0,
+            total=1,
             detail="",
         )
         dto = await self.client.get_channel_metadata(cid)
@@ -237,7 +260,10 @@ class ChannelSyncService:
         await self.storage.upsert_channel_metadata(dto)
         ch_result.metadata_updated = True
         await self._emit_progress(
-            cid, "metadata", progress=1, total=1,
+            cid,
+            "metadata",
+            progress=1,
+            total=1,
             detail=f"title={dto.title}",
         )
         await self._sleep_or_cancel(options.chat_delay_ms / 1000.0)
@@ -263,23 +289,32 @@ class ChannelSyncService:
         from_id = last_id or 0
         if last_id is not None:
             await self._emit_progress(
-                cid, "history", progress=0, total=None,
+                cid,
+                "history",
+                progress=0,
+                total=None,
                 detail=f"续拉 from {last_id}",
             )
         else:
             await self._emit_progress(
-                cid, "history", progress=0, total=None,
+                cid,
+                "history",
+                progress=0,
+                total=None,
                 detail="拉全部",
             )
 
         page_count = 0
         async for m in self.client.iter_chat_history(
-            cid, before_msg_id=from_id, limit=100,
+            cid,
+            before_msg_id=from_id,
+            limit=100,
         ):
             if self._cancel.is_set():
                 return  # outer 检测 cancel 写 ch_result.error
             existed = await self.storage.get_message(
-                m.channel_id, m.telegram_msg_id,
+                m.channel_id,
+                m.telegram_msg_id,
             )
             if existed is not None:
                 # 已在库中 — 静默跳过,只递增 skipped 与 cursor;
@@ -293,15 +328,18 @@ class ChannelSyncService:
                 ch_result.history_ended_at_msg_id = m.telegram_msg_id
                 # 媒体下载(FULL 策略)— 复用 monitor 的 MediaDownloader,
                 # download_one 内部已带 skip-if-stored(2026-08-24)
-                if (m.media
-                        and self.downloader is not None
-                        and self.media_policy == MediaPolicy.FULL):
+                if (
+                    m.media
+                    and self.downloader is not None
+                    and self.media_policy == MediaPolicy.FULL
+                ):
                     needs_resave = False
                     for idx, med in enumerate(m.media):
                         if med.download_status != MediaDownloadStatus.PENDING:
                             continue
                         updated = await self.downloader.download_one(
-                            msg_pk=m.id, media=med,
+                            msg_pk=m.id,
+                            media=med,
                         )
                         if updated is not med:
                             m.media[idx] = updated
@@ -316,10 +354,11 @@ class ChannelSyncService:
                 self._last_progress_emit[cid] = now
                 self._last_stage[cid] = "history"
                 await self._emit_progress(
-                    cid, "history", progress=ch_result.messages_added,
+                    cid,
+                    "history",
+                    progress=ch_result.messages_added,
                     total=None,
-                    detail=(f"新增 {ch_result.messages_added} "
-                            f"已存 {ch_result.messages_skipped}"),
+                    detail=(f"新增 {ch_result.messages_added} 已存 {ch_result.messages_skipped}"),
                 )
             # 单条间隔(防限速)
             if options.chat_delay_ms > 0:
@@ -327,10 +366,7 @@ class ChannelSyncService:
                     options.chat_delay_ms / 1000.0,
                 )
             # 整百条触发分页间隔(更重的请求)
-            if (
-                page_count % 100 == 0
-                and options.page_delay_ms > 0
-            ):
+            if page_count % 100 == 0 and options.page_delay_ms > 0:
                 await self._sleep_or_cancel(
                     options.page_delay_ms / 1000.0,
                 )
@@ -356,7 +392,12 @@ class ChannelSyncService:
         total: int | None,
         detail: str = "",
     ) -> None:
-        await self.bus.publish(ChannelSyncProgress(
-            channel_id=channel_id, stage=stage, progress=progress,
-            total=total, detail=detail,
-        ))
+        await self.bus.publish(
+            ChannelSyncProgress(
+                channel_id=channel_id,
+                stage=stage,
+                progress=progress,
+                total=total,
+                detail=detail,
+            )
+        )

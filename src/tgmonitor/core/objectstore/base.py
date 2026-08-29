@@ -4,6 +4,7 @@
 - `put/get/exists/delete` + 流式上下文 `open_read/open_write`(可选用)
 - 后端有 Local 与 S3(aioboto3)两种,后端在 DB `media.object_backend` 字段标记
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

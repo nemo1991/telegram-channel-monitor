@@ -15,6 +15,7 @@
 公开方法返回 `(state, detail)` 元组,跟 `TelegramClient.state` 一致 —
 UI 端 `submit_*` 调用直接看 state 判断成功 / 失败。
 """
+
 from __future__ import annotations
 
 from tgmonitor.core.config import Settings
@@ -92,7 +93,8 @@ class AuthService:
         email = (email or "").strip()
         if "@" not in email or len(email) > 100:
             return await self._fail(
-                "submit_email", "邮箱格式不正确",
+                "submit_email",
+                "邮箱格式不正确",
             )
         try:
             return await self._client.submit_email(email)
@@ -106,7 +108,8 @@ class AuthService:
         code = (code or "").strip()
         if not code:
             return await self._fail(
-                "submit_email_code", "验证码不能为空",
+                "submit_email_code",
+                "验证码不能为空",
             )
         try:
             return await self._client.submit_email_code(code)
@@ -122,7 +125,8 @@ class AuthService:
         first_name = (first_name or "").strip()
         if not first_name:
             return await self._fail(
-                "submit_registration", "first_name 不能为空",
+                "submit_registration",
+                "first_name 不能为空",
             )
         try:
             return await self._client.submit_registration(first_name, last_name)

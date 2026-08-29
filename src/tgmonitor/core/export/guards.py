@@ -15,6 +15,7 @@ title 都来自外部,可能被攻击者利用导出器渲染层做以下副作�
 各 exporter 在写入时调 ``_scrub_markdown`` / ``_guard_csv_cell`` /
 ``_check_thumb_size``;函数本身 stateless 且纯文本,便于单测。
 """
+
 from __future__ import annotations
 
 import re

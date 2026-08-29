@@ -1,5 +1,6 @@
 # mypy: disable-error-code="attr-defined"
 """ExportDialog — 选择频道/时间/格式/输出路径,生成 ExportRequest。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -88,7 +89,11 @@ class ExportDialog(QDialog):
 
         # 输出路径(选文件而不是目录)
         self.in_path = path_field(
-            form, "输出:", "", file_mode=True, parent=self,
+            form,
+            "输出:",
+            "",
+            file_mode=True,
+            parent=self,
         )
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -97,7 +102,9 @@ class ExportDialog(QDialog):
         root.addWidget(bb)
 
     def _set_default_filename(self) -> None:
-        self.in_path.setText(f"./export-{datetime.now().strftime('%Y%m%d-%H%M%S')}{_FORMAT_EXT[ExportFormat.JSON]}")
+        self.in_path.setText(
+            f"./export-{datetime.now().strftime('%Y%m%d-%H%M%S')}{_FORMAT_EXT[ExportFormat.JSON]}"
+        )
 
     def _on_ok(self) -> None:
         # 频道

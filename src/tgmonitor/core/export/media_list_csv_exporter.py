@@ -16,6 +16,7 @@
 `m.media[0]` 写一行。`media_idx` 列通过 dispatcher 在 service 层注入到
 message 的临时属性 `_media_idx`(本 exporter 读它)。
 """
+
 from __future__ import annotations
 
 import csv

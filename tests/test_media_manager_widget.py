@@ -5,6 +5,7 @@ QT_QPA_PLATFORM=offscreen 无 GUI 跑;只测 widget 内部逻辑:
 - current_filters 透传 sort/sort_dir/offset
 - on_media_loaded 接收 `(rows, total)` tuple 后更新 _total + 翻页按钮状态
 """
+
 from __future__ import annotations
 
 import pytest
@@ -36,15 +37,23 @@ def widget(qt_app: QApplication) -> MediaManagerWidget:
 
 def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]) -> MessageDTO:
     return MessageDTO(
-        id=0, channel_id=channel_id, telegram_msg_id=msg_id, text="", media=media,
+        id=0,
+        channel_id=channel_id,
+        telegram_msg_id=msg_id,
+        text="",
+        media=media,
     )
 
 
 def _done(file_size: int = 1024) -> MediaDTO:
     return MediaDTO(
-        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="x.jpg",
-        file_size=file_size, telegram_file_id="fid",
-        object_key="media/x.jpg", object_backend="local",
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="x.jpg",
+        file_size=file_size,
+        telegram_file_id="fid",
+        object_key="media/x.jpg",
+        object_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
 
@@ -88,7 +97,8 @@ def test_current_filters_includes_sort_dir_offset(widget: MediaManagerWidget) ->
 
 
 def test_on_media_loaded_accepts_tuple_payload(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #6:on_media_loaded 接收 `(rows, total)` tuple。"""
     msg = _msg(100, 1, [_done()])
@@ -100,7 +110,8 @@ def test_on_media_loaded_accepts_tuple_payload(
 
 
 def test_page_nav_disables_buttons_at_boundaries(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #6:5 条 media + page_size=2 → 3 页;page 1 / 3 翻页按钮状态正确。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(5)]
@@ -128,7 +139,8 @@ def test_page_nav_disables_buttons_at_boundaries(
 
 
 def test_sort_change_resets_page_to_zero(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #6:切 sort / dir combo → 翻回 page=0(filter 变化不应保留旧 page)。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(5)]
@@ -144,7 +156,8 @@ def test_sort_change_resets_page_to_zero(
 
 
 def test_refresh_signal_emitted_on_sort_change(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #6:sort / dir combo 变化 → emit refresh_requested。"""
     emitted: list[int] = []
@@ -180,7 +193,8 @@ def test_total_zero_disables_page_nav(widget: MediaManagerWidget, qt_app: QAppli
 
 
 def test_total_updates_label_correctly(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #6:`lbl_page` 显示 `current / total_pages`。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(7)]
@@ -204,7 +218,9 @@ def test_widget_has_export_csv_button(widget: MediaManagerWidget) -> None:
 
 
 def test_export_csv_emits_path_when_dialog_confirmed(
-    widget: MediaManagerWidget, qt_app: QApplication, monkeypatch,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
+    monkeypatch,
 ) -> None:
     """PR #7:点 Export CSV → QFileDialog.getSaveFileName 选路径 → emit
     `export_csv_requested(out_path)`。
@@ -212,7 +228,8 @@ def test_export_csv_emits_path_when_dialog_confirmed(
     from PySide6.QtWidgets import QFileDialog
 
     monkeypatch.setattr(
-        QFileDialog, "getSaveFileName",
+        QFileDialog,
+        "getSaveFileName",
         staticmethod(lambda *a, **k: ("/tmp/test-export.csv", "CSV files (*.csv)")),
     )
     captured: list[str] = []
@@ -224,13 +241,16 @@ def test_export_csv_emits_path_when_dialog_confirmed(
 
 
 def test_export_csv_does_nothing_when_dialog_cancelled(
-    widget: MediaManagerWidget, qt_app: QApplication, monkeypatch,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
+    monkeypatch,
 ) -> None:
     """PR #7:用户 Cancel → 不 emit(空 path)。"""
     from PySide6.QtWidgets import QFileDialog
 
     monkeypatch.setattr(
-        QFileDialog, "getSaveFileName",
+        QFileDialog,
+        "getSaveFileName",
         staticmethod(lambda *a, **k: ("", "")),
     )
     captured: list[str] = []
@@ -260,7 +280,8 @@ def _row_button(widget: MediaManagerWidget, row: int, label: str) -> QPushButton
 
 
 def test_reveal_button_emits_signal_with_correct_args(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #16:Reveal 按钮 click → reveal_requested.emit(channel_id, msg_id, media_idx)。"""
     msg = _msg(100, 7, [_done()])
@@ -281,7 +302,8 @@ def test_reveal_button_emits_signal_with_correct_args(
 
 
 def test_copy_button_emits_signal_with_correct_args(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #16:Copy 按钮 click → copy_requested.emit(channel_id, msg_id, media_idx)。"""
     msg = _msg(200, 42, [_done()])
@@ -302,12 +324,16 @@ def test_copy_button_emits_signal_with_correct_args(
 
 
 def test_reveal_button_disabled_when_not_done(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #16:非 DONE 媒体 → Reveal 按钮 disabled(防误点 → OS 文件管理器失败)。"""
     pending = MediaDTO(
-        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="x.jpg",
-        file_size=1024, telegram_file_id="fid",
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="x.jpg",
+        file_size=1024,
+        telegram_file_id="fid",
         download_status=MediaDownloadStatus.PENDING,
     )
     msg = _msg(100, 1, [pending])
@@ -319,12 +345,16 @@ def test_reveal_button_disabled_when_not_done(
 
 
 def test_copy_button_disabled_when_not_done(
-    widget: MediaManagerWidget, qt_app: QApplication,
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
 ) -> None:
     """PR #16:非 DONE 媒体 → Copy 按钮 disabled。"""
     pending = MediaDTO(
-        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="x.jpg",
-        file_size=1024, telegram_file_id="fid",
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="x.jpg",
+        file_size=1024,
+        telegram_file_id="fid",
         download_status=MediaDownloadStatus.PENDING,
     )
     msg = _msg(100, 1, [pending])

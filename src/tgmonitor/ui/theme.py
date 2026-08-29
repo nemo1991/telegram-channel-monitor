@@ -9,6 +9,7 @@
     自己处理:setStyleSheet 时使用 is_dark 参数)
   - SearchBar 内联样式在 init 时固定,不依赖主题切换(浅色足够通用)
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -36,7 +37,11 @@ class ThemeManager:
     def load_qss(cls, theme: Theme) -> str:
         """从 `tgmonitor.ui.resources` 加载主题 QSS(DARK→`style_dark.qss`,LIGHT→`style.qss`)。"""
         if theme == Theme.DARK:
-            return resources.files("tgmonitor.ui.resources").joinpath("style_dark.qss").read_text("utf-8")
+            return (
+                resources.files("tgmonitor.ui.resources")
+                .joinpath("style_dark.qss")
+                .read_text("utf-8")
+            )
         return resources.files("tgmonitor.ui.resources").joinpath("style.qss").read_text("utf-8")
 
     @classmethod
@@ -52,9 +57,7 @@ class ThemeManager:
             return
         qss = cls.load_qss(theme)
         # 把 {accent} / {accentHover} 占位符替换成实际 hex,让 QSS 走单源
-        qss = qss.replace("{accent}", cls.accent()).replace(
-            "{accentHover}", cls.accent("hover")
-        )
+        qss = qss.replace("{accent}", cls.accent()).replace("{accentHover}", cls.accent("hover"))
         app.setStyleSheet(qss)
 
     @classmethod

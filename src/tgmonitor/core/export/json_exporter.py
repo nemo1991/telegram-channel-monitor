@@ -1,4 +1,5 @@
 """JSON Exporter — 完整 DTO 序列化,结构化、可程序消费。"""
+
 from __future__ import annotations
 
 import json

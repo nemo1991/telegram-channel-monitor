@@ -3,6 +3,7 @@
 所有跨层(core 内部、core↔UI、core↔Exporter)传输都用 DTO;
 绝不传递 TDLib 原生对象、ORM 行对象或框架特定的类型。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from enum import Enum
 from typing import Any
 
 # ---------- 频道 ----------
+
 
 @dataclass
 class ChannelDTO:
@@ -22,10 +24,10 @@ class ChannelDTO:
       `MessageDTO.date`,不要混。
     """
 
-    id: int                                  # Telegram chat_id(全局唯一)
+    id: int  # Telegram chat_id(全局唯一)
     title: str
-    username: str | None = None              # 公开频道如 @example;私有无
-    kind: str = "channel"                    # channel | supergroup | basic_group
+    username: str | None = None  # 公开频道如 @example;私有无
+    kind: str = "channel"  # channel | supergroup | basic_group
     member_count: int | None = None
     created_at: datetime | None = None
     is_subscribed: bool = False
@@ -38,6 +40,7 @@ class ChannelDTO:
 
 
 # ---------- 媒体 ----------
+
 
 class MediaType(str, Enum):
     """Telegram 媒体类型枚举(与 TDLib MessageContent 类型对应)。"""
@@ -102,14 +105,14 @@ class MediaDTO:
     file_size: int | None = None
     width: int | None = None
     height: int | None = None
-    duration: int | None = None              # 秒
+    duration: int | None = None  # 秒
 
     # Telegram 侧标识
-    telegram_file_id: str | None = None      # TDLib remote file_id,用于按需重下
+    telegram_file_id: str | None = None  # TDLib remote file_id,用于按需重下
 
     # ObjectStore 引用(原文件)
     object_key: str | None = None
-    object_backend: str | None = None        # 'local' | 's3'
+    object_backend: str | None = None  # 'local' | 's3'
 
     # ObjectStore 引用(缩略图)
     thumb_key: str | None = None
@@ -117,13 +120,14 @@ class MediaDTO:
 
     # 下载状态(异步下载队列写入;持久化到各仓储)
     download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
-    download_error: str | None = None        # FAILED 时的原因(超限 / 超时 / 存储写入失败…)
+    download_error: str | None = None  # FAILED 时的原因(超限 / 超时 / 存储写入失败…)
 
     # Sticker 专属 — 关联的 emoji 字符(如 "😀");其它 type 始终 None
     emoji: str | None = None
 
 
 # ---------- 消息 ----------
+
 
 @dataclass
 class MessageDTO:
@@ -135,9 +139,9 @@ class MessageDTO:
     `updateMessageInteractionInfo` 推 reactions 增量时使用。
     """
 
-    id: int                                 # 自增主键,DB 分配
-    channel_id: int                         # FK → channels.id
-    telegram_msg_id: int                    # 在该频道内的 message_id
+    id: int  # 自增主键,DB 分配
+    channel_id: int  # FK → channels.id
+    telegram_msg_id: int  # 在该频道内的 message_id
     author: str | None = None
     date: datetime = field(default_factory=lambda: datetime.now(UTC))
     text: str = ""
@@ -146,12 +150,14 @@ class MessageDTO:
     reply_to_msg_id: int | None = None
     edited: bool = False
     media: list[MediaDTO] = field(default_factory=list)
-    raw: dict[str, Any] | None = None       # 可选:原始 TDLib payload 摘要(供高级导出)
+    raw: dict[str, Any] | None = None  # 可选:原始 TDLib payload 摘要(供高级导出)
     # 2026-08-27 v1.4.0 PR #9:TDLib Message 暴露但 v1.3.0 丢弃的字段。
-    forward_origin: dict[str, Any] | None = None  # messageOrigin* 扁平 dict(`{"@type": "messageOriginUser", ...}`)
-    via_bot_user_id: int | None = None              # 通过 inline bot 发送时的 bot id
-    media_album_id: int | None = None               # 同一相册的多张图共享,UI 用来分组
-    is_pinned: bool = False                         # 是否被频道置顶
+    forward_origin: dict[str, Any] | None = (
+        None  # messageOrigin* 扁平 dict(`{"@type": "messageOriginUser", ...}`)
+    )
+    via_bot_user_id: int | None = None  # 通过 inline bot 发送时的 bot id
+    media_album_id: int | None = None  # 同一相册的多张图共享,UI 用来分组
+    is_pinned: bool = False  # 是否被频道置顶
     # 2026-08-27 v1.4.0 PR #10:reactions — TDLib
     # updateMessageInteractionInfo.interactions.reactions[] 扁平为 `ReactionDTO` 列表。
     # None = 没推送过(老消息);空 list = 推过但已被撤回干净。
@@ -174,8 +180,8 @@ class ReactionDTO:
     - `is_chosen`:当前用户(我)是否也投了 — UI 高亮用
     """
 
-    type: str = ""                # 'emoji' | 'custom_emoji' | '@type' raw 字符串
-    emoji: str = ""               # 标准 emoji 文本("😀")或自定义 emoji 占位符
+    type: str = ""  # 'emoji' | 'custom_emoji' | '@type' raw 字符串
+    emoji: str = ""  # 标准 emoji 文本("😀")或自定义 emoji 占位符
     count: int = 0
     is_chosen: bool = False
 
@@ -201,6 +207,7 @@ class ReactionDTO:
 
 # ---------- 导出 ----------
 
+
 class ExportFormat(str, Enum):
     """导出格式枚举 — UI 下拉框选项 + Exporter 注册 key。"""
 
@@ -223,7 +230,7 @@ class ExportRequest:
     format: ExportFormat = ExportFormat.JSON
     out_path: str = ""
     include_media_meta: bool = True
-    include_thumbnails: bool = False         # HTML 用:把缩略图内嵌
+    include_thumbnails: bool = False  # HTML 用:把缩略图内嵌
 
 
 @dataclass
@@ -324,16 +331,17 @@ class DeleteChannelPreview:
 
 # ---------- 全量同步(ChannelSyncService) ----------
 
+
 @dataclass
 class SyncOptions:
     """用户选的全量同步 options。"""
 
     include_metadata: bool = True
     include_history: bool = True
-    history_limit: int | None = None      # None = 拉全部历史
-    chat_delay_ms: int = 500               # 单条 API 间隔(防封号)
-    page_delay_ms: int = 1000              # getChatHistory 分页间
-    resume_from_saved: bool = True         # True: 从 storage max_msg_id 续拉
+    history_limit: int | None = None  # None = 拉全部历史
+    chat_delay_ms: int = 500  # 单条 API 间隔(防封号)
+    page_delay_ms: int = 1000  # getChatHistory 分页间
+    resume_from_saved: bool = True  # True: 从 storage max_msg_id 续拉
 
 
 @dataclass
@@ -342,9 +350,9 @@ class ChannelSyncResult:
 
     channel_id: int
     metadata_updated: bool = False
-    messages_added: int = 0          # 本轮拉到的消息数(不去重)
-    new_messages_added: int = 0      # 本轮新落库的消息数(existed is None 时 +1)
-    messages_skipped: int = 0        # 本轮发现已存、不重写的消息数(skip-if-stored)
+    messages_added: int = 0  # 本轮拉到的消息数(不去重)
+    new_messages_added: int = 0  # 本轮新落库的消息数(existed is None 时 +1)
+    messages_skipped: int = 0  # 本轮发现已存、不重写的消息数(skip-if-stored)
     history_ended_at_msg_id: int | None = None  # 本轮拉到最早/最新的 msg_id
     error: str | None = None
     rate_limited: bool = False
@@ -374,6 +382,7 @@ class ChannelStats:
     - `done_media`:download_status == DONE 的 media 数
     - `last_date`:最近一条消息的 date(无消息则为 None)
     """
+
     messages: int = 0
     media: int = 0
     done_media: int = 0

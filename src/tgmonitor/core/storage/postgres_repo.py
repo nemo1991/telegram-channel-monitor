@@ -4,6 +4,7 @@
 - JSON 列(`raw`):用 `json.dumps` / `jsonb` 类型
 - 唯一约束 `(channel_id, telegram_msg_id)` 配合 ON CONFLICT 实现幂等 upsert
 """
+
 from __future__ import annotations
 
 import json
@@ -129,7 +130,9 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
         raw=raw,
         # 2026-08-27 v1.4.0 PR #9:forward_origin 是 JSONB,asyncpg 已解;老库
         # ALTER TABLE 加的列,新库建表即有。其它 3 字段新列默认 False / NULL。
-        forward_origin=json.loads(row["forward_origin"]) if isinstance(row.get("forward_origin"), str) else row.get("forward_origin"),
+        forward_origin=json.loads(row["forward_origin"])
+        if isinstance(row.get("forward_origin"), str)
+        else row.get("forward_origin"),
         via_bot_user_id=row.get("via_bot_user_id"),
         media_album_id=row.get("media_album_id"),
         is_pinned=bool(row.get("is_pinned", False)),
@@ -259,12 +262,13 @@ class PostgresRepository(StorageRepository):
                     member_count = COALESCE($3, member_count)
                 WHERE id = $4
                 """,
-                title, username, member_count, channel_id,
+                title,
+                username,
+                member_count,
+                channel_id,
             )
 
-    async def set_channel_subscribed(
-        self, channel_id: int, subscribed: bool
-    ) -> None:
+    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
         """只设订阅标志;频道未建档时用 id 做个 stub(后续会被 metadata 覆盖)。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
@@ -275,7 +279,9 @@ class PostgresRepository(StorageRepository):
                 VALUES ($1, $2, $3)
                 ON CONFLICT (id) DO UPDATE SET subscribed = EXCLUDED.subscribed
                 """,
-                channel_id, f"#{channel_id}", subscribed,
+                channel_id,
+                f"#{channel_id}",
+                subscribed,
             )
 
     async def list_channels(self) -> list[ChannelDTO]:
@@ -332,7 +338,8 @@ class PostgresRepository(StorageRepository):
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
-                "SELECT value FROM meta WHERE key = $1", key,
+                "SELECT value FROM meta WHERE key = $1",
+                key,
             )
 
     async def set_meta(self, key: str, value: str) -> None:
@@ -344,7 +351,8 @@ class PostgresRepository(StorageRepository):
                 INSERT INTO meta (key, value) VALUES ($1, $2)
                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                 """,
-                key, value,
+                key,
+                value,
             )
 
     # ---- 消息 ----
@@ -361,7 +369,8 @@ class PostgresRepository(StorageRepository):
         # 2026-08-27 v1.4.0 PR #10:reactions 序列化为 JSONB list[dict]。
         reactions_json = (
             json.dumps([r.to_dict() for r in message.reactions])
-            if message.reactions is not None else None
+            if message.reactions is not None
+            else None
         )
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
@@ -454,8 +463,9 @@ class PostgresRepository(StorageRepository):
             reactions_arg: Any = None
         else:
             reactions_clause = "reactions = $4::jsonb"
-            reactions_arg = json.dumps([r.to_dict() if isinstance(r, ReactionDTO) else r
-                                        for r in reactions])
+            reactions_arg = json.dumps(
+                [r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions]
+            )
         if views is None:
             views_clause = ""
             views_arg: Any = None
@@ -493,9 +503,7 @@ class PostgresRepository(StorageRepository):
                 telegram_msg_id,
             )
 
-    async def get_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None:
+    async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息 + 关联 media;不存在返 None。"""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
@@ -540,11 +548,7 @@ class PostgresRepository(StorageRepository):
             where.append(f"date <= ${len(params)}")
         # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 jsonl/mongo 语义一致)。
         order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
-        sql = (
-            "SELECT * FROM messages WHERE "
-            + " AND ".join(where)
-            + f" ORDER BY {order_by}"
-        )
+        sql = "SELECT * FROM messages WHERE " + " AND ".join(where) + f" ORDER BY {order_by}"
         if limit is not None:
             params.append(limit)
             sql += f" LIMIT ${len(params)}"
@@ -577,9 +581,7 @@ class PostgresRepository(StorageRepository):
                 "SELECT count(*)::int FROM messages WHERE channel_id = $1", channel_id
             )
 
-    async def aggregate_per_channel(
-        self, channel_ids: list[int]
-    ) -> dict[int, ChannelStats]:
+    async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:Postgres 单 GROUP BY 查询,一次性拿所有
         channel 的 messages / media / done_media / last_date。
 
@@ -618,9 +620,7 @@ class PostgresRepository(StorageRepository):
             )
         return out
 
-    async def find_media_by_file_id(
-        self, telegram_file_id: str
-    ) -> MediaDTO | None:
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
         """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
 
         命中条件 `object_key IS NOT NULL AND download_status = 'done'`;partial
@@ -664,7 +664,10 @@ class PostgresRepository(StorageRepository):
         """
         assert self._pool is not None
         where_sql, params, next_idx = self._media_where_clause(
-            channel_ids, status, media_type, search,
+            channel_ids,
+            status,
+            media_type,
+            search,
         )
         sort_col = _MEDIA_SORT_COLUMN[sort]
         sql = [
@@ -683,6 +686,7 @@ class PostgresRepository(StorageRepository):
             params.extend([limit, offset])
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("\n".join(sql), *params)
+
         # row → media dict(2 处复用,抽出 helper 避免重复)
         def _row_to_media_dict(r: asyncpg.Record) -> dict[str, Any]:
             return {
@@ -702,14 +706,25 @@ class PostgresRepository(StorageRepository):
                 "download_status": r["media_dl_status"],
                 "download_error": r["download_error"],
             }
+
         msg_keys = (
-            "id", "channel_id", "telegram_msg_id", "author",
-            "date", "text", "views", "forwards", "reply_to_msg_id",
-            "edited", "raw",
+            "id",
+            "channel_id",
+            "telegram_msg_id",
+            "author",
+            "date",
+            "text",
+            "views",
+            "forwards",
+            "reply_to_msg_id",
+            "edited",
+            "raw",
         )
         return [
             (
-                _row_to_message({k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]),
+                _row_to_message(
+                    {k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]
+                ),
                 r["media_idx"],
                 _row_to_media(_row_to_media_dict(r)),
             )
@@ -731,7 +746,10 @@ class PostgresRepository(StorageRepository):
         """
         assert self._pool is not None
         where_sql, params, _ = self._media_where_clause(
-            channel_ids, status, media_type, search,
+            channel_ids,
+            status,
+            media_type,
+            search,
         )
         async with self._pool.acquire() as conn:
             return await conn.fetchval(

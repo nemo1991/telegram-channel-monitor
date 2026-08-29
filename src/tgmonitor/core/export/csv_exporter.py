@@ -5,6 +5,7 @@
 - 2026-08-27 v1.4.0 PR #17:`text` / `author` / `channel_title` 等用户/频道
   内容走 `_guard_csv_cell` 防 Excel 公式注入(CWE-1236)
 """
+
 from __future__ import annotations
 
 import csv
@@ -72,7 +73,9 @@ class CsvExporter(Exporter):
                         "edited": m.edited,
                         "media_count": len(m.media),
                         "media_types": "|".join(med.type.value for med in m.media),
-                        "reply_to_msg_id": m.reply_to_msg_id if m.reply_to_msg_id is not None else "",
+                        "reply_to_msg_id": m.reply_to_msg_id
+                        if m.reply_to_msg_id is not None
+                        else "",
                     }
                 )
         return out_path.stat().st_size  # noqa: ASYNC240 — 文件 IO 同步,与 write 同步完成

@@ -16,6 +16,7 @@ SVG 直接交给 `QSvgRenderer` → `QPixmap`,无中间 PNG。
 `currentColor` 真正生效,必须在 renderer 之前把 `currentColor` 字面量替换
 成目标 QColor 的 name(rgb)。这就是 `tinted_action_icon()` 干的事。
 """
+
 from __future__ import annotations
 
 from functools import lru_cache

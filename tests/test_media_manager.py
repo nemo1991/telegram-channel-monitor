@@ -7,6 +7,7 @@
 - open_media:Local / Folder / S3 路径分支
 - 事件发布(MediaDeleted / MediaRetried / MediaDownloaded)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 
 
 # ---- helpers ---------------------------------------------------------
+
 
 def _base_media(file_id: str = "fid-x", **overrides) -> MediaDTO:
     """构造带 telegram_file_id 的 PHOTO media — 测试用基础形态。"""
@@ -89,7 +91,8 @@ def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]) -> MessageDTO:
 
 @pytest.mark.asyncio
 async def test_list_media_returns_all_with_no_filter(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """无 filter 时返所有 media(扁平化)+ total 一致。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
@@ -103,7 +106,8 @@ async def test_list_media_returns_all_with_no_filter(
 
 @pytest.mark.asyncio
 async def test_list_media_filters_by_status_failed(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """status=FAILED 只返失败的 media + total=1。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
@@ -116,7 +120,8 @@ async def test_list_media_filters_by_status_failed(
 
 @pytest.mark.asyncio
 async def test_list_media_filters_by_channel(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """channel_id 过滤 — 只返指定频道 + total 同样被过滤。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
@@ -129,12 +134,15 @@ async def test_list_media_filters_by_channel(
 
 @pytest.mark.asyncio
 async def test_list_media_filters_by_type(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """media_type 过滤 — 只返指定类型 + total 同样被过滤。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     video = dataclasses.replace(
-        _base_media("f2"), type=MediaType.VIDEO, file_name="vid.mp4",
+        _base_media("f2"),
+        type=MediaType.VIDEO,
+        file_name="vid.mp4",
         mime_type="video/mp4",
     )
     await storage.save_message(_msg(100, 2, [video]))
@@ -146,12 +154,14 @@ async def test_list_media_filters_by_type(
 
 @pytest.mark.asyncio
 async def test_list_media_search_by_filename_case_insensitive(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """filename 搜索大小写不敏感 + total 同 filter。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     sunset = dataclasses.replace(
-        _done_media("f2", "media/2.jpg"), file_name="Sunset.JPG",
+        _done_media("f2", "media/2.jpg"),
+        file_name="Sunset.JPG",
     )
     await storage.save_message(_msg(100, 2, [sunset]))
     await storage.save_message(_msg(100, 3, [_base_media("f3")]))
@@ -166,7 +176,9 @@ async def test_list_media_search_by_filename_case_insensitive(
 
 @pytest.mark.asyncio
 async def test_delete_media_removes_from_message_keeps_bytes_when_referenced(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """同 key 两条 message 都引用 — 删一条 → media 摘掉,bytes 保留。"""
     await objectstore.put("media/shared.jpg", b"data", None)
@@ -186,7 +198,9 @@ async def test_delete_media_removes_from_message_keeps_bytes_when_referenced(
 
 @pytest.mark.asyncio
 async def test_delete_media_removes_bytes_when_no_other_reference(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """唯一引用 → 删 media + 删 bytes。"""
     await objectstore.put("media/only.jpg", b"data", None)
@@ -198,7 +212,9 @@ async def test_delete_media_removes_bytes_when_no_other_reference(
 
 @pytest.mark.asyncio
 async def test_delete_media_publishes_media_deleted_event(
-    app: AppService, storage: StorageRepository, bus: EventBus,
+    app: AppService,
+    storage: StorageRepository,
+    bus: EventBus,
 ) -> None:
     """delete_media 触发 MediaDeleted 事件 — UI 据此刷新 LIVE 流。"""
     received: list[MediaDeleted] = []
@@ -217,7 +233,9 @@ async def test_delete_media_publishes_media_deleted_event(
 
 @pytest.mark.asyncio
 async def test_retry_failed_resets_to_pending_and_redownloads(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
     monkeypatch,
 ) -> None:
     """FAILED media 被 retry:状态重置 → PENDING → 走 download_one(force=True)。
@@ -252,7 +270,8 @@ async def test_retry_failed_resets_to_pending_and_redownloads(
 
 @pytest.mark.asyncio
 async def test_retry_skips_non_failed(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """非 FAILED 的 media 调 retry → no-op(不发事件,不改状态)。"""
     received: list[MediaRetried] = []
@@ -268,7 +287,8 @@ async def test_retry_skips_non_failed(
 
 @pytest.mark.asyncio
 async def test_retry_publishes_retried_and_downloaded_events(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """retry 成功 → 同时发 MediaRetried + MediaDownloaded 两个事件。"""
     retried: list[MediaRetried] = []
@@ -297,7 +317,9 @@ async def test_retry_publishes_retried_and_downloaded_events(
 
 @pytest.mark.asyncio
 async def test_open_media_returns_false_for_failed(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """FAILED media 返 False(QDesktopServices 不能打开不存在的文件)。"""
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
@@ -316,7 +338,9 @@ async def test_open_media_returns_false_for_missing_message(
 
 @pytest.mark.asyncio
 async def test_open_media_local_done_returns_bool(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """DONE + Local 后端 → 调 QDesktopServices.openUrl(成功与否依赖环境,只验不抛)。
 
@@ -331,7 +355,9 @@ async def test_open_media_local_done_returns_bool(
 
 @pytest.mark.asyncio
 async def test_open_media_folder_done_returns_bool(
-    app: AppService, storage: StorageRepository, tmp_path: Path,
+    app: AppService,
+    storage: StorageRepository,
+    tmp_path: Path,
 ) -> None:
     """FolderObjectStore 后端也走 openUrl,验证 bool 返值。"""
     folder = FolderObjectStore(root=tmp_path / "folder_media")
@@ -353,7 +379,9 @@ async def test_open_media_folder_done_returns_bool(
 
 @pytest.mark.asyncio
 async def test_reconcile_orphans_emits_event(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
     bus: EventBus,
 ) -> None:
     """reconcile 跑完 → 发 MediaReconcileFinished 事件 + 返 evt。"""
@@ -377,7 +405,8 @@ async def test_reconcile_orphans_emits_event(
 
 @pytest.mark.asyncio
 async def test_delete_by_channel_removes_all_messages_in_channel(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """批量删 — 目标频道所有 message 清掉,返真实删数。"""
     # ch 100: 3 条 message(2 含 media)
@@ -399,10 +428,12 @@ async def test_delete_by_channel_removes_all_messages_in_channel(
 
 @pytest.mark.asyncio
 async def test_delete_by_channel_no_op_when_no_messages(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """频道存在但无 message → 返 0,不抛。"""
     from tgmonitor.core.dto import ChannelDTO
+
     await storage.upsert_channel(ChannelDTO(id=999, title="#999"))
     deleted = await app.delete_by_channel(999)
     assert deleted == 0
@@ -410,7 +441,9 @@ async def test_delete_by_channel_no_op_when_no_messages(
 
 @pytest.mark.asyncio
 async def test_delete_by_channel_cleans_orphan_bytes(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """该频道独占引用的 bytes 应被清(走 storage.delete_message 的 refcount 路径)。
 
@@ -435,7 +468,8 @@ async def test_delete_by_channel_cleans_orphan_bytes(
 
 @pytest.mark.asyncio
 async def test_delete_by_channel_does_not_touch_other_channels(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """目标频道外:message 不动,channel 元数据不动(走 list_messages → delete_message)。"""
     await storage.save_message(_msg(100, 1, []))
@@ -518,7 +552,8 @@ class _FakeS3Session:
 
 
 def _make_s3_backend(
-    app: AppService, monkeypatch: pytest.MonkeyPatch,
+    app: AppService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[object, _FakeS3Session]:
     """把 app.objects 切到 S3ObjectStore(用 fake aioboto3.Session 注入)。"""
     from tgmonitor.core.objectstore.s3_store import S3ObjectStore
@@ -545,7 +580,8 @@ async def test_open_media_with_result_missing_message_returns_error(
 
 @pytest.mark.asyncio
 async def test_open_media_with_result_failed_media_returns_error(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """FAILED media → OpenMediaResult(False, '媒体未下载完成')(状态前置检查)。"""
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
@@ -556,7 +592,9 @@ async def test_open_media_with_result_failed_media_returns_error(
 
 @pytest.mark.asyncio
 async def test_open_media_s3_stages_to_temp_and_calls_openurl(
-    app: AppService, storage: StorageRepository, monkeypatch,
+    app: AppService,
+    storage: StorageRepository,
+    monkeypatch,
 ) -> None:
     """S3 后端成功路径:get_object 拉 bytes → 写 tmp → openUrl 返 True。
 
@@ -574,8 +612,9 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
 
     openurl_calls: list[QUrl] = []
     monkeypatch.setattr(
-        QDesktopServices, "openUrl",
-        lambda url: (openurl_calls.append(url) or True),
+        QDesktopServices,
+        "openUrl",
+        lambda url: openurl_calls.append(url) or True,
     )
 
     await storage.save_message(
@@ -596,6 +635,7 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     assert tmp_path.endswith(".jpg"), f"expected .jpg suffix, got {tmp_path}"
     # 文件存在 + 内容与 S3 一致
     from pathlib import Path
+
     tmp_p = Path(tmp_path)
     assert await asyncio.to_thread(tmp_p.read_bytes) == b"fake-jpeg-content"
     # 清理 tmp(成功路径下不主动 unlink,测试自己清)
@@ -604,7 +644,9 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
 
 @pytest.mark.asyncio
 async def test_open_media_s3_cleans_tmp_when_open_url_fails(
-    app: AppService, storage: StorageRepository, monkeypatch,
+    app: AppService,
+    storage: StorageRepository,
+    monkeypatch,
 ) -> None:
     """S3 后端 + openUrl 返 False → tmp 文件被 unlink + 返 OpenMediaResult(False)。"""
     from PySide6.QtGui import QDesktopServices
@@ -635,7 +677,8 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
 
 @pytest.mark.asyncio
 async def test_list_media_sort_by_size_desc(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #6:AppService.list_media 透传 sort=SortKey.SIZE + sort_dir=SortDir.DESC。
 
@@ -644,7 +687,9 @@ async def test_list_media_sort_by_size_desc(
     """
     big = dataclasses.replace(
         _base_media("big"),
-        type=MediaType.VIDEO, file_name="v.mp4", mime_type="video/mp4",
+        type=MediaType.VIDEO,
+        file_name="v.mp4",
+        mime_type="video/mp4",
         file_size=5_000_000,
     )
     small_a = dataclasses.replace(_base_media("a"), file_size=1024)
@@ -654,7 +699,8 @@ async def test_list_media_sort_by_size_desc(
     await storage.save_message(_msg(100, 3, [small_b]))
 
     rows, total = await app.list_media(
-        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+        sort=SortKey.SIZE,
+        sort_dir=SortDir.DESC,
     )
     assert total == 3
     sizes = [r[2].file_size for r in rows]
@@ -663,7 +709,8 @@ async def test_list_media_sort_by_size_desc(
 
 @pytest.mark.asyncio
 async def test_list_media_sort_default_unchanged_when_omitted(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #6 向后兼容:不传 sort/sort_dir 时走默认 DATE DESC(v1.2.0 行为)。"""
     await storage.save_message(
@@ -680,7 +727,8 @@ async def test_list_media_sort_default_unchanged_when_omitted(
 
 @pytest.mark.asyncio
 async def test_list_media_offset_pagination(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #6:offset 跳过 + limit 切片 + total 不变。
 
@@ -697,7 +745,8 @@ async def test_list_media_offset_pagination(
 
 @pytest.mark.asyncio
 async def test_list_media_count_matches_total_independent_of_pagination(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #6:sum(分页) == count,无 filter。"""
     for i in range(7):
@@ -714,7 +763,9 @@ async def test_list_media_count_matches_total_independent_of_pagination(
 
 @pytest.mark.asyncio
 async def test_reveal_in_folder_local_success(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """PR #16:Local 后端 + 文件存在 → spawn 子进程成功 → RevealResult(True)。
 
@@ -744,7 +795,9 @@ async def test_reveal_in_folder_local_success(
 
 @pytest.mark.asyncio
 async def test_reveal_in_folder_s3_returns_error(
-    app: AppService, storage: StorageRepository, monkeypatch,
+    app: AppService,
+    storage: StorageRepository,
+    monkeypatch,
 ) -> None:
     """PR #16:S3 后端 → RevealResult(False, "S3 后端无本地路径:请使用「Copy 路径」...")。"""
     saved_objects, _fake = _make_s3_backend(app, monkeypatch)
@@ -774,7 +827,8 @@ async def test_reveal_in_folder_missing_message_returns_error(
 
 @pytest.mark.asyncio
 async def test_reveal_in_folder_pending_media_returns_error(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #16:media 未 DONE → RevealResult(False, '媒体未下载完成')。"""
     await storage.save_message(_msg(100, 1, [_base_media("f1")]))  # PENDING
@@ -785,7 +839,9 @@ async def test_reveal_in_folder_pending_media_returns_error(
 
 @pytest.mark.asyncio
 async def test_reveal_in_folder_missing_file_returns_error(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """PR #16:DONE 但文件不在磁盘上(可能被外部删) → RevealResult(False, 含 '文件不存在')。"""
     # 仅写 storage 元数据,不实际 put 文件
@@ -799,7 +855,9 @@ async def test_reveal_in_folder_missing_file_returns_error(
 
 @pytest.mark.asyncio
 async def test_copy_media_path_local_returns_absolute_path(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """PR #16:Local 后端 → CopyResult(True, copied_value=绝对路径)。"""
     await objectstore.put("media/p.jpg", b"jpeg", None)
@@ -813,12 +871,15 @@ async def test_copy_media_path_local_returns_absolute_path(
     assert result.copied_value.endswith("media/p.jpg")
     # 必须是绝对路径
     from pathlib import Path
+
     assert Path(result.copied_value).is_absolute()
 
 
 @pytest.mark.asyncio
 async def test_copy_media_path_s3_returns_uri(
-    app: AppService, storage: StorageRepository, monkeypatch,
+    app: AppService,
+    storage: StorageRepository,
+    monkeypatch,
 ) -> None:
     """PR #16:S3 后端 → CopyResult(True, copied_value='s3://<bucket>/<key>')。"""
     saved_objects, _fake = _make_s3_backend(app, monkeypatch)
@@ -848,7 +909,8 @@ async def test_copy_media_path_missing_message_returns_error(
 
 @pytest.mark.asyncio
 async def test_copy_media_path_pending_media_returns_error(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """PR #16:media 未 DONE → CopyResult(False, error='媒体未下载完成')。"""
     await storage.save_message(_msg(100, 1, [_base_media("f1")]))

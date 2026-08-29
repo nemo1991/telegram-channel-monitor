@@ -11,6 +11,7 @@
   ctype 的类 — 这样 `type(content).__name__` 走我们 dispatch 字典的对应 key。
 - 调用 `_map_message(simple_msg)` 直接验证返回的 `MessageDTO`。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -77,8 +78,17 @@ def test_message_photo_picks_biggest_size_by_area():
 def test_message_photo_with_caption():
     cap = SimpleNamespace(text="look at this")
     ph = SimpleNamespace(
-        sizes=[SimpleNamespace(type_="x", photo=SimpleNamespace(id=1, size=100), width=100, height=100, progressive_sizes=[])],
-        minithumbnail=None, has_stickers=False,
+        sizes=[
+            SimpleNamespace(
+                type_="x",
+                photo=SimpleNamespace(id=1, size=100),
+                width=100,
+                height=100,
+                progressive_sizes=[],
+            )
+        ],
+        minithumbnail=None,
+        has_stickers=False,
     )
     msg = _msg("MessagePhoto", photo=ph, caption=cap)
     dto = _map_message(msg)
@@ -88,7 +98,11 @@ def test_message_photo_with_caption():
 
 def test_message_video():
     video = SimpleNamespace(
-        width=1920, height=1080, duration=120, mime_type="video/mp4", file_name="v.mp4",
+        width=1920,
+        height=1080,
+        duration=120,
+        mime_type="video/mp4",
+        file_name="v.mp4",
         video=SimpleNamespace(id=42, size=9999),
         thumbnail=SimpleNamespace(file=SimpleNamespace(id=33, size=200)),
     )
@@ -108,7 +122,11 @@ def test_message_video():
 
 def test_message_animation():
     animation = SimpleNamespace(
-        width=320, height=240, duration=5, mime_type="video/mp4", file_name="anim.mp4",
+        width=320,
+        height=240,
+        duration=5,
+        mime_type="video/mp4",
+        file_name="anim.mp4",
         animation=SimpleNamespace(id=7, size=500),
         thumbnail=SimpleNamespace(file=SimpleNamespace(id=8, size=100)),
     )
@@ -121,7 +139,9 @@ def test_message_animation():
 
 def test_message_audio():
     audio = SimpleNamespace(
-        duration=180, mime_type="audio/mp3", file_name="song.mp3",
+        duration=180,
+        mime_type="audio/mp3",
+        file_name="song.mp3",
         audio=SimpleNamespace(id=12, size=4096),
         album_cover_thumbnail=SimpleNamespace(file=SimpleNamespace(id=99, size=300)),
     )
@@ -137,7 +157,8 @@ def test_message_audio():
 
 def test_message_voice_note():
     voice_note = SimpleNamespace(
-        duration=30, mime_type="audio/ogg",
+        duration=30,
+        mime_type="audio/ogg",
         voice=SimpleNamespace(id=11, size=2048),
     )
     msg = _msg("MessageVoiceNote", voice_note=voice_note, caption=SimpleNamespace(text=""))
@@ -152,7 +173,8 @@ def test_message_voice_note():
 def test_message_video_note_square_dims():
     """VideoNote 用 length 字段同时表示 w=h(圆形)。"""
     vn = SimpleNamespace(
-        length=240, duration=15,
+        length=240,
+        duration=15,
         video=SimpleNamespace(id=10, size=2000),
         thumbnail=SimpleNamespace(file=SimpleNamespace(id=20, size=300)),
     )
@@ -167,7 +189,8 @@ def test_message_video_note_square_dims():
 
 def test_message_document_with_caption():
     doc = SimpleNamespace(
-        mime_type="application/pdf", file_name="paper.pdf",
+        mime_type="application/pdf",
+        file_name="paper.pdf",
         document=SimpleNamespace(id=77, size=12345),
         thumbnail=SimpleNamespace(file=SimpleNamespace(id=88, size=400)),
     )
@@ -183,7 +206,9 @@ def test_message_document_with_caption():
 
 def test_message_sticker_emoji():
     sticker = SimpleNamespace(
-        width=512, height=512, emoji="😀",
+        width=512,
+        height=512,
+        emoji="😀",
         sticker=SimpleNamespace(id=11, size=4096),
         thumbnail=SimpleNamespace(file=SimpleNamespace(id=22, size=200)),
     )
@@ -254,13 +279,22 @@ def test_message_story():
 def test_message_gift():
     """带 text 的 Gift 应渲染两行。"""
     gift = SimpleNamespace(star_count=100)
-    msg = _msg("MessageGift",
-               gift=gift, sender_id=None, received_gift_id="r1",
-               text=SimpleNamespace(text="happy bday"),
-               prepaid_upgrade_star_count=0, sell_star_count=0,
-               is_private=False, is_saved=False, can_be_upgraded=False,
-               was_converted=False, was_upgraded=False, was_refunded=False,
-               upgraded_received_gift_id=None)
+    msg = _msg(
+        "MessageGift",
+        gift=gift,
+        sender_id=None,
+        received_gift_id="r1",
+        text=SimpleNamespace(text="happy bday"),
+        prepaid_upgrade_star_count=0,
+        sell_star_count=0,
+        is_private=False,
+        is_saved=False,
+        can_be_upgraded=False,
+        was_converted=False,
+        was_upgraded=False,
+        was_refunded=False,
+        upgraded_received_gift_id=None,
+    )
     assert _map_message(msg).text == "🎁 100⭐ 礼物\n  happy bday"
 
 
@@ -287,16 +321,23 @@ async def test_sticker_emoji_roundtrip_jsonl(tmp_path):
         date=datetime(2026, 7, 15, 12, 0, 0),
         text="",
         author=None,
-        media=[MediaDTO(
-            type=MediaType.STICKER, mime_type="image/webp",
-            file_size=4096, width=512, height=512,
-            thumb_key="media/sticker.webp.thumb", thumb_backend="local",
-            emoji="😀",
-        )],
+        media=[
+            MediaDTO(
+                type=MediaType.STICKER,
+                mime_type="image/webp",
+                file_size=4096,
+                width=512,
+                height=512,
+                thumb_key="media/sticker.webp.thumb",
+                thumb_backend="local",
+                emoji="😀",
+            )
+        ],
     )
     await store.save_message(msg)
     # 验证文件里有 emoji
     import json
+
     raw = (tmp_path / "messages" / "100.jsonl").read_text(encoding="utf-8").strip()
     record = json.loads(raw)
     assert record["media"][0]["emoji"] == "😀"
@@ -316,7 +357,13 @@ async def test_sticker_emoji_roundtrip_jsonl(tmp_path):
 def test_message_with_no_content_does_not_crash():
     """content 是 None 时 — 旧实现在生产遇到过,不应崩。"""
     msg = SimpleNamespace(
-        id=1, chat_id=100, date=0, views=0, forwards=0, edit_date=0, author_signature=None,
+        id=1,
+        chat_id=100,
+        date=0,
+        views=0,
+        forwards=0,
+        edit_date=0,
+        author_signature=None,
         content=None,
     )
     dto = _map_message(msg)
@@ -327,8 +374,13 @@ def test_message_with_no_content_does_not_crash():
 def test_message_video_caption_preserved():
     cap = SimpleNamespace(text="watch this")
     video = SimpleNamespace(
-        width=100, height=100, duration=10, mime_type="video/mp4", file_name=None,
-        video=SimpleNamespace(id=1, size=100), thumbnail=None,
+        width=100,
+        height=100,
+        duration=10,
+        mime_type="video/mp4",
+        file_name=None,
+        video=SimpleNamespace(id=1, size=100),
+        thumbnail=None,
     )
     msg = _msg("MessageVideo", video=video, caption=cap)
     dto = _map_message(msg)
@@ -362,7 +414,8 @@ def test_pr9_forward_origin_user_flattened():
     """PR #9:messageOriginUser 扁平化为 dict。"""
     msg = _msg("MessageText", text=SimpleNamespace(text="fwd"), caption=None)
     fo = SimpleNamespace(
-        sender_user_id=999, date=1700000000,
+        sender_user_id=999,
+        date=1700000000,
     )
     fo.type_name = "messageOriginUser"  # tdlib_json 暴露为 property
     msg.forward_origin = fo
@@ -378,7 +431,9 @@ def test_pr9_forward_origin_channel_flattened():
     """PR #9:messageOriginChannel 展开发送 chat / msg / 签名。"""
     msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
     fo = SimpleNamespace(
-        chat_id=-1001234567890, message_id=5, author_signature="Anon",
+        chat_id=-1001234567890,
+        message_id=5,
+        author_signature="Anon",
     )
     fo.type_name = "messageOriginChannel"
     msg.forward_origin = fo
@@ -428,7 +483,11 @@ def test_pr9_via_bot_user_id_zero_normalized_to_none():
 
 def test_pr9_media_album_id_mapped():
     """PR #9:media_album_id(同一相册的不同消息共享此 ID)映射。"""
-    msg = _msg("MessagePhoto", photo=SimpleNamespace(sizes=[], minithumbnail=None, has_stickers=False), caption=None)
+    msg = _msg(
+        "MessagePhoto",
+        photo=SimpleNamespace(sizes=[], minithumbnail=None, has_stickers=False),
+        caption=None,
+    )
     msg.media_album_id = 8888
     dto = _map_message(msg)
     assert dto.media_album_id == 8888
@@ -478,6 +537,7 @@ def _reaction(emoji_type: str, **kwargs) -> SimpleNamespace:
 def test_pr10_reaction_emoji_mapped():
     """PR #10:`reactionEmoji` 扁平化 emoji 文本 + count + is_chosen。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_reaction
+
     r = _reaction("reactionEmoji", emoji="😀", total_count=5, is_chosen=True)
     dto = _map_reaction(r)
     assert dto is not None
@@ -490,8 +550,8 @@ def test_pr10_reaction_emoji_mapped():
 def test_pr10_reaction_custom_emoji_mapped():
     """PR #10:`reactionCustomEmoji` 记占位符 `🖼 <id>`(无图源)。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_reaction
-    r = _reaction("reactionCustomEmoji", custom_emoji_id=1234567890,
-                  total_count=3, is_chosen=False)
+
+    r = _reaction("reactionCustomEmoji", custom_emoji_id=1234567890, total_count=3, is_chosen=False)
     dto = _map_reaction(r)
     assert dto is not None
     assert dto.type == "custom_emoji"
@@ -503,6 +563,7 @@ def test_pr10_reaction_custom_emoji_mapped():
 def test_pr10_reaction_unknown_type_returns_none():
     """PR #10:TDLib 推未知 reaction type → None(上层过滤,不让 UI 渲染坏数据)。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_reaction
+
     r = _reaction("reactionFutureType", emoji="?", total_count=1)
     assert _map_reaction(r) is None
 
@@ -510,6 +571,7 @@ def test_pr10_reaction_unknown_type_returns_none():
 def test_pr10_reactions_list_filters_unknown():
     """PR #10:reactions 列表里混入未知 type 时静默过滤。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_reactions
+
     rxns = [
         _reaction("reactionEmoji", emoji="❤️", total_count=2, is_chosen=True),
         _reaction("reactionUnknown", emoji="?", total_count=99),
@@ -524,12 +586,14 @@ def test_pr10_reactions_list_filters_unknown():
 def test_pr10_reactions_none_yields_empty_list():
     """PR #10:reactions 字段为 None → 空 list(语义:无 reaction)。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_reactions
+
     assert _map_reactions(None) == []
 
 
 def test_pr10_interaction_info_views_only():
     """PR #10:`MessageInteractionInfo` 只推 view_count 时,reactions=[]。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+
     info = SimpleNamespace(view_count=42, reactions=None)
     views, reactions = _map_interaction_info(info)
     assert views == 42
@@ -539,6 +603,7 @@ def test_pr10_interaction_info_views_only():
 def test_pr10_interaction_info_none_returns_none_views():
     """PR #10:`interaction_info=None` → views=None, reactions=[]。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+
     views, reactions = _map_interaction_info(None)
     assert views is None
     assert reactions == []
@@ -547,6 +612,7 @@ def test_pr10_interaction_info_none_returns_none_views():
 def test_pr10_interaction_info_full_payload():
     """PR #10:reactions + view_count 同时推时两者都正常返回。"""
     from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+
     info = SimpleNamespace(
         view_count=100,
         reactions=[

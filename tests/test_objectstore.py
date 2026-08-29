@@ -1,4 +1,5 @@
 """对象存储后端单测(Local + Folder + S3)。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +40,7 @@ async def _wrap_to_thread(monkeypatch, calls: list[str]) -> None:
 
 
 # ---- Local ----
+
 
 async def test_put_get_roundtrip(tmp_path):
     s = LocalObjectStore(root=tmp_path)
@@ -95,6 +97,7 @@ async def test_get_missing_raises(tmp_path):
 
 
 # ---- Folder(两级分片)----
+
 
 async def test_folder_put_get_roundtrip(tmp_path):
     s = FolderObjectStore(root=tmp_path)
@@ -472,9 +475,13 @@ async def test_s3_iter_keys_returns_all(monkeypatch):
     """S3 iter_keys → list_objects_v2 paginator,把桶里所有 key 列出。"""
     store, client = _make_s3_store(monkeypatch)
     await store.connect()
-    client.set_list_keys([
-        "media/a.jpg", "media/b.png", "other/c.txt",
-    ])
+    client.set_list_keys(
+        [
+            "media/a.jpg",
+            "media/b.png",
+            "other/c.txt",
+        ]
+    )
     keys = sorted([k async for k in store.iter_keys(prefix="")])
     assert keys == ["media/a.jpg", "media/b.png", "other/c.txt"]
     # 校验走到了 paginator + 传了 Prefix

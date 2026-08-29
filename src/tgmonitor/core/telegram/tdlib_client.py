@@ -17,6 +17,7 @@
 
 依赖:`tdlib-json-client`(workspace 子项目,aiotdlib 归档后的替代)。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +31,7 @@ log = logging.getLogger(__name__)
 try:
     from tdlib_json import TdlibError, TDLibObject
     from tdlib_json import TdlibJsonClient as _AiClient
+
     _HAVE_TDLIB_JSON = True
 except Exception:  # noqa: BLE001
     _HAVE_TDLIB_JSON = False
@@ -143,7 +145,8 @@ class TdlibTelegramClient(_AiClient):
         missing = _missing_credentials(settings)
         if missing:
             raise TelegramNotConfiguredError(
-                "未配置 Telegram 凭据:" + "、".join(missing)
+                "未配置 Telegram 凭据:"
+                + "、".join(missing)
                 + "。请在 .env 或 设置… 中填写后再启动。"
             )
         self._settings = settings
@@ -249,6 +252,7 @@ class TdlibTelegramClient(_AiClient):
             self._on_supergroup_updated,
             update_type="updateSupergroup",
         )
+
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
         async def _on_any_update(client_self, update) -> None:
@@ -258,8 +262,8 @@ class TdlibTelegramClient(_AiClient):
                     self._seen_error_codes.append(code)
                     msg = str(update.get("message", ""))
                     self._last_error_message = msg
-                    log.warning("tdlib_json Error observed: code=%s msg=%s",
-                                code, msg)
+                    log.warning("tdlib_json Error observed: code=%s msg=%s", code, msg)
+
         self.add_event_handler(
             _on_any_update,
             update_type="*",
@@ -272,6 +276,7 @@ class TdlibTelegramClient(_AiClient):
         from tgmonitor.core.telegram.tdlib_channels import (  # noqa: E402 — 延迟 import 避免循环
             ChannelsApi,
         )
+
         self.channels = ChannelsApi(self)
 
     # ============================================================
@@ -289,8 +294,7 @@ class TdlibTelegramClient(_AiClient):
         prev = self._state
         self._state = new_state
         self._state_detail = detail
-        log.info("state: %s → %s%s", prev, new_state,
-                 f" ({detail})" if detail else "")
+        log.info("state: %s → %s%s", prev, new_state, f" ({detail})" if detail else "")
         self._state_event.set()
         if self._bus is not None:
             try:
@@ -302,6 +306,7 @@ class TdlibTelegramClient(_AiClient):
     async def _safe_publish_state(self, state: str, detail: str) -> None:
         try:
             from tgmonitor.core.events import LoginStateChanged
+
             assert self._bus is not None
             await self._bus.publish(LoginStateChanged(state=state, detail=detail))
         except Exception:  # noqa: BLE001
@@ -317,9 +322,14 @@ class TdlibTelegramClient(_AiClient):
             return
         try:
             from tgmonitor.core.events import AuthErrorOccurred
-            await self._bus.publish(AuthErrorOccurred(
-                source=source, message=message, exception=exception,
-            ))
+
+            await self._bus.publish(
+                AuthErrorOccurred(
+                    source=source,
+                    message=message,
+                    exception=exception,
+                )
+            )
         except Exception:  # noqa: BLE001
             log.exception("publish AuthErrorOccurred failed")
 
@@ -358,7 +368,9 @@ class TdlibTelegramClient(_AiClient):
             log.warning("%s failed: %s", error_label, e)
             detail = _extract_error_detail(e)
             await self._publish_auth_error(
-                source, f"{detail_prefix}{detail}", e,
+                source,
+                f"{detail_prefix}{detail}",
+                e,
             )
         except Exception as e:  # noqa: BLE001
             log.exception("%s unexpected failure", error_label)
@@ -390,7 +402,10 @@ class TdlibTelegramClient(_AiClient):
         await self._submit_auth_step(
             source="email_code",
             queue=self._email_code_queue,
-            request_factory=lambda code: {"@type": "checkAuthenticationEmailCode", "code": {"@type": "emailAddressAuthenticationCode", "code": code}},
+            request_factory=lambda code: {
+                "@type": "checkAuthenticationEmailCode",
+                "code": {"@type": "emailAddressAuthenticationCode", "code": code},
+            },
             error_label="CheckAuthenticationEmailCode",
             detail_prefix="邮箱验证码错误: ",
         )
@@ -401,24 +416,33 @@ class TdlibTelegramClient(_AiClient):
         """
         first_name, last_name = await self._registration_queue.get()
         log.info(
-            "registering new user (first=%r, last=%r)", first_name, last_name,
+            "registering new user (first=%r, last=%r)",
+            first_name,
+            last_name,
         )
         try:
-            await self.request({
-                "@type": "registerUser",
-                "first_name": first_name,
-                "last_name": last_name,
-            }, request_timeout=30)
+            await self.request(
+                {
+                    "@type": "registerUser",
+                    "first_name": first_name,
+                    "last_name": last_name,
+                },
+                request_timeout=30,
+            )
         except TdlibError as e:
             detail = _extract_error_detail(e)
             log.warning("registerUser failed: %s", e)
             await self._publish_auth_error(
-                "registration", f"注册失败: {detail}", e,
+                "registration",
+                f"注册失败: {detail}",
+                e,
             )
         except Exception as e:  # noqa: BLE001
             log.exception("registerUser unexpected failure")
             await self._publish_auth_error(
-                "registration", f"注册失败: {e}", e,
+                "registration",
+                f"注册失败: {e}",
+                e,
             )
 
     async def _ask_for_code(self) -> None:
@@ -560,33 +584,48 @@ class TdlibTelegramClient(_AiClient):
                 )
                 return
             from tgmonitor.core.telegram.tdlib_messages import _map_interaction_info
+
             new_views, new_reactions = _map_interaction_info(
                 getattr(update, "interaction_info", None),
             )
             log.debug(
                 "updateMessageInteractionInfo: chat=%s msg=%s views=%s reactions=%d",
-                chat_id, msg_id, new_views, len(new_reactions),
+                chat_id,
+                msg_id,
+                new_views,
+                len(new_reactions),
             )
             if self._bus is not None:
-                asyncio.create_task(self._safe_publish_interactions(
-                    chat_id, msg_id, new_views, new_reactions,
-                ))
+                asyncio.create_task(
+                    self._safe_publish_interactions(
+                        chat_id,
+                        msg_id,
+                        new_views,
+                        new_reactions,
+                    )
+                )
         except Exception:  # noqa: BLE001
             log.exception("updateMessageInteractionInfo handling failed")
 
     async def _safe_publish_interactions(
-        self, chat_id: int, msg_id: int,
-        views: int | None, reactions: list,
+        self,
+        chat_id: int,
+        msg_id: int,
+        views: int | None,
+        reactions: list,
     ) -> None:
         try:
             from tgmonitor.core.events import MessageInteractionsChanged
+
             assert self._bus is not None
-            await self._bus.publish(MessageInteractionsChanged(
-                channel_id=int(chat_id),
-                telegram_msg_id=int(msg_id),
-                views=views,
-                reactions=reactions,
-            ))
+            await self._bus.publish(
+                MessageInteractionsChanged(
+                    channel_id=int(chat_id),
+                    telegram_msg_id=int(msg_id),
+                    views=views,
+                    reactions=reactions,
+                )
+            )
         except Exception:  # noqa: BLE001
             log.exception("publish MessageInteractionsChanged failed")
 
@@ -608,27 +647,37 @@ class TdlibTelegramClient(_AiClient):
                 )
                 return
             log.info(
-                "updateDeleteMessages: chat=%s count=%d", chat_id, len(msg_ids),
+                "updateDeleteMessages: chat=%s count=%d",
+                chat_id,
+                len(msg_ids),
             )
             if self._bus is not None:
                 # 每条 msg_id 单独 publish — UI 订阅端粒度更细。
-                asyncio.create_task(self._safe_publish_bulk_delete(
-                    int(chat_id), [int(m) for m in msg_ids],
-                ))
+                asyncio.create_task(
+                    self._safe_publish_bulk_delete(
+                        int(chat_id),
+                        [int(m) for m in msg_ids],
+                    )
+                )
         except Exception:  # noqa: BLE001
             log.exception("updateDeleteMessages handling failed")
 
     async def _safe_publish_bulk_delete(
-        self, chat_id: int, msg_ids: list[int],
+        self,
+        chat_id: int,
+        msg_ids: list[int],
     ) -> None:
         try:
             from tgmonitor.core.events import MessageDeleted
+
             assert self._bus is not None
             for mid in msg_ids:
-                await self._bus.publish(MessageDeleted(
-                    channel_id=chat_id,
-                    telegram_msg_id=mid,
-                ))
+                await self._bus.publish(
+                    MessageDeleted(
+                        channel_id=chat_id,
+                        telegram_msg_id=mid,
+                    )
+                )
         except Exception:  # noqa: BLE001
             log.exception("publish bulk MessageDeleted failed")
 
@@ -651,14 +700,19 @@ class TdlibTelegramClient(_AiClient):
             new_username = getattr(channel, "username", None)
             log.debug(
                 "updateChannel: id=%s title=%r username=%r",
-                cid, new_title, new_username,
+                cid,
+                new_title,
+                new_username,
             )
             if self._bus is not None:
-                asyncio.create_task(self._safe_publish_channel_metadata(
-                    channel_id=int(cid),
-                    title=new_title, username=new_username,
-                    member_count=None,
-                ))
+                asyncio.create_task(
+                    self._safe_publish_channel_metadata(
+                        channel_id=int(cid),
+                        title=new_title,
+                        username=new_username,
+                        member_count=None,
+                    )
+                )
         except Exception:  # noqa: BLE001
             log.exception("updateChannel handling failed")
 
@@ -682,47 +736,69 @@ class TdlibTelegramClient(_AiClient):
             username = getattr(supergroup, "username", None)
             log.debug(
                 "updateSupergroup: id=%s member_count=%s username=%r",
-                sid, member_count, username,
+                sid,
+                member_count,
+                username,
             )
             if self._bus is not None:
-                asyncio.create_task(self._safe_publish_supergroup_metadata(
-                    supergroup_id=int(sid),
-                    member_count=member_count, username=username,
-                ))
+                asyncio.create_task(
+                    self._safe_publish_supergroup_metadata(
+                        supergroup_id=int(sid),
+                        member_count=member_count,
+                        username=username,
+                    )
+                )
         except Exception:  # noqa: BLE001
             log.exception("updateSupergroup handling failed")
 
     async def _safe_publish_channel_metadata(
-        self, channel_id: int, title: str | None, username: str | None,
+        self,
+        channel_id: int,
+        title: str | None,
+        username: str | None,
         member_count: int | None,
     ) -> None:
         try:
             from tgmonitor.core.events import ChannelMetadataChanged
+
             assert self._bus is not None
-            await self._bus.publish(ChannelMetadataChanged(
-                channel_id=channel_id,
-                title=title, username=username, member_count=member_count,
-            ))
+            await self._bus.publish(
+                ChannelMetadataChanged(
+                    channel_id=channel_id,
+                    title=title,
+                    username=username,
+                    member_count=member_count,
+                )
+            )
         except Exception:  # noqa: BLE001
             log.exception("publish ChannelMetadataChanged failed")
 
     async def _safe_publish_supergroup_metadata(
-        self, supergroup_id: int, member_count: int | None, username: str | None,
+        self,
+        supergroup_id: int,
+        member_count: int | None,
+        username: str | None,
     ) -> None:
         try:
             from tgmonitor.core.events import ChannelMetadataChanged
+
             assert self._bus is not None
-            await self._bus.publish(ChannelMetadataChanged(
-                channel_id=0,  # 0 = monitor 通过 supergroup_id 解析
-                supergroup_id=supergroup_id,
-                title=None, username=username, member_count=member_count,
-            ))
+            await self._bus.publish(
+                ChannelMetadataChanged(
+                    channel_id=0,  # 0 = monitor 通过 supergroup_id 解析
+                    supergroup_id=supergroup_id,
+                    title=None,
+                    username=username,
+                    member_count=member_count,
+                )
+            )
         except Exception:  # noqa: BLE001
             log.exception("publish supergroup ChannelMetadataChanged failed")
 
     async def _safe_publish_conn_state(self, state: str) -> None:
         try:
             from tgmonitor.core.events import ConnectionStateChanged
+
             assert self._bus is not None
             await self._bus.publish(ConnectionStateChanged(state=state))
         except Exception:  # noqa: BLE001
@@ -741,7 +817,9 @@ class TdlibTelegramClient(_AiClient):
         td_dir = self._settings.session_dir / "tdlib"
         log.info(
             "start preflight: session_dir=%s | proxy=%s | td_dir_exists=%s",
-            td_dir, self._settings.proxy, td_dir.exists(),
+            td_dir,
+            self._settings.proxy,
+            td_dir.exists(),
         )
         # stale lock / wal / shm 清理 — 不 raise,只 warn
         for lock in td_dir.rglob("*.lock"):
@@ -768,6 +846,7 @@ class TdlibTelegramClient(_AiClient):
         每一步都有耗时日志,启动卡在哪一步一眼能看出(4:30-5:00 排查场景)。
         """
         import time as _t
+
         t0 = _t.monotonic()
         # 启动 updates_loop + tdlib_json 内部 task(带崩溃自愈)
         self._schedule_updates_loop()
@@ -801,23 +880,23 @@ class TdlibTelegramClient(_AiClient):
         # WaitTdlibParameters,seen error codes 会累积 — 转成可见错误,而不是
         # 让 UI 永远停在 `tdlib_parameters` 裸标签。
         t = _t.monotonic()
-        log.info("[tdlib] waiting for state machine to advance (current=%s)…",
-                 self._state)
+        log.info("[tdlib] waiting for state machine to advance (current=%s)…", self._state)
         await self._state_event.wait()
         while self._state in self._BOOT_TRANSIENT_STATES:
-            log.info("[tdlib] state=%s still transient, waiting to settle…",
-                     self._state)
+            log.info("[tdlib] state=%s still transient, waiting to settle…", self._state)
             self._state_event.clear()
             try:
                 await asyncio.wait_for(
-                    self._state_event.wait(), timeout=self._SETTLE_GRACE,
+                    self._state_event.wait(),
+                    timeout=self._SETTLE_GRACE,
                 )
             except TimeoutError:
                 # 有 seen error codes → TDLib 明确拒绝了启动请求(如
                 # api_id/api_hash 无效,code=400),立即转可见错误。
                 if self._seen_error_codes:
                     err_detail = _translate_boot_error(
-                        self._seen_error_codes, self._last_error_message,
+                        self._seen_error_codes,
+                        self._last_error_message,
                     )
                     log.error("[tdlib] stuck in %s: %s", self._state, err_detail)
                     await self._kill_client()
@@ -830,10 +909,11 @@ class TdlibTelegramClient(_AiClient):
                 log.info(
                     "[tdlib] state=%s no movement in %.0fs, no error codes — "
                     "keep waiting (boot budget %.0fs)",
-                    self._state, self._SETTLE_GRACE, self._BOOT_TIMEOUT,
+                    self._state,
+                    self._SETTLE_GRACE,
+                    self._BOOT_TIMEOUT,
                 )
-        log.info("[tdlib] state machine advanced to %s in %.3fs",
-                 self._state, _t.monotonic() - t)
+        log.info("[tdlib] state machine advanced to %s in %.3fs", self._state, _t.monotonic() - t)
 
     async def start(self) -> tuple[str, str | None]:
         """主入口 — 应用启动时调一次。
@@ -861,17 +941,20 @@ class TdlibTelegramClient(_AiClient):
         self._last_error_message = ""
         try:
             await asyncio.wait_for(
-                self._do_start_inner(), timeout=self._BOOT_TIMEOUT,
+                self._do_start_inner(),
+                timeout=self._BOOT_TIMEOUT,
             )
             log.info("start: settled on state=%s", self._state)
             return self._state, self._state_detail
         except TimeoutError:
             log.error(
                 "start: timed out after %.0fs; seen_error_codes=%s",
-                self._BOOT_TIMEOUT, list(self._seen_error_codes),
+                self._BOOT_TIMEOUT,
+                list(self._seen_error_codes),
             )
             err_detail = _translate_boot_error(
-                self._seen_error_codes, self._last_error_message,
+                self._seen_error_codes,
+                self._last_error_message,
             )
             await self._kill_client()
             self._set_state("error", detail=err_detail)
@@ -900,7 +983,8 @@ class TdlibTelegramClient(_AiClient):
         phone = (phone or "").strip()
         if not phone.startswith("+"):
             await self._publish_auth_error(
-                "phone", "手机号需以 + 国家区号开头,如 +8613800000000",
+                "phone",
+                "手机号需以 + 国家区号开头,如 +8613800000000",
             )
             return self._state, self._state_detail
         # 等 TDLib 进入 phone_required(最多 5s)
@@ -912,23 +996,27 @@ class TdlibTelegramClient(_AiClient):
                 pass
         if self._state != "phone_required":
             log.warning(
-                "submit_phone: state=%s,非 phone_required 无法发号", self._state,
+                "submit_phone: state=%s,非 phone_required 无法发号",
+                self._state,
             )
             return self._state, self._state_detail
         log.info("submitting phone %s → setAuthenticationPhoneNumber", phone)
         try:
-            await self.request({
-                "@type": "setAuthenticationPhoneNumber",
-                "phone_number": phone,
-                "settings": {
-                    "@type": "phoneNumberAuthenticationSettings",
-                    "allow_flash_call": False,
-                    "allow_missed_call": False,
-                    "is_current_phone_number": True,
-                    "allow_sms_retriever_api": False,
-                    "authentication_tokens": [],
+            await self.request(
+                {
+                    "@type": "setAuthenticationPhoneNumber",
+                    "phone_number": phone,
+                    "settings": {
+                        "@type": "phoneNumberAuthenticationSettings",
+                        "allow_flash_call": False,
+                        "allow_missed_call": False,
+                        "is_current_phone_number": True,
+                        "allow_sms_retriever_api": False,
+                        "authentication_tokens": [],
+                    },
                 },
-            }, request_timeout=30)
+                request_timeout=30,
+            )
         except TdlibError as e:
             detail = _extract_error_detail(e)
             log.warning("submit_phone failed: %s", e)
@@ -940,7 +1028,8 @@ class TdlibTelegramClient(_AiClient):
             await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
         except TimeoutError:
             log.warning(
-                "submit_phone: 发号后 15s 未推进 (state=%s)", self._state,
+                "submit_phone: 发号后 15s 未推进 (state=%s)",
+                self._state,
             )
         return self._state, self._state_detail
 
@@ -981,7 +1070,8 @@ class TdlibTelegramClient(_AiClient):
         email = (email or "").strip()
         if "@" not in email or len(email) > 100:
             await self._publish_auth_error(
-                "email", "邮箱格式不正确",
+                "email",
+                "邮箱格式不正确",
             )
             return self._state, self._state_detail
         # 等 TDLib 进入 email_required(最多 5s)
@@ -993,15 +1083,19 @@ class TdlibTelegramClient(_AiClient):
                 pass
         if self._state != "email_required":
             log.warning(
-                "submit_email: state=%s,非 email_required 无法发邮箱", self._state,
+                "submit_email: state=%s,非 email_required 无法发邮箱",
+                self._state,
             )
             return self._state, self._state_detail
         log.info("submitting email → setAuthenticationEmailAddress")
         try:
-            await self.request({
-                "@type": "setAuthenticationEmailAddress",
-                "email_address": email,
-            }, request_timeout=30)
+            await self.request(
+                {
+                    "@type": "setAuthenticationEmailAddress",
+                    "email_address": email,
+                },
+                request_timeout=30,
+            )
         except TdlibError as e:
             detail = _extract_error_detail(e)
             log.warning("submit_email failed: %s", e)
@@ -1012,7 +1106,8 @@ class TdlibTelegramClient(_AiClient):
             await asyncio.wait_for(self._state_event.wait(), timeout=15.0)
         except TimeoutError:
             log.warning(
-                "submit_email: 发邮箱后 15s 未推进 (state=%s)", self._state,
+                "submit_email: 发邮箱后 15s 未推进 (state=%s)",
+                self._state,
             )
         return self._state, self._state_detail
 
@@ -1040,7 +1135,8 @@ class TdlibTelegramClient(_AiClient):
         last_name = (last_name or "").strip()
         if not first_name:
             await self._publish_auth_error(
-                "registration", "注册需提供 first_name",
+                "registration",
+                "注册需提供 first_name",
             )
             return self._state, self._state_detail
         await self._registration_queue.put((first_name, last_name))
@@ -1083,6 +1179,7 @@ class TdlibTelegramClient(_AiClient):
         # 字符串里 "FLOOD_WAIT_NNN" 也算(TdlibError 某些场景 code 不是 429)
         msg = _extract_error_detail(exc)
         import re as _re
+
         m = _re.search(r"FLOOD_WAIT[_ ](\d+)", msg)
         if m:
             return TelegramRateLimitError(float(m.group(1)))
@@ -1128,6 +1225,7 @@ class TdlibTelegramClient(_AiClient):
         td_dir = self._settings.session_dir / "tdlib"
         await self._kill_client()
         import shutil as _sh
+
         for sub in ("database", "files", ".aiotdlib"):
             target = td_dir / sub
             if target.exists():
@@ -1188,6 +1286,7 @@ class TdlibTelegramClient(_AiClient):
           2) event 未 set 时 `wait_for(state_event.wait(), 0.5)` 真等 fire。
         """
         import time as _t
+
         deadline = _t.monotonic() + timeout
         while _t.monotonic() < deadline:
             if self._state == target:
@@ -1241,7 +1340,9 @@ class TdlibTelegramClient(_AiClient):
         """
         # async generator 必须直接返回,不能包 `async def yield`(会破坏 lazy 语义)
         return self.channels.iter_chat_history(
-            channel_id, before_msg_id=before_msg_id, limit=limit,
+            channel_id,
+            before_msg_id=before_msg_id,
+            limit=limit,
         )
 
     async def join_channel(self, identifier: str) -> ChannelDTO:

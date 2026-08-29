@@ -1,4 +1,5 @@
 """JsonlFileStore 单测 — 验证文件后端与抽象语义对齐。"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -101,7 +102,10 @@ async def test_list_messages_limit_keeps_most_recent(tmp_path: Path):
     for j in range(5):
         await store.save_message(
             MessageDTO(
-                id=0, channel_id=1, telegram_msg_id=j, text=f"m{j}",
+                id=0,
+                channel_id=1,
+                telegram_msg_id=j,
+                text=f"m{j}",
                 date=base + timedelta(minutes=j),
             )
         )
@@ -159,7 +163,10 @@ async def test_save_message_resets_status_cleans_media_index(tmp_path: Path):
     fid = "fid-A"
     # 第 1 次 save:DONE
     m = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, text="v1",
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="v1",
         date=datetime.now(UTC),
         media=[_photo_with_fid(fid)],
     )
@@ -168,12 +175,21 @@ async def test_save_message_resets_status_cleans_media_index(tmp_path: Path):
     # 第 2 次 save:同 (channel_id, telegram_msg_id) 覆盖,media 改 PENDING
     # (模拟 retry 路径:AppService.retry_media 摘掉 DONE 标 PENDING 再 force 重下)
     m_v2 = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, text="v2", date=datetime.now(UTC),
-        media=[MediaDTO(
-            type=MediaType.PHOTO, mime_type="image/jpeg", file_name="p.jpg",
-            file_size=1024, telegram_file_id=fid,
-            download_status=MediaDownloadStatus.PENDING,
-        )],
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="v2",
+        date=datetime.now(UTC),
+        media=[
+            MediaDTO(
+                type=MediaType.PHOTO,
+                mime_type="image/jpeg",
+                file_name="p.jpg",
+                file_size=1024,
+                telegram_file_id=fid,
+                download_status=MediaDownloadStatus.PENDING,
+            )
+        ],
     )
     await store.save_message(m_v2)
     # 现在 storage 里该 fid 状态是 PENDING,索引不该再返 DONE entry
@@ -186,17 +202,27 @@ async def test_delete_message_cleans_media_index(tmp_path: Path):
     await store.connect()
     fid = "fid-X"
     # 频道 1:DONE,有 fid
-    await store.save_message(MessageDTO(
-        id=0, channel_id=1, telegram_msg_id=10, text="a",
-        date=datetime.now(UTC),
-        media=[_photo_with_fid(fid)],
-    ))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=1,
+            telegram_msg_id=10,
+            text="a",
+            date=datetime.now(UTC),
+            media=[_photo_with_fid(fid)],
+        )
+    )
     # 频道 2:同 fid 另一 message
-    await store.save_message(MessageDTO(
-        id=0, channel_id=2, telegram_msg_id=20, text="b",
-        date=datetime.now(UTC),
-        media=[_photo_with_fid(fid)],
-    ))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=2,
+            telegram_msg_id=20,
+            text="b",
+            date=datetime.now(UTC),
+            media=[_photo_with_fid(fid)],
+        )
+    )
     assert await store.find_media_by_file_id(fid) is not None
     # 删频道 1 的引用 → 频道 2 还在,索引留
     await store.delete_message(1, 10)
@@ -215,27 +241,46 @@ async def test_retry_path_finds_no_prior_after_reset(tmp_path: Path):
     await store.connect()
     fid = "fid-R"
     # DONE
-    await store.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, text="",
-        date=datetime.now(UTC),
-        media=[_photo_with_fid(fid)],
-    ))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            text="",
+            date=datetime.now(UTC),
+            media=[_photo_with_fid(fid)],
+        )
+    )
     # 重置:在 retry 路径里,storage.update_message 把 media 改成 PENDING,
     # 后续 download_one(force=True) 会跳过 skip #1 重下
-    await store.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, text="",
-        date=datetime.now(UTC),
-        media=[MediaDTO(
-            type=MediaType.PHOTO, mime_type="image/jpeg", file_name="p.jpg",
-            telegram_file_id=fid,
-            download_status=MediaDownloadStatus.PENDING,
-        )],
-    ))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            text="",
+            date=datetime.now(UTC),
+            media=[
+                MediaDTO(
+                    type=MediaType.PHOTO,
+                    mime_type="image/jpeg",
+                    file_name="p.jpg",
+                    telegram_file_id=fid,
+                    download_status=MediaDownloadStatus.PENDING,
+                )
+            ],
+        )
+    )
     assert await store.find_media_by_file_id(fid) is None
     # 再 DONE:重新落库(模拟 download_one 重下完回写 storage)
-    await store.save_message(MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, text="",
-        date=datetime.now(UTC),
-        media=[_photo_with_fid(fid)],
-    ))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=100,
+            telegram_msg_id=1,
+            text="",
+            date=datetime.now(UTC),
+            media=[_photo_with_fid(fid)],
+        )
+    )
     assert await store.find_media_by_file_id(fid) is not None

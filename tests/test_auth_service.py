@@ -5,6 +5,7 @@
 - 委托语义:把请求转给 `TelegramClient.submit_*`
 - 错误路径:client 抛异常 → 返回 `('error', msg)` + 发 `ErrorOccurred`
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -83,6 +84,7 @@ async def test_submit_registration_delegates_with_args(auth_service) -> None:
         captured["first"] = first
         captured["last"] = last
         return "ready", None
+
     auth._client.submit_registration = fake_reg  # type: ignore[method-assign]
     state, _ = await auth.submit_registration("Alice", "Wonder")
     assert state == "ready"

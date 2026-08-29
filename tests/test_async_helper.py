@@ -6,6 +6,7 @@
   3. 异常归一:log.exception + on_error 都被触发
   4. on_success / on_error 自身抛 → log.exception 兜底,不污染 future
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,8 +38,10 @@ def _wait_callbacks(ms: int = 100) -> None:
 
 # ---- 1. success path ----
 
+
 def test_runs_coro_and_calls_on_success_with_result(
-    bg_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture,
+    bg_loop: asyncio.AbstractEventLoop,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def ok() -> str:
         return "hello"
@@ -56,6 +59,7 @@ def test_returns_future_even_without_callbacks(
     bg_loop: asyncio.AbstractEventLoop,
 ) -> None:
     """fire-and-forget:同样返 Future 给 caller 取句柄。"""
+
     async def ok() -> int:
         return 42
 
@@ -65,8 +69,10 @@ def test_returns_future_even_without_callbacks(
 
 # ---- 2. exception path ----
 
+
 def test_logs_exception_and_calls_on_error(
-    bg_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture,
+    bg_loop: asyncio.AbstractEventLoop,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def fail() -> None:
         raise ValueError("boom")
@@ -74,8 +80,10 @@ def test_logs_exception_and_calls_on_error(
     errs: list[BaseException] = []
     with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
         fut = run_coro(
-            bg_loop, fail(),
-            on_error=errs.append, error_label="fail-test",
+            bg_loop,
+            fail(),
+            on_error=errs.append,
+            error_label="fail-test",
         )
         # fut.result() 抛 ValueError(原始异常从 coroutine 透传)
         with pytest.raises(ValueError, match="boom"):
@@ -88,12 +96,14 @@ def test_logs_exception_and_calls_on_error(
 
 
 def test_on_error_swallows_its_own_exception(
-    bg_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture,
+    bg_loop: asyncio.AbstractEventLoop,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """on_error 内部抛 → log.exception 兜底,不污染 future / 不往上抛。
 
     注:on_error 跑在 bg_loop 线程,我们先 wait 一下让它 log,再 caplog 检查。
     """
+
     async def fail() -> None:
         raise RuntimeError("orig")
 
@@ -105,7 +115,10 @@ def test_on_error_swallows_its_own_exception(
 
     with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
         fut = run_coro(
-            bg_loop, fail(), on_error=on_e, error_label="fail2",
+            bg_loop,
+            fail(),
+            on_error=on_e,
+            error_label="fail2",
         )
         # fut.result() 拿的是"原" RuntimeError(orig),跟 on_error 内的 raise 无关
         with pytest.raises(RuntimeError, match="orig"):
@@ -117,7 +130,8 @@ def test_on_error_swallows_its_own_exception(
 
 
 def test_on_success_swallows_its_own_exception(
-    bg_loop: asyncio.AbstractEventLoop, caplog: pytest.LogCaptureFixture,
+    bg_loop: asyncio.AbstractEventLoop,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def ok() -> str:
         return "result"
@@ -127,7 +141,10 @@ def test_on_success_swallows_its_own_exception(
 
     with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
         fut = run_coro(
-            bg_loop, ok(), on_success=bad_success, error_label="ok2",
+            bg_loop,
+            ok(),
+            on_success=bad_success,
+            error_label="ok2",
         )
         # success 跑过,on_success 抛了,但 fut.result() 仍是 success result
         assert fut.result(timeout=2) == "result"
@@ -136,6 +153,7 @@ def test_on_success_swallows_its_own_exception(
 
 
 # ---- 3. 验证 typing 契约 ----
+
 
 @pytest.mark.parametrize(
     "value,expected",
@@ -147,7 +165,9 @@ def test_on_success_swallows_its_own_exception(
     ],
 )
 def test_on_success_value_type_passes_through(
-    bg_loop: asyncio.AbstractEventLoop, value: Any, expected: Any,
+    bg_loop: asyncio.AbstractEventLoop,
+    value: Any,
+    expected: Any,
 ) -> None:
     """TypeVar T 透传:coro 返 int / str / None / tuple 都没问题。"""
 

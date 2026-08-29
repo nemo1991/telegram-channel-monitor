@@ -16,6 +16,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
 热重载:调用 `reconfigure(new_settings)` 可切换 storage / objects(无需重启 app);
        TelegramClient / session / 鉴权状态变更需要登出再登入,UI 应引导。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,13 +106,14 @@ class AppService:
         self._reconfiguring = False
         # 全量同步服务(用户多选触发)— 延迟初始化避免循环 import
         from tgmonitor.core.channel_sync import ChannelSyncService
+
         # 2026-08-24:与 monitor 共享同一个 MediaDownloader 实例(FULL 策略下
         # sync 也会复用做媒体下载);非 FULL 策略 / 未接线时传 None,sync 跳过下载。
-        self.downloader = (
-            monitor.downloader if (monitor is not None) else None
-        )
+        self.downloader = monitor.downloader if (monitor is not None) else None
         self.channel_sync = ChannelSyncService(
-            bus, client, storage,
+            bus,
+            client,
+            storage,
             downloader=self.downloader,
             objects=objects,
             media_policy=settings.media_policy,
@@ -149,16 +151,22 @@ class AppService:
             log.warning("bootstrap: 401 detected — rotating key and rebuilding client")
             await self.client.nuke_and_rebuild(rotate_key=True)
             from tgmonitor.core.telegram.factory import build_telegram_client
+
             await self.client.close()
             self.client = build_telegram_client(
-                self.settings, use_fake=False, event_bus=self.bus,
+                self.settings,
+                use_fake=False,
+                event_bus=self.bus,
             )
             state, detail = await self.client.start()
         # client 端已经 publish 过 LoginStateChanged,这里只 fail-safe 再发一次终态
         if state == "error":
-            await self.bus.publish(ErrorOccurred(
-                source="bootstrap", message=detail or "start failed",
-            ))
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="bootstrap",
+                    message=detail or "start failed",
+                )
+            )
         return state, detail
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
@@ -278,13 +286,14 @@ class AppService:
         # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #B。
         """
         if channel_ids is None:
-            channel_ids = [
-                c.id for c in await self.storage.list_subscribed_channels()
-            ]
+            channel_ids = [c.id for c in await self.storage.list_subscribed_channels()]
         if not channel_ids:
             return []
         return await self.storage.list_messages(
-            channel_ids, date_from, date_to, limit,
+            channel_ids,
+            date_from,
+            date_to,
+            limit,
         )
 
     # ---------- 导出(由 ExportService 提供实现) ----------
@@ -298,7 +307,8 @@ class AppService:
             yield
 
     async def export_media_list(
-        self, request: MediaExportRequest,
+        self,
+        request: MediaExportRequest,
     ) -> AsyncIterator[None]:
         """Media Manager 当前视图(per-media 行)导出 — 2026-08-25 v1.3.0 PR #7。
 
@@ -357,7 +367,10 @@ class AppService:
         return rows, total
 
     async def delete_media(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> None:
         """摘 media from message + refcount=0 时清 bytes + 发 MediaDeleted。
 
@@ -370,7 +383,7 @@ class AppService:
             return
         med = msg.media[media_idx]
         object_key = med.object_key
-        new_media = msg.media[:media_idx] + msg.media[media_idx + 1:]
+        new_media = msg.media[:media_idx] + msg.media[media_idx + 1 :]
         new_msg = dataclasses.replace(msg, media=new_media)
         await self.storage.update_message(new_msg)
         if object_key:
@@ -384,17 +397,21 @@ class AppService:
                     await self.objects.delete(object_key)
                 except Exception:  # noqa: BLE001
                     log.warning(
-                        "delete bytes %s failed (already gone?)", object_key,
+                        "delete bytes %s failed (already gone?)",
+                        object_key,
                         exc_info=True,
                     )
-        await self.bus.publish(MediaDeleted(
-            channel_id=channel_id,
-            telegram_msg_id=telegram_msg_id,
-            media_idx=media_idx,
-        ))
+        await self.bus.publish(
+            MediaDeleted(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media_idx=media_idx,
+            )
+        )
 
     async def preview_delete_by_channel(
-        self, channel_id: int,
+        self,
+        channel_id: int,
     ) -> DeleteChannelPreview:
         """2026-08-25 v1.3.0 PR #8:Clear Channel dry-run 预览。
 
@@ -421,8 +438,10 @@ class AppService:
         # 注:`storage.list_media` 直接返 `list[tuple]`(不带 total),`AppService.list_media`
         # 才返 `(rows, total)` tuple — 这里走 storage 级别避免再调一次 count_media。
         done_rows = await self.storage.list_media(
-            channel_ids=[channel_id], status=MediaDownloadStatus.DONE,
-            limit=1_000_000, offset=0,
+            channel_ids=[channel_id],
+            status=MediaDownloadStatus.DONE,
+            limit=1_000_000,
+            offset=0,
         )
         orphan_bytes = 0
         seen: set[str] = set()
@@ -466,7 +485,8 @@ class AppService:
         for msg in msgs:
             # 1) 先记下该 message 的所有 object_key(用于后续 refcount)
             keys: list[str] = [
-                med.object_key for med in msg.media
+                med.object_key
+                for med in msg.media
                 if med.object_key and med.download_status == MediaDownloadStatus.DONE
             ]
             try:
@@ -474,7 +494,8 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception(
                     "delete_by_channel partial failure: channel=%s msg=%s",
-                    channel_id, msg.telegram_msg_id,
+                    channel_id,
+                    msg.telegram_msg_id,
                 )
                 continue
             deleted += 1
@@ -490,16 +511,22 @@ class AppService:
                         await self.objects.delete(key)
                     except Exception:  # noqa: BLE001
                         log.warning(
-                            "delete_by_channel bytes %s failed", key,
+                            "delete_by_channel bytes %s failed",
+                            key,
                             exc_info=True,
                         )
         log.info(
-            "delete_by_channel: channel=%s deleted=%d", channel_id, deleted,
+            "delete_by_channel: channel=%s deleted=%d",
+            channel_id,
+            deleted,
         )
         return deleted
 
     async def retry_media(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> None:
         """重下 FAILED media:`objects.delete(old_key)` + download_one(force=True)。
 
@@ -530,21 +557,26 @@ class AppService:
                 await self.objects.delete(old_object_key)
             except Exception:  # noqa: BLE001
                 log.warning(
-                    "retry pre-clean bytes %s failed", old_object_key,
+                    "retry pre-clean bytes %s failed",
+                    old_object_key,
                     exc_info=True,
                 )
         # 先发 MediaRetried,UI 立刻把状态切到 PENDING(避免用户重复点 Retry)
-        await self.bus.publish(MediaRetried(
-            channel_id=channel_id,
-            telegram_msg_id=telegram_msg_id,
-            media_idx=media_idx,
-        ))
+        await self.bus.publish(
+            MediaRetried(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media_idx=media_idx,
+            )
+        )
         # 然后走同步下载路径(retry 走 AppService 直调,不走 worker queue —
         # 2026-08-24 D4:不增加 force flag 进 queue,避免协议变更)
         if self.downloader is not None:
             try:
                 updated = await self.downloader.download_one(
-                    msg_pk=msg.id, media=new_med, force=True,
+                    msg_pk=msg.id,
+                    media=new_med,
+                    force=True,
                 )
             except Exception as e:  # noqa: BLE001
                 log.exception("retry download failed: %s", e)
@@ -558,11 +590,13 @@ class AppService:
             final_media[media_idx] = updated
             final_msg = dataclasses.replace(new_msg, media=tuple(final_media))
             await self.storage.update_message(final_msg)
-            await self.bus.publish(MediaDownloaded(
-                channel_id=channel_id,
-                telegram_msg_id=telegram_msg_id,
-                media=updated,
-            ))
+            await self.bus.publish(
+                MediaDownloaded(
+                    channel_id=channel_id,
+                    telegram_msg_id=telegram_msg_id,
+                    media=updated,
+                )
+            )
 
     async def load_thumbnail_bytes(self, media: MediaDTO) -> bytes | None:
         """读 media 的缩略图 bytes — UI 渲染缩略图用(2026-08-25 PR #1)。
@@ -602,12 +636,17 @@ class AppService:
         except Exception:  # noqa: BLE001 — KeyError / S3 ClientError / 任何错
             log.warning(
                 "load_thumbnail_bytes failed: backend=%s key=%s",
-                backend, key, exc_info=True,
+                backend,
+                key,
+                exc_info=True,
             )
             return None
 
     async def open_media(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> bool:
         """系统默认程序打开 media 文件。True = 成功发起,False = 不可打开。
 
@@ -615,12 +654,13 @@ class AppService:
         失败原因。返回 bool 是向后兼容 wrapper — 真实实现走 `open_media_with_result`,
         UI 失败时显示 reason。
         """
-        return (
-            await self.open_media_with_result(channel_id, telegram_msg_id, media_idx)
-        ).success
+        return (await self.open_media_with_result(channel_id, telegram_msg_id, media_idx)).success
 
     async def open_media_with_result(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> OpenMediaResult:
         """打开 media + 返回结构化结果(2026-08-25 v1.3.0 PR #5)。
 
@@ -653,25 +693,23 @@ class AppService:
                 # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
                 # 直接拼 root 会落到错的子目录。
                 abs_path = self.objects._path(med.object_key)  # noqa: SLF001
-                ok = bool(
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(abs_path)))
-                )
+                ok = bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(abs_path))))
                 return (
-                    OpenMediaResult(True) if ok
+                    OpenMediaResult(True)
+                    if ok
                     else OpenMediaResult(False, "系统调用失败:请检查是否已关联默认应用")
                 )
             if isinstance(self.objects, S3ObjectStore):
                 tmp = await self._stage_s3_to_tmp(med)
-                ok = bool(
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp)))
-                )
+                ok = bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp))))
                 if not ok:
                     try:
                         tmp.unlink()
                     except OSError:
                         pass
                     return OpenMediaResult(
-                        False, f"系统调用失败:无法打开临时文件 {tmp.name}",
+                        False,
+                        f"系统调用失败:无法打开临时文件 {tmp.name}",
                     )
                 return OpenMediaResult(True)
             return OpenMediaResult(
@@ -682,7 +720,10 @@ class AppService:
             return OpenMediaResult(False, f"{type(exc).__name__}: {exc}")
 
     async def reveal_in_folder(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> RevealResult:
         """2026-08-27 v1.4.0 PR #16:在文件管理器中高亮 media 文件(macOS
         Finder / Windows Explorer / Linux xdg-open 父目录)。
@@ -704,11 +745,13 @@ class AppService:
             return RevealResult(False, "媒体未下载完成")
         if isinstance(self.objects, S3ObjectStore):
             return RevealResult(
-                False, "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
+                False,
+                "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
             )
         if not isinstance(self.objects, (LocalObjectStore, FolderObjectStore)):
             return RevealResult(
-                False, f"不支持的对象存储后端: {type(self.objects).__name__}",
+                False,
+                f"不支持的对象存储后端: {type(self.objects).__name__}",
             )
 
         try:
@@ -718,7 +761,9 @@ class AppService:
             # OS-specific 唤起文件管理器(macOS `open -R` 高亮 / Windows
             # `explorer /select,` / Linux `xdg-open <parent_dir>`)
             await asyncio.to_thread(
-                self._spawn_reveal, abs_path, sys.platform,
+                self._spawn_reveal,
+                abs_path,
+                sys.platform,
             )
             return RevealResult(True)
         except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
@@ -734,6 +779,7 @@ class AppService:
           标准「高亮」API,降级开父目录)
         """
         import subprocess
+
         if platform == "darwin":
             subprocess.Popen(["open", "-R", str(abs_path)])
         elif platform == "win32":
@@ -742,7 +788,10 @@ class AppService:
             subprocess.Popen(["xdg-open", str(abs_path.parent)])
 
     async def copy_media_path(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> CopyResult:
         """2026-08-27 v1.4.0 PR #16:把 media 路径 / URI 写入剪贴板。
 
@@ -765,7 +814,8 @@ class AppService:
                 abs_path = self.objects._path(med.object_key)  # noqa: SLF001
             except Exception as exc:  # noqa: BLE001
                 return CopyResult(
-                    False, error=f"{type(exc).__name__}: {exc}",
+                    False,
+                    error=f"{type(exc).__name__}: {exc}",
                 )
             return CopyResult(True, copied_value=str(abs_path))
         if isinstance(self.objects, S3ObjectStore):
@@ -780,12 +830,14 @@ class AppService:
                 bucket = None
             if not bucket:
                 return CopyResult(
-                    False, error="S3 后端未暴露 bucket 字段",
+                    False,
+                    error="S3 后端未暴露 bucket 字段",
                 )
             uri = f"s3://{bucket}/{med.object_key}"
             return CopyResult(True, copied_value=uri)
         return CopyResult(
-            False, error=f"不支持的对象存储后端: {type(self.objects).__name__}",
+            False,
+            error=f"不支持的对象存储后端: {type(self.objects).__name__}",
         )
 
     async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
@@ -820,10 +872,7 @@ class AppService:
             )
         except Exception:  # noqa: BLE001 — PySide6 不可用兜底
             tmp_dir_str = ""
-        tmp_dir = (
-            Path(tmp_dir_str) if tmp_dir_str
-            else Path.home() / ".cache" / "tgmonitor"
-        )
+        tmp_dir = Path(tmp_dir_str) if tmp_dir_str else Path.home() / ".cache" / "tgmonitor"
         await asyncio.to_thread(tmp_dir.mkdir, parents=True, exist_ok=True)
 
         # 3. 写文件
@@ -851,17 +900,18 @@ class AppService:
                 # 2026-08-25 PR #2:加 RuntimeError(S3 未连接会 raise "未连接")
                 log.info(
                     "reconcile skipped: %s backend iter_keys unavailable: %s",
-                    backend, e,
+                    backend,
+                    e,
                 )
         chs = await self.storage.list_channels()
         if chs:
             msgs = await self.storage.list_messages(
-                [c.id for c in chs], limit=100_000,
+                [c.id for c in chs],
+                limit=100_000,
             )
             for m in msgs:
                 for med in m.media:
-                    if (med.object_key
-                            and med.download_status == MediaDownloadStatus.DONE):
+                    if med.object_key and med.download_status == MediaDownloadStatus.DONE:
                         referenced_keys.add(med.object_key)
         orphans = scanned_keys - referenced_keys
         deleted = 0
@@ -881,9 +931,12 @@ class AppService:
             dry_run=dry_run,
         )
         log.info(
-            "reconcile: backend=%s scanned=%d referenced=%d orphans=%d "
-            "deleted=%d dry_run=%s",
-            backend, evt.scanned, evt.referenced, evt.orphans, evt.deleted,
+            "reconcile: backend=%s scanned=%d referenced=%d orphans=%d deleted=%d dry_run=%s",
+            backend,
+            evt.scanned,
+            evt.referenced,
+            evt.orphans,
+            evt.deleted,
             dry_run,
         )
         await self.bus.publish(evt)
@@ -945,15 +998,20 @@ class AppService:
         # 继续写旧库,用户看到"切 PG 没生效,重启才生效"(2026-08-18 修)。
         if self.monitor is not None:
             await self.monitor.update_backends(
-                self.storage, self.objects, new_settings,
+                self.storage,
+                self.objects,
+                new_settings,
             )
             # 2026-08-24:reconfigure 后 monitor 重建了 MediaDownloader(新
             # storage / objects / max_bytes),同步给 self.downloader 让 sync
             # 也用新实例。policy 变化同样需要 — 直接拿新 settings 字段。
             self.downloader = self.monitor.downloader
         from tgmonitor.core.channel_sync import ChannelSyncService
+
         self.channel_sync = ChannelSyncService(
-            self.bus, self.client, self.storage,
+            self.bus,
+            self.client,
+            self.storage,
             downloader=self.downloader,
             objects=self.objects,
             media_policy=new_settings.media_policy,
@@ -964,12 +1022,14 @@ class AppService:
         # AuthService 持旧 settings 引用的话,_check_credentials 预检用旧凭据
         # (2026-08-18:reconfigure 后重建,消除引用不一致)
         self.auth = AuthService(self.bus, self.client, new_settings)
-        await self.bus.publish(SettingsChanged(
-            what=_what_label(diff),
-            new_settings=new_settings,
-            needs_relogin=diff.needs_relogin,
-            needs_restart=diff.client_changed,  # proxy / session_dir 变更需重启生效
-        ))
+        await self.bus.publish(
+            SettingsChanged(
+                what=_what_label(diff),
+                new_settings=new_settings,
+                needs_relogin=diff.needs_relogin,
+                needs_restart=diff.client_changed,  # proxy / session_dir 变更需重启生效
+            )
+        )
 
     async def _rebuild_storage(self, new_settings: Settings) -> None:
         """切换 storage:**先建新库**(connect + init_schema)成功后才关旧库。
@@ -1087,4 +1147,3 @@ def _what_label(diff: SettingsDiff) -> str:
     if diff.client_changed:
         return "client"
     return "credentials"
-

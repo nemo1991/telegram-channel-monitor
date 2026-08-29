@@ -15,6 +15,7 @@
 
 新增状态时,只需在 `STATE_DOT` / `STATE_LABEL` / `STATE_HINT` 各加一行,任意 caller 复用。
 """
+
 from __future__ import annotations
 
 # 13 个 TDLib 登录状态 — 上游 `TdlibTelegramClient.start()` 返回值 + 状态机过渡。

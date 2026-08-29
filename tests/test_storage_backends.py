@@ -7,6 +7,7 @@ contract 一致性由它们各自的 backend unit test 保证(后续按需补)�
 断言集中在 `test_*_parity_*` 系列 — 同一组 input,两后端产出必须一致
 (顺序由 backend 自己定,顺序差异在 spec 里说明)。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -31,9 +32,13 @@ pytestmark = pytest.mark.asyncio
 
 # ---- 共享 fixture:种子数据 ----
 
-def _photo(idx: int = 0, status: MediaDownloadStatus = MediaDownloadStatus.DONE,
-           object_key: str | None = "media/photo_a.jpg",
-           file_name: str = "photo_a.jpg") -> MediaDTO:
+
+def _photo(
+    idx: int = 0,
+    status: MediaDownloadStatus = MediaDownloadStatus.DONE,
+    object_key: str | None = "media/photo_a.jpg",
+    file_name: str = "photo_a.jpg",
+) -> MediaDTO:
     return MediaDTO(
         type=MediaType.PHOTO,
         mime_type="image/jpeg",
@@ -47,9 +52,12 @@ def _photo(idx: int = 0, status: MediaDownloadStatus = MediaDownloadStatus.DONE,
     )
 
 
-def _video(idx: int = 0, status: MediaDownloadStatus = MediaDownloadStatus.DONE,
-           object_key: str | None = "media/clip_a.mp4",
-           file_name: str = "clip_a.mp4") -> MediaDTO:
+def _video(
+    idx: int = 0,
+    status: MediaDownloadStatus = MediaDownloadStatus.DONE,
+    object_key: str | None = "media/clip_a.mp4",
+    file_name: str = "clip_a.mp4",
+) -> MediaDTO:
     return MediaDTO(
         type=MediaType.VIDEO,
         mime_type="video/mp4",
@@ -65,25 +73,41 @@ def _video(idx: int = 0, status: MediaDownloadStatus = MediaDownloadStatus.DONE,
 @pytest_asyncio.fixture
 async def in_mem_repo() -> InMemoryRepository:
     repo = InMemoryRepository()
-    await repo.save_message(make_message(
-        channel_id=100, msg_id=1, date=datetime(2026, 1, 1, 10),
-        media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
-    ))
-    await repo.save_message(make_message(
-        channel_id=100, msg_id=2, date=datetime(2026, 1, 2, 10),
-        media=[
-            _video(0, MediaDownloadStatus.DONE, "media/clip_a.mp4", "clip_a.mp4"),
-            _photo(1, MediaDownloadStatus.FAILED, None, "failed.jpg"),
-        ],
-    ))
-    await repo.save_message(make_message(
-        channel_id=200, msg_id=10, date=datetime(2026, 1, 3, 10),
-        media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
-    ))
-    await repo.save_message(make_message(
-        channel_id=300, msg_id=5, date=datetime(2026, 1, 4, 10),
-        media=[_video(0, MediaDownloadStatus.PENDING, None, "pending.mp4")],
-    ))
+    await repo.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=1,
+            date=datetime(2026, 1, 1, 10),
+            media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=2,
+            date=datetime(2026, 1, 2, 10),
+            media=[
+                _video(0, MediaDownloadStatus.DONE, "media/clip_a.mp4", "clip_a.mp4"),
+                _photo(1, MediaDownloadStatus.FAILED, None, "failed.jpg"),
+            ],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=200,
+            msg_id=10,
+            date=datetime(2026, 1, 3, 10),
+            media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=300,
+            msg_id=5,
+            date=datetime(2026, 1, 4, 10),
+            media=[_video(0, MediaDownloadStatus.PENDING, None, "pending.mp4")],
+        )
+    )
     return repo
 
 
@@ -94,32 +118,50 @@ async def jsonl_repo(tmp_path):
     await repo.init_schema()
     # 频道需要「已订阅」才会被 jsonl 后端扫描到(list_media 走 list_subscribed_channels)
     from tgmonitor.core.dto import ChannelDTO
+
     for cid in (100, 200, 300):
         await repo.upsert_channel(ChannelDTO(id=cid, title=f"#{cid}"))
         await repo.set_channel_subscribed(cid, True)
-    await repo.save_message(make_message(
-        channel_id=100, msg_id=1, date=datetime(2026, 1, 1, 10),
-        media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
-    ))
-    await repo.save_message(make_message(
-        channel_id=100, msg_id=2, date=datetime(2026, 1, 2, 10),
-        media=[
-            _video(0, MediaDownloadStatus.DONE, "media/clip_a.mp4", "clip_a.mp4"),
-            _photo(1, MediaDownloadStatus.FAILED, None, "failed.jpg"),
-        ],
-    ))
-    await repo.save_message(make_message(
-        channel_id=200, msg_id=10, date=datetime(2026, 1, 3, 10),
-        media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
-    ))
-    await repo.save_message(make_message(
-        channel_id=300, msg_id=5, date=datetime(2026, 1, 4, 10),
-        media=[_video(0, MediaDownloadStatus.PENDING, None, "pending.mp4")],
-    ))
+    await repo.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=1,
+            date=datetime(2026, 1, 1, 10),
+            media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=2,
+            date=datetime(2026, 1, 2, 10),
+            media=[
+                _video(0, MediaDownloadStatus.DONE, "media/clip_a.mp4", "clip_a.mp4"),
+                _photo(1, MediaDownloadStatus.FAILED, None, "failed.jpg"),
+            ],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=200,
+            msg_id=10,
+            date=datetime(2026, 1, 3, 10),
+            media=[_photo(0, MediaDownloadStatus.DONE, "media/photo_a.jpg", "photo_a.jpg")],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=300,
+            msg_id=5,
+            date=datetime(2026, 1, 4, 10),
+            media=[_video(0, MediaDownloadStatus.PENDING, None, "pending.mp4")],
+        )
+    )
     return repo
 
 
 # ---- list_media parity ----
+
 
 async def test_in_mem_list_media_no_filter_returns_all(in_mem_repo):
     rows = await in_mem_repo.list_media()
@@ -204,6 +246,7 @@ async def test_jsonl_list_media_limit_offset(jsonl_repo):
 
 # ---- count_media_by_object_key parity ----
 
+
 async def test_in_mem_count_refcount_shared_key(in_mem_repo):
     # photo_a.jpg 在 msg1 + msg10 两次出现 → refcount=2
     assert await in_mem_repo.count_media_by_object_key("media/photo_a.jpg") == 2
@@ -245,7 +288,8 @@ async def test_jsonl_count_refcount_empty_key(jsonl_repo):
 async def test_in_mem_list_media_sort_by_size_desc(in_mem_repo):
     """PR #6:SortKey.SIZE + SortDir.DESC — 大文件优先。"""
     rows = await in_mem_repo.list_media(
-        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+        sort=SortKey.SIZE,
+        sort_dir=SortDir.DESC,
     )
     sizes = [r[2].file_size for r in rows]
     assert sizes == sorted(sizes, reverse=True)
@@ -256,7 +300,8 @@ async def test_in_mem_list_media_sort_by_size_desc(in_mem_repo):
 async def test_jsonl_list_media_sort_by_size_desc(jsonl_repo):
     """PR #6:Jsonl 后端 SortKey.SIZE + DESC parity。"""
     rows = await jsonl_repo.list_media(
-        sort=SortKey.SIZE, sort_dir=SortDir.DESC,
+        sort=SortKey.SIZE,
+        sort_dir=SortDir.DESC,
     )
     sizes = [r[2].file_size for r in rows]
     assert sizes == sorted(sizes, reverse=True)
@@ -266,7 +311,8 @@ async def test_jsonl_list_media_sort_by_size_desc(jsonl_repo):
 async def test_in_mem_list_media_sort_by_status_asc(in_mem_repo):
     """PR #6:SortKey.STATUS + SortDir.ASC — 字典序排序(do<fa<pe<do w/loading)。"""
     rows = await in_mem_repo.list_media(
-        sort=SortKey.STATUS, sort_dir=SortDir.ASC,
+        sort=SortKey.STATUS,
+        sort_dir=SortDir.ASC,
     )
     statuses = [r[2].download_status.value for r in rows]
     # 字典序 ASC:done<failed<pending
@@ -277,7 +323,8 @@ async def test_in_mem_list_media_sort_by_status_asc(in_mem_repo):
 async def test_jsonl_list_media_sort_by_status_asc(jsonl_repo):
     """PR #6:Jsonl SortKey.STATUS parity。"""
     rows = await jsonl_repo.list_media(
-        sort=SortKey.STATUS, sort_dir=SortDir.ASC,
+        sort=SortKey.STATUS,
+        sort_dir=SortDir.ASC,
     )
     statuses = [r[2].download_status.value for r in rows]
     assert statuses == sorted(statuses)
@@ -287,22 +334,20 @@ async def test_in_mem_list_media_sort_by_date_desc_default(in_mem_repo):
     """PR #6:默认 sort=DATE / sort_dir=DESC(与 v1.2.0 既有行为对齐)。"""
     rows_default = await in_mem_repo.list_media()
     rows_explicit = await in_mem_repo.list_media(
-        sort=SortKey.DATE, sort_dir=SortDir.DESC,
+        sort=SortKey.DATE,
+        sort_dir=SortDir.DESC,
     )
-    assert [r[2].object_key for r in rows_default] == [
-        r[2].object_key for r in rows_explicit
-    ]
+    assert [r[2].object_key for r in rows_default] == [r[2].object_key for r in rows_explicit]
 
 
 async def test_jsonl_list_media_sort_by_date_desc_default(jsonl_repo):
     """PR #6:Jsonl 默认 DATE DESC 与显式 DATE DESC 等价。"""
     rows_default = await jsonl_repo.list_media()
     rows_explicit = await jsonl_repo.list_media(
-        sort=SortKey.DATE, sort_dir=SortDir.DESC,
+        sort=SortKey.DATE,
+        sort_dir=SortDir.DESC,
     )
-    assert [r[2].object_key for r in rows_default] == [
-        r[2].object_key for r in rows_explicit
-    ]
+    assert [r[2].object_key for r in rows_default] == [r[2].object_key for r in rows_explicit]
 
 
 async def test_in_mem_count_media_no_filter(in_mem_repo):
@@ -398,15 +443,21 @@ async def test_in_mem_list_messages_limit_offset_tail_pagination(in_mem_repo):
     limit=2 offset=4 → 空(数据耗尽)
     """
     page0 = await in_mem_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=0,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=0,
     )
     assert [m.telegram_msg_id for m in page0] == [10, 5]
     page1 = await in_mem_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=2,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=2,
     )
     assert [m.telegram_msg_id for m in page1] == [1, 2]
     page2 = await in_mem_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=4,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=4,
     )
     assert page2 == []
 
@@ -414,15 +465,21 @@ async def test_in_mem_list_messages_limit_offset_tail_pagination(in_mem_repo):
 async def test_jsonl_list_messages_limit_offset_tail_pagination(jsonl_repo):
     """PR #12:Jsonl parity — 与 InMemory 完全一致的 tail pagination 语义。"""
     page0 = await jsonl_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=0,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=0,
     )
     assert [m.telegram_msg_id for m in page0] == [10, 5]
     page1 = await jsonl_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=2,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=2,
     )
     assert [m.telegram_msg_id for m in page1] == [1, 2]
     page2 = await jsonl_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=4,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=4,
     )
     assert page2 == []
 
@@ -434,7 +491,9 @@ async def test_in_mem_list_messages_offset_zero_unchanged(in_mem_repo):
     [msg10, msg5]。这条是基线回归保护。
     """
     rows = await in_mem_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=0,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=0,
     )
     assert [m.telegram_msg_id for m in rows] == [10, 5]
 
@@ -442,7 +501,9 @@ async def test_in_mem_list_messages_offset_zero_unchanged(in_mem_repo):
 async def test_jsonl_list_messages_offset_zero_unchanged(jsonl_repo):
     """PR #12:Jsonl offset=0 向后兼容。"""
     rows = await jsonl_repo.list_messages(
-        channel_ids=[100, 200, 300], limit=2, offset=0,
+        channel_ids=[100, 200, 300],
+        limit=2,
+        offset=0,
     )
     assert [m.telegram_msg_id for m in rows] == [10, 5]
 
@@ -572,8 +633,7 @@ async def test_in_mem_update_views_only(in_mem_repo):
     await in_mem_repo.save_message(msg)
     await in_mem_repo.update_message_interactions(100, 5500, views=99)
     got = next(
-        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
-        if r.telegram_msg_id == 5500
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100])) if r.telegram_msg_id == 5500
     )
     assert got.views == 99
     # reactions 字段未初始化(原 save_message 时没设)→ 仍 None
@@ -589,8 +649,7 @@ async def test_jsonl_update_views_only(jsonl_repo):
     await jsonl_repo.save_message(msg)
     await jsonl_repo.update_message_interactions(200, 2600, views=88)
     got = next(
-        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
-        if r.telegram_msg_id == 2600
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200])) if r.telegram_msg_id == 2600
     )
     assert got.views == 88
     assert got.reactions is None
@@ -609,8 +668,7 @@ async def test_in_mem_update_reactions_only(in_mem_repo):
     ]
     await in_mem_repo.update_message_interactions(100, 5501, reactions=new_rxns)
     got = next(
-        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
-        if r.telegram_msg_id == 5501
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100])) if r.telegram_msg_id == 5501
     )
     assert got.views == 42  # 未动
     assert got.reactions is not None
@@ -632,8 +690,7 @@ async def test_jsonl_update_reactions_only(jsonl_repo):
     ]
     await jsonl_repo.update_message_interactions(200, 2601, reactions=new_rxns)
     got = next(
-        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
-        if r.telegram_msg_id == 2601
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200])) if r.telegram_msg_id == 2601
     )
     assert got.views == 42
     assert got.reactions is not None
@@ -654,8 +711,7 @@ async def test_in_mem_update_reactions_empty_list_clears(in_mem_repo):
     # reactions=None 不动 → 仍有反应;reactions=[] 清空
     await in_mem_repo.update_message_interactions(100, 5502, reactions=[])
     got = next(
-        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
-        if r.telegram_msg_id == 5502
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100])) if r.telegram_msg_id == 5502
     )
     assert got.reactions == []
 
@@ -672,8 +728,7 @@ async def test_jsonl_update_reactions_empty_list_clears(jsonl_repo):
     await jsonl_repo.save_message(msg)
     await jsonl_repo.update_message_interactions(200, 2602, reactions=[])
     got = next(
-        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
-        if r.telegram_msg_id == 2602
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200])) if r.telegram_msg_id == 2602
     )
     assert got.reactions == []
 
@@ -683,11 +738,13 @@ async def test_in_mem_update_both_views_and_reactions(in_mem_repo):
     await in_mem_repo.save_message(make_message(channel_id=100, msg_id=5503))
     rxns = [ReactionDTO(type="emoji", emoji="🚀", count=10, is_chosen=False)]
     await in_mem_repo.update_message_interactions(
-        100, 5503, views=500, reactions=rxns,
+        100,
+        5503,
+        views=500,
+        reactions=rxns,
     )
     got = next(
-        r for r in (await in_mem_repo.list_messages(channel_ids=[100]))
-        if r.telegram_msg_id == 5503
+        r for r in (await in_mem_repo.list_messages(channel_ids=[100])) if r.telegram_msg_id == 5503
     )
     assert got.views == 500
     assert got.reactions is not None and got.reactions[0].count == 10
@@ -718,8 +775,7 @@ async def test_jsonl_update_reactions_accepts_dict_format(jsonl_repo):
     ]
     await jsonl_repo.update_message_interactions(200, 2603, reactions=rxns_dict)
     got = next(
-        r for r in (await jsonl_repo.list_messages(channel_ids=[200]))
-        if r.telegram_msg_id == 2603
+        r for r in (await jsonl_repo.list_messages(channel_ids=[200])) if r.telegram_msg_id == 2603
     )
     assert got.reactions is not None
     assert got.reactions[0].emoji == "😀"
@@ -737,54 +793,68 @@ async def test_in_mem_update_channel_metadata_partial(in_mem_repo):
     """PR #14:InMemory 部分更新 — 只传 title → 其它字段保留。"""
     # fixture 已隐式建频道 100/200/300;补一个显式订阅 + 初始 username
     in_mem_repo.channels[100] = ChannelDTO(
-        id=100, title="Old Title", username="oldname", member_count=50,
+        id=100,
+        title="Old Title",
+        username="oldname",
+        member_count=50,
     )
     await in_mem_repo.set_channel_subscribed(100, True)
     # 用 update_channel_metadata 只改 title + member_count
     await in_mem_repo.update_channel_metadata(
-        100, title="New Title", member_count=500,
+        100,
+        title="New Title",
+        member_count=500,
     )
     got = await in_mem_repo.get_channel(100)
     assert got is not None
-    assert got.title == "New Title"           # 改了
-    assert got.username == "oldname"          # 保留
-    assert got.member_count == 500            # 改了
+    assert got.title == "New Title"  # 改了
+    assert got.username == "oldname"  # 保留
+    assert got.member_count == 500  # 改了
 
 
 async def test_jsonl_update_channel_metadata_partial(jsonl_repo):
     """PR #14:Jsonl 部分更新 — 只传 member_count → 其它字段保留 + 落盘。"""
     # jsonl_repo fixture:ch100 已订阅 + title 默认「#100」,补一个 username
     from tgmonitor.core.dto import ChannelDTO
+
     existing = await jsonl_repo.get_channel(100)
     assert existing is not None
-    await jsonl_repo.upsert_channel(ChannelDTO(
-        id=100,
-        title=existing.title,
-        username="oldname",
-        member_count=50,
-        created_at=existing.created_at,
-        is_subscribed=True,
-        last_synced_at=existing.last_synced_at,
-    ))
+    await jsonl_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title=existing.title,
+            username="oldname",
+            member_count=50,
+            created_at=existing.created_at,
+            is_subscribed=True,
+            last_synced_at=existing.last_synced_at,
+        )
+    )
     # 只改 member_count
     await jsonl_repo.update_channel_metadata(100, member_count=999)
     got = await jsonl_repo.get_channel(100)
     assert got is not None
-    assert got.member_count == 999           # 改了
-    assert got.username == "oldname"         # 保留
-    assert got.title == existing.title       # 保留
+    assert got.member_count == 999  # 改了
+    assert got.username == "oldname"  # 保留
+    assert got.title == existing.title  # 保留
 
 
 async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
     """PR #14:InMemory 部分更新不动 is_subscribed —— 订阅标志由
     set_channel_subscribed 单独维护。"""
     in_mem_repo.channels[100] = ChannelDTO(
-        id=100, title="t", username="u", member_count=10,
+        id=100,
+        title="t",
+        username="u",
+        member_count=10,
     )
     await in_mem_repo.set_channel_subscribed(100, True)
     # 即使 title/username 都重写,is_subscribed 不该变
     await in_mem_repo.update_channel_metadata(
-        100, title="New", username="new", member_count=999,
+        100,
+        title="New",
+        username="new",
+        member_count=999,
     )
     got = await in_mem_repo.get_channel(100)
     assert got is not None
@@ -800,8 +870,8 @@ async def test_jsonl_update_channel_metadata_preserves_subscribed(jsonl_repo):
     await jsonl_repo.update_channel_metadata(100, title="Renamed", member_count=10)
     got = await jsonl_repo.get_channel(100)
     assert got is not None
-    assert got.is_subscribed is True          # 保留 True
-    assert got.title == "Renamed"             # 改了
+    assert got.is_subscribed is True  # 保留 True
+    assert got.title == "Renamed"  # 改了
 
 
 async def test_in_mem_update_channel_metadata_nonexistent_silent(in_mem_repo):
@@ -821,7 +891,10 @@ async def test_jsonl_update_channel_metadata_nonexistent_silent(jsonl_repo):
 async def test_in_mem_update_channel_metadata_only_title(in_mem_repo):
     """PR #14:None 参数保留旧值;只传 title 时 username/member_count 不动。"""
     in_mem_repo.channels[100] = ChannelDTO(
-        id=100, title="old", username="u", member_count=42,
+        id=100,
+        title="old",
+        username="u",
+        member_count=42,
     )
     await in_mem_repo.set_channel_subscribed(100, True)
     await in_mem_repo.update_channel_metadata(100, title="only-title")

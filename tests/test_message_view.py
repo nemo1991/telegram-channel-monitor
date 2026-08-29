@@ -3,6 +3,7 @@
 不测交互(点击/双击),只验 `_format()` 输出格式与 `set_channel_titles()` 行为。
 需要 QApplication:widget 实例化要求 QGuiApplication 存活。
 """
+
 from __future__ import annotations
 
 import os
@@ -34,8 +35,11 @@ def test_format_local_timezone(qapp):
     view = MessageView()
     # 13:50 UTC → 北京时间 21:50(+0800)
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=42,
-        text="hi", author="alice",
+        id=0,
+        channel_id=100,
+        telegram_msg_id=42,
+        text="hi",
+        author="alice",
         date=datetime(2026, 7, 15, 13, 50, 10),  # naive,语义上 UTC
     )
     line = view._format(msg).split("\n")[0]  # 第一行是 head
@@ -45,31 +49,34 @@ def test_format_local_timezone(qapp):
     # 但**绝对不能**让 tzutc 之外解释成 naive=本地(那样 py 在 UTC 容器里
     # 会印 13:50,在 +0800 容器里也会印 13:50,永远不是 21:50,这就是 bug)
     # 所以这里只要求格式存在 "13:50:10" 或 "21:50:10"
-    assert ("13:50:10" in line) or ("21:50:10" in line), (
-        f"时间应来自 UTC 转换,但 line={line!r}"
-    )
+    assert ("13:50:10" in line) or ("21:50:10" in line), f"时间应来自 UTC 转换,但 line={line!r}"
 
 
 def test_format_aware_utc_also_converts(qapp):
     """aware UTC datetime 同样按本地时区显示。"""
     view = MessageView()
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=42,
-        text="hi", author=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=42,
+        text="hi",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10, tzinfo=UTC),
     )
     line = view._format(msg).split("\n")[0]
-    assert ("13:50:10" in line) or ("21:50:10" in line), (
-        f"aware UTC 应转本地,line={line!r}"
-    )
+    assert ("13:50:10" in line) or ("21:50:10" in line), f"aware UTC 应转本地,line={line!r}"
 
 
 def test_format_no_date_shows_placeholder(qapp):
     """m.date 为 None 时 head 时间占位为 '?'。"""
     view = MessageView()
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        text="x", author=None, date=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="x",
+        author=None,
+        date=None,
     )
     line = view._format(msg).split("\n")[0]
     assert "[?]" in line
@@ -83,8 +90,11 @@ def test_format_uses_channel_title_when_known(qapp):
     view = MessageView()
     view.set_channel_titles({100: "Telegram News"})
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=999,
-        text="hi", author=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=999,
+        text="hi",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     line = view._format(msg).split("\n")[0]
@@ -98,8 +108,11 @@ def test_format_falls_back_to_id_when_title_unknown(qapp):
     """未注册的 channel_id → 退化为 [#id](无 title 时使用 id 作为占位)。"""
     view = MessageView()
     msg = MessageDTO(
-        id=0, channel_id=-1001234567890, telegram_msg_id=1,
-        text="x", author=None,
+        id=0,
+        channel_id=-1001234567890,
+        telegram_msg_id=1,
+        text="x",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     line = view._format(msg).split("\n")[0]
@@ -112,8 +125,10 @@ def test_format_msg_id_is_telegram_id_not_db_pk(qapp):
     view = MessageView()
     msg = MessageDTO(
         id=42,  # DB pk — 不应显示
-        channel_id=100, telegram_msg_id=98765,  # 应显示
-        text="x", author=None,
+        channel_id=100,
+        telegram_msg_id=98765,  # 应显示
+        text="x",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     line = view._format(msg).split("\n")[0]
@@ -142,8 +157,11 @@ def test_append_renders_correct_text(qapp):
     view = MessageView()
     view.set_channel_titles({100: "My Channel"})
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1234,
-        text="hello world", author=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1234,
+        text="hello world",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     view.append(msg)
@@ -159,8 +177,11 @@ def test_append_media_has_dedicated_bg(qapp):
     """带媒体的消息应有背景色(底色区分)。"""
     view = MessageView()
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        text="", author=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
         media=[MediaDTO(type=MediaType.PHOTO, mime_type="image/jpeg")],
     )
@@ -168,6 +189,7 @@ def test_append_media_has_dedicated_bg(qapp):
     item = view.item(0)
     # MediaDTO 单非空 → has_media=True → 背景被设;不验证具体颜色(QPalette 跨平台)
     from PySide6.QtGui import QBrush
+
     assert item.background() != QBrush()  # 非默认 brush
 
 
@@ -175,12 +197,20 @@ def test_append_dedup_updates_existing_row(qapp):
     """同 (channel_id, telegram_msg_id) 重复 append → 更新文本而非新增行。"""
     view = MessageView()
     m1 = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        text="first", author=None, date=datetime(2026, 7, 15, 13, 50, 10),
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="first",
+        author=None,
+        date=datetime(2026, 7, 15, 13, 50, 10),
     )
     m2 = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1,
-        text="edited", author=None, date=datetime(2026, 7, 15, 13, 51, 0),
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        text="edited",
+        author=None,
+        date=datetime(2026, 7, 15, 13, 51, 0),
     )
     view.append(m1)
     view.append(m2)
@@ -201,14 +231,23 @@ def test_append_with_media_dto_does_not_crash(qapp):
     """
     view = MessageView()
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=42,
-        text="look at this", author=None,
+        id=0,
+        channel_id=100,
+        telegram_msg_id=42,
+        text="look at this",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
-        media=[MediaDTO(
-            type=MediaType.PHOTO, mime_type="image/jpeg",
-            file_size=1234, width=800, height=600,
-            thumb_key="media/abc.thumb", thumb_backend="local",
-        )],
+        media=[
+            MediaDTO(
+                type=MediaType.PHOTO,
+                mime_type="image/jpeg",
+                file_size=1234,
+                width=800,
+                height=600,
+                thumb_key="media/abc.thumb",
+                thumb_backend="local",
+            )
+        ],
     )
     # 不应抛 AttributeError
     view.append(msg)
@@ -239,8 +278,11 @@ def test_empty_overlay_hidden_after_first_append(qapp):
     assert not view._empty_overlay.isHidden()  # 先确认初始显示
 
     msg = MessageDTO(
-        id=0, channel_id=1, telegram_msg_id=1,
-        text="first!", author=None,
+        id=0,
+        channel_id=1,
+        telegram_msg_id=1,
+        text="first!",
+        author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     view.append(msg)
@@ -251,23 +293,32 @@ def test_empty_overlay_hidden_after_first_append(qapp):
 def test_empty_overlay_reappears_after_clear(qapp):
     """clear_view() 把所有 item 删了 → overlay 应再次显示。"""
     view = MessageView()
-    view.append(MessageDTO(
-        id=0, channel_id=1, telegram_msg_id=1,
-        text="x", date=datetime(2026, 7, 15, 13, 0, 0),
-    ))
+    view.append(
+        MessageDTO(
+            id=0,
+            channel_id=1,
+            telegram_msg_id=1,
+            text="x",
+            date=datetime(2026, 7, 15, 13, 0, 0),
+        )
+    )
     assert view._empty_overlay.isHidden()
 
     view.clear_view()
     assert view.count() == 0
     assert not view._empty_overlay.isHidden()
 
+
 # ---- remove_row (2026-08-24 Media Manager 接入) ----
 
 
 def _make_msg(channel_id: int, telegram_msg_id: int) -> MessageDTO:
     return MessageDTO(
-        id=0, channel_id=channel_id, telegram_msg_id=telegram_msg_id,
-        text="x", author=None,
+        id=0,
+        channel_id=channel_id,
+        telegram_msg_id=telegram_msg_id,
+        text="x",
+        author=None,
         date=datetime(2026, 7, 15, 13, 0, 0),
     )
 

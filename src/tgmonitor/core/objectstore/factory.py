@@ -3,6 +3,7 @@
 实现类**懒加载**:只 import 用户实际选中的那个,避免装 Local 时被强制拉 aioboto3
 (或装 S3 时被强制拉文件存储依赖等)。
 """
+
 from __future__ import annotations
 
 from tgmonitor.core.config import ObjectStoreBackend, Settings
@@ -30,4 +31,3 @@ def build_object_store(settings: Settings) -> ObjectStore:
             secret_key=settings.objectstore_secret_key,
         )
     raise ValueError(f"unknown object store backend: {settings.objectstore_backend}")
-

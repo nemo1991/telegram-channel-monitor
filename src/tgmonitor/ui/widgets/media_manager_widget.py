@@ -19,6 +19,7 @@
 - 所有用户操作 → emit Qt Signal → MainWindow 调 VM
 - 后台线程安全:VM 用 run_coro 在 qasync 主 loop 触发,UI 端只读数据
 """
+
 from __future__ import annotations
 
 import logging
@@ -312,7 +313,9 @@ class MediaManagerWidget(QWidget):
 
         self.btn_prune = QPushButton("🧹 Prune Orphans")
         self.btn_prune.setCursor(Qt.PointingHandCursor)
-        self.btn_prune.setToolTip("Scan ObjectStore vs storage and delete orphan bytes (irreversible)")
+        self.btn_prune.setToolTip(
+            "Scan ObjectStore vs storage and delete orphan bytes (irreversible)"
+        )
         self.btn_prune.clicked.connect(self.prune_requested.emit)
         actions.addWidget(self.btn_prune)
 
@@ -357,7 +360,9 @@ class MediaManagerWidget(QWidget):
 
     def _render_page_info(self) -> None:
         """更新 `lbl_page` 文字 + btn_prev/btn_next enabled 状态。"""
-        total_pages = max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        total_pages = (
+            max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        )
         # 当前 page 不能超 total_pages(极端 case:total 变小后,_page 还在旧 max)
         if self._page >= total_pages:
             self._page = max(0, total_pages - 1)
@@ -376,7 +381,9 @@ class MediaManagerWidget(QWidget):
 
     def _on_page_next(self) -> None:
         """下一页 — 触发 refresh,VM 会带新 offset。"""
-        total_pages = max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        total_pages = (
+            max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
+        )
         if self._page + 1 >= total_pages:
             return
         self._page += 1
@@ -399,7 +406,11 @@ class MediaManagerWidget(QWidget):
             log.exception("set_view_model: connect thumbnail_loaded failed")
 
     def _on_thumbnail_loaded(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int, pix: object,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+        pix: object,
     ) -> None:
         """VM.thumbnail_loaded → 找行 + 写 LRU + setPixmap。
 
@@ -504,7 +515,9 @@ class MediaManagerWidget(QWidget):
             self.btn_prune.setToolTip("S3 backend: orphan reconcile not supported (iter_keys TODO)")
         else:
             self.btn_prune.setEnabled(True)
-            self.btn_prune.setToolTip("Scan ObjectStore vs storage and delete orphan bytes (irreversible)")
+            self.btn_prune.setToolTip(
+                "Scan ObjectStore vs storage and delete orphan bytes (irreversible)"
+            )
 
         # 更新 status
         verb = "Scanned" if dry_run else "Pruned"
@@ -558,14 +571,22 @@ class MediaManagerWidget(QWidget):
             self._maybe_load_thumb_for_row(*row)
 
     def _maybe_load_thumb_for_row(
-        self, msg: MessageDTO, idx: int, med: MediaDTO,
+        self,
+        msg: MessageDTO,
+        idx: int,
+        med: MediaDTO,
     ) -> None:
         """单行缩略图处理:cache hit 即时 setPixmap;miss 触发 VM 异步加载。"""
         # 只对 photo / video + DONE 加载;audio/document/sticker 不参与
         if med.download_status != MediaDownloadStatus.DONE:
             return
-        if med.type not in (MediaType.PHOTO, MediaType.VIDEO, MediaType.VIDEO_NOTE,
-                            MediaType.ANIMATION, MediaType.STICKER):
+        if med.type not in (
+            MediaType.PHOTO,
+            MediaType.VIDEO,
+            MediaType.VIDEO_NOTE,
+            MediaType.ANIMATION,
+            MediaType.STICKER,
+        ):
             return
         ck = cache_key_for(med)
         if ck is None:
@@ -582,7 +603,10 @@ class MediaManagerWidget(QWidget):
         if self._vm is not None:
             try:
                 self._vm.load_thumbnail(  # type: ignore[attr-defined]
-                    msg.channel_id, msg.telegram_msg_id, idx, med,
+                    msg.channel_id,
+                    msg.telegram_msg_id,
+                    idx,
+                    med,
                 )
             except Exception:  # noqa: BLE001
                 log.exception("vm.load_thumbnail dispatch failed")
@@ -594,7 +618,11 @@ class MediaManagerWidget(QWidget):
         return QSize(800, 48)
 
     def _build_row_widget(
-        self, msg: MessageDTO, idx: int, med: MediaDTO, key: _RowKey,
+        self,
+        msg: MessageDTO,
+        idx: int,
+        med: MediaDTO,
+        key: _RowKey,
     ) -> QWidget:
         """单行自绘:🖼 [Channel] #msg42 type filename size status [Open][Retry][Delete]。"""
         w = QWidget()
@@ -660,7 +688,9 @@ class MediaManagerWidget(QWidget):
         btn_open.setEnabled(med.download_status == MediaDownloadStatus.DONE)
         btn_open.clicked.connect(
             lambda _checked=False, k=key: self.open_requested.emit(
-                k.channel_id, k.telegram_msg_id, k.media_idx,
+                k.channel_id,
+                k.telegram_msg_id,
+                k.media_idx,
             )
         )
         hbox.addWidget(btn_open)
@@ -674,7 +704,9 @@ class MediaManagerWidget(QWidget):
         btn_reveal.setEnabled(is_done)
         btn_reveal.clicked.connect(
             lambda _checked=False, k=key: self.reveal_requested.emit(
-                k.channel_id, k.telegram_msg_id, k.media_idx,
+                k.channel_id,
+                k.telegram_msg_id,
+                k.media_idx,
             )
         )
         hbox.addWidget(btn_reveal)
@@ -685,7 +717,9 @@ class MediaManagerWidget(QWidget):
         btn_copy.setEnabled(is_done)
         btn_copy.clicked.connect(
             lambda _checked=False, k=key: self.copy_requested.emit(
-                k.channel_id, k.telegram_msg_id, k.media_idx,
+                k.channel_id,
+                k.telegram_msg_id,
+                k.media_idx,
             )
         )
         hbox.addWidget(btn_copy)
@@ -697,7 +731,9 @@ class MediaManagerWidget(QWidget):
         btn_retry.setEnabled(med.download_status == MediaDownloadStatus.FAILED)
         btn_retry.clicked.connect(
             lambda _checked=False, k=key: self.retry_requested.emit(
-                k.channel_id, k.telegram_msg_id, k.media_idx,
+                k.channel_id,
+                k.telegram_msg_id,
+                k.media_idx,
             )
         )
         hbox.addWidget(btn_retry)
@@ -708,7 +744,9 @@ class MediaManagerWidget(QWidget):
         btn_delete.setCursor(Qt.PointingHandCursor)
         btn_delete.clicked.connect(
             lambda _checked=False, k=key: self.delete_requested.emit(
-                k.channel_id, k.telegram_msg_id, k.media_idx,
+                k.channel_id,
+                k.telegram_msg_id,
+                k.media_idx,
             )
         )
         hbox.addWidget(btn_delete)
@@ -787,7 +825,10 @@ class MediaManagerWidget(QWidget):
 
         default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出 Media Manager 当前视图", default_name, "CSV files (*.csv)",
+            self,
+            "导出 Media Manager 当前视图",
+            default_name,
+            "CSV files (*.csv)",
         )
         if not path:
             return

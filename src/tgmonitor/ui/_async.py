@@ -18,6 +18,7 @@ callback / 启动期)需要从别的线程或同步上下文把 coroutine 推上
     让 caller 写 lambda
   - 不引入新依赖,纯 stdlib + PySide6 qasync
 """
+
 from __future__ import annotations
 
 import asyncio

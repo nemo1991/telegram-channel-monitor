@@ -2,6 +2,7 @@
 
 仅作为薄壳:实际工作在 `app.py` 的 `run()` 里,这里只处理顶层异常与退出码。
 """
+
 from __future__ import annotations
 
 import sys

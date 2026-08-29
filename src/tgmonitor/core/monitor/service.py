@@ -9,6 +9,7 @@
 
 启动/停止:`start()` / `stop()`,由 `AppService.start_monitor()` 调用。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -93,9 +94,7 @@ class MonitorService:
         # 2026-08-24:最近 stream 见过 / 落库过的 (channel_id, telegram_msg_id)。
         # 用于区分 updateNewMessage 与 updateMessageContent:命中走 _handle_edited,
         # miss 走 _handle。OrderedDict 限长 10000,超长 evict 最旧。
-        self._seen_ids: collections.OrderedDict[tuple[int, int], None] = (
-            collections.OrderedDict()
-        )
+        self._seen_ids: collections.OrderedDict[tuple[int, int], None] = collections.OrderedDict()
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
         """替换白名单 — 由 AppService 启动 monitor 时调。"""
@@ -128,7 +127,9 @@ class MonitorService:
         self.settings = settings
         if self.downloader is not None:
             self.downloader = MediaDownloader(
-                self.client, storage, objects,
+                self.client,
+                storage,
+                objects,
                 max_bytes=settings.media_max_bytes,
             )
         # 订阅真理随存储切换:白名单从新 storage 重载;失败只降级记日志,
@@ -241,7 +242,8 @@ class MonitorService:
                     self._log_heartbeat(no_updates=False)
                     log.debug(
                         "monitor update received: channel=%s msg_id=%s",
-                        msg.channel_id, msg.telegram_msg_id,
+                        msg.channel_id,
+                        msg.telegram_msg_id,
                     )
                     try:
                         # 2026-08-24:按 _seen_ids 区分「新消息」与「编辑」—
@@ -317,12 +319,14 @@ class MonitorService:
             max_id = await self.storage.get_max_telegram_msg_id(channel_id) or 0
             n = 0
             async for msg in self.client.iter_chat_history(
-                channel_id, limit=self._BACKFILL_LIMIT,
+                channel_id,
+                limit=self._BACKFILL_LIMIT,
             ):
                 if n >= self._BACKFILL_MAX_PAGE:
                     log.warning(
                         "backfill channel %d hit cap %d; 新消息过多,建议手动全量同步",
-                        channel_id, self._BACKFILL_MAX_PAGE,
+                        channel_id,
+                        self._BACKFILL_MAX_PAGE,
                     )
                     break
                 if max_id > 0 and msg.telegram_msg_id <= max_id:
@@ -366,7 +370,8 @@ class MonitorService:
             # 日志里能看到两者不同步,定位"空窗"来源(INFO 默认可见)
             log.info(
                 "backfill round start: whitelist=%d handled=%d",
-                len(self._whitelist), self._handled,
+                len(self._whitelist),
+                self._handled,
             )
             await self._backfill_all()
 
@@ -382,7 +387,8 @@ class MonitorService:
         if msg.channel_id not in self._whitelist:
             log.debug(
                 "monitor ignored msg: channel_id=%s not in whitelist %s",
-                msg.channel_id, sorted(self._whitelist),
+                msg.channel_id,
+                sorted(self._whitelist),
             )
             return
 
@@ -395,9 +401,11 @@ class MonitorService:
                     prior = await self.storage.find_media_by_file_id(
                         med.telegram_file_id,
                     )
-                    if (prior is not None
-                            and prior.download_status == MediaDownloadStatus.DONE
-                            and prior.object_key):
+                    if (
+                        prior is not None
+                        and prior.download_status == MediaDownloadStatus.DONE
+                        and prior.object_key
+                    ):
                         med.object_key = prior.object_key
                         med.object_backend = prior.object_backend
                         med.file_size = prior.file_size
@@ -434,10 +442,14 @@ class MonitorService:
                 # DONE / FAILED 不再重下(FAILED 让用户看原因,不无限重试)。
                 # 注:跨消息去重(D8 上面那段)已把已下载的 media 标 DONE +
                 # object_key 已填,这里 `not object_key` 自然跳过。
-                if med.download_status in (
-                    MediaDownloadStatus.PENDING,
-                    MediaDownloadStatus.DOWNLOADING,
-                ) and not med.object_key:
+                if (
+                    med.download_status
+                    in (
+                        MediaDownloadStatus.PENDING,
+                        MediaDownloadStatus.DOWNLOADING,
+                    )
+                    and not med.object_key
+                ):
                     med.download_status = MediaDownloadStatus.DOWNLOADING
                     med.download_error = None
                     queued.append(idx)
@@ -449,7 +461,9 @@ class MonitorService:
         self._handled += 1
         log.debug(
             "monitor stored message: channel=%s msg_id=%s (handled=%d)",
-            msg.channel_id, msg.telegram_msg_id, self._handled,
+            msg.channel_id,
+            msg.telegram_msg_id,
+            self._handled,
         )
         await self.bus.publish(MessageReceived(message=msg))
 
@@ -473,7 +487,8 @@ class MonitorService:
         过滤。
         """
         existed = await self.storage.get_message(
-            msg.channel_id, msg.telegram_msg_id,
+            msg.channel_id,
+            msg.telegram_msg_id,
         )
         if existed is None:
             # 编辑前消息不在 storage(罕见:用户从未订阅该频道,或 sync 还没拉过)
@@ -485,7 +500,8 @@ class MonitorService:
                 self._seen_ids.popitem(last=False)
             log.debug(
                 "monitor edited (no prior): channel=%s msg_id=%s",
-                msg.channel_id, msg.telegram_msg_id,
+                msg.channel_id,
+                msg.telegram_msg_id,
             )
             await self.bus.publish(MessageEdited(message=msg))
             return
@@ -501,7 +517,8 @@ class MonitorService:
         await self.storage.update_message(updated)
         log.debug(
             "monitor edited: channel=%s msg_id=%s",
-            msg.channel_id, msg.telegram_msg_id,
+            msg.channel_id,
+            msg.telegram_msg_id,
         )
         await self.bus.publish(MessageEdited(message=updated))
 
@@ -518,7 +535,8 @@ class MonitorService:
             med = msg.media[idx]
             try:
                 updated = await self.downloader.download_one(
-                    msg_pk=msg.id, media=med,
+                    msg_pk=msg.id,
+                    media=med,
                 )
             except asyncio.CancelledError:
                 raise
@@ -532,7 +550,9 @@ class MonitorService:
             msg.media[idx] = updated
             log.info(
                 "media download done: channel=%s msg_id=%s idx=%d status=%s key=%s",
-                msg.channel_id, msg.telegram_msg_id, idx,
+                msg.channel_id,
+                msg.telegram_msg_id,
+                idx,
                 updated.download_status.value,
                 updated.object_key or "-",
             )
@@ -541,7 +561,9 @@ class MonitorService:
             except Exception as e:  # noqa: BLE001
                 log.exception(
                     "update media status failed: channel=%s msg_id=%s: %s",
-                    msg.channel_id, msg.telegram_msg_id, e,
+                    msg.channel_id,
+                    msg.telegram_msg_id,
+                    e,
                 )
             await self.bus.publish(
                 MediaDownloaded(
@@ -585,7 +607,9 @@ class MonitorService:
             )
 
     async def _delete_with_orphan_check(
-        self, channel_id: int, telegram_msg_id: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
     ) -> None:
         """PR #11:删 row + 清孤儿 bytes 核心逻辑,与 AppService.delete_message 共享。"""
         old = await self.storage.get_message(channel_id, telegram_msg_id)
@@ -608,16 +632,20 @@ class MonitorService:
                     await self.objects.delete(key)
                     log.info(
                         "monitor delete orphan bytes: channel=%s msg=%s key=%s",
-                        channel_id, telegram_msg_id, key,
+                        channel_id,
+                        telegram_msg_id,
+                        key,
                     )
                 except Exception:  # noqa: BLE001
                     log.warning(
-                        "monitor delete bytes %s failed (already gone?)", key,
+                        "monitor delete bytes %s failed (already gone?)",
+                        key,
                         exc_info=True,
                     )
 
     async def _handle_interactions_changed(
-        self, event: MessageInteractionsChanged,
+        self,
+        event: MessageInteractionsChanged,
     ) -> None:
         """2026-08-27 v1.4.0 PR #10:TDLib `updateMessageInteractionInfo`
         → storage `update_message_interactions`(views / reactions 增量)。
@@ -637,7 +665,8 @@ class MonitorService:
             )
             log.debug(
                 "interactions updated: channel=%s msg=%s views=%s reactions=%d",
-                event.channel_id, event.telegram_msg_id,
+                event.channel_id,
+                event.telegram_msg_id,
                 event.views,
                 len(event.reactions) if event.reactions else 0,
             )
@@ -652,7 +681,8 @@ class MonitorService:
             )
 
     async def _handle_channel_metadata(
-        self, event: ChannelMetadataChanged,
+        self,
+        event: ChannelMetadataChanged,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:频道元数据增量更新落库。
 
@@ -679,7 +709,8 @@ class MonitorService:
                             log.debug(
                                 "channel metadata updated via supergroup: "
                                 "channel=%s member_count=%s",
-                                c.id, event.member_count,
+                                c.id,
+                                event.member_count,
                             )
                             return
                 # 没找到匹配 username → 静默(可能 TDLib 推了陌生 supergroup)
@@ -693,9 +724,10 @@ class MonitorService:
                 member_count=event.member_count,
             )
             log.debug(
-                "channel metadata updated: channel=%s title=%r username=%r "
-                "member_count=%s",
-                event.channel_id, event.title, event.username,
+                "channel metadata updated: channel=%s title=%r username=%r member_count=%s",
+                event.channel_id,
+                event.title,
+                event.username,
                 event.member_count,
             )
         except Exception as e:  # noqa: BLE001
@@ -709,7 +741,8 @@ class MonitorService:
             )
 
     async def _handle_connection_state(
-        self, event: ConnectionStateChanged,
+        self,
+        event: ConnectionStateChanged,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:reconnect → 立即触发 backfill,不等 30s tick。
 
@@ -747,6 +780,7 @@ class MonitorService:
 
 
 # ---------- 后台下载器(可选,生产需要时可启动) ----------
+
 
 class MediaDownloader:
     """按 telegram_file_id 异步下载原文件入 ObjectStore,然后回写 DB 的 object_key。
@@ -786,12 +820,18 @@ class MediaDownloader:
     @staticmethod
     def make_key(media: MediaDTO, suffix: str = "") -> str:
         """生成稳定的对象 key:`media/<sha256[:16]>.<ext><suffix>`(内容寻址)。"""
-        h = hashlib.sha256((media.telegram_file_id or media.file_name or "").encode()).hexdigest()[:16]
+        h = hashlib.sha256((media.telegram_file_id or media.file_name or "").encode()).hexdigest()[
+            :16
+        ]
         ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
         return f"media/{h}.{ext}{suffix}"
 
     async def download_one(
-        self, msg_pk: int, media: MediaDTO, *, force: bool = False,
+        self,
+        msg_pk: int,
+        media: MediaDTO,
+        *,
+        force: bool = False,
     ) -> MediaDTO:
         """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
 
@@ -812,7 +852,8 @@ class MediaDownloader:
         def failed(reason: str) -> MediaDTO:
             log.warning(
                 "skip media msg_pk=%s %s: %s",
-                msg_pk, media.file_name or media.telegram_file_id or media.type.value,
+                msg_pk,
+                media.file_name or media.telegram_file_id or media.type.value,
                 reason,
             )
             return dataclasses.replace(
@@ -830,12 +871,16 @@ class MediaDownloader:
         # `force=True`(retry)时跳过 — 用户显式要求重试,即使 prior 已存也走原下载。
         if not force:
             prior = await self.storage.find_media_by_file_id(fid)
-            if (prior is not None
-                    and prior.download_status == MediaDownloadStatus.DONE
-                    and prior.object_key):
+            if (
+                prior is not None
+                and prior.download_status == MediaDownloadStatus.DONE
+                and prior.object_key
+            ):
                 log.debug(
                     "skip media msg_pk=%s: storage hit (fid=%s key=%s)",
-                    msg_pk, fid, prior.object_key,
+                    msg_pk,
+                    fid,
+                    prior.object_key,
                 )
                 return dataclasses.replace(
                     media,
@@ -852,7 +897,8 @@ class MediaDownloader:
         if not force and await self.objects.exists(key):
             log.debug(
                 "skip media msg_pk=%s: objectstore hit (key=%s)",
-                msg_pk, key,
+                msg_pk,
+                key,
             )
             return dataclasses.replace(
                 media,
@@ -864,17 +910,13 @@ class MediaDownloader:
             )
 
         if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
-            return failed(
-                f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节"
-            )
+            return failed(f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节")
         data = await self.client.download_file(fid)
         if data is None:
             return failed("下载超时或未返回数据")
         # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)
         if self.max_bytes and len(data) > self.max_bytes:
-            return failed(
-                f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节"
-            )
+            return failed(f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节")
         meta = ObjectMeta(
             content_type=media.mime_type,
             size=len(data),

@@ -6,6 +6,7 @@
 - bucket:目标桶(启动时若不存在则尝试创建)
 - key:对象 key(应用层自己定义,本类不强制)
 """
+
 from __future__ import annotations
 
 import logging
@@ -100,9 +101,7 @@ class S3ObjectStore(ObjectStore):
         if self._session is None:
             # v1.0.21:启动降级后 connect() 未成功时也会走到这里 — 用清晰的
             # RuntimeError 替代 assert(用户看到的是可操作提示,不是断言)。
-            raise RuntimeError(
-                "对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存"
-            )
+            raise RuntimeError("对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存")
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint,
@@ -181,13 +180,12 @@ class S3ObjectStore(ObjectStore):
                 "may be slow / costly on large buckets"
             )
         if self._session is None:
-            raise RuntimeError(
-                "对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存"
-            )
+            raise RuntimeError("对象存储未连接:connect() 未成功,请检查对象存储设置后重新保存")
         async with self._client() as s3:
             paginator = s3.get_paginator("list_objects_v2")
             async for page in paginator.paginate(
-                Bucket=self._bucket, Prefix=prefix,
+                Bucket=self._bucket,
+                Prefix=prefix,
             ):
                 for obj in page.get("Contents", []) or []:
                     key = obj.get("Key")

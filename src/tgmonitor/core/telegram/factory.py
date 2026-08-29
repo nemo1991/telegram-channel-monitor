@@ -8,6 +8,7 @@
   (历史 bug #22:吞异常返回 Fake 导致"无 tdlib-json-client 也能 ready"),
   直接上抛,由 `app.py` 或上层 UI 暴露给用户。
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,22 +36,21 @@ def build_telegram_client(
     """
     if use_fake:
         from tgmonitor.core.telegram.fake_client import FakeTelegramClient
+
         return FakeTelegramClient()
     # 凭据未配置:不构造真 client(避免 tdlib_json 底层构造报错),
     # 返回占位实现 — UI 正常启动显示"未登录"引导,填好凭据重启即可。
     missing = _missing_credentials(settings)
     if missing:
-        log.info(
-            "[factory] Telegram 凭据未配置(%s),使用占位客户端", "、".join(missing)
-        )
+        log.info("[factory] Telegram 凭据未配置(%s),使用占位客户端", "、".join(missing))
         from tgmonitor.core.telegram.unconfigured import UnconfiguredTelegramClient
+
         return UnconfiguredTelegramClient()
     from tgmonitor.core.telegram.tdlib_client import (
         _HAVE_TDLIB_JSON,
         TdlibTelegramClient,
     )
+
     if not _HAVE_TDLIB_JSON:
-        raise RuntimeError(
-            "tdlib-json-client 未安装:`uv sync` 后重试"
-        )
+        raise RuntimeError("tdlib-json-client 未安装:`uv sync` 后重试")
     return TdlibTelegramClient(settings, event_bus=event_bus)

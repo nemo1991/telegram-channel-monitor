@@ -3,6 +3,7 @@
 从环境变量 / .env 读取,集中定义所有后端选择与凭据。
 UI 永远不直接读环境变量,所有配置都通过 `AppService.config()` 间接访问。
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -19,23 +20,23 @@ class DBBackend(str, Enum):
 
     POSTGRES = "postgres"
     MONGO = "mongo"
-    JSONL = "jsonl"     # 文件:每频道一个 .jsonl(轻量,无需 DB 服务)
+    JSONL = "jsonl"  # 文件:每频道一个 .jsonl(轻量,无需 DB 服务)
 
 
 class ObjectStoreBackend(str, Enum):
     """对象存储后端选择。"""
 
-    LOCAL = "local"     # 平铺本地(无分片)
-    FOLDER = "folder"   # 本地两级分片(适合大量文件)
+    LOCAL = "local"  # 平铺本地(无分片)
+    FOLDER = "folder"  # 本地两级分片(适合大量文件)
     S3 = "s3"
 
 
 class MediaPolicy(str, Enum):
     """媒体下载策略。"""
 
-    METADATA = "metadata"      # 仅元数据
-    THUMBNAIL = "thumbnail"    # 元数据 + 缩略图(默认)
-    FULL = "full"              # 元数据 + 缩略图 + 原文件
+    METADATA = "metadata"  # 仅元数据
+    THUMBNAIL = "thumbnail"  # 元数据 + 缩略图(默认)
+    FULL = "full"  # 元数据 + 缩略图 + 原文件
 
 
 # ---- platform-native 路径 ----
@@ -87,8 +88,10 @@ class Settings(BaseSettings):
     # ---- 对象存储后端 ----
     # 默认 FOLDER:两级分片,文件多时不慢;亦可改 local(平铺)
     objectstore_backend: ObjectStoreBackend = Field(default=ObjectStoreBackend.FOLDER)
-    objectstore_root: Path = Field(default_factory=lambda: _user_data_dir() / "media")  # local/folder
-    objectstore_endpoint: str | None = None                      # s3 用
+    objectstore_root: Path = Field(
+        default_factory=lambda: _user_data_dir() / "media"
+    )  # local/folder
+    objectstore_endpoint: str | None = None  # s3 用
     objectstore_region: str = "us-east-1"
     objectstore_access_key: str | None = None
     objectstore_secret_key: str | None = None

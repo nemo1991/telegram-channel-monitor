@@ -7,6 +7,7 @@
 
 适用:大量小文件时,避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -154,17 +155,26 @@ class FolderObjectStore(ObjectStore):
                         continue
                     # 重组:如果文件名带分片目录(head/tail/),合并成完整 key
                     # 例:`media / ab / cd / abc.jpg` → `media/abc.jpg`
-                    if shard > 0 and len(parts) >= 4 and parts[-1].startswith(
-                        parts[-3] + parts[-2] + "",
+                    if (
+                        shard > 0
+                        and len(parts) >= 4
+                        and parts[-1].startswith(
+                            parts[-3] + parts[-2] + "",
+                        )
                     ):
                         # 最后一段文件名以 head + tail 开头 → 重组
                         # 反向:把 `parent / head / tail / name` → `parent / name`
                         # 这里 parent 是 parts[:-3]
                         parent = parts[:-3]
                         reconstructed = "/".join(parent + [parts[-1]])
-                    elif shard > 0 and len(parts) >= 3 and parts[-1].startswith(
-                        parts[-2] + "",
-                    ) and len(parts[-2]) == shard:
+                    elif (
+                        shard > 0
+                        and len(parts) >= 3
+                        and parts[-1].startswith(
+                            parts[-2] + "",
+                        )
+                        and len(parts[-2]) == shard
+                    ):
                         # 三段式:parent / head / name(分片未生效 — 名字太短不分片)
                         reconstructed = "/".join(parts)
                     else:

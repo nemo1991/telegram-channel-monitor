@@ -9,6 +9,7 @@ error code 集合翻成人话,401 / 429 / 其他 / 空 各分支都要测试。
 
 测试纯函数,不需要 TDLib stub / Qt / event loop — 跑得最快。
 """
+
 from __future__ import annotations
 
 import collections
@@ -20,6 +21,7 @@ from tgmonitor.core.telegram.tdlib_errors import _extract_error_detail
 from tgmonitor.core.telegram.tdlib_proxy import _translate_boot_error
 
 # ---- 1. TdlibError 风格 exception ----
+
 
 def test_extracts_message_from_tdlib_error() -> None:
     err = TdlibError(code=400, message="PHONE_NUMBER_INVALID")
@@ -33,6 +35,7 @@ def test_extracts_message_when_tdlib_error_message_is_empty() -> None:
 
 
 # ---- 2. 普通 Exception 没 `.message` 字段 ----
+
 
 def test_falls_back_to_str_for_plain_exception() -> None:
     """`getattr(e, "message", None)` 返 None → str(e)。"""
@@ -50,6 +53,7 @@ def test_falls_back_to_str_for_timeout_error() -> None:
 
 # ---- 3. 极端 fallback:str(exc) 也是空 → "未知错误" ----
 
+
 def test_falls_back_to_unknown_when_all_empty() -> None:
     """`.message` None + str(e) 空 → '未知错误'。"""
 
@@ -63,16 +67,22 @@ def test_falls_back_to_unknown_when_all_empty() -> None:
 
 # ---- 4. 实际表现:链式"getattr message or str" 路径对照 ----
 
-@pytest.mark.parametrize("exc_class,attr_value,expected", [
-    # 有 .message 优先
-    (TdlibError, "MSG", "MSG"),
-    # 没 .message → str(e)
-    (ValueError, None, "boom"),
-    # 极端 fallback
-    (Exception, None, "未知错误"),
-])
+
+@pytest.mark.parametrize(
+    "exc_class,attr_value,expected",
+    [
+        # 有 .message 优先
+        (TdlibError, "MSG", "MSG"),
+        # 没 .message → str(e)
+        (ValueError, None, "boom"),
+        # 极端 fallback
+        (Exception, None, "未知错误"),
+    ],
+)
 def test_extract_error_detail_truthiness_chain(
-    exc_class: type, attr_value: str | None, expected: str,
+    exc_class: type,
+    attr_value: str | None,
+    expected: str,
 ) -> None:
     """`getattr(...) or str(...) or "未知错误"` 链式判断逐项验证。"""
     if exc_class is TdlibError:
@@ -84,6 +94,7 @@ def test_extract_error_detail_truthiness_chain(
         class _Empty(Exception):
             def __str__(self) -> str:
                 return ""
+
         exc = _Empty()
     assert _extract_error_detail(exc) == expected
 
@@ -140,7 +151,7 @@ def test_translate_boot_error_lock_msg_preferred() -> None:
     而不是误导性的「DC 握手失败」(2026-08-13 线上:旧实例占用 td.binlog)。"""
     msg = (
         "Can't lock file \"/Users/me/Library/Application Support/tgmonitor"
-        "/session/tdlib/database/td.binlog\", because it is already in use; "
+        '/session/tdlib/database/td.binlog", because it is already in use; '
         "check for another program instance running"
     )
     detail = _translate_boot_error(_codes(400), msg)

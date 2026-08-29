@@ -10,6 +10,7 @@
 
 默认隐藏;无选中消息时显示「点击消息查看详情」提示。
 """
+
 from __future__ import annotations
 
 import json

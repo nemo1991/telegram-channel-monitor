@@ -17,6 +17,7 @@ helper 只是"创建 widget 并把它绑进 form row",所以 `_find_form_row`
 `path_field` 把 QHBoxLayout 套进一个 inner `QWidget`(因为 QFormLayout.FieldRole
 推荐传 QWidget,直接传 QHBoxLayout 会有 layout 警告)。
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -206,7 +207,7 @@ def empty_hint(
     *,
     parent: QWidget | None = None,
 ) -> QWidget:
-    """"暂无内容"占位面板 — icon + title + hint 三行居中布局。
+    """ "暂无内容"占位面板 — icon + title + hint 三行居中布局。
 
     跟 `MessageDetail._build_empty_state` 同模式,但抽成 helper 复用:
       - `MessageView`(实时流第一次打开 / 没订频道)— 全幅面板占位

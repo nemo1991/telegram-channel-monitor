@@ -16,6 +16,7 @@ MonitorService 流,验证 1/2/3/4/5 都成立。`_on_new_message` 是用
 receive loop 收到 packet 时按 update 的 `@type` 派发 — 我们直接
 调 `_on_new_message` 等价。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,7 +75,9 @@ class _FakeUpdateNewMessage:
 def settings(tmp_path) -> Settings:
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
-        api_id=1, api_hash="x" * 32, phone="+10000000000",
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+10000000000",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
@@ -91,7 +94,9 @@ def bus() -> EventBus:
 
 @pytest.mark.asyncio
 async def test_on_new_message_pushes_to_subscribed_stream(
-    settings, bus, stub_tdlib_init,
+    settings,
+    bus,
+    stub_tdlib_init,
 ):
     """最小路径:`_on_new_message` 调起后,`subscribe_updates()` 拿到的 stream
     应该能 `__anext__` 到 MessageDTO。"""
@@ -121,7 +126,9 @@ async def test_on_new_message_pushes_to_subscribed_stream(
 
 @pytest.mark.asyncio
 async def test_monitor_service_publishes_message_received(
-    settings, bus, stub_tdlib_init,
+    settings,
+    bus,
+    stub_tdlib_init,
 ):
     """完整路径:`_on_new_message` → stream → MonitorService._handle → bus.publish。
 
@@ -183,7 +190,9 @@ async def test_monitor_service_publishes_message_received(
 
 @pytest.mark.asyncio
 async def test_on_new_message_skips_non_whitelisted_channel(
-    settings, bus, stub_tdlib_init,
+    settings,
+    bus,
+    stub_tdlib_init,
 ):
     """频道不在白名单 → MonitorService 静默 drop,不发 MessageReceived。"""
     from tests.conftest import InMemoryRepository

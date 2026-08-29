@@ -1,4 +1,5 @@
 """AppService.reconfigure() 单测 — 热重载 storage / objects。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,11 +19,17 @@ from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 def _settings(tmp: Path, **kw) -> Settings:
     base = dict(
-        api_id=1, api_hash="h" * 32, phone="+1",
+        api_id=1,
+        api_hash="h" * 32,
+        phone="+1",
         session_dir=tmp / "s",
-        db_backend=DBBackend.JSONL, db_dsn="", db_root=tmp / "m",
-        objectstore_backend=ObjectStoreBackend.FOLDER, objectstore_root=tmp / "o",
-        media_policy=MediaPolicy.METADATA, data_root=tmp,
+        db_backend=DBBackend.JSONL,
+        db_dsn="",
+        db_root=tmp / "m",
+        objectstore_backend=ObjectStoreBackend.FOLDER,
+        objectstore_root=tmp / "o",
+        media_policy=MediaPolicy.METADATA,
+        data_root=tmp,
     )
     base.update(kw)
     return Settings(**base)  # type: ignore[arg-type]
@@ -72,8 +79,13 @@ async def test_reconfigure_credentials_triggers_relogin(tmp_path: Path):
     s1 = _settings(tmp_path, api_id=1, api_hash="a" * 32, phone="+1")
     s1.ensure_dirs()
     bus = EventBus()
-    app = AppService(bus, FakeTelegramClient(), InMemoryRepository(),
-                     LocalObjectStore(root=s1.objectstore_root), s1)
+    app = AppService(
+        bus,
+        FakeTelegramClient(),
+        InMemoryRepository(),
+        LocalObjectStore(root=s1.objectstore_root),
+        s1,
+    )
     seen: list[SettingsChanged] = []
     bus.subscribe(SettingsChanged, lambda e: seen.append(e))
     s2 = _settings(tmp_path, api_id=2)
@@ -123,7 +135,8 @@ class _InitFailsStorage:
 
 
 async def test_reconfigure_storage_failure_keeps_old_storage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """重建 storage 失败时:旧 storage 不被关闭仍可用、settings 不提交、无事件。
 
@@ -165,7 +178,8 @@ async def test_reconfigure_storage_failure_keeps_old_storage(
 
 
 async def test_reconfigure_storage_init_schema_failure_closes_new(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """新库 connect 成功但 init_schema 失败:新建连接被关闭(不留泄漏)、旧库可用。"""
     s1 = _settings(tmp_path)
@@ -205,7 +219,8 @@ class _BrokenObjects:
 
 
 async def test_reconfigure_objectstore_failure_keeps_old_objects(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """重建 objectstore 失败时:旧 store 不被关闭仍可用、settings 不提交、无事件。
 
@@ -248,7 +263,8 @@ async def test_reconfigure_objectstore_failure_keeps_old_objects(
 
 
 async def test_reconfigure_validates_objects_even_when_objects_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """2026-08-18:任何设置变化都无条件重建校验对象存储(即使配置没变)。
 
@@ -312,7 +328,8 @@ async def test_validate_backends_ok_does_not_swap_runtime(tmp_path: Path):
 
 
 async def test_validate_backends_failure_raises_keeps_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """validate_backends:后端连不上时上抛、运行时不动、新建连接被清理。"""
     s1 = _settings(tmp_path)
@@ -350,7 +367,8 @@ async def test_validate_backends_failure_raises_keeps_runtime(
 
 
 async def test_reconfigure_syncs_backends_to_monitor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """热重载切 storage 后 monitor / downloader / channel_sync 都指向新后端。
 
@@ -367,7 +385,11 @@ async def test_reconfigure_syncs_backends_to_monitor(
     await objects.connect()
     client = FakeTelegramClient()
     monitor = MonitorService(
-        bus, client, storage, objects, s1,
+        bus,
+        client,
+        storage,
+        objects,
+        s1,
         downloader=MediaDownloader(client, storage, objects),
     )
     app = AppService(bus, client, storage, objects, s1, monitor=monitor)

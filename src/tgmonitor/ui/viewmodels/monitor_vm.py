@@ -1,4 +1,5 @@
 """MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -63,22 +64,27 @@ class MonitorViewModel(QObject):
     # MessageView._format 取 `med.type` 崩溃。Signal(object) 让 Qt 承载
     # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
     """
+
     message_received = Signal(object)
     message_edited = Signal(object)  # 2026-08-24:编辑事件 MessageDTO
     media_downloaded = Signal(object)  # MediaDownloaded(下载结束,成功或失败)
     login_state = Signal(str)
-    conn_state = Signal(str)      # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
+    conn_state = Signal(
+        str
+    )  # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
     channels_changed = Signal()
-    export_done = Signal(object, object)   # (result_dict | None, error | None)
+    export_done = Signal(object, object)  # (result_dict | None, error | None)
     error = Signal(str)
-    settings_changed = Signal(str, bool, bool, str)  # (what, needs_relogin, needs_restart, backend_label)
+    settings_changed = Signal(
+        str, bool, bool, str
+    )  # (what, needs_relogin, needs_restart, backend_label)
     # 全量同步进度(sync dialog 订阅)
-    sync_progress = Signal(object)         # ChannelSyncProgress
-    sync_done = Signal(object)             # ChannelSyncDone(带 result)
+    sync_progress = Signal(object)  # ChannelSyncProgress
+    sync_done = Signal(object)  # ChannelSyncDone(带 result)
     # Media Manager(2026-08-24 新增)
-    media_list_loaded = Signal(object)     # list_media 返回值(list of (msg, idx, media))
-    media_retried = Signal(object)         # MediaRetried 转发
-    media_deleted = Signal(object)         # MediaDeleted 转发
+    media_list_loaded = Signal(object)  # list_media 返回值(list of (msg, idx, media))
+    media_retried = Signal(object)  # MediaRetried 转发
+    media_deleted = Signal(object)  # MediaDeleted 转发
     media_reconcile_done = Signal(object)  # MediaReconcileFinished 转发
     # 按频道批量删除完成(2026-08-25 PR #4)— payload (channel_id, deleted_count)
     channel_cleared = Signal(int, int)
@@ -194,9 +200,7 @@ class MonitorViewModel(QObject):
         if not isinstance(e.new_settings, Settings):
             return
         new = e.new_settings
-        backend_label = (
-            f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
-        )
+        backend_label = f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
         self.settings_changed.emit(e.what, e.needs_relogin, e.needs_restart, backend_label)
 
     async def _on_sync_progress(self, e: Event) -> None:
@@ -245,6 +249,7 @@ class MonitorViewModel(QObject):
         2026-08-25 v1.3.0 PR #6 新增 sort / sort_dir / offset kwargs;不传
         走默认(DATE DESC,offset=0),向后兼容旧调用方。
         """
+
         async def _go() -> None:
             # 默认 None 透传(None 视作 "all",不过滤)
             st = status if isinstance(status, MediaDownloadStatus) else None
@@ -267,49 +272,67 @@ class MonitorViewModel(QObject):
 
     def delete_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """单条 media 删除 — 后台 fire app.delete_media。"""
+
         async def _go() -> None:
             await self.app.delete_media(channel_id, telegram_msg_id, media_idx)
+
         run_coro(self.loop, _go(), error_label="delete_media")
 
     def delete_media_batch(self, items: list[tuple[int, int, int]]) -> None:
         """批量删除 — items: list[(channel_id, telegram_msg_id, media_idx)]。"""
+
         async def _go() -> None:
             for cid, mid, idx in items:
                 try:
                     await self.app.delete_media(cid, mid, idx)
                 except Exception:  # noqa: BLE001 — 单条失败不影响 batch
                     log.exception("delete_media batch failed: %s/%s/%d", cid, mid, idx)
+
         run_coro(self.loop, _go(), error_label="delete_media_batch")
 
     def retry_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """单条 retry — 后台 fire app.retry_media。"""
+
         async def _go() -> None:
             await self.app.retry_media(channel_id, telegram_msg_id, media_idx)
+
         run_coro(self.loop, _go(), error_label="retry_media")
 
     def open_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """打开 media 文件 — 后台 fire app.open_media_with_result,失败时 emit
         open_media_failed 把原因给 UI(2026-08-25 v1.3.0 PR #5)。
         """
+
         async def _go() -> None:
             result = await self.app.open_media_with_result(
-                channel_id, telegram_msg_id, media_idx,
+                channel_id,
+                telegram_msg_id,
+                media_idx,
             )
             if not result.success:
                 reason = result.error or "未知原因"
                 log.warning(
                     "open_media failed: channel=%s msg=%s idx=%d reason=%s",
-                    channel_id, telegram_msg_id, media_idx, reason,
+                    channel_id,
+                    telegram_msg_id,
+                    media_idx,
+                    reason,
                 )
                 self.open_media_failed.emit(
-                    channel_id, telegram_msg_id, media_idx, reason,
+                    channel_id,
+                    telegram_msg_id,
+                    media_idx,
+                    reason,
                 )
+
         run_coro(self.loop, _go(), error_label="open_media")
 
     def reconcile_orphans(self, *, dry_run: bool) -> None:
         """孤儿 reconcile — dry_run=True 只 log,dry_run=False 真删。"""
+
         async def _go() -> None:
             await self.app.reconcile_orphans(dry_run=dry_run)
+
         run_coro(self.loop, _go(), error_label="reconcile_orphans")
 
     def preview_delete_by_channel(self, channel_id: int) -> None:
@@ -321,6 +344,7 @@ class MonitorViewModel(QObject):
         二次确认,用户勾上「我已了解不可撤销」才 enable OK,确认后走
         `vm.delete_by_channel(channel_id)` 真删。
         """
+
         async def _go() -> DeleteChannelPreview:
             return await self.app.preview_delete_by_channel(channel_id)
 
@@ -329,7 +353,8 @@ class MonitorViewModel(QObject):
                 self.delete_preview_ready.emit(preview)
 
         run_coro(
-            self.loop, _go(),
+            self.loop,
+            _go(),
             on_success=_on_success,
             error_label="preview_delete_by_channel",
         )
@@ -340,13 +365,19 @@ class MonitorViewModel(QObject):
         完成后 emit `channel_cleared(channel_id, deleted_count)` — UI 据此
         状态栏反馈 + 重新加载 media list。
         """
+
         async def _go() -> None:
             n = await self.app.delete_by_channel(channel_id)
             self.channel_cleared.emit(channel_id, n)
+
         run_coro(self.loop, _go(), error_label="delete_by_channel")
 
     def load_thumbnail(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int, media: object,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+        media: object,
     ) -> None:
         """UI 行内请求加载缩略图(2026-08-25 PR #1)。
 
@@ -367,12 +398,14 @@ class MonitorViewModel(QObject):
         async def _go() -> object:
             # media 是弱类型 object — VM 接口稳定,不依赖 DTO 强类型
             from tgmonitor.core.dto import MediaDTO
+
             if not isinstance(media, MediaDTO):
                 return None
             return await self.app.load_thumbnail_bytes(media)
 
         run_coro(
-            self.loop, _go(),
+            self.loop,
+            _go(),
             on_success=_on_success,
             error_label="load_thumbnail",
         )
@@ -402,11 +435,13 @@ class MonitorViewModel(QObject):
         # 走 `list_joined_channels` 是 best-effort UX 路径(不持久化),
         # 跟 `MonitorService._whitelist` 是两件事 — 后者是真理。
         """
+
         async def _go() -> None:
             chs = await self.app.list_joined_channels()
             for ch in chs:
                 self.known_channels[ch.id] = ch
             self.channels_changed.emit()
+
         run_coro(self.loop, _go(), error_label="refresh_channels")
 
     def subscribe_channel(self, ch: ChannelDTO) -> None:
@@ -415,16 +450,20 @@ class MonitorViewModel(QObject):
 
     def unsubscribe_channel(self, channel_id: int) -> None:
         """退订频道 — 后台 fire `app.unsubscribe_channel`(关订阅标志,保留历史)。"""
+
         async def _go() -> None:
             await self.app.unsubscribe_channel(channel_id)
+
         run_coro(self.loop, _go(), error_label="unsubscribe_channel")
 
     def load_recent_messages(self) -> None:
         """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
+
         async def _go() -> None:
             msgs = await self.app.list_messages(limit=200)
             for m in msgs:
                 self.message_received.emit(m)
+
         run_coro(self.loop, _go(), error_label="load_recent_messages")
 
     def start_export(self, req: ExportRequest) -> None:
@@ -432,9 +471,11 @@ class MonitorViewModel(QObject):
 
         `app.export` 内部 yield 心跳,这里只消耗掉(进度走 ExportProgress 事件)。
         """
+
         async def _go() -> None:
             async for _ in self.app.export(req):
                 pass
+
         run_coro(self.loop, _go(), error_label="start_export")
 
     def export_media_list(self, req: MediaExportRequest) -> None:
@@ -443,7 +484,9 @@ class MonitorViewModel(QObject):
         复用 `ExportDone` 事件(`vm.export_done` 已绑),UI 无须新增信号;
         完成 / 失败通过 `_on_export_done` 走老路径弹消息框。
         """
+
         async def _go() -> None:
             async for _ in self.app.export_media_list(req):
                 pass
+
         run_coro(self.loop, _go(), error_label="export_media_list")

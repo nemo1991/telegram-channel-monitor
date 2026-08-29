@@ -1,4 +1,5 @@
 """代理支持 — proxy URL 解析 + Settings/store 往返 + TdlibClient 跳过 None。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +17,7 @@ from tgmonitor.core.settings_store import (
 from tgmonitor.core.telegram.tdlib_proxy import parse_socks5_proxy
 
 # ---- parse_socks5_proxy 边界 ----
+
 
 class TestParseSocks5Proxy:
     def test_none_returns_none(self) -> None:
@@ -59,10 +61,10 @@ class TestParseSocks5Proxy:
     @pytest.mark.parametrize(
         "bad",
         [
-            "http://1.2.3.4:1080",       # 协议不支持
-            "socks5://host",             # 缺 port
-            "socks5://host:abc",         # port 非数字
-            "socks5://:1080",            # host 空
+            "http://1.2.3.4:1080",  # 协议不支持
+            "socks5://host",  # 缺 port
+            "socks5://host:abc",  # port 非数字
+            "socks5://:1080",  # host 空
         ],
     )
     def test_invalid_raises(self, bad: str) -> None:
@@ -71,6 +73,7 @@ class TestParseSocks5Proxy:
 
 
 # ---- _validate_proxy_url(给 SettingsDialog 用) ----
+
 
 class TestValidateProxyUrl:
     def test_empty_ok(self) -> None:
@@ -89,6 +92,7 @@ class TestValidateProxyUrl:
 
 
 # ---- Settings + store 往返 ----
+
 
 class TestSettingsProxyRoundTrip:
     def test_settings_accepts_proxy(self) -> None:
@@ -144,6 +148,7 @@ class TestSettingsProxyRoundTrip:
 # 的 ctypes 绑定),proxy 以 Socks5Proxy dataclass 传构造。下面是纯函数 /
 # kwargs 形状 的单元测试 + 真实解析的端到端校验。
 
+
 def test_parse_socks5_proxy_returns_socks5_proxy() -> None:
     """parse_socks5_proxy() 必须产 TdlibJsonClient 构造能吃的 Socks5Proxy。
 
@@ -172,7 +177,8 @@ def test_parse_socks5_proxy_no_creds_uses_empty_strings() -> None:
 
 
 def test_proxy_kwargs_passed_to_construct_via_factory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """工厂把 parsed Socks5Proxy 通过 `proxy=` 传给 TdlibJsonClient 构造。
 
@@ -236,9 +242,12 @@ def test_aio_event_emit_login_state_changed_via_bus() -> None:
 # 响应没有 request_id,被 tdlib_json 静默丢弃 → 代理不生效,只有开 TUN 才通。
 # 现在改用 request() 显式等响应,失败直接抛 TdlibError,启动流程转可见错误。
 
+
 @pytest.mark.asyncio
 async def test_setup_proxy_sends_addproxy_when_configured(
-    tmp_path: Path, bus, stub_tdlib_init,
+    tmp_path: Path,
+    bus,
+    stub_tdlib_init,
 ) -> None:
     """配了 SOCKS5 代理 → 发 addProxy(enable=True),proxy 对象内 server/port/凭据逐字段正确。
 
@@ -284,7 +293,9 @@ async def test_setup_proxy_sends_addproxy_when_configured(
 
 @pytest.mark.asyncio
 async def test_setup_proxy_disables_when_no_proxy(
-    tmp_path: Path, bus, stub_tdlib_init,
+    tmp_path: Path,
+    bus,
+    stub_tdlib_init,
 ) -> None:
     """未配代理 → 发 disableProxy,防止残留/默认代理生效。
 
@@ -316,7 +327,9 @@ async def test_setup_proxy_disables_when_no_proxy(
 
 @pytest.mark.asyncio
 async def test_setup_proxy_raises_tdlib_error(
-    tmp_path: Path, bus, stub_tdlib_init,
+    tmp_path: Path,
+    bus,
+    stub_tdlib_init,
 ) -> None:
     """addProxy 被 TDLib 拒绝 → 必须抛 TdlibError(启动流程转可见错误)。"""
     from tgmonitor.core.telegram import tdlib_client as tdc

@@ -9,6 +9,7 @@
 - `save_message` 幂等(以 `(channel_id, telegram_msg_id)` 为唯一键)。
 - `delete_message` 支持消息撤回;`update_message` 支持编辑。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -65,9 +66,7 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def set_channel_subscribed(
-        self, channel_id: int, subscribed: bool
-    ) -> None:
+    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
         """只设订阅标志,不动其它字段。"""
         ...
 
@@ -130,9 +129,7 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def get_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None:
+    async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息;不存在返 None。"""
         ...
 
@@ -160,9 +157,7 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def aggregate_per_channel(
-        self, channel_ids: list[int]
-    ) -> dict[int, ChannelStats]:
+    async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:一次拉多频道聚合统计(messages / media /
         done_media / last_date),消除 Dashboard N+1 round-trip。
 
@@ -178,9 +173,7 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def find_media_by_file_id(
-        self, telegram_file_id: str
-    ) -> MediaDTO | None:
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
         """查任意 prior MediaDTO 同 `telegram_file_id`(任意 channel)且下载已完成。
 
         用于跨消息媒体去重:同一 file_id 在 channel A 已下载成功 → channel B 再

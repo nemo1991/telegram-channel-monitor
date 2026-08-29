@@ -9,6 +9,7 @@ fake client 持有几个频道(channel 面板要把它们拉回来 + 与白名�
 不在测试里跑 qasync run_forever — 自己在后台线程起一个 asyncio loop
 (模拟 qasync 的 QEventLoop),drive 它来跑协程。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,8 +75,10 @@ def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> b
     测试主体线程就是 main thread,所以 step 用 time.sleep 比较简单。
     """
     import time as _t
+
     deadline = _t.monotonic() + timeout
     while _t.monotonic() < deadline:
+
         async def _check() -> bool:
             return bool(pred())
 
@@ -110,7 +113,9 @@ def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -168,10 +173,7 @@ def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
 
         # _refresh_state 等价:求 known_channels ∩ subscribed_ids
         subscribed_ids = monitor.subscribed_ids
-        rendered_subscribed = [
-            ch for cid, ch in vm.known_channels.items()
-            if cid in subscribed_ids
-        ]
+        rendered_subscribed = [ch for cid, ch in vm.known_channels.items() if cid in subscribed_ids]
         assert sorted(c.id for c in rendered_subscribed) == [100, 200]
 
 
@@ -207,7 +209,9 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -255,7 +259,10 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
 
 def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
-    qapp, qloop, tmp_path, stub_tdlib_init,
+    qapp,
+    qloop,
+    tmp_path,
+    stub_tdlib_init,
 ):
     """直接打 TdlibTelegramClient.list_joined_channels:生产代码确实有
     `_state != "ready"` 早返 guard,但 fire-and-forget 调用时机可能正撞
@@ -277,7 +284,9 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
 
     settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
-        api_id=1, api_hash="x" * 32, phone="+8612345",
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+8612345",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
@@ -309,6 +318,7 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
         # _state_event 状态来决定用 sleep(0.05) 还是 wait_for(event.wait()) 路径。
         async def _delay_ready():
             import asyncio as _asyncio
+
             await _asyncio.sleep(0.3)
             client._set_state("ready")
 
@@ -320,13 +330,14 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
     fut.result(timeout=5.0)
     # 如果 list_joined_channels 是 fire-and-forget "先看 state, 非 ready 立即 []",
     # 那 _setup_and_go 会立即返回 [] 且 _fake_request 永远不会被调
-    assert captured["called"], (
-        "list_joined_channels 没有等到 state 走到 ready,而是在中间态就 []"
-    )
+    assert captured["called"], "list_joined_channels 没有等到 state 走到 ready,而是在中间态就 []"
 
 
 def test_wait_for_state_does_not_spin_when_event_already_set(
-    qapp, qloop, tmp_path, stub_tdlib_init,
+    qapp,
+    qloop,
+    tmp_path,
+    stub_tdlib_init,
 ):
     """`_state_event` 是 set-only — 一旦被前面的 `_set_state(...)` set 住,
     后续 `wait()` 立即返回,不等 CPU。如果 `_wait_for_state` 用纯
@@ -350,7 +361,10 @@ def test_wait_for_state_does_not_spin_when_event_already_set(
     from tgmonitor.core.telegram import tdlib_client as tdc
 
     settings = Settings(  # type: ignore[call-arg]
-        _env_file=None, api_id=1, api_hash="x" * 32, phone="+8612345",
+        _env_file=None,
+        api_id=1,
+        api_hash="x" * 32,
+        phone="+8612345",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
@@ -395,8 +409,7 @@ def test_wait_for_state_does_not_spin_when_event_already_set(
 
         # _wait_for_state 必须 ≤ 2.5s 内退出(不要 spin 死)
         assert elapsed <= 2.5, (
-            f"_wait_for_state 总耗时 {elapsed:.2f}s,期望 ≤ 2.5s — "
-            f"spin 的话会远超 timeout(应 2s 退)"
+            f"_wait_for_state 总耗时 {elapsed:.2f}s,期望 ≤ 2.5s — spin 的话会远超 timeout(应 2s 退)"
         )
         # 6s 周期,50ms 间隔 → 理论 ~120 ticks;最少应能 80+(spin 时 0~2)
         assert ticks >= 40, (
@@ -424,7 +437,9 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -473,7 +488,9 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -492,6 +509,7 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor
@@ -516,7 +534,9 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -535,6 +555,7 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor
@@ -547,9 +568,11 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
         assert not widget._empty_joined.isHidden()
 
         # 装载一条频道
-        widget.set_joined([
-            ChannelDTO(id=42, title="新闻频道", kind="channel"),
-        ])
+        widget.set_joined(
+            [
+                ChannelDTO(id=42, title="新闻频道", kind="channel"),
+            ]
+        )
         assert widget.lst_joined.count() == 1
         assert widget._empty_joined.isHidden()
 
@@ -589,8 +612,7 @@ def test_channel_list_card_clear_items_hides_data(qapp):
     from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
 
     card = _ChannelListCard(title="已监听", action_label="同步")
-    card.set_items([ChannelDTO(id=1, title="x", kind="channel")],
-                   count_template="已监听 · {n}")
+    card.set_items([ChannelDTO(id=1, title="x", kind="channel")], count_template="已监听 · {n}")
     assert card.lst.count() == 1
     card.clear_items(count_template="已监听 · {n}")
     assert card.lst.count() == 0
@@ -650,8 +672,7 @@ def test_channel_list_card_selected_cids_when_no_selection(qapp):
     from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
 
     card = _ChannelListCard(title="x", action_label="y")
-    card.set_items([ChannelDTO(id=1, title="c1", kind="channel")],
-                   count_template="{n}")
+    card.set_items([ChannelDTO(id=1, title="c1", kind="channel")], count_template="{n}")
     assert card.selected_cids() == []
     assert card.all_cids() == [1]
 
@@ -663,7 +684,9 @@ def test_channel_list_card_extended_selection_mode(qapp):
     from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
 
     card = _ChannelListCard(
-        title="已监听", action_label="同步", extended_selection=True,
+        title="已监听",
+        action_label="同步",
+        extended_selection=True,
     )
     assert card.lst.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
 
@@ -673,13 +696,13 @@ def test_channel_list_card_empty_hint_visibility_toggles(qapp):
     from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
 
     card = _ChannelListCard(
-        title="x", action_label="y",
+        title="x",
+        action_label="y",
         empty_hint_spec=("💡", "空", "请加数据"),
     )
     assert not card._empty_hint.isHidden()  # 初始:空 → 显示
 
-    card.set_items([ChannelDTO(id=1, title="c", kind="channel")],
-                   count_template="{n}")
+    card.set_items([ChannelDTO(id=1, title="c", kind="channel")], count_template="{n}")
     assert card._empty_hint.isHidden()  # 有数据 → 隐藏
 
     card.clear_items(count_template="{n}")
@@ -696,8 +719,7 @@ def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
     card.btn_action.click()
     assert action_calls == [1]
 
-    card.set_items([ChannelDTO(id=42, title="x", kind="channel")],
-                   count_template="{n}")
+    card.set_items([ChannelDTO(id=42, title="x", kind="channel")], count_template="{n}")
     double_clicked_ids: list[int] = []
     card.item_double_clicked.connect(double_clicked_ids.append)
     card.lst.itemDoubleClicked.emit(card.lst.item(0))
@@ -722,7 +744,9 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -741,6 +765,7 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor
@@ -766,7 +791,9 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -785,6 +812,7 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor
@@ -821,7 +849,9 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -842,6 +872,7 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor
@@ -870,7 +901,8 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
         mw.SyncOptionsDialog = _StubDialog  # type: ignore[assignment,misc]
         try:
             result = win._show_sync_options_dialog(
-                [1, 2, 3], {1: "c1", 2: "c2", 3: "c3"},
+                [1, 2, 3],
+                {1: "c1", 2: "c2", 3: "c3"},
             )
         finally:
             mw.SyncOptionsDialog = original  # type: ignore[assignment,misc]
@@ -895,7 +927,9 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
     with tempfile.TemporaryDirectory() as td:
         settings = Settings(  # type: ignore[call-arg]
             _env_file=None,
-            api_id=1, api_hash="x" * 32, phone="+8612345",
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
@@ -914,6 +948,7 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
         async def setup_async():
             await storage.connect()
             from tgmonitor.core.monitor.service import MonitorService
+
             monitor = MonitorService(bus, client, storage, objects, settings)
             app_svc = AppService(bus, client, storage, objects, settings)
             return app_svc, monitor

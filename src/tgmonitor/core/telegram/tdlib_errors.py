@@ -13,6 +13,7 @@
 不依赖 `TdlibTelegramClient` 类,所以可独立单元测试 + 跨模块复用
 (`channel_sync/service.py` 捕获 `TelegramRateLimitError`)。
 """
+
 from __future__ import annotations
 
 from tgmonitor.core.config import Settings

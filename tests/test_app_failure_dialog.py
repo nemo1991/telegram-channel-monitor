@@ -5,6 +5,7 @@ mock QApplication + QMessageBox.exec 验证弹窗不抛、不污染 qt_app 退�
 QT_QPA_PLATFORM=offscreen 无 GUI,但 `QApplication.instance()` 仍可解析;
 `QMessageBox.exec` 我们通过 monkeypatch 替换,避免真弹 modal 阻塞测试。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,8 @@ def qt_app() -> QApplication:
 
 
 def test_dialog_runs_and_does_not_raise(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch,
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """最简版本:mock QMessageBox.exec 替代真弹窗,验证 _show_setup_failure_dialog
     走完不抛。"""
@@ -48,7 +50,8 @@ def test_dialog_runs_and_does_not_raise(
 
 
 def test_dialog_handles_exception_with_empty_message(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch,
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """异常 str() 空时,显示 '(no message)' 而不是空字符串。"""
     captured: list[str] = []
@@ -94,6 +97,7 @@ def test_dialog_swallows_qt_import_failure(
     """PySide6.QtWidgets import 抛 ImportError 时,弹窗静默退化。"""
     # Patch the import inside _show_setup_failure_dialog
     import builtins
+
     real_import = builtins.__import__
 
     def fake_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]

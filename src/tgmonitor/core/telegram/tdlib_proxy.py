@@ -14,6 +14,7 @@
 
 不依赖 `TdlibTelegramClient` 类,可独立测试;`factory.py` 也复用 `parse_socks5_proxy`。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -197,7 +198,8 @@ async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]
 
     try:
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout,
+            asyncio.open_connection(host, port),
+            timeout=timeout,
         )
     except (TimeoutError, OSError) as e:
         log.error("proxy TCP unreachable: %s:%d — %s", host, port, e)
@@ -217,8 +219,11 @@ async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]
         # 2) CONNECT 1.1.1.1:443 (验证代理本身可达,不出 DC)
         target_host = b"1.1.1.1"
         target_port = 443
-        req = bytes([0x05, 0x01, 0x00, 0x01]) + bytes([len(target_host)]) + target_host + bytes(
-            [(target_port >> 8) & 0xFF, target_port & 0xFF]
+        req = (
+            bytes([0x05, 0x01, 0x00, 0x01])
+            + bytes([len(target_host)])
+            + target_host
+            + bytes([(target_port >> 8) & 0xFF, target_port & 0xFF])
         )
         writer.write(req)
         await asyncio.wait_for(writer.drain(), timeout=timeout)
@@ -227,7 +232,8 @@ async def _probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]
         if reply[1] != 0x00:
             log.error(
                 "SOCKS5 CONNECT to 1.1.1.1:443 failed: reply=%s (rep=%d — 0x00=success)",
-                reply.hex(), reply[1],
+                reply.hex(),
+                reply[1],
             )
             return False, f"代理拒绝 CONNECT (rep={reply[1]})"
         log.info("SOCKS5 proxy OK: %s:%d", host, port)

@@ -17,6 +17,7 @@ flush 时全文件重写,所以行长度变化不影响索引。
 线程安全:每实例有独立 `asyncio.Lock`,跨频道串行由 `JsonlFileStore._write_lock`
 保证(同一频道并发安全,跨频道亦有序)。
 """
+
 from __future__ import annotations
 
 import asyncio

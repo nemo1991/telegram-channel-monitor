@@ -6,6 +6,7 @@
   续拉开关;手动覆盖延迟)
 - `SyncProgressDialog` (QDialog):运行中显示每个频道状态,可"取消"
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,9 +61,7 @@ class SyncOptionsDialog(QDialog):
         root.setSpacing(10)
 
         # 概要
-        head = QLabel(
-            f"将对 <b>{len(channel_ids)}</b> 个频道执行全量同步。"
-        )
+        head = QLabel(f"将对 <b>{len(channel_ids)}</b> 个频道执行全量同步。")
         root.addWidget(head)
 
         # 频道列表
@@ -232,9 +231,7 @@ class SyncProgressDialog(QDialog):
         else:
             progress_str = str(e.progress)
         detail = f" — {e.detail}" if e.detail else ""
-        self._update_row(
-            e.channel_id, f"{icon} {title}  [{e.stage}] {progress_str}{detail}"
-        )
+        self._update_row(e.channel_id, f"{icon} {title}  [{e.stage}] {progress_str}{detail}")
 
     def on_done(self, e: ChannelSyncDone) -> None:
         """VM 信号槽:ChannelSyncDone → 更新 summary(成功/失败/新增/限流) + 关闭按钮可用。"""
@@ -245,8 +242,7 @@ class SyncProgressDialog(QDialog):
             self.lbl_summary.setText("同步已完成")
         else:
             n_ok = sum(
-                1 for r in result.per_channel.values()
-                if r.error is None and not r.rate_limited
+                1 for r in result.per_channel.values() if r.error is None and not r.rate_limited
             )
             n_fail = sum(1 for r in result.per_channel.values() if r.error)
             n_added = result.total_messages_added

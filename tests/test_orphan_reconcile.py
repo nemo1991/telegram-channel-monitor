@@ -5,6 +5,7 @@
 - prune 真删:orphan key 消失,referenced key 保留
 - S3 后端:NotImplementedError → 当作后端不可用,不崩
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 # ---- helpers ---------------------------------------------------------
 
+
 def _done(file_id: str, key: str) -> MediaDTO:
     """构造 DONE 状态 + object_key 的 media。"""
     from tgmonitor.core.dto import MediaType
@@ -44,9 +46,13 @@ def _done(file_id: str, key: str) -> MediaDTO:
 
 def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]):
     from tgmonitor.core.dto import MessageDTO
+
     return MessageDTO(
-        id=0, channel_id=channel_id, telegram_msg_id=msg_id,
-        text="", media=media,
+        id=0,
+        channel_id=channel_id,
+        telegram_msg_id=msg_id,
+        text="",
+        media=media,
     )
 
 
@@ -55,7 +61,9 @@ def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]):
 
 @pytest.mark.asyncio
 async def test_local_reconcile_dry_run_does_not_delete(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """dry_run=True → 不删 ObjectStore bytes。"""
     assert isinstance(objectstore, LocalObjectStore)
@@ -70,7 +78,9 @@ async def test_local_reconcile_dry_run_does_not_delete(
 
 @pytest.mark.asyncio
 async def test_local_reconcile_prune_deletes_orphan_bytes(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """dry_run=False → 真删 orphan key(referenced 不动)。"""
     assert isinstance(objectstore, LocalObjectStore)
@@ -88,7 +98,9 @@ async def test_local_reconcile_prune_deletes_orphan_bytes(
 
 @pytest.mark.asyncio
 async def test_local_reconcile_keeps_referenced_bytes(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """所有 key 都被 storage 引用 → orphans=0,prune 不删。"""
     assert isinstance(objectstore, LocalObjectStore)
@@ -105,7 +117,9 @@ async def test_local_reconcile_keeps_referenced_bytes(
 
 @pytest.mark.asyncio
 async def test_folder_reconcile_dry_run_does_not_delete(
-    app: AppService, storage: StorageRepository, tmp_path: Path,
+    app: AppService,
+    storage: StorageRepository,
+    tmp_path: Path,
 ) -> None:
     """FolderObjectStore 后端 + dry_run → 不删 bytes。
 
@@ -129,7 +143,9 @@ async def test_folder_reconcile_dry_run_does_not_delete(
 
 @pytest.mark.asyncio
 async def test_folder_reconcile_prune_deletes_orphan_bytes(
-    app: AppService, storage: StorageRepository, tmp_path: Path,
+    app: AppService,
+    storage: StorageRepository,
+    tmp_path: Path,
 ) -> None:
     """Folder + dry_run=False → 真删 orphan bytes。"""
     folder = FolderObjectStore(root=tmp_path / "folder_media")
@@ -150,7 +166,8 @@ async def test_folder_reconcile_prune_deletes_orphan_bytes(
 
 @pytest.mark.asyncio
 async def test_s3_reconcile_skips_gracefully(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """S3 后端未连接 → iter_keys 抛 RuntimeError → reconcile 兜底空集。
 
@@ -176,7 +193,9 @@ async def test_s3_reconcile_skips_gracefully(
 
 @pytest.mark.asyncio
 async def test_s3_reconcile_with_iter_keys(
-    app: AppService, storage: StorageRepository, monkeypatch,
+    app: AppService,
+    storage: StorageRepository,
+    monkeypatch,
 ) -> None:
     """S3 后端 iter_keys 真返回 key 列表时,reconcile 能正确算 orphan / referenced。
 
@@ -198,8 +217,8 @@ async def test_s3_reconcile_with_iter_keys(
 
         async def iter_keys(self, prefix: str = ""):  # noqa: ARG002
             yield "media/orphan.jpg"  # 没被 storage 引用 → orphan
-            yield "media/keep.jpg"    # 被 storage 引用 → keep
-            yield "media/other.png"   # 没被引用 → orphan
+            yield "media/keep.jpg"  # 被 storage 引用 → keep
+            yield "media/other.png"  # 没被引用 → orphan
 
         async def delete(self, key: str) -> None:
             """记录被删的 key,不走真 SDK。"""

@@ -6,6 +6,7 @@
 失效(`iter_chat_history` 的 `_map_message` 也因此把内容派发成
 "[service: dict]")。修复后嵌套 dict 递归包成 TDLibObject。
 """
+
 from __future__ import annotations
 
 import json
@@ -37,9 +38,7 @@ def test_nested_dicts_are_wrapped_recursively() -> None:
 
 def test_nested_lists_are_wrapped() -> None:
     """list 元素里的 dict 也要能属性访问(如 resp.messages / Photo.sizes)。"""
-    obj = TDLibObject.from_dict(
-        {"messages": [{"id": 1, "text": "a"}, {"id": 2, "text": "b"}]}
-    )
+    obj = TDLibObject.from_dict({"messages": [{"id": 1, "text": "a"}, {"id": 2, "text": "b"}]})
     assert obj.messages[0].id == 1
     assert obj.messages[1].text == "b"
 

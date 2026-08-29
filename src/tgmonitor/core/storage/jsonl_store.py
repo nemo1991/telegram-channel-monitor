@@ -17,6 +17,7 @@
   `_channel_to_dict` / `_dict_to_channel`)
 - `JsonlFileStore` Repository 主体
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -63,9 +64,7 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
         "edited": m.edited,
         # 2026-08-27 v1.4.0 PR #10:reactions 列表 → dict 列表;
         # None 不写 key(老 jsonl 兼容),[] 写空 list(语义:已推送过但当前空)。
-        "reactions": (
-            [r.to_dict() for r in m.reactions] if m.reactions is not None else None
-        ),
+        "reactions": ([r.to_dict() for r in m.reactions] if m.reactions is not None else None),
         "media": [
             {
                 "type": med.type.value,
@@ -99,9 +98,7 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
     for md in d.get("media", []):
         try:
             try:
-                dl_status = MediaDownloadStatus(
-                    str(md.get("download_status", "pending"))
-                )
+                dl_status = MediaDownloadStatus(str(md.get("download_status", "pending")))
             except ValueError:
                 # 旧数据 / 非法值回退 pending,不丢整条 media
                 dl_status = MediaDownloadStatus.PENDING
@@ -147,7 +144,8 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         # list → [ReactionDTO.from_dict(...)]。
         reactions=(
             [ReactionDTO.from_dict(r) for r in d["reactions"]]
-            if d.get("reactions") is not None else None
+            if d.get("reactions") is not None
+            else None
         ),
         media=media,
         raw=d.get("raw"),
@@ -180,8 +178,7 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
         created_at=datetime.fromisoformat(d["created_at"]) if d.get("created_at") else None,
         is_subscribed=bool(d.get("is_subscribed", True)),
         last_synced_at=(
-            datetime.fromisoformat(d["last_synced_at"])
-            if d.get("last_synced_at") else None
+            datetime.fromisoformat(d["last_synced_at"]) if d.get("last_synced_at") else None
         ),
     )
 
@@ -264,9 +261,7 @@ class JsonlFileStore(StorageRepository):
         # 加载 meta
         if self._meta_path.exists():
             try:
-                self._meta = json.loads(
-                    self._meta_path.read_text(encoding="utf-8")
-                )
+                self._meta = json.loads(self._meta_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 self._meta = {}
         # 预扫描已有 message id,初始化 _next_msg_pk
@@ -367,10 +362,7 @@ class JsonlFileStore(StorageRepository):
             title=title if title is not None else existing.title,
             username=username if username is not None else existing.username,
             kind=existing.kind,
-            member_count=(
-                member_count if member_count is not None
-                else existing.member_count
-            ),
+            member_count=(member_count if member_count is not None else existing.member_count),
             created_at=existing.created_at,
             is_subscribed=existing.is_subscribed,
             last_synced_at=existing.last_synced_at,
@@ -378,9 +370,7 @@ class JsonlFileStore(StorageRepository):
         self._channels[channel_id] = merged
         self._flush_registry()
 
-    async def set_channel_subscribed(
-        self, channel_id: int, subscribed: bool
-    ) -> None:
+    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
         """只设订阅标志,不动其它字段;频道未建档时用 id 做个 stub(后续会被 sync 补全)。"""
         existing = self._channels.get(channel_id)
         if existing is None:
@@ -390,8 +380,11 @@ class JsonlFileStore(StorageRepository):
             )
         else:
             self._channels[channel_id] = ChannelDTO(
-                id=existing.id, title=existing.title, username=existing.username,
-                kind=existing.kind, member_count=existing.member_count,
+                id=existing.id,
+                title=existing.title,
+                username=existing.username,
+                kind=existing.kind,
+                member_count=existing.member_count,
                 created_at=existing.created_at,
                 is_subscribed=subscribed,
                 last_synced_at=existing.last_synced_at,
@@ -426,9 +419,7 @@ class JsonlFileStore(StorageRepository):
         self._meta[key] = value
         # 同步落盘 — meta 量很小(几 KB),每次写都全量 flush。
         try:
-            self._meta_path.write_text(
-                json.dumps(self._meta, ensure_ascii=False), encoding="utf-8"
-            )
+            self._meta_path.write_text(json.dumps(self._meta, ensure_ascii=False), encoding="utf-8")
         except OSError:  # noqa: BLE001
             pass  # 内存值已更新,下次 connect() 重读会丢,不致命
 
@@ -482,8 +473,7 @@ class JsonlFileStore(StorageRepository):
             # 取旧 media(可能有同 fid 的 DONE 项)用于 re-evaluate 索引
             old_msg = await self.get_message(message.channel_id, message.telegram_msg_id)
             old_fids = {
-                m.telegram_file_id for m in (old_msg.media if old_msg else [])
-                if m.telegram_file_id
+                m.telegram_file_id for m in (old_msg.media if old_msg else []) if m.telegram_file_id
             }
             d = _message_to_dict(message)
             await cf.upsert(d)
@@ -574,16 +564,13 @@ class JsonlFileStore(StorageRepository):
                 msg.views = views
             if reactions is not None:
                 msg.reactions = [
-                    r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r)
-                    for r in reactions
+                    r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r) for r in reactions
                 ]
             cf = await self._file_for(channel_id)
             await cf.upsert(_message_to_dict(msg))
             await cf.flush()
 
-    async def get_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> MessageDTO | None:
+    async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息;不存在返 None。"""
         cf = await self._file_for(channel_id)
         idx = cf.index.get(telegram_msg_id)
@@ -638,9 +625,7 @@ class JsonlFileStore(StorageRepository):
         cf = await self._file_for(channel_id)
         return len(cf.rows)
 
-    async def aggregate_per_channel(
-        self, channel_ids: list[int]
-    ) -> dict[int, ChannelStats]:
+    async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:Jsonl 实现 — 单轮扫每个 channel 的 jsonl
         文件,聚合 4 字段。N+1 → 1,实际就是 file 维度的 1 次读取。
 
@@ -664,8 +649,7 @@ class JsonlFileStore(StorageRepository):
                 md = row.get("media", [])
                 n_media += len(md)
                 n_done += sum(
-                    1 for x in md
-                    if x.get("download_status") == MediaDownloadStatus.DONE.value
+                    1 for x in md if x.get("download_status") == MediaDownloadStatus.DONE.value
                 )
                 # `row["date"]` 是 ISO str → 解析
                 d_raw = row.get("date")
@@ -683,9 +667,7 @@ class JsonlFileStore(StorageRepository):
             )
         return bucket
 
-    async def find_media_by_file_id(
-        self, telegram_file_id: str
-    ) -> MediaDTO | None:
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
         """跨频道去重:任一先前已 DONE 的同 file_id media → 拷字段复用。
 
         索引在 `connect()` 加载时 + 每次 `save_message` 时增量更新,O(1) 查。
@@ -715,8 +697,10 @@ class JsonlFileStore(StorageRepository):
         STATUS 走 med.download_status.value(枚举字符串字典序)。
         """
         rows = await self._filter_media_rows(
-            channel_ids=channel_ids, status=status,
-            media_type=media_type, search=search,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
         )
         rows = _sort_media_rows(rows, sort, sort_dir)
         if offset:
@@ -736,8 +720,10 @@ class JsonlFileStore(StorageRepository):
         复用 `_filter_media_rows` helper(只过滤不取,Python len 即可)。
         """
         rows = await self._filter_media_rows(
-            channel_ids=channel_ids, status=status,
-            media_type=media_type, search=search,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
         )
         return len(rows)
 
@@ -755,9 +741,7 @@ class JsonlFileStore(StorageRepository):
         处理(`list_media` 走 sort + slice;`count_media` 只数)。
         """
         ch_ids = (
-            channel_ids
-            if channel_ids
-            else [c.id for c in await self.list_subscribed_channels()]
+            channel_ids if channel_ids else [c.id for c in await self.list_subscribed_channels()]
         )
         msgs: list[MessageDTO] = []
         for cid in ch_ids:

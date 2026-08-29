@@ -12,6 +12,7 @@
   - `subscribe_updates()` 返回一个**永不结束**的流,`aclose()` 唤醒退出 —
     与 `MonitorService.stop()` 的关流流程自洽
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -94,7 +95,9 @@ class UnconfiguredTelegramClient(TelegramClient):
         return self._state, None
 
     async def submit_registration(
-        self, first_name: str, last_name: str = "",
+        self,
+        first_name: str,
+        last_name: str = "",
     ) -> tuple[str, str | None]:
         """2026-08-27 v1.4.0 PR #13:无凭据时兜底返 `phone_required`,UI 不应走到。"""
         return self._state, None

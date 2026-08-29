@@ -9,6 +9,7 @@ Clear Channel 操作的 dry-run 二次确认对话框:
 `main_window._on_media_clear_channel` 调 Accept/Reject 决定是否真的走
 `vm.delete_by_channel`。
 """
+
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
@@ -59,27 +60,19 @@ class ClearChannelPreviewDialog(QDialog):
         layout.setSpacing(10)
 
         # 标题
-        title_label = QLabel(
-            f"🗑 清空频道 "
-            f"{self._channel_title or f'#{self._preview.channel_id}'}"
-        )
+        title_label = QLabel(f"🗑 清空频道 {self._channel_title or f'#{self._preview.channel_id}'}")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(title_label)
 
         # 警告
-        warn = QLabel(
-            "⚠ 此操作不可撤销。确认前请仔细检查以下数据:"
-        )
+        warn = QLabel("⚠ 此操作不可撤销。确认前请仔细检查以下数据:")
         layout.addWidget(warn)
 
         # 数据项
         layout.addWidget(QLabel(f"  • 消息数: {self._preview.message_count}"))
         layout.addWidget(QLabel(f"  • 媒体数: {self._preview.media_count}"))
         layout.addWidget(
-            QLabel(
-                f"  • 预计释放对象存储: "
-                f"{_format_bytes(self._preview.potential_orphan_bytes)}"
-            ),
+            QLabel(f"  • 预计释放对象存储: {_format_bytes(self._preview.potential_orphan_bytes)}"),
         )
         layout.addWidget(
             QLabel(

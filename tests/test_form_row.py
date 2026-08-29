@@ -2,6 +2,7 @@
 
 QT_QPA_PLATFORM=offscreen 无 GUI 跑(跟其他 UI 测试一致)。
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -46,6 +47,7 @@ def form(form_holders: tuple[QWidget, QFormLayout]) -> QFormLayout:
 
 # ---- text_field ----
 
+
 def test_text_field_returns_line_edit_with_placeholder(form: QFormLayout) -> None:
     edit = text_field(form, "URL:", "https://example.com")
     assert edit.placeholderText() == "https://example.com"
@@ -54,11 +56,13 @@ def test_text_field_returns_line_edit_with_placeholder(form: QFormLayout) -> Non
 
 def test_text_field_echo_password_sets_password_mode(form: QFormLayout) -> None:
     from PySide6.QtWidgets import QLineEdit
+
     edit = text_field(form, "API Hash:", "hash", echo_password=True)
     assert edit.echoMode() == QLineEdit.EchoMode.Password
 
 
 # ---- path_field ----
+
 
 def test_path_field_returns_line_edit(form: QFormLayout) -> None:
     """基本 build:QLineEdit + 浏览按钮 + addRow(无 on_default)。"""
@@ -70,7 +74,9 @@ def test_path_field_returns_line_edit(form: QFormLayout) -> None:
 def test_path_field_on_default_callback_fires(form: QFormLayout) -> None:
     """on_default 给 callable 时,点「默认」按钮触发。"""
     edit = path_field(
-        form, "Path:", "/p",
+        form,
+        "Path:",
+        "/p",
         on_default=lambda: edit.setText("/default"),
     )
     # 模拟点「默认」按钮 — form_row 内部 btn_default.clicked.connect(on_default)
@@ -82,6 +88,7 @@ def test_path_field_on_default_callback_fires(form: QFormLayout) -> None:
 
 
 # ---- combo_field ----
+
 
 class _Color(Enum):
     RED = "red"
@@ -129,10 +136,14 @@ def test_combo_field_disables_wheel_selection(form: QFormLayout) -> None:
     # 模拟滚轮向下滚一格(angleDelta.y=120):默认 QComboBox 会切到下一项,
     # 我们的实现忽略该事件,选中项必须保持。
     ev = QWheelEvent(
-        QPointF(0, 0), QPointF(0, 0),
-        QPoint(0, 0), QPoint(0, 120),
-        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase, False,
+        QPointF(0, 0),
+        QPointF(0, 0),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
     )
     cmb.wheelEvent(ev)
     assert cmb.currentData() == _Color.BLUE
@@ -140,6 +151,7 @@ def test_combo_field_disables_wheel_selection(form: QFormLayout) -> None:
 
 
 # ---- spin_field ----
+
 
 def test_spin_field_basic(form: QFormLayout) -> None:
     spin = spin_field(form, "API ID:", min=0, max=2_000_000_000, value=0)
@@ -152,8 +164,13 @@ def test_spin_field_basic(form: QFormLayout) -> None:
 
 def test_spin_field_with_suffix_step_tooltip(form: QFormLayout) -> None:
     spin = spin_field(
-        form, "Size:", min=0, max=10240,
-        value=200, suffix=" MB", single_step=10,
+        form,
+        "Size:",
+        min=0,
+        max=10240,
+        value=200,
+        suffix=" MB",
+        single_step=10,
         tooltip="0 = 无限制",
     )
     assert spin.suffix() == " MB"
@@ -176,6 +193,7 @@ def test_spin_field_adds_row(form: QFormLayout) -> None:
 def _grab_labels(widget) -> list:
     """helper — 找到 widget 子树里所有 QLabel,验证 icon/title/hint 三行。"""
     from PySide6.QtWidgets import QLabel
+
     out = []
     for child in widget.findChildren(QLabel):
         out.append(child)
@@ -214,10 +232,7 @@ def test_empty_hint_title_has_pagetitle_objectname(form: QFormLayout) -> None:
     from tgmonitor.ui.widgets.form_row import empty_hint
 
     w = empty_hint("📋", "暂无已加入频道", "登录后点「刷新」")
-    title_lbls = [
-        lbl for lbl in _grab_labels(w)
-        if lbl.objectName() == "pageTitle"
-    ]
+    title_lbls = [lbl for lbl in _grab_labels(w) if lbl.objectName() == "pageTitle"]
     assert len(title_lbls) == 1
     assert title_lbls[0].text() == "暂无已加入频道"
 
@@ -227,9 +242,6 @@ def test_empty_hint_hint_label_has_hint_role_property(form: QFormLayout) -> None
     from tgmonitor.ui.widgets.form_row import empty_hint
 
     w = empty_hint("💬", "暂无消息", "等待新消息…")
-    hint_lbls = [
-        lbl for lbl in _grab_labels(w)
-        if lbl.property("role") == "hint"
-    ]
+    hint_lbls = [lbl for lbl in _grab_labels(w) if lbl.property("role") == "hint"]
     assert len(hint_lbls) == 1
     assert "等待" in hint_lbls[0].text()

@@ -8,6 +8,7 @@
 导出)— 走 `_run_media` 分支,共享同样的 ExportProgress / ExportDone
 事件。
 """
+
 from __future__ import annotations
 
 import logging
@@ -89,7 +90,9 @@ class ExportService:
         # 频道信息
         all_channels = {c.id: c for c in await self._storage.list_channels()}
         if request.channel_ids:
-            channels = {cid: all_channels[cid] for cid in request.channel_ids if cid in all_channels}
+            channels = {
+                cid: all_channels[cid] for cid in request.channel_ids if cid in all_channels
+            }
         else:
             channels = all_channels
 
@@ -114,9 +117,7 @@ class ExportService:
                 break
             all_messages.extend(batch)
             offset += len(batch)
-            await self._bus.publish(
-                ExportProgress(request_id=req_id, written=offset, total=None)
-            )
+            await self._bus.publish(ExportProgress(request_id=req_id, written=offset, total=None))
             yield
             # 最后一页:不足 PAGE_SIZE 说明数据耗尽。
             if len(batch) < PAGE_SIZE:
@@ -150,9 +151,7 @@ class ExportService:
             yield
         except Exception as e:  # noqa: BLE001
             log.exception("export failed")
-            await self._bus.publish(
-                ExportDone(request_id=req_id, error=str(e))
-            )
+            await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
             raise
 
     async def _run_media(self, request: MediaExportRequest) -> AsyncIterator[None]:
@@ -216,7 +215,5 @@ class ExportService:
             yield
         except Exception as e:  # noqa: BLE001
             log.exception("media export failed")
-            await self._bus.publish(
-                ExportDone(request_id=req_id, error=str(e))
-            )
+            await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
             raise

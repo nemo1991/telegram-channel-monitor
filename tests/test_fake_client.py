@@ -5,6 +5,7 @@
 - `submit_email_code` → ready
 - `submit_registration(first, last)` → ready + me 字段写入
 """
+
 from __future__ import annotations
 
 import pytest

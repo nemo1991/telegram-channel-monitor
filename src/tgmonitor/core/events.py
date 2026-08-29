@@ -6,6 +6,7 @@
 - 订阅者抛异常被吞掉 + 日志,不互相影响
 - 无第三方依赖,纯 asyncio(避免 aio-pika / redis 之类)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +24,7 @@ T = TypeVar("T", bound="Event")
 
 # ---------- 领域事件 ----------
 
+
 @dataclass
 class Event:
     """所有领域事件的基类。"""
@@ -34,7 +36,7 @@ class Event:
 class LoginStateChanged(Event):
     """登录状态机状态变化。"""
 
-    state: str = "unknown"   # phone_required | code_required | password_required | ready | error
+    state: str = "unknown"  # phone_required | code_required | password_required | ready | error
     detail: str = ""
 
 
@@ -106,7 +108,7 @@ class MessageInteractionsChanged(Event):
     channel_id: int = 0
     telegram_msg_id: int = 0
     views: int | None = None
-    reactions: object = None        # list[ReactionDTO] | None(避免循环 import,object 占位)
+    reactions: object = None  # list[ReactionDTO] | None(避免循环 import,object 占位)
 
 
 @dataclass
@@ -152,11 +154,11 @@ class MediaReconcileFinished(Event):
     UI 据此更新 Media Manager footer 的「Prune Orphans」按钮状态 + 计数。
     """
 
-    backend: str = ""      # 'local' / 'folder' / 's3'
-    scanned: int = 0       # ObjectStore keys
-    referenced: int = 0    # storage 命中
-    orphans: int = 0       # 孤儿数(scanned - referenced)
-    deleted: int = 0       # 实际 delete 数(dry_run 时为 0)
+    backend: str = ""  # 'local' / 'folder' / 's3'
+    scanned: int = 0  # ObjectStore keys
+    referenced: int = 0  # storage 命中
+    orphans: int = 0  # 孤儿数(scanned - referenced)
+    deleted: int = 0  # 实际 delete 数(dry_run 时为 0)
     dry_run: bool = True
 
 
@@ -208,7 +210,7 @@ class AuthErrorOccurred(ErrorOccurred):
 class SettingsChanged(Event):
     """设置已变更(已热重载的部分)。"""
 
-    what: str = ""               # "storage" | "objectstore" | "credentials"
+    what: str = ""  # "storage" | "objectstore" | "credentials"
     new_settings: object | None = None  # Settings 实例(供 UI 同步)
     needs_relogin: bool = False  # True 表示 Telegram 凭据改了,需登出再登入
     needs_restart: bool = False  # 保留扩展
@@ -225,17 +227,19 @@ class ChannelSyncProgress(Event):
       - "done"       : 单频道完成
       - "failed"     : 单频道失败(error 字段非空)
     """
+
     channel_id: int = 0
     stage: str = ""
-    progress: int = 0           # 已处理消息数
-    total: int | None = None    # 总数(可空,history 全量无终点)
-    detail: str = ""            # 退避秒数 / 错误消息等
+    progress: int = 0  # 已处理消息数
+    total: int | None = None  # 总数(可空,history 全量无终点)
+    detail: str = ""  # 退避秒数 / 错误消息等
 
 
 @dataclass
 class ChannelSyncDone(Event):
     """全量同步整轮结束 — UI 进度对话框据此自动关闭。"""
-    result: object = None        # SyncResult(避免循环 import,用 object 占位)
+
+    result: object = None  # SyncResult(避免循环 import,用 object 占位)
 
 
 @dataclass
@@ -248,6 +252,7 @@ class ChannelMetadataChanged(Event):
     - `supergroup_id`:TG 内部 supergroup id(对应 TDLib `updateSupergroup`),
       MonitorService 据此查 `channels.username` 拿到 channel_id
     """
+
     channel_id: int = 0
     title: str | None = None
     username: str | None = None

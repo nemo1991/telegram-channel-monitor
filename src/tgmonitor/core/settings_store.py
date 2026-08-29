@@ -7,6 +7,7 @@
 > 为什么不用 pydantic-settings 反向序列化:它无"原地更新 .env"的语义,
 > 自己写一个轻量解析器更可控。
 """
+
 from __future__ import annotations
 
 import re
@@ -40,8 +41,8 @@ def _quote(v: str) -> str:
 class EnvFile:
     """解析后的 .env 文件(可序列化回原格式)。"""
 
-    raw_lines: list[str]      # 原始行(含注释/空行),用于保形输出
-    pairs: dict[str, str]     # 解析出的 key -> value
+    raw_lines: list[str]  # 原始行(含注释/空行),用于保形输出
+    pairs: dict[str, str]  # 解析出的 key -> value
     # key 在 raw_lines 中的 index(便于覆盖时直接改行)
     indices: dict[str, int]
 
@@ -84,6 +85,7 @@ def write_env_file(env: EnvFile, path: Path) -> None:
 
 # ---- 高层 API:Settings <-> EnvFile ----
 
+
 def settings_to_pairs(s: Settings) -> dict[str, str]:
     """Settings → .env 字段 dict(供 UI 编辑后写回)。"""
     return {
@@ -123,6 +125,7 @@ def update_env_with_settings(env_path: Path, settings: Settings) -> None:
 
 # ---- 可编辑模型(给 UI 用) ----
 
+
 @dataclass
 class EditableSettings:
     """UI 用的可编辑设置(类型友好,无 pydantic 依赖)。"""
@@ -132,7 +135,7 @@ class EditableSettings:
     phone: str = ""
     session_dir: str = "./data/session"
 
-    db_backend: str = "postgres"     # DBBackend.value
+    db_backend: str = "postgres"  # DBBackend.value
     db_dsn: str = ""
     db_root: str = "./data/messages"  # jsonl 用
 
@@ -229,7 +232,9 @@ class EditableSettings:
             objectstore_region=self.objectstore_region,
             objectstore_access_key=self.objectstore_access_key or None,
             objectstore_secret_key=self.objectstore_secret_key or None,
-            objectstore_bucket=self.objectstore_backend == "s3" and self.objectstore_bucket or self.objectstore_bucket,
+            objectstore_bucket=self.objectstore_backend == "s3"
+            and self.objectstore_bucket
+            or self.objectstore_bucket,
             media_policy=MediaPolicy(self.media_policy),
             media_max_bytes=self.media_max_mb * 1024 * 1024,
             data_root=Path(self.data_root),
@@ -261,6 +266,7 @@ def _validate_proxy_url(s: str) -> str | None:
 
 # ---- Settings 重建(用于热重载) ----
 
+
 # settings 不变(同进程),可绕过 pydantic 重新构造以让字段生效
 def reload_settings(env_path: Path | None = None, *, env: dict[str, str] | None = None) -> Settings:
     """从 .env 重新构造 Settings(env 可显式覆盖以测热重载)。
@@ -275,6 +281,7 @@ def reload_settings(env_path: Path | None = None, *, env: dict[str, str] | None 
 
 # ---- Settings diff(给 AppService.reconfigure 用) ----
 
+
 @dataclass(frozen=True)
 class SettingsDiff:
     """两个 Settings 之间的差异 — `AppService.reconfigure` 用。
@@ -288,6 +295,7 @@ class SettingsDiff:
         diff.changed=False,reconfigure 直接 return,UI 却弹「已保存并热重载」,
         属假成功)
     """
+
     needs_relogin: bool
     storage_changed: bool
     objects_changed: bool
@@ -311,14 +319,10 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
     storage / objects / 是否需要重登。
     """
     needs_relogin = (
-        old.api_id != new.api_id
-        or old.api_hash != new.api_hash
-        or old.phone != new.phone
+        old.api_id != new.api_id or old.api_hash != new.api_hash or old.phone != new.phone
     )
     storage_changed = (
-        old.db_backend != new.db_backend
-        or old.db_dsn != new.db_dsn
-        or old.db_root != new.db_root
+        old.db_backend != new.db_backend or old.db_dsn != new.db_dsn or old.db_root != new.db_root
     )
     objects_changed = (
         old.objectstore_backend != new.objectstore_backend
@@ -329,10 +333,7 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
         or old.objectstore_secret_key != new.objectstore_secret_key
         or old.objectstore_region != new.objectstore_region
     )
-    client_changed = (
-        old.proxy != new.proxy
-        or old.session_dir != new.session_dir
-    )
+    client_changed = old.proxy != new.proxy or old.session_dir != new.session_dir
     return SettingsDiff(
         needs_relogin=needs_relogin,
         storage_changed=storage_changed,

@@ -11,6 +11,7 @@ loop 在另一个线程上跑(否则 closeEvent 同步等时,loop 永远不会�
 Qt 在 closeEvent 处理过程中不 pump 自己的事件)。这里用后台线程 + QApplication
 processEvents 模拟生产(qasync 主线程 loop 在另一个线程里)。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -198,9 +199,7 @@ def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_th
         # 就已发生,closeEvent 拿到的是个已 cancelled 的 future。
         loop_thread.asyncio_loop.call_soon_threadsafe(task_holder.__setitem__, "t", None)
         # 先把 cb 调起来
-        fut_for_setup = asyncio.run_coroutine_threadsafe(
-            cb(), loop_thread.asyncio_loop
-        )
+        fut_for_setup = asyncio.run_coroutine_threadsafe(cb(), loop_thread.asyncio_loop)
         # 等 cb 把自己注册到 holder 上(loop 跑几个 tick)
         deadline_setup = time.monotonic() + 1.0
         while task_holder["t"] is None and time.monotonic() < deadline_setup:

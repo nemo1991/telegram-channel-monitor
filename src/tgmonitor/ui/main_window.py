@@ -28,6 +28,7 @@
   closeEvent → 同步阻塞 async shutdown → accept
   aboutToQuit → 尽力清理(备用)
 """
+
 # mypy: disable-error-code="attr-defined"
 # PySide6 6.6+.pyi 漏了一堆 class-level const(QFrame.NoFrame / Qt.UserRole /
 # QHeaderView.ResizeToContents / QDialogButtonBox.Ok/AcceptRole / ...)— 全
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
         # (~/.local/share/tgmonitor/.env / ~/Library/Application Support/tgmonitor/.env),
         # 不依赖 cwd。
         from tgmonitor.core.config import _user_data_dir
+
         self.env_path = env_path or (_user_data_dir() / ".env")
         self.setWindowTitle("tgmonitor · Telegram 频道监听")
         self.resize(1180, 740)
@@ -192,7 +194,8 @@ class MainWindow(QMainWindow):
                 # 只接受 Coroutine。cast 显式窄化。
                 coro = cast(Coroutine[Any, Any, None], self._shutdown_cb())
                 fut: concurrent.futures.Future[None] = asyncio.run_coroutine_threadsafe(
-                    coro, self.loop,
+                    coro,
+                    self.loop,
                 )
                 deadline_ms = 10_000
 
@@ -226,9 +229,7 @@ class MainWindow(QMainWindow):
                         # invokeMethod(QueuedConnection) 派到 main thread。
                         sl = subloop_holder[0]
                         if sl is not None:
-                            QMetaObject.invokeMethod(
-                                sl, "quit", Qt.ConnectionType.QueuedConnection
-                            )
+                            QMetaObject.invokeMethod(sl, "quit", Qt.ConnectionType.QueuedConnection)
 
                     fut.add_done_callback(_quit_on_done)
                     # hard upper bound:可 stop 的 QTimer,exec 返回后 `stop()`。
@@ -261,8 +262,7 @@ class MainWindow(QMainWindow):
                     except concurrent.futures.CancelledError:
                         log.warning("shutdown coroutine was cancelled (race)")
                     except Exception as exc:  # noqa: BLE001
-                        log.warning("shutdown raised: %s: %s",
-                                    type(exc).__name__, exc)
+                        log.warning("shutdown raised: %s: %s", type(exc).__name__, exc)
             except RuntimeError:
                 log.warning("loop unavailable during shutdown")
             except BaseException:  # noqa: BLE001
@@ -382,9 +382,7 @@ class MainWindow(QMainWindow):
         self.channel_panel.sync_requested.connect(self._on_sync_requested)
 
         # MediaManagerWidget 信号
-        self.media_manager.refresh_requested.connect(
-            lambda: self._on_media_refresh()
-        )
+        self.media_manager.refresh_requested.connect(lambda: self._on_media_refresh())
         self.media_manager.open_requested.connect(
             lambda cid, mid, idx: self._vm.open_media(cid, mid, idx)
         )
@@ -398,9 +396,7 @@ class MainWindow(QMainWindow):
             lambda cid, mid, idx: self._vm.delete_media(cid, mid, idx)
         )
         self.media_manager.batch_retry_requested.connect(self._on_media_batch_retry)
-        self.media_manager.batch_delete_requested.connect(
-            self._on_media_batch_delete
-        )
+        self.media_manager.batch_delete_requested.connect(self._on_media_batch_delete)
         self.media_manager.prune_requested.connect(self._on_media_prune)
         # 2026-08-25 PR #4:按频道批量删除 — 二次确认后调 vm.delete_by_channel
         self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
@@ -415,11 +411,11 @@ class MainWindow(QMainWindow):
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键。
 
-          Ctrl+1/2/3/4/5 — 切换 tab(LIVE/DASHBOARD/CHANNELS/MEDIA/SETTINGS)
-          Ctrl+R      — 刷新频道列表
-          Ctrl+F      — 聚焦搜索框
-          Ctrl+E      — 导出
-          Ctrl+T      — 切换主题
+        Ctrl+1/2/3/4/5 — 切换 tab(LIVE/DASHBOARD/CHANNELS/MEDIA/SETTINGS)
+        Ctrl+R      — 刷新频道列表
+        Ctrl+F      — 聚焦搜索框
+        Ctrl+E      — 导出
+        Ctrl+T      — 切换主题
         """
         from PySide6.QtGui import QKeySequence, QShortcut
 
@@ -471,7 +467,8 @@ class MainWindow(QMainWindow):
         if hasattr(self.channel_panel, "refresh_theme"):
             self.channel_panel.refresh_theme()
         self.status_bar.showMessage(
-            f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题", 2000,
+            f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题",
+            2000,
         )
 
     # ======================== ViewModel 事件绑定 ========================
@@ -534,6 +531,7 @@ class MainWindow(QMainWindow):
     def _on_header_action(self) -> None:
         """头栏「登录」按钮 — 弹 LoginDialog(复用现有代码)"""
         from tgmonitor.ui.widgets.login_dialog import LoginDialog
+
         dlg = LoginDialog(self.app, self.loop, self)
         dlg.exec()
         # 登录成功后刷新状态
@@ -572,7 +570,9 @@ class MainWindow(QMainWindow):
         if not isinstance(e, MediaDownloaded) or e.media is None:
             return
         self.live_view.update_media_status(
-            e.channel_id, e.telegram_msg_id, e.media,
+            e.channel_id,
+            e.telegram_msg_id,
+            e.media,
         )
         self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
 
@@ -606,7 +606,11 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"⚠ {msg}", 5000)
 
     def _on_settings_changed(
-        self, what: str, needs_relogin: bool, needs_restart: bool, backend_label: str,
+        self,
+        what: str,
+        needs_relogin: bool,
+        needs_restart: bool,
+        backend_label: str,
     ) -> None:
         # v1.0.22:热重载成功即代表对象存储本轮已通过无条件 connect 校验,
         # 启动时挂上的红字警告可移除
@@ -628,8 +632,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "需重启生效",
-                "代理或会话目录已变更并保存。\n"
-                "TDLib 客户端在启动时创建,请重启应用使其生效。",
+                "代理或会话目录已变更并保存。\nTDLib 客户端在启动时创建,请重启应用使其生效。",
             )
 
     # ======================== Media Manager 槽 (2026-08-24) ========================
@@ -651,14 +654,19 @@ class MainWindow(QMainWindow):
     def _on_media_batch_retry(self, keys: list) -> None:
         """批量 retry — keys 是 widget 内部的 _RowKey 列表(对象)。"""
         items = [(k.channel_id, k.telegram_msg_id, k.media_idx) for k in keys]
+
         async def _go() -> None:
             for cid, mid, idx in items:
                 try:
                     await self.app.retry_media(cid, mid, idx)
                 except Exception:  # noqa: BLE001
                     log.exception(
-                        "batch retry failed: %s/%s/%d", cid, mid, idx,
+                        "batch retry failed: %s/%s/%d",
+                        cid,
+                        mid,
+                        idx,
                     )
+
         run_coro(self.loop, _go(), error_label="batch_retry_media")
 
     def _on_media_batch_delete(self, keys: list) -> None:
@@ -689,8 +697,7 @@ class MainWindow(QMainWindow):
         ans = QMessageBox.warning(
             self,
             "Prune Orphans",
-            "扫描对象存储并删除无引用的孤立文件。\n"
-            "此操作不可撤销,确认执行?",
+            "扫描对象存储并删除无引用的孤立文件。\n此操作不可撤销,确认执行?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -711,7 +718,9 @@ class MainWindow(QMainWindow):
         self._vm.preview_delete_by_channel(channel_id)
 
     def _show_clear_channel_dialog(
-        self, channel_id: int, preview: object,
+        self,
+        channel_id: int,
+        preview: object,
     ) -> None:
         """`delete_preview_ready` 信号 handler — 弹 dialog,Accepted 才真删。"""
         from tgmonitor.core.dto import DeleteChannelPreview
@@ -754,56 +763,76 @@ class MainWindow(QMainWindow):
         self._vm.export_media_list(req)
 
     def _on_open_media_failed(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int, reason: str,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+        reason: str,
     ) -> None:
         """2026-08-25 v1.3.0 PR #5:VM.open_media 失败 → QMessageBox.warning
         把 reason 显示给用户(v1.2.0 默默吞错,只能去 log 翻)。
         """
         QMessageBox.warning(
-            self, "打开媒体失败",
+            self,
+            "打开媒体失败",
             f"无法打开频道 #{channel_id} 消息 #{telegram_msg_id} 第 {media_idx + 1} 个媒体:\n\n{reason}",
         )
 
     def _on_media_reveal(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> None:
         """2026-08-27 v1.4.0 PR #16:Reveal in Folder — 调 AppService.reveal_in_folder,
         失败弹 QMessageBox.warning(同 Open 失败模式)。
         """
+
         async def _go():
             return await self._app.reveal_in_folder(
-                channel_id, telegram_msg_id, media_idx,
+                channel_id,
+                telegram_msg_id,
+                media_idx,
             )
 
         def _after(result):
             if result.success:
                 return
             QMessageBox.warning(
-                self, "Reveal 失败",
+                self,
+                "Reveal 失败",
                 f"无法在文件管理器中显示:\n\n{result.error}",
             )
 
         run_coro(
-            self._qloop, _go(),
+            self._qloop,
+            _go(),
             on_success=lambda r: _after(r),
             error_label="reveal_in_folder",
         )
 
     def _on_media_copy(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int,
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
     ) -> None:
         """2026-08-27 v1.4.0 PR #16:Copy 路径 / URI — 调 AppService.copy_media_path,
         成功写剪贴板,失败弹 QMessageBox.warning。
         """
+
         async def _go():
             return await self._app.copy_media_path(
-                channel_id, telegram_msg_id, media_idx,
+                channel_id,
+                telegram_msg_id,
+                media_idx,
             )
 
         def _after(result):
             if not result.success:
                 QMessageBox.warning(
-                    self, "Copy 失败",
+                    self,
+                    "Copy 失败",
                     f"无法复制路径:\n\n{result.error}",
                 )
                 return
@@ -811,7 +840,8 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(result.copied_value or "")
 
         run_coro(
-            self._qloop, _go(),
+            self._qloop,
+            _go(),
             on_success=lambda r: _after(r),
             error_label="copy_media_path",
         )
@@ -910,15 +940,10 @@ class MainWindow(QMainWindow):
         """channels_changed / 登录状态变化 / 定时 触发刷新。"""
         all_known = self._vm.known_channels
         self.channel_panel.set_joined(list(all_known.values()))
-        subscribed = [
-            ch for cid, ch in all_known.items()
-            if cid in self.monitor.subscribed_ids
-        ]
+        subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.subscribed_ids]
         self.channel_panel.set_subscribed(subscribed)
 
-        self.live_view.set_channel_titles(
-            {cid: ch.title for cid, ch in all_known.items()}
-        )
+        self.live_view.set_channel_titles({cid: ch.title for cid, ch in all_known.items()})
         self._vm.load_recent_messages()
 
         # 更新 dashboard 统计
@@ -926,6 +951,7 @@ class MainWindow(QMainWindow):
 
 
 # ======================== 紧凑头栏 ========================
+
 
 class _HeaderBar(QWidget):
     """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
@@ -977,6 +1003,7 @@ class _HeaderBar(QWidget):
 
         # 主题切换按钮 — 显示「当前切到该主题后会变成什么」
         from tgmonitor.ui.theme import ThemeManager
+
         cur = ThemeManager.current()
         self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
         self.btn_theme.setObjectName("headerActionBtn")

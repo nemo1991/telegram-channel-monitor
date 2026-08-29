@@ -9,6 +9,7 @@
   - busy 期间重复调用 `_submit_*` 直接返回,不触发第二次提交
   - 响应返回后自动解锁(成功切页 / 失败显示错误文案,均不隐藏对话框)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -166,6 +167,7 @@ def test_submit_error_shows_message_keeps_page(qapp, qloop):
 
 def test_submit_exception_shows_error(qapp, qloop):
     """run_coro 异常路径:对话框内显示失败原因,不隐藏。"""
+
     async def boom(phone: str):
         raise RuntimeError("boom")
 

@@ -27,6 +27,7 @@
 `tdlib_channels.py` → `tdlib_errors.ClientClosingError`(已有独立模块)
 `tdlib_channels.py` 不反向 import `tdlib_client` — 无循环依赖。
 """
+
 # mypy: disable-error-code="misc,assignment"
 from __future__ import annotations
 
@@ -119,7 +120,10 @@ class ChannelsApi:
                 if isinstance(mc, int) and mc > 0:
                     member_count = mc
             return ChannelDTO(
-                id=chat_id, title=title, username=username, kind=kind,
+                id=chat_id,
+                title=title,
+                username=username,
+                kind=kind,
                 member_count=member_count,
             )
         if ct is not None and ct.get("@type") == "chatTypeBasicGroup":
@@ -132,7 +136,10 @@ class ChannelsApi:
                 if isinstance(mc, int) and mc > 0:
                     member_count = mc
             return ChannelDTO(
-                id=chat_id, title=title, username=None, kind="basic_group",
+                id=chat_id,
+                title=title,
+                username=None,
+                kind="basic_group",
                 member_count=member_count,
             )
         return None  # private / secret — 同步功能不覆盖
@@ -175,19 +182,18 @@ class ChannelsApi:
             # 等 ≤ N 秒让 tdlib_json 完成从 Wait* → Ready 的过渡
             # 仍 best-effort:超过 N 秒还没 ready(网络挂了/401/...)就 []
             try:
-                await self._c._wait_for_state(
-                    "ready", timeout=self._READY_WAIT_TIMEOUT
-                )
+                await self._c._wait_for_state("ready", timeout=self._READY_WAIT_TIMEOUT)
             except TimeoutError:
                 log.debug(
-                    "[tdlib] list_joined_channels: state=%r "
-                    "(未到 ready,%.1fs 超时)",
-                    self._c._state, self._READY_WAIT_TIMEOUT,
+                    "[tdlib] list_joined_channels: state=%r (未到 ready,%.1fs 超时)",
+                    self._c._state,
+                    self._READY_WAIT_TIMEOUT,
                 )
                 return []
             if self._c._state != "ready":
                 return []
         import time as _t
+
         t0 = _t.monotonic()
         result: list[ChannelDTO] = []
         try:
@@ -195,13 +201,16 @@ class ChannelsApi:
             chats = await self._c.request(
                 {"@type": "getChats", "chat_list": {"@type": "chatListMain"}, "limit": 200}
             )
-            log.info("[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
-                     len(chats.chat_ids) if chats and chats.chat_ids else 0,
-                     _t.monotonic() - t)
+            log.info(
+                "[tdlib] GetChats(limit=200) returned %d ids in %.3fs",
+                len(chats.chat_ids) if chats and chats.chat_ids else 0,
+                _t.monotonic() - t,
+            )
             if chats is None:
                 return result
             async for dto in self._iter_resolved_chats(
-                chats.chat_ids or [], t0,
+                chats.chat_ids or [],
+                t0,
             ):
                 result.append(dto)
         except ClientClosingError:
@@ -210,8 +219,11 @@ class ChannelsApi:
             log.info("[tdlib] list_joined_channels: aborted (client closing)")
         except Exception:  # noqa: BLE001
             log.exception("list_joined_channels failed")
-        log.info("[tdlib] list_joined_channels done: %d channels in %.2fs",
-                 len(result), _t.monotonic() - t0)
+        log.info(
+            "[tdlib] list_joined_channels done: %d channels in %.2fs",
+            len(result),
+            _t.monotonic() - t0,
+        )
         return result
 
     async def _iter_resolved_chats(
@@ -250,8 +262,12 @@ class ChannelsApi:
             if dto is None:
                 continue
             if n_total >= 50 and (i + 1) % 50 == 0:
-                log.info("[tdlib] list_joined_channels progress %d/%d in %.2fs",
-                         i + 1, n_total, _t.monotonic() - t0)
+                log.info(
+                    "[tdlib] list_joined_channels progress %d/%d in %.2fs",
+                    i + 1,
+                    n_total,
+                    _t.monotonic() - t0,
+                )
             yield dto
 
     # ============================================================
@@ -286,7 +302,8 @@ class ChannelsApi:
         except Exception as e:  # noqa: BLE001
             if _is_chat_not_found(e):
                 raise ChatUnavailableError(
-                    channel_id, reason=getattr(e, "message", None) or str(e),
+                    channel_id,
+                    reason=getattr(e, "message", None) or str(e),
                 ) from e
             raise
         if chat is None:
@@ -296,13 +313,15 @@ class ChannelsApi:
         # 跨 loop wakeup 噪音)
         while True:
             self._c._check_alive()
-            resp = await self._c.request({
-                "@type": "getChatHistory",
-                "chat_id": channel_id,
-                "from_message_id": before_msg_id,
-                "offset": 0,
-                "limit": limit,
-            })
+            resp = await self._c.request(
+                {
+                    "@type": "getChatHistory",
+                    "chat_id": channel_id,
+                    "from_message_id": before_msg_id,
+                    "offset": 0,
+                    "limit": limit,
+                }
+            )
             if resp is None or not getattr(resp, "messages", None):
                 break
             batch = list(resp.messages)
@@ -358,12 +377,14 @@ class ChannelsApi:
         self._c._check_alive()
         # 1) 触发后台下载(不等 — downloadFile synchronous=False)
         try:
-            await self._c.request({
-                "@type": "downloadFile",
-                "file_id": file_id,
-                "priority": 1,
-                "synchronous": False,
-            })
+            await self._c.request(
+                {
+                    "@type": "downloadFile",
+                    "file_id": file_id,
+                    "priority": 1,
+                    "synchronous": False,
+                }
+            )
         except ClientClosingError:
             raise  # 让 close() 路径正常 throw,monitor loop 兜底
         except Exception as e:  # noqa: BLE001

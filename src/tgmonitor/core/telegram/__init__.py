@@ -27,6 +27,7 @@ TDLib 自身的类型与原始更新对象不出本包。
   - `tdlib_channels.ChannelsApi` → 不被外部 import(仅 `tdlib_client.__init__`
     构造 `self.channels`),但 re-export 以便类型注解 / 测试可见
 """
+
 from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 from tgmonitor.core.telegram.tdlib_errors import (
     ClientClosingError,

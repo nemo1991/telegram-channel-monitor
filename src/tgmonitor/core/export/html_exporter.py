@@ -5,6 +5,7 @@
 2026-08-27 v1.4.0 PR #17:data URI 设 256KB 上限(见 `MAX_THUMB_DATA_URI_BYTES`),
 超出改占位文,避免大缩略图冻死浏览器。
 """
+
 from __future__ import annotations
 
 import base64
@@ -128,7 +129,9 @@ class HtmlExporter(Exporter):
                             if len(blob) > MAX_THUMB_DATA_URI_BYTES:
                                 log.info(
                                     "thumb too large, skip inline: key=%s size=%d > %d",
-                                    med.thumb_key, len(blob), MAX_THUMB_DATA_URI_BYTES,
+                                    med.thumb_key,
+                                    len(blob),
+                                    MAX_THUMB_DATA_URI_BYTES,
                                 )
                                 continue
                             mime = _guess_thumb_mime(med.thumb_key, med.mime_type)

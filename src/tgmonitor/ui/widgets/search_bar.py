@@ -7,6 +7,7 @@
 - 右侧清除按钮
 - 占位文字可定制
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal

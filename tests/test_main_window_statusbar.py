@@ -7,6 +7,7 @@
 来源:2026-08-13 需求 — 底部状态栏显示与 TG 的通信状态
 (数据源 `updateConnectionState`,经 ConnectionStateChanged 事件桥接过来)。
 """
+
 from __future__ import annotations
 
 import os

@@ -4,6 +4,7 @@
 - 防越界:禁止 `..` 与绝对路径
 - 内容寻址:典型用法是 `put(sha256_of_bytes, bytes)`,天然去重
 """
+
 from __future__ import annotations
 
 import asyncio

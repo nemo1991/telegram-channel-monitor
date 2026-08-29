@@ -12,6 +12,7 @@ Phase 1 版本:
 - 速率限制 / 错误统计
 - 同步进度概览
 """
+
 from __future__ import annotations
 
 import logging
@@ -429,7 +430,9 @@ class DashboardWidget(QWidget):
         run_coro(self._loop, _go(), error_label="dashboard_refresh_stats")
 
     def _apply_stats_table(
-        self, rows: list[tuple[str, str, int]], total: int,
+        self,
+        rows: list[tuple[str, str, int]],
+        total: int,
     ) -> None:
         """从 background loop 调回主线程填充表格。"""
         self.card_total_messages.set_value(f"{total:,}", "已监听频道累计")

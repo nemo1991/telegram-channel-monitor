@@ -18,6 +18,7 @@
  11. force=True 绕过 skip #1 — 真重下覆盖(2026-08-24 Media Manager retry)
  12. force=True 绕过 skip #2 — 真重下覆盖
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -59,6 +60,7 @@ def storage():
     """2026-08-24:download_one 现在依赖 storage.find_media_by_file_id,所有
     测试用 InMemoryRepository 替原 None。"""
     from tests.conftest import InMemoryRepository
+
     return InMemoryRepository()
 
 
@@ -72,6 +74,7 @@ def _make_dl(
 
 
 # ---- 1. 成功路径 ----
+
 
 async def test_download_one_stores_bytes_and_returns_updated_dto(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -98,6 +101,7 @@ async def test_download_one_stores_bytes_and_returns_updated_dto(
 
 # ---- 2. file_id 缺失 ----
 
+
 async def test_download_one_returns_failed_when_file_id_missing(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
 ) -> None:
@@ -119,6 +123,7 @@ async def test_download_one_returns_failed_when_file_id_missing(
 
 # ---- 3. 已知 oversized(被 settings 拒)----
 
+
 async def test_download_one_skips_oversized_by_setting(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
 ) -> None:
@@ -132,12 +137,11 @@ async def test_download_one_skips_oversized_by_setting(
     assert out.download_status == MediaDownloadStatus.FAILED
     assert out.download_error
     # 没写
-    assert not (objects._root / "media").exists() or not any(
-        (objects._root / "media").iterdir()
-    )
+    assert not (objects._root / "media").exists() or not any((objects._root / "media").iterdir())
 
 
 # ---- 4. max_bytes=0 = 无限制(已知大尺寸也通过)----
+
 
 async def test_download_one_zero_max_bytes_means_unlimited(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -157,6 +161,7 @@ async def test_download_one_zero_max_bytes_means_unlimited(
 
 # ---- 5. download 失败 ----
 
+
 async def test_download_one_returns_failed_on_download_failure(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
 ) -> None:
@@ -170,12 +175,11 @@ async def test_download_one_returns_failed_on_download_failure(
     assert out.download_error, "失败应带原因"
     assert out.object_key is None
     # 没有任何 bytes 写入
-    assert not (objects._root / "media").exists() or not any(
-        (objects._root / "media").iterdir()
-    )
+    assert not (objects._root / "media").exists() or not any((objects._root / "media").iterdir())
 
 
 # ---- 6. unknown-size hard cap(已知 file_size=None,真下来超大)----
+
 
 async def test_download_one_hard_cap_for_unknown_size(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -191,7 +195,8 @@ async def test_download_one_hard_cap_for_unknown_size(
     dl = _make_dl(client, objects, storage, max_bytes=1000)  # 1 KB 上限
 
     out = await dl.download_one(
-        msg_pk=5, media=_make_media(file_size=None),  # 大小未知
+        msg_pk=5,
+        media=_make_media(file_size=None),  # 大小未知
     )
 
     assert out is not None
@@ -199,12 +204,11 @@ async def test_download_one_hard_cap_for_unknown_size(
     assert out.download_error, "失败应带原因"
     assert out.object_key is None
     # 确认 objects.put 没被调用(否则返 DONE 的 DTO)
-    assert not (objects._root / "media").exists() or not any(
-        (objects._root / "media").iterdir()
-    )
+    assert not (objects._root / "media").exists() or not any((objects._root / "media").iterdir())
 
 
 # ---- 7. make_key 稳定性(同一 file_id 不同 file_name → 同 key)----
+
 
 def test_make_key_is_stable_across_file_name(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -220,6 +224,7 @@ def test_make_key_is_stable_across_file_name(
 
 
 # ---- bonus:max_bytes=0 也接受 oversized 真下载(同等行为)----
+
 
 async def test_download_one_zero_max_bytes_passes_actual_oversized(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -238,6 +243,7 @@ async def test_download_one_zero_max_bytes_passes_actual_oversized(
 
 
 # ---- ObjectMeta 透传 ----
+
 
 async def test_download_one_passes_size_via_meta(
     client: FakeTelegramClient, objects: LocalObjectStore, storage
@@ -266,6 +272,7 @@ async def test_download_one_passes_size_via_meta(
     # 真下载下来 size 跟 file_size 对齐
     assert out.file_size == 6
 
+
 # ============================================================
 # 2026-08-24:skip-if-stored(skip #1 storage / skip #2 objectstore / 落空路径)
 # ============================================================
@@ -287,18 +294,23 @@ async def test_download_one_skips_when_storage_has_object_key(
     )
     # pre-populate storage:同一 telegram_file_id="fid-A" 已经 DOWNLOADED,
     # 但用不同的 file_name 模拟跨消息共享 file_id 的场景。
-    await storage.save_message(MessageDTO(
-        id=0, channel_id=99, telegram_msg_id=1,
-        text="prior", date=_dt(2026, 1, 1),
-        media=[
-            dataclasses.replace(
-                prior,
-                object_key="media/prior_key.png",
-                object_backend="local",
-                download_status=MediaDownloadStatus.DONE,
-            )
-        ],
-    ))
+    await storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=99,
+            telegram_msg_id=1,
+            text="prior",
+            date=_dt(2026, 1, 1),
+            media=[
+                dataclasses.replace(
+                    prior,
+                    object_key="media/prior_key.png",
+                    object_backend="local",
+                    download_status=MediaDownloadStatus.DONE,
+                )
+            ],
+        )
+    )
     # 没在 client 注入任何 payload — 若走了 client 路径会返 None,失败。
     dl = _make_dl(client, objects, storage)
     med = _make_media(file_name="new_name.jpg", file_size=1024)
@@ -375,16 +387,27 @@ async def test_download_one_force_bypasses_storage_skip(
     from tgmonitor.core.dto import MessageDTO
 
     prior = _make_media(
-        file_size=2048, mime_type="image/png", file_name="prior.png",
+        file_size=2048,
+        mime_type="image/png",
+        file_name="prior.png",
     )
-    await storage.save_message(MessageDTO(
-        id=0, channel_id=99, telegram_msg_id=1, text="prior",
-        date=datetime.now(UTC),  # type: ignore[arg-type]
-        media=[dataclasses.replace(
-            prior, object_key="media/prior.png", object_backend="local",
-            download_status=MediaDownloadStatus.DONE,
-        )],
-    ))
+    await storage.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=99,
+            telegram_msg_id=1,
+            text="prior",
+            date=datetime.now(UTC),  # type: ignore[arg-type]
+            media=[
+                dataclasses.replace(
+                    prior,
+                    object_key="media/prior.png",
+                    object_backend="local",
+                    download_status=MediaDownloadStatus.DONE,
+                )
+            ],
+        )
+    )
     new_payload = b"newly-fetched"
     client.set_download("fid-A", new_payload)
     dl = _make_dl(client, objects, storage)

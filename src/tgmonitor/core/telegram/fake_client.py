@@ -7,6 +7,7 @@
     async for msg in client.subscribe_updates():
         ...
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -146,7 +147,8 @@ class FakeTelegramClient(TelegramClient):
         """2026-08-27 v1.4.0 PR #13:Fake 注册永远成功 → `ready`。"""
         self._state = "ready"
         self._me = {
-            "id": 1, "username": "fake_new",
+            "id": 1,
+            "username": "fake_new",
             "first_name": first_name or "Fake",
             "last_name": last_name or "",
         }
@@ -245,6 +247,7 @@ class FakeTelegramClient(TelegramClient):
                 from tgmonitor.core.telegram.tdlib_errors import (
                     TelegramRateLimitError,
                 )
+
                 raise TelegramRateLimitError(60.0)
             yield MessageDTO(
                 id=mid,

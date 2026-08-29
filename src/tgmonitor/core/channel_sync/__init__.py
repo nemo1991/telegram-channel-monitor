@@ -5,6 +5,7 @@
 
 详见 `service.py`。
 """
+
 from tgmonitor.core.channel_sync.service import ChannelSyncService
 
 __all__ = ["ChannelSyncService"]

@@ -6,6 +6,7 @@
 - cache_key_for:DONE + thumb_key 优先 / object_key fallback / 不可显示返 None
 - AppService.load_thumbnail_bytes:三后端路径(local / folder / S3 mock)
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -132,17 +133,22 @@ def test_render_pixmap_valid_jpeg_succeeds(qt_app: QApplication) -> None:
 
 def _photo(**overrides) -> MediaDTO:
     base = MediaDTO(
-        type=MediaType.PHOTO, mime_type="image/jpeg", file_name="p.jpg",
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="p.jpg",
         telegram_file_id="fid",
     )
     from dataclasses import replace
+
     return replace(base, **overrides)
 
 
 def test_cache_key_prefers_thumb_key() -> None:
     med = _photo(
-        object_key="media/full.jpg", object_backend="local",
-        thumb_key="media/thumb.jpg", thumb_backend="local",
+        object_key="media/full.jpg",
+        object_backend="local",
+        thumb_key="media/thumb.jpg",
+        thumb_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
     ck = cache_key_for(med)
@@ -151,7 +157,8 @@ def test_cache_key_prefers_thumb_key() -> None:
 
 def test_cache_key_falls_back_to_object_key() -> None:
     med = _photo(
-        object_key="media/full.jpg", object_backend="local",
+        object_key="media/full.jpg",
+        object_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
     ck = cache_key_for(med)
@@ -160,7 +167,8 @@ def test_cache_key_falls_back_to_object_key() -> None:
 
 def test_cache_key_returns_none_for_pending() -> None:
     med = _photo(
-        object_key="media/x.jpg", object_backend="local",
+        object_key="media/x.jpg",
+        object_backend="local",
         download_status=MediaDownloadStatus.PENDING,
     )
     assert cache_key_for(med) is None
@@ -176,13 +184,18 @@ def test_cache_key_returns_none_when_no_key() -> None:
 
 @pytest.mark.asyncio
 async def test_load_thumbnail_bytes_returns_none_for_failed(
-    app: AppService, storage: StorageRepository,
+    app: AppService,
+    storage: StorageRepository,
 ) -> None:
     """FAILED media 直接返 None(不读 ObjectStore)。"""
     from tgmonitor.core.dto import MessageDTO
+
     media = _photo(download_status=MediaDownloadStatus.FAILED)
     msg = MessageDTO(
-        id=0, channel_id=100, telegram_msg_id=1, media=[media],
+        id=0,
+        channel_id=100,
+        telegram_msg_id=1,
+        media=[media],
     )
     await storage.save_message(msg)
     assert await app.load_thumbnail_bytes(media) is None
@@ -190,7 +203,9 @@ async def test_load_thumbnail_bytes_returns_none_for_failed(
 
 @pytest.mark.asyncio
 async def test_load_thumbnail_bytes_local_backend(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
     qt_app: QApplication,
 ) -> None:
     """Local 后端:写入 PNG bytes,AppService 读出来。"""
@@ -201,7 +216,8 @@ async def test_load_thumbnail_bytes_local_backend(
     await objectstore.put("media/thumb.png", png, None)
 
     med = _photo(
-        object_key="media/thumb.png", object_backend="local",
+        object_key="media/thumb.png",
+        object_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
     out = await app.load_thumbnail_bytes(med)
@@ -210,7 +226,9 @@ async def test_load_thumbnail_bytes_local_backend(
 
 @pytest.mark.asyncio
 async def test_load_thumbnail_bytes_folder_backend(
-    app: AppService, storage: StorageRepository, tmp_path,
+    app: AppService,
+    storage: StorageRepository,
+    tmp_path,
     qt_app: QApplication,
 ) -> None:
     """Folder 后端:替换 app.objects 后读 thumbnail bytes。"""
@@ -225,7 +243,8 @@ async def test_load_thumbnail_bytes_folder_backend(
     app.objects = folder  # type: ignore[assignment]
     try:
         med = _photo(
-            object_key="media/thumb.png", object_backend="folder",
+            object_key="media/thumb.png",
+            object_backend="folder",
             download_status=MediaDownloadStatus.DONE,
         )
         out = await app.load_thumbnail_bytes(med)
@@ -244,7 +263,8 @@ async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
     app.objects = s3  # type: ignore[assignment]
     try:
         med = _photo(
-            object_key="media/thumb.png", object_backend="s3",
+            object_key="media/thumb.png",
+            object_backend="s3",
             download_status=MediaDownloadStatus.DONE,
         )
         out = await app.load_thumbnail_bytes(med)
@@ -255,12 +275,15 @@ async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
 
 @pytest.mark.asyncio
 async def test_load_thumbnail_bytes_missing_key_returns_none(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
 ) -> None:
     """DONE 但 ObjectStore 里没有 key → open_read 抛 KeyError → 返 None。"""
     assert isinstance(objectstore, LocalObjectStore)
     med = _photo(
-        object_key="media/missing.png", object_backend="local",
+        object_key="media/missing.png",
+        object_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
     out = await app.load_thumbnail_bytes(med)
@@ -269,7 +292,9 @@ async def test_load_thumbnail_bytes_missing_key_returns_none(
 
 @pytest.mark.asyncio
 async def test_load_thumbnail_bytes_uses_thumb_key_first(
-    app: AppService, storage: StorageRepository, objectstore: ObjectStore,
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
     qt_app: QApplication,
 ) -> None:
     """优先 thumb_key;thumb 内容应该 ≠ object 内容(我们故意不同)。"""
@@ -284,8 +309,10 @@ async def test_load_thumbnail_bytes_uses_thumb_key_first(
     await objectstore.put("media/full.png", full_bytes, None)
 
     med = _photo(
-        object_key="media/full.png", object_backend="local",
-        thumb_key="media/thumb.png", thumb_backend="local",
+        object_key="media/full.png",
+        object_backend="local",
+        thumb_key="media/thumb.png",
+        thumb_backend="local",
         download_status=MediaDownloadStatus.DONE,
     )
     out = await app.load_thumbnail_bytes(med)

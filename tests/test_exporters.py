@@ -1,4 +1,5 @@
 """Exporter 快照测试 — JSON / CSV / Markdown / HTML。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -34,9 +35,7 @@ async def _setup(tmp_path):
 
     base = datetime(2026, 1, 1, 12, 0, 0)
     await storage.save_message(make_message(channel_id=100, msg_id=1, text="第一条", date=base))
-    await storage.save_message(
-        make_photo(channel_id=200, msg_id=1)
-    )
+    await storage.save_message(make_photo(channel_id=200, msg_id=1))
     await storage.save_message(make_message(channel_id=200, msg_id=2, text="再见", date=base))
 
     return storage, objects, bus, [ch1, ch2]
@@ -72,6 +71,7 @@ async def test_export_each_format(tmp_path, fmt, ext):
     text = out.read_text(encoding="utf-8")
     if fmt == ExportFormat.JSON:
         import json
+
         d = json.loads(text)
         assert d["schema"] == "tgmonitor.export/v1"
         assert len(d["messages"]) == 3
@@ -157,9 +157,19 @@ async def test_media_csv_exporter_snapshot(tmp_path):
     row = rows[0]
     # 13 列固定顺序
     expected_cols = [
-        "channel_id", "channel_title", "telegram_msg_id", "message_date",
-        "media_idx", "media_type", "file_name", "file_size", "mime_type",
-        "download_status", "download_error", "object_key", "object_backend",
+        "channel_id",
+        "channel_title",
+        "telegram_msg_id",
+        "message_date",
+        "media_idx",
+        "media_type",
+        "file_name",
+        "file_size",
+        "mime_type",
+        "download_status",
+        "download_error",
+        "object_key",
+        "object_backend",
     ]
     assert list(row.keys()) == expected_cols
     assert row["channel_id"] == "200"
@@ -236,7 +246,10 @@ async def _bulk_seed_messages(storage, channel_id: int, count: int) -> None:
     for i in range(1, count + 1):
         await storage.save_message(
             make_message(
-                channel_id=channel_id, msg_id=i, text=f"m{i}", date=base,
+                channel_id=channel_id,
+                msg_id=i,
+                text=f"m{i}",
+                date=base,
             )
         )
 
@@ -296,10 +309,13 @@ async def test_export_pagination_emits_progress_per_batch(tmp_path):
     req = ExportRequest(channel_ids=[100], format=ExportFormat.CSV, out_path=str(out))
 
     progress_written: list[int] = []
+
     async def on_event(event) -> None:
         from tgmonitor.core.events import ExportProgress
+
         if isinstance(event, ExportProgress):
             progress_written.append(event.written)
+
     bus.subscribe_all(on_event)
 
     async for _ in svc.run(req):
@@ -401,12 +417,19 @@ async def test_csv_exporter_guards_formula_prefix(tmp_path):
     svc = ExportService(storage, objects, bus)
     # fixture 上追加一条带危险文本的 message(make_message 不接受 author,用 replace)
     from tests.conftest import make_message
+
     base = make_message(
-        channel_id=100, msg_id=99, date=datetime(2026, 1, 5, 12),
+        channel_id=100,
+        msg_id=99,
+        date=datetime(2026, 1, 5, 12),
     )
-    await storage.save_message(replace(
-        base, text="=cmd|'/c calc'!A1", author="@SUM(1+1)",
-    ))
+    await storage.save_message(
+        replace(
+            base,
+            text="=cmd|'/c calc'!A1",
+            author="@SUM(1+1)",
+        )
+    )
     out = tmp_path / "msg.csv"
     req = ExportRequest(channel_ids=[100, 200], format=ExportFormat.CSV, out_path=str(out))
     async for _ in svc.run(req):
@@ -427,11 +450,15 @@ async def test_markdown_exporter_scrubs_user_text(tmp_path):
     svc = ExportService(storage, objects, bus)
     # 加一条带 `## ` 文本的 message
     from tests.conftest import make_message
-    await storage.save_message(make_message(
-        channel_id=100, msg_id=99,
-        text="## 假冒系统公告:请尽快操作",
-        date=datetime(2026, 1, 5, 12),
-    ))
+
+    await storage.save_message(
+        make_message(
+            channel_id=100,
+            msg_id=99,
+            text="## 假冒系统公告:请尽快操作",
+            date=datetime(2026, 1, 5, 12),
+        )
+    )
     out = tmp_path / "msg.md"
     req = ExportRequest(channel_ids=[100, 200], format=ExportFormat.MARKDOWN, out_path=str(out))
     async for _ in svc.run(req):
@@ -457,8 +484,10 @@ async def test_html_exporter_skips_oversized_thumb(tmp_path):
     svc = ExportService(storage, objects, bus)
     out = tmp_path / "msg.html"
     req = ExportRequest(
-        channel_ids=[100, 200], format=ExportFormat.HTML,
-        out_path=str(out), include_thumbnails=True,
+        channel_ids=[100, 200],
+        format=ExportFormat.HTML,
+        out_path=str(out),
+        include_thumbnails=True,
     )
     async for _ in svc.run(req):
         pass

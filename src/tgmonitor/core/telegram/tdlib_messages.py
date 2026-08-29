@@ -20,6 +20,7 @@ dispatch 用 `content.type_name`(`tdlib_json.TDLibObject` 把 `@type`
 首字母大写:"messagePhoto" → "MessagePhoto");对非 TDLibObject 输入
 兜底回退到 `type(content).__name__`。
 """
+
 from __future__ import annotations
 
 import logging
@@ -133,6 +134,7 @@ def _build_media_handler(
     - has_duration: 是否取 duration(秒);audio/voice/video/animation/video_note = True;document = False
     - thumb_attr: media_obj 下挂的 Thumbnail 字段名;None = 无缩略图(voice_note)
     """
+
     def _fn(content: Any) -> tuple[list[MediaDTO], str]:
         obj = getattr(content, media_obj, None)
         if obj is None:
@@ -161,6 +163,7 @@ def _build_media_handler(
             kwargs["thumb_key"] = tk
             kwargs["thumb_backend"] = tb
         return ([MediaDTO(**kwargs)], _extract_caption(content))
+
     return _fn
 
 
@@ -172,14 +175,16 @@ def _handle_photo(content: Any) -> tuple[list[MediaDTO], str]:
     biggest = _pick_biggest_photo_size(ph)
     file_obj = getattr(biggest, "photo", None) if biggest is not None else None
     return (
-        [MediaDTO(
-            type=MediaType.PHOTO,
-            mime_type="image/jpeg",
-            file_size=_file_size(file_obj),
-            width=getattr(biggest, "width", None) if biggest is not None else None,
-            height=getattr(biggest, "height", None) if biggest is not None else None,
-            telegram_file_id=_file_id(file_obj),
-        )],
+        [
+            MediaDTO(
+                type=MediaType.PHOTO,
+                mime_type="image/jpeg",
+                file_size=_file_size(file_obj),
+                width=getattr(biggest, "width", None) if biggest is not None else None,
+                height=getattr(biggest, "height", None) if biggest is not None else None,
+                telegram_file_id=_file_id(file_obj),
+            )
+        ],
         _extract_caption(content),
     )
 
@@ -193,16 +198,18 @@ def _handle_sticker(content: Any) -> tuple[list[MediaDTO], str]:
     th = getattr(st, "thumbnail", None)
     tk, tb = _thumb_key_from(th)
     return (
-        [MediaDTO(
-            type=MediaType.STICKER,
-            file_size=_file_size(file_obj),
-            width=getattr(st, "width", None),
-            height=getattr(st, "height", None),
-            telegram_file_id=_file_id(file_obj),
-            thumb_key=tk,
-            thumb_backend=tb,
-            emoji=getattr(st, "emoji", None),
-        )],
+        [
+            MediaDTO(
+                type=MediaType.STICKER,
+                file_size=_file_size(file_obj),
+                width=getattr(st, "width", None),
+                height=getattr(st, "height", None),
+                telegram_file_id=_file_id(file_obj),
+                thumb_key=tk,
+                thumb_backend=tb,
+                emoji=getattr(st, "emoji", None),
+            )
+        ],
         "",
     )
 
@@ -211,35 +218,49 @@ _MEDIA_HANDLERS: dict[str, Any] = {
     "MessagePhoto": _handle_photo,
     "MessageVideo": _build_media_handler(
         MediaType.VIDEO,
-        media_obj="video", file_attr="video",
-        has_dims=True, thumb_attr="thumbnail",
+        media_obj="video",
+        file_attr="video",
+        has_dims=True,
+        thumb_attr="thumbnail",
     ),
     "MessageAnimation": _build_media_handler(
         MediaType.ANIMATION,
-        media_obj="animation", file_attr="animation",
-        has_dims=True, thumb_attr="thumbnail",
+        media_obj="animation",
+        file_attr="animation",
+        has_dims=True,
+        thumb_attr="thumbnail",
     ),
     "MessageAudio": _build_media_handler(
         MediaType.AUDIO,
-        media_obj="audio", file_attr="audio",
+        media_obj="audio",
+        file_attr="audio",
         mime_default="audio/mpeg",
-        has_dims=False, thumb_attr="album_cover_thumbnail",
+        has_dims=False,
+        thumb_attr="album_cover_thumbnail",
     ),
     "MessageVoiceNote": _build_media_handler(
         MediaType.VOICE,
-        media_obj="voice_note", file_attr="voice",
+        media_obj="voice_note",
+        file_attr="voice",
         mime_default="audio/ogg",
-        has_dims=False, thumb_attr=None,  # voice 没缩略图
+        has_dims=False,
+        thumb_attr=None,  # voice 没缩略图
     ),
     "MessageVideoNote": _build_media_handler(
         MediaType.VIDEO_NOTE,
-        media_obj="video_note", file_attr="video",
-        has_dims=True, dims_square=True, thumb_attr="thumbnail",
+        media_obj="video_note",
+        file_attr="video",
+        has_dims=True,
+        dims_square=True,
+        thumb_attr="thumbnail",
     ),
     "MessageDocument": _build_media_handler(
         MediaType.DOCUMENT,
-        media_obj="document", file_attr="document",
-        has_dims=False, has_duration=False, thumb_attr="thumbnail",
+        media_obj="document",
+        file_attr="document",
+        has_dims=False,
+        has_duration=False,
+        thumb_attr="thumbnail",
     ),
     "MessageSticker": _handle_sticker,
 }
@@ -347,45 +368,27 @@ _SERVICE_HANDLERS: dict[str, Any] = {
     "MessageCustomServiceAction": lambda c: _formatted_text(c, "text"),
     "MessageVideoChatScheduled": _handle_video_chat_scheduled,
     "MessageVideoChatStarted": lambda c: "📹 视频通话已开始",
-    "MessageVideoChatEnded": lambda c: (
-        f"📹 视频通话已结束({getattr(c, 'duration', 0)}s)"
-    ),
+    "MessageVideoChatEnded": lambda c: f"📹 视频通话已结束({getattr(c, 'duration', 0)}s)",
     "MessageInviteVideoChatParticipants": lambda c: (
         f"📹 邀请 {len(getattr(c, 'user_ids', []) or [])} 人加入视频通话"
     ),
-    "MessageStory": lambda c: (
-        f"📖 转发的故事(频道 #{getattr(c, 'story_sender_chat_id', 0)})"
-    ),
+    "MessageStory": lambda c: f"📖 转发的故事(频道 #{getattr(c, 'story_sender_chat_id', 0)})",
     "MessageGame": lambda c: f"🎮 {_formatted_text(getattr(c, 'game', None), 'title')}",
     "MessageGift": _handle_gift,
     "MessageGiftedPremium": _handle_gifted_premium,
     "MessageGiftedStars": lambda c: (
         f"⭐ {getattr(getattr(c, 'gift', None), 'star_count', 0)} Stars"
     ),
-    "MessageGiveaway": lambda c: (
-        f"🎁 抽奖开始({getattr(c, 'winner_count', 0)} 名获奖者)"
-    ),
+    "MessageGiveaway": lambda c: f"🎁 抽奖开始({getattr(c, 'winner_count', 0)} 名获奖者)",
     "MessageGiveawayCreated": _handle_giveaway_created,
-    "MessageGiveawayCompleted": lambda c: (
-        f"🎁 抽奖结束 · {getattr(c, 'winner_count', 0)} 名获奖者"
-    ),
-    "MessageGiveawayWinners": lambda c: (
-        f"🏆 {getattr(c, 'winner_count', 0)} 名获奖者"
-    ),
-    "MessageGiveawayPrizeStars": lambda c: (
-        f"⭐ {getattr(c, 'star_count', 0)} Stars 抽奖奖励"
-    ),
+    "MessageGiveawayCompleted": lambda c: f"🎁 抽奖结束 · {getattr(c, 'winner_count', 0)} 名获奖者",
+    "MessageGiveawayWinners": lambda c: f"🏆 {getattr(c, 'winner_count', 0)} 名获奖者",
+    "MessageGiveawayPrizeStars": lambda c: f"⭐ {getattr(c, 'star_count', 0)} Stars 抽奖奖励",
     "MessageUpgradedGift": _handle_upgraded_gift,
     "MessageRefundedUpgradedGift": lambda c: "↩️ 礼物已退款",
-    "MessagePremiumGiftCode": lambda c: (
-        f"🎟️ Premium 兑换码: {getattr(c, 'month_count', 0)} 个月"
-    ),
-    "MessagePinMessage": lambda c: (
-        f"📌 已置顶消息 #{getattr(c, 'message_id', 0)}"
-    ),
-    "MessageChatBoost": lambda c: (
-        f"🚀 群组被 boost {getattr(c, 'boost_count', 0)} 次"
-    ),
+    "MessagePremiumGiftCode": lambda c: f"🎟️ Premium 兑换码: {getattr(c, 'month_count', 0)} 个月",
+    "MessagePinMessage": lambda c: f"📌 已置顶消息 #{getattr(c, 'message_id', 0)}",
+    "MessageChatBoost": lambda c: f"🚀 群组被 boost {getattr(c, 'boost_count', 0)} 次",
     "MessageUnsupported": lambda c: "❓ 不支持的消息",
     "MessageExpiredPhoto": lambda c: "🕯️ 自毁照片已过期",
     "MessageExpiredVideo": lambda c: "🕯️ 自毁视频已过期",
@@ -443,8 +446,10 @@ def _map_message(msg: Any) -> MessageDTO:
 # 2026-08-27 v1.4.0 PR #9:把 TDLib messageOrigin* 对象扁平化。
 # TDLib 经常加新 origin type,我们只展开常见 4 种,其余保留 type_name 不展。
 _FORWARD_ORIGIN_TYPES = {
-    "messageOriginUser", "messageOriginChannel",
-    "messageOriginHiddenUser", "messageOriginChat",
+    "messageOriginUser",
+    "messageOriginChannel",
+    "messageOriginHiddenUser",
+    "messageOriginChat",
 }
 
 
@@ -461,8 +466,14 @@ def _normalize_forward_origin(fo: Any) -> dict[str, Any] | None:
         return {"@type": type_name}
     out: dict[str, Any] = {"@type": type_name}
     # 提取常见字段;tdlib_json 把字段暴露为属性。
-    for attr in ("sender_user_id", "sender_chat_id", "author_signature",
-                 "chat_id", "message_id", "date"):
+    for attr in (
+        "sender_user_id",
+        "sender_chat_id",
+        "author_signature",
+        "chat_id",
+        "message_id",
+        "date",
+    ):
         v = getattr(fo, attr, None)
         if v is not None:
             out[attr] = v
@@ -491,7 +502,8 @@ def _map_reaction(r: Any) -> ReactionDTO | None:
     if type_name == "reactionEmoji":
         emoji = getattr(r, "emoji", "") or ""
         return ReactionDTO(
-            type="emoji", emoji=emoji,
+            type="emoji",
+            emoji=emoji,
             count=int(getattr(r, "total_count", 0) or 0),
             is_chosen=bool(getattr(r, "is_chosen", False)),
         )

@@ -1,4 +1,5 @@
 """SettingsStore 单测 — .env 解析/序列化/保形更新。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,15 +39,12 @@ def test_parse_env_with_comments(tmp_path: Path):
 def test_write_env_preserves_format(tmp_path: Path):
     p = tmp_path / ".env"
     p.write_text(
-        "# header\n"
-        "TG_API_ID=1\n"
-        "TG_API_HASH=h\n"
-        "TG_PHONE=+1\n",
+        "# header\nTG_API_ID=1\nTG_API_HASH=h\nTG_PHONE=+1\n",
         encoding="utf-8",
     )
     env = parse_env_file(p)
-    env.pairs["TG_API_ID"] = "999"          # 改
-    env.pairs["TG_DB_BACKEND"] = "jsonl"    # 新增
+    env.pairs["TG_API_ID"] = "999"  # 改
+    env.pairs["TG_DB_BACKEND"] = "jsonl"  # 新增
     write_env_file(env, p)
     text = p.read_text(encoding="utf-8")
     assert "# header" in text
@@ -99,8 +97,12 @@ def test_editable_settings_validate():
     assert e.validate() == []
 
     e = EditableSettings(
-        api_id=1, api_hash="abcdef0123456789", phone="8613800000000",
-        db_backend="nosuch", objectstore_backend="local", media_policy="thumbnail",
+        api_id=1,
+        api_hash="abcdef0123456789",
+        phone="8613800000000",
+        db_backend="nosuch",
+        objectstore_backend="local",
+        media_policy="thumbnail",
     )
     errs = e.validate()
     assert any("DB_BACKEND" in x for x in errs)
@@ -108,14 +110,22 @@ def test_editable_settings_validate():
 
 def test_editable_to_settings_roundtrip():
     e = EditableSettings(
-        api_id=1, api_hash="h" * 32, phone="+1",
+        api_id=1,
+        api_hash="h" * 32,
+        phone="+1",
         session_dir="./s",
-        db_backend="jsonl", db_dsn="", db_root="./m",
-        objectstore_backend="folder", objectstore_root="./o",
-        objectstore_endpoint="", objectstore_region="us-east-1",
-        objectstore_access_key="", objectstore_secret_key="",
+        db_backend="jsonl",
+        db_dsn="",
+        db_root="./m",
+        objectstore_backend="folder",
+        objectstore_root="./o",
+        objectstore_endpoint="",
+        objectstore_region="us-east-1",
+        objectstore_access_key="",
+        objectstore_secret_key="",
         objectstore_bucket="b",
-        media_policy="full", data_root="./d",
+        media_policy="full",
+        data_root="./d",
     )
     s = e.to_settings()
     assert s.api_id == 1
@@ -130,11 +140,17 @@ def test_editable_to_settings_roundtrip():
 def _settings(**kw) -> Settings:
     """最小可工作 Settings(default 全相同)。"""
     base = dict(
-        api_id=1, api_hash="a" * 32, phone="+1",
+        api_id=1,
+        api_hash="a" * 32,
+        phone="+1",
         session_dir=Path("/tmp/s"),
-        db_backend=DBBackend.JSONL, db_dsn="", db_root=Path("/tmp/m"),
-        objectstore_backend=ObjectStoreBackend.FOLDER, objectstore_root=Path("/tmp/o"),
-        media_policy=MediaPolicy.METADATA, data_root=Path("/tmp"),
+        db_backend=DBBackend.JSONL,
+        db_dsn="",
+        db_root=Path("/tmp/m"),
+        objectstore_backend=ObjectStoreBackend.FOLDER,
+        objectstore_root=Path("/tmp/o"),
+        media_policy=MediaPolicy.METADATA,
+        data_root=Path("/tmp"),
     )
     base.update(kw)
     return Settings(**base)  # type: ignore[arg-type]
@@ -191,4 +207,3 @@ def test_diff_settings_session_dir_change_needs_restart():
     d = diff_settings(old, new)
     assert d.client_changed is True
     assert d.changed is True
-

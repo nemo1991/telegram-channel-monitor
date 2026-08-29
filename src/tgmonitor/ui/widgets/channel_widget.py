@@ -8,6 +8,7 @@
 事件:`ChannelSubscribed / ChannelUnsubscribed` 会刷新下半栏。
 设计原则:订阅是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -136,9 +137,7 @@ class _ChannelListCard(QWidget):
         self.lst.setAlternatingRowColors(True)
         if extended_selection:
             # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
-            self.lst.setSelectionMode(
-                QAbstractItemView.SelectionMode.ExtendedSelection
-            )
+            self.lst.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.lst.itemDoubleClicked.connect(self._on_lst_double_clicked)
         root.addWidget(self.lst)
 
@@ -234,8 +233,7 @@ class _ChannelListCard(QWidget):
         return [
             int(self.lst.item(i).data(Qt.UserRole))
             for i in range(self.lst.count())
-            if self.lst.item(i) is not None
-            and self.lst.item(i).isSelected()
+            if self.lst.item(i) is not None and self.lst.item(i).isSelected()
         ]
 
     def all_cids(self) -> list[int]:
@@ -276,7 +274,7 @@ class ChannelWidget(QWidget):
     # 异步拉频道后 → 主线程刷新 list
     joined_loaded = Signal(list)
     # 用户在"已监听"栏多选 + 点"全量同步…" → 触发 sync dialog
-    sync_requested = Signal(list)   # list[int] channel_ids
+    sync_requested = Signal(list)  # list[int] channel_ids
 
     def __init__(
         self,
@@ -318,8 +316,7 @@ class ChannelWidget(QWidget):
             empty_hint_spec=(
                 "📋",
                 "暂无已加入频道",
-                "请先在「设置 → 账户」登录 Telegram 账号,\n"
-                "登录成功后点「刷新」自动拉取。",
+                "请先在「设置 → 账户」登录 Telegram 账号,\n登录成功后点「刷新」自动拉取。",
             ),
             bottom_hint="💡 双击一行 → 加入监听白名单",
         )
@@ -400,16 +397,12 @@ class ChannelWidget(QWidget):
         self._joined[ch.id] = ch
         self._subscribed_ids.add(ch.id)
         self.subs_card.add_item(ch)
-        self.subs_card.count_label.setText(
-            f"已监听:{len(self._subscribed_ids)}"
-        )
+        self.subs_card.count_label.setText(f"已监听:{len(self._subscribed_ids)}")
 
     def _remove_from_subscribed_list(self, channel_id: int) -> None:
         self._subscribed_ids.discard(channel_id)
         self.subs_card.remove_by_cid(channel_id)
-        self.subs_card.count_label.setText(
-            f"已监听:{len(self._subscribed_ids)}"
-        )
+        self.subs_card.count_label.setText(f"已监听:{len(self._subscribed_ids)}")
 
     # ---- 槽 ----
 
@@ -434,7 +427,8 @@ class ChannelWidget(QWidget):
         if cid in self._subscribed_ids:
             return  # 已订阅,双击无效(改在已监听栏里退订)
         run_coro(
-            self.loop, self.app.subscribe_channel(ch),
+            self.loop,
+            self.app.subscribe_channel(ch),
             error_label="subscribe_channel",
         )
 
@@ -442,7 +436,8 @@ class ChannelWidget(QWidget):
         if cid is None:
             return
         run_coro(
-            self.loop, self.app.unsubscribe_channel(int(cid)),
+            self.loop,
+            self.app.unsubscribe_channel(int(cid)),
             error_label="unsubscribe_channel",
         )
 
@@ -456,9 +451,7 @@ class ChannelWidget(QWidget):
             # 没选:全部订阅
             ids = self.subs_card.all_cids()
         if not ids:
-            QMessageBox.information(
-                self, "全量同步", "已监听列表为空,先订阅频道"
-            )
+            QMessageBox.information(self, "全量同步", "已监听列表为空,先订阅频道")
             return
         self.sync_requested.emit(ids)
 

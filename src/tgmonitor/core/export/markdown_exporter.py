@@ -3,6 +3,7 @@
 2026-08-27 v1.4.0 PR #17:用户消息 / 文件名 / 频道标题走 `_scrub_markdown`
 防 Markdown 注入(CWE-79)。
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -76,7 +77,9 @@ class MarkdownExporter(Exporter):
                             f"({_human_size(med.file_size)})"
                         )
                         if med.object_key:
-                            lines.append(f"  - object_key: `{med.object_key}` (backend={med.object_backend})")
+                            lines.append(
+                                f"  - object_key: `{med.object_key}` (backend={med.object_backend})"
+                            )
                     lines.append("")
         out_path.write_text("\n".join(lines), encoding="utf-8")  # noqa: ASYNC240 — 文件 IO 同步
         return out_path.stat().st_size  # noqa: ASYNC240 — 同上

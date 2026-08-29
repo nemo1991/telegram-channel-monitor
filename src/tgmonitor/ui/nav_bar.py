@@ -17,6 +17,7 @@
   currentColor,所以不能依赖 QSS color → SVG currentColor 链路 — 必须
   在 SVG 字节上直接替换为 hex。这是项目内 nav 唯一的图标加载入口。
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
@@ -47,18 +48,18 @@ _NAV_ITEMS = [
 #   active  >  hover  >  idle
 _DARK = {
     # 父级 nav bg = #1a1a26(由 QSS `#navBar` 设)
-    "active_bg": "#5b9cf5",       # accent 实色 — 强烈对比,选中立刻可见
-    "hover_bg": "#2c2c45",        # 比 idle 亮 1 阶
+    "active_bg": "#5b9cf5",  # accent 实色 — 强烈对比,选中立刻可见
+    "hover_bg": "#2c2c45",  # 比 idle 亮 1 阶
     "idle_bg": "transparent",
-    "active_fg": "#ffffff",       # 白字在蓝实色上,WCAG 5.3:1
-    "inactive_fg": "#b0b5c8",     # 浅灰(WCAG AA 对 #1a1a26)
+    "active_fg": "#ffffff",  # 白字在蓝实色上,WCAG 5.3:1
+    "inactive_fg": "#b0b5c8",  # 浅灰(WCAG AA 对 #1a1a26)
     "accent": "#5b9cf5",
     "accent_soft": "rgba(91,156,245,0.18)",  # hover 用(在 dark active 上太亮反而刺眼)
 }
 _LIGHT = {
     # 父级 nav bg = #1a1a26(浅色主题 nav 底故意保持深色做"锚点")
-    "active_bg": "#5b9cf5",       # accent 实色 — 强对比
-    "hover_bg": "#2c2c45",        # 比父级 #1a1a26 亮一阶
+    "active_bg": "#5b9cf5",  # accent 实色 — 强对比
+    "hover_bg": "#2c2c45",  # 比父级 #1a1a26 亮一阶
     "idle_bg": "transparent",
     "active_fg": "#ffffff",
     "inactive_fg": "#b0b5c8",
@@ -141,8 +142,7 @@ class _NavButton(QWidget):
         # 让按钮宽度保持 64 不变(不切换 active 时整条 nav 不抖)。
         border_left = "3px solid transparent"
         self.setStyleSheet(
-            f"border-left:{border_left};"
-            f"border-top:0;border-right:0;border-bottom:0;"
+            f"border-left:{border_left};border-top:0;border-right:0;border-bottom:0;"
         )
 
         # ---- label palette + QSS(双保险) ----
@@ -152,9 +152,7 @@ class _NavButton(QWidget):
             lbl_pal.setColor(lbl.foregroundRole(), fg)
             lbl.setPalette(lbl_pal)
         self._ico_label.setStyleSheet("background: transparent;")
-        self._txt_label.setStyleSheet(
-            f"background: transparent;color:{fg.name()};font-size:10px;"
-        )
+        self._txt_label.setStyleSheet(f"background: transparent;color:{fg.name()};font-size:10px;")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         super().mousePressEvent(event)

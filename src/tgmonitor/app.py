@@ -8,6 +8,7 @@
                     → AppService
                     → UI(QMainWindow)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -57,9 +58,7 @@ def _setup_file_logging(level: int) -> None:
             encoding="utf-8",
         )
         handler.setLevel(level)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         logging.getLogger().addHandler(handler)
         log.info("file logging enabled: %s", log_dir / "tgmonitor.log")
     except Exception:  # noqa: BLE001
@@ -106,13 +105,16 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None
         log.error(
             "[bootstrap] objectstore.connect() failed, 媒体下载将失败: %s "
             "(backend=%s bucket=%s endpoint=%s)",
-            e, settings.objectstore_backend.value,
-            settings.objectstore_bucket, settings.objectstore_endpoint,
+            e,
+            settings.objectstore_backend.value,
+            settings.objectstore_bucket,
+            settings.objectstore_endpoint,
         )
     else:
         log.info(
             "[bootstrap] objectstore.connect() took %.2fs backend=%s",
-            time.monotonic() - t, settings.objectstore_backend.value,
+            time.monotonic() - t,
+            settings.objectstore_backend.value,
         )
 
     t = time.monotonic()
@@ -123,16 +125,23 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None
     client = build_telegram_client(settings, use_fake=False, event_bus=bus)
     log.info(
         "[bootstrap] telegram client built in %.2fs kind=%s",
-        time.monotonic() - t, type(client).__name__,
+        time.monotonic() - t,
+        type(client).__name__,
     )
 
     # FULL 媒体策略才真正下载原文件:组合根负责接线 MediaDownloader,
     # MonitorService 侧 `downloader=None`(如未接线)时 FULL 策略静默退化为
     # 不下载 — 避免历史 bug:策略选了 FULL 但没有任何下载器在工作。
     monitor = MonitorService(
-        bus, client, storage, objects, settings,
+        bus,
+        client,
+        storage,
+        objects,
+        settings,
         downloader=MediaDownloader(
-            client, storage, objects,
+            client,
+            storage,
+            objects,
             max_bytes=settings.media_max_bytes,
         ),
     )
@@ -183,6 +192,7 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
         )
         # 日志路径 — 跟 README「数据目录」章节一致
         from tgmonitor.core.config import _user_data_dir
+
         log_dir = _user_data_dir()
         box.setDetailedText(str(log_dir))
         ret = box.exec()
@@ -240,6 +250,7 @@ def run() -> None:
     from PySide6.QtGui import QGuiApplication
 
     from tgmonitor.ui.icon import load_app_icon
+
     QGuiApplication.setWindowIcon(load_app_icon())
 
     # 全局 QSS — 字号 / 间距 / 状态色(由 ThemeManager 统一管理)
@@ -248,6 +259,7 @@ def run() -> None:
         import os as _os
 
         from tgmonitor.ui.theme import Theme, ThemeManager
+
         env_theme = _os.environ.get("TG_THEME", "light").lower()
         start_theme = Theme.DARK if env_theme == "dark" else Theme.LIGHT
         ThemeManager.apply(start_theme)
@@ -262,6 +274,7 @@ def run() -> None:
     # v1.0.1:走 platform-native 目录(macOS ~/Library/Application Support/
     # tgmonitor/.env 等),Settings.model_config.env_file 同源 — 不依赖 cwd。
     from tgmonitor.core.config import _user_data_dir
+
     env_path = _user_data_dir() / ".env"
 
     async def _setup_then_show() -> None:
@@ -280,7 +293,8 @@ def run() -> None:
             monitor.set_whitelist(c.id for c in subscribed)
             log.info(
                 "[setup] loaded %d subscribed channels from storage in %.2fs",
-                len(subscribed), time.monotonic() - t,
+                len(subscribed),
+                time.monotonic() - t,
             )
             t = time.monotonic()
             await monitor.start()
@@ -304,12 +318,13 @@ def run() -> None:
                     await app_svc.reconcile_orphans(dry_run=True)
                 except Exception:  # noqa: BLE001 — startup reconcile 不能让 UI 崩溃
                     log.exception("startup orphan reconcile failed")
+
             asyncio.create_task(_startup_reconcile())
 
             # UI 构造 — 现在 services 都 ready,事件总线已就位
             from tgmonitor.ui.main_window import MainWindow
-            win = MainWindow(app_svc, monitor, loop, env_path=env_path,
-                             objects_error=objects_error)
+
+            win = MainWindow(app_svc, monitor, loop, env_path=env_path, objects_error=objects_error)
             # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
             # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
             # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
@@ -317,8 +332,7 @@ def run() -> None:
             win.set_shutdown_callback(_shutdown_async)
             win.show()
             state["win"] = win
-            log.info("[setup] full _setup_then_show done in %.2fs",
-                     time.monotonic() - t_setup)
+            log.info("[setup] full _setup_then_show done in %.2fs", time.monotonic() - t_setup)
         except BaseException as e:  # noqa: BLE001
             # 不能 raise 出 setup_then_show —— 没人在 await 它,异常会被
             # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出

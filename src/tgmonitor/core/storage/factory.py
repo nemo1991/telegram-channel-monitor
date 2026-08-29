@@ -2,6 +2,7 @@
 
 实现类**懒加载**:只 import 用户实际选中的那个,避免装 Postgres 时被强制拉 motor(或反过来)。
 """
+
 from __future__ import annotations
 
 from tgmonitor.core.config import DBBackend, Settings
@@ -23,4 +24,3 @@ def build_storage(settings: Settings) -> StorageRepository:
 
         return JsonlFileStore(root=settings.db_root)
     raise ValueError(f"unknown db backend: {settings.db_backend}")
-

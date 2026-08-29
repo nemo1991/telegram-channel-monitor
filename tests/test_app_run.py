@@ -12,6 +12,7 @@ event loop + qasync 跑起来才能验)。所以这一组做的是"源码结构"
 这是 **结构性** 测试。如果有人重构 `run()` 改回老模式,这几个断言会失败。
 不强引用具体任务名 — `run_forever` / `qasync.QEventLoop` 仍允许出现。
 """
+
 from __future__ import annotations
 
 import ast
@@ -74,14 +75,14 @@ def test_no_run_until_complete_in_app_run() -> None:
                 callee = sub.func
                 # 方法调用 `loop.run_until_complete(...)`
                 if isinstance(callee, ast.Attribute) and callee.attr == "run_until_complete":
-                        raise AssertionError(
-                            "app.run() uses loop.run_until_complete(...) — "
-                            "qasync pauses the loop between run_until_complete "
-                            "and run_forever, causing "
-                            "`RuntimeError: loop ... is not the running loop` "
-                            "from tdlib_json task wakeups. Use ensure_future(..., "
-                            "loop=loop) and a single run_forever() instead."
-                        )
+                    raise AssertionError(
+                        "app.run() uses loop.run_until_complete(...) — "
+                        "qasync pauses the loop between run_until_complete "
+                        "and run_forever, causing "
+                        "`RuntimeError: loop ... is not the running loop` "
+                        "from tdlib_json task wakeups. Use ensure_future(..., "
+                        "loop=loop) and a single run_forever() instead."
+                    )
         # 只查顶层 run 函数,嵌套 def 不会被这个 break 提前退出
         break
 
@@ -113,12 +114,10 @@ def test_main_window_is_constructed_after_services_ready(run_body: str) -> None:
     assert bootstrap_app_idx >= 0
     assert main_window_idx >= 0
     assert bootstrap_idx < main_window_idx, (
-        "MainWindow 必须在 _bootstrap 之后构造,否则事件总线上的 service "
-        "还没起来就被 wire 进 UI。"
+        "MainWindow 必须在 _bootstrap 之后构造,否则事件总线上的 service 还没起来就被 wire 进 UI。"
     )
     assert bootstrap_app_idx < main_window_idx, (
-        "MainWindow 必须在 app.bootstrap 之后构造,否则启动期的 "
-        "LoginStateChanged 事件被 UI 错过。"
+        "MainWindow 必须在 app.bootstrap 之后构造,否则启动期的 LoginStateChanged 事件被 UI 错过。"
     )
 
 
@@ -132,9 +131,9 @@ def test_bootstrap_wires_media_downloader() -> None:
     source = inspect.getsource(app_module)
     tree = ast.parse(source)
     bootstrap = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and n.name == "_bootstrap"
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_bootstrap"
     )
     body = ast.unparse(bootstrap)
     m = re.search(r"MonitorService\s*\([^)]*", body)
@@ -271,7 +270,11 @@ def test_log_level_env(monkeypatch) -> None:
 
 
 async def test_bootstrap_continues_when_objectstore_connect_fails(
-    monkeypatch, settings, bus, client, storage,
+    monkeypatch,
+    settings,
+    bus,
+    client,
+    storage,
 ) -> None:
     """v1.0.21 回归:对象存储 connect 失败(如 S3 HeadBucket 400)不阻止启动。
 
@@ -280,6 +283,7 @@ async def test_bootstrap_continues_when_objectstore_connect_fails(
     bootstrap 也调它 → S3 配置有问题的用户直接启动失败弹窗。现在启动降级为
     log.error + 继续;保存设置时的严格校验保留在 app_service 的 reconfigure。
     """
+
     class _BrokenStore:
         async def connect(self) -> None:
             raise ConnectionError("HeadBucket 400")
@@ -288,7 +292,8 @@ async def test_bootstrap_continues_when_objectstore_connect_fails(
     monkeypatch.setattr(app_module, "build_storage", lambda s: storage)
     monkeypatch.setattr(app_module, "build_object_store", lambda s: _BrokenStore())
     monkeypatch.setattr(
-        app_module, "build_telegram_client",
+        app_module,
+        "build_telegram_client",
         lambda s, use_fake=False, event_bus=None: client,
     )
 

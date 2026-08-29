@@ -13,6 +13,7 @@
 空状态:首启 / 没订阅频道 / 还没消息到时居中显示「暂无消息」占位面板
 (走 `form_row.empty_hint`),第一条数据到达自动隐藏。
 """
+
 from __future__ import annotations
 
 from datetime import UTC
@@ -56,8 +57,7 @@ class MessageView(QListWidget):
         self._empty_overlay = empty_hint(
             icon="💬",
             title="暂无消息",
-            hint="先去「频道」页双击订阅一个频道,\n"
-                 "新消息会实时显示在这里。",
+            hint="先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
             parent=self,
         )
         self._empty_overlay.raise_()
@@ -192,9 +192,7 @@ class MessageView(QListWidget):
                 self._seen[k] -= 1
         self._refresh_empty_state()
 
-    def update_media_status(
-        self, channel_id: int, telegram_msg_id: int, media: MediaDTO
-    ) -> None:
+    def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
         """异步下载结束回调:找到对应行,更新 DTO 里的 media 并重绘文本。
 
         `media` 是 `_download_worker` 回写后的新对象(`dataclasses.replace`
@@ -212,8 +210,7 @@ class MessageView(QListWidget):
             return
         for i, med in enumerate(dto.media):
             if med is media or (
-                media.telegram_file_id
-                and med.telegram_file_id == media.telegram_file_id
+                media.telegram_file_id and med.telegram_file_id == media.telegram_file_id
             ):
                 dto.media[i] = media
                 break

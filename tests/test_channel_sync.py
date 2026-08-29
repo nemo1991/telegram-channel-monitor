@@ -9,6 +9,7 @@
 - save_message 幂等(重复 sync 不引入重复消息)
 - 选单频道 / 多频道 路径
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -25,6 +26,7 @@ from tgmonitor.core.events import EventBus
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 # ---- helpers ----
+
 
 async def _make_app(
     bus: EventBus, fake: FakeTelegramClient, storage: InMemoryRepository
@@ -61,15 +63,22 @@ async def test_sync_metadata_and_history(bus, client, storage, settings):
     # 注入历史:max_id=100, count=100
     client.set_history(100, max_id=100, count=100)
     # 注入元数据
-    client.set_metadata(ChannelDTO(
-        id=100, title="Telegram News",
-        username="tnews", kind="channel", member_count=12345,
-    ))
+    client.set_metadata(
+        ChannelDTO(
+            id=100,
+            title="Telegram News",
+            username="tnews",
+            kind="channel",
+            member_count=12345,
+        )
+    )
     captured = _capture_events(bus)
 
     options = SyncOptions(
-        include_metadata=True, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,  # 加速
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,  # 加速
     )
     result = await svc.sync_channels([100], options)
 
@@ -106,8 +115,10 @@ async def test_sync_metadata_only(bus, client, storage, settings):
     client.set_metadata(ChannelDTO(id=100, title="X", kind="channel"))
 
     options = SyncOptions(
-        include_metadata=True, include_history=False,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=True,
+        include_history=False,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     await svc.sync_channels([100], options)
     msgs = await storage.list_messages([100])
@@ -119,8 +130,10 @@ async def test_sync_history_only(bus, client, storage, settings):
     svc = await _make_app(bus, client, storage)
     client.set_history(100, max_id=100, count=50)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     await svc.sync_channels([100], options)
     ch = await storage.get_channel(100)
@@ -140,15 +153,23 @@ async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
     """已有 max_id=50,client 那边 max=100,只应拉 51-100(50 条)。"""
     # 先存 50 条到 storage
     for mid in range(1, 51):
-        await storage.save_message(MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=mid,
-            text=f"old-{mid}", date=datetime(2026, 1, 1),
-        ))
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=100,
+                telegram_msg_id=mid,
+                text=f"old-{mid}",
+                date=datetime(2026, 1, 1),
+            )
+        )
     svc = await _make_app(bus, client, storage)
     client.set_history(100, max_id=100, count=100)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=True,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+        resume_from_saved=True,
     )
     captured = _capture_events(bus)
     await svc.sync_channels([100], options)
@@ -164,9 +185,7 @@ async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
     assert res.per_channel[100].messages_skipped >= 2
 
 
-async def test_resume_disabled_re_pulls_and_skips_already_stored(
-    bus, client, storage, settings
-):
+async def test_resume_disabled_re_pulls_and_skips_already_stored(bus, client, storage, settings):
     """resume_from_saved=False → 即使 storage 有 max_id,也从头拉。
 
     skip-if-stored:storage 已有的 1-50 在 re-sync 时静默跳过,
@@ -174,15 +193,23 @@ async def test_resume_disabled_re_pulls_and_skips_already_stored(
     `total_messages_added == 50`(语义:实际写入 DB 的新消息)。
     """
     for mid in range(1, 51):
-        await storage.save_message(MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=mid,
-            text=f"old-{mid}", date=datetime(2026, 1, 1),
-        ))
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=100,
+                telegram_msg_id=mid,
+                text=f"old-{mid}",
+                date=datetime(2026, 1, 1),
+            )
+        )
     svc = await _make_app(bus, client, storage)
     client.set_history(100, max_id=100, count=100)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=False,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+        resume_from_saved=False,
     )
     captured = _capture_events(bus)
     await svc.sync_channels([100], options)
@@ -208,14 +235,17 @@ async def test_cancel_stops_sync_immediately(bus, client, storage, settings):
     client.set_history(100, max_id=100, count=100)
     # 设个慢 delay(50ms 每条),让取消信号有机会插进来
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=50, page_delay_ms=0,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=50,
+        page_delay_ms=0,
     )
     import asyncio
 
     async def _cancel_soon() -> None:
         await asyncio.sleep(0.05)
         svc.cancel()
+
     asyncio.create_task(_cancel_soon())
     result = await svc.sync_channels([100], options)
     # 应被取消
@@ -236,8 +266,10 @@ async def test_rate_limit_triggers_backoff_and_continues(bus, client, storage, s
     client.set_history(100, max_id=100, count=100)
     client.inject_rate_limit_after(30)  # 第 30+1 条前抛
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     captured = _capture_events(bus)
     result = await svc.sync_channels([100], options)
@@ -258,19 +290,23 @@ async def test_rate_limit_during_metadata_skips_history(bus, client, storage, se
 
     # 用 wrapper 替换 get_channel_metadata,只为 100 抛
     from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
+
     orig = client.get_channel_metadata
 
     async def _selective(cid: int):
         if cid == 100:
             raise TelegramRateLimitError(0.01)  # 10ms
         return await orig(cid)
+
     client.get_channel_metadata = _selective  # type: ignore[assignment]
 
     # 准备 history(不应被触达)
     client.set_history(100, max_id=100, count=100)
     options = SyncOptions(
-        include_metadata=True, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     result = await svc.sync_channels([100], options)
     assert result.per_channel[100].rate_limited
@@ -292,8 +328,10 @@ async def test_sync_multiple_channels_serial(bus, client, storage, settings):
     client.set_history(1, max_id=10, count=10)
     client.set_history(2, max_id=20, count=20)
     options = SyncOptions(
-        include_metadata=True, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     result = await svc.sync_channels([1, 2], options)
     assert 1 in result.per_channel and 2 in result.per_channel
@@ -303,9 +341,7 @@ async def test_sync_multiple_channels_serial(bus, client, storage, settings):
     assert len(msgs_2) == 20
 
 
-async def test_sync_continues_after_one_channel_fails(
-    bus, client, storage, settings
-):
+async def test_sync_continues_after_one_channel_fails(bus, client, storage, settings):
     """一频道 metadata 失败,不应阻塞下一个频道。"""
     svc = await _make_app(bus, client, storage)
     from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
@@ -317,14 +353,17 @@ async def test_sync_continues_after_one_channel_fails(
         if cid == 1:
             raise TelegramRateLimitError(0.01)  # 10ms 退避
         return await orig(cid)
+
     client.get_channel_metadata = _selective  # type: ignore[assignment]
 
     # 2 号频道 metadata 正常(走 orig)
     client.set_metadata(ChannelDTO(id=2, title="OK", kind="channel"))
     client.set_history(2, max_id=5, count=5)
     options = SyncOptions(
-        include_metadata=True, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     result = await svc.sync_channels([1, 2], options)
     # 1 标记 rate_limited,2 成功
@@ -340,9 +379,7 @@ async def test_sync_continues_after_one_channel_fails(
 # ============================================================
 
 
-async def test_metadata_sync_does_not_change_subscribed(
-    bus, client, storage, settings
-):
+async def test_metadata_sync_does_not_change_subscribed(bus, client, storage, settings):
     """ChannelDTO.from_settings sync 时传入 is_subscribed=False,
     但 upsert_channel_metadata 必须保留旧 is_subscribed 不动。
     """
@@ -371,6 +408,7 @@ def test_translate_rate_limit_429():
     class _FakeError:
         code = 429
         retry_after = 12
+
     got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
     assert isinstance(got, TelegramRateLimitError)
     assert got.retry_after_seconds == 12
@@ -383,6 +421,7 @@ def test_translate_rate_limit_flood_wait_text():
     class _FakeError:
         code = 0
         message = "FLOOD_WAIT_42 something"
+
     got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
     assert isinstance(got, TelegramRateLimitError)
     assert got.retry_after_seconds == 42
@@ -394,6 +433,7 @@ def test_translate_rate_limit_returns_none_for_unrelated():
     class _FakeError:
         code = 400
         message = "Something else"
+
     got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
     assert got is None
 
@@ -403,24 +443,30 @@ def test_translate_rate_limit_returns_none_for_unrelated():
 # ============================================================
 
 
-async def test_sync_skips_already_stored_messages(
-    bus, client, storage, settings
-):
+async def test_sync_skips_already_stored_messages(bus, client, storage, settings):
     """re-sync 同一频道 — storage 已有 100 条,client 再推 100 同 id,全静默跳过。
 
     messages_added=0, messages_skipped=100, len(msgs) 仍 100。
     """
     # pre-populate 1-100
     for mid in range(1, 101):
-        await storage.save_message(MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=mid,
-            text=f"old-{mid}", date=datetime(2026, 1, 1),
-        ))
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=100,
+                telegram_msg_id=mid,
+                text=f"old-{mid}",
+                date=datetime(2026, 1, 1),
+            )
+        )
     svc = await _make_app(bus, client, storage)
     client.set_history(100, max_id=100, count=100)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=False,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+        resume_from_saved=False,
     )
     captured = _capture_events(bus)
     result = await svc.sync_channels([100], options)
@@ -444,8 +490,10 @@ async def test_sync_emits_init_event(bus, client, storage, settings):
     client.set_history(2, max_id=5, count=5)
     captured = _capture_events(bus)
     options = SyncOptions(
-        include_metadata=True, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     await svc.sync_channels([1, 2], options)
     # 第一条 progress 应是 init
@@ -461,8 +509,10 @@ async def test_sync_emits_channel_start_event(bus, client, storage, settings):
     client.set_history(100, max_id=10, count=10)
     captured = _capture_events(bus)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
     )
     await svc.sync_channels([100], options)
     starts = [e for e in captured["progress"] if e.stage == "channel_start"]
@@ -477,28 +527,35 @@ async def test_sync_emits_channel_start_event(bus, client, storage, settings):
     assert cs_idx < first_history_idx
 
 
-async def test_sync_progress_history_includes_skipped_counter(
-    bus, client, storage, settings
-):
+async def test_sync_progress_history_includes_skipped_counter(bus, client, storage, settings):
     """history 节流事件 detail 同时含「新增」与「已存」计数。"""
     # pre-populate 30 条
     for mid in range(1, 31):
-        await storage.save_message(MessageDTO(
-            id=0, channel_id=100, telegram_msg_id=mid,
-            text=f"old-{mid}", date=datetime(2026, 1, 1),
-        ))
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=100,
+                telegram_msg_id=mid,
+                text=f"old-{mid}",
+                date=datetime(2026, 1, 1),
+            )
+        )
     svc = await _make_app(bus, client, storage)
     client.set_history(100, max_id=100, count=100)
     captured = _capture_events(bus)
     options = SyncOptions(
-        include_metadata=False, include_history=True,
-        chat_delay_ms=0, page_delay_ms=0, resume_from_saved=False,
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+        resume_from_saved=False,
     )
     await svc.sync_channels([100], options)
     # 至少一条 history 事件 detail 含「新增 ... 已存 ...」
     assert any(
         e.detail and "新增" in e.detail and "已存" in e.detail
-        for e in captured["progress"] if e.stage == "history"
+        for e in captured["progress"]
+        if e.stage == "history"
     )
     # 终态 SyncResult.per_channel 携带 skipped 计数(30 skip + 70 新落)
     res = captured["done"][0].result
