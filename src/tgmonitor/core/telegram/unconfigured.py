@@ -85,6 +85,20 @@ class UnconfiguredTelegramClient(TelegramClient):
         """凭据缺失,兜底返 `phone_required`(AuthService 会先拦截)。"""
         return self._state, None
 
+    async def submit_email(self, email: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:无凭据时兜底返 `phone_required`,UI 不应走到。"""
+        return self._state, None
+
+    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:无凭据时兜底返 `phone_required`,UI 不应走到。"""
+        return self._state, None
+
+    async def submit_registration(
+        self, first_name: str, last_name: str = "",
+    ) -> tuple[str, str | None]:
+        """2026-08-27 v1.4.0 PR #13:无凭据时兜底返 `phone_required`,UI 不应走到。"""
+        return self._state, None
+
     async def logout(self) -> None:
         """未登录,no-op。"""
         return None
