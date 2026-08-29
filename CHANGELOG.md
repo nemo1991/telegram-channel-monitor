@@ -22,6 +22,36 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
   (commit `38a657a`,3032+/1679-,纯空白 / quote-style / 缩进,无逻辑变化)。
   后续任何「该格式化未格式化」CI 红,杜绝「改一行空格 → 再 CI」循环
 
+- **AppService 拆分(PR #A2,架构主线)** — `core/app_service.py`
+  从 1083 行单体 facade 拆为「facade + 3 子 service」:
+  - 新增 `core/media_service.py` — Media Manager 域:list_media /
+    delete_media / delete_by_channel / preview_delete_by_channel /
+    retry_media / load_thumbnail_bytes / open_media* / reveal_in_folder /
+    copy_media_path / _stage_s3_to_tmp / reconcile_orphans(~480 行)
+  - 新增 `core/subscription_service.py` — 频道订阅 / 退订 / 列表 /
+    消息查询(125 行)
+  - `core/app_service.py` 1083 → ~620 行,只剩组合根 + 转发
+    (auth / bootstrap / start_monitor / stop_monitor / shutdown /
+    reconfigure / _rebuild_storage / _rebuild_objects / validate_backends)
+  - `self.storage` / `self.objects` 改为 property,set 时同步给子 service
+    (`SubscriptionService._storage` / `MediaService._storage` /
+    `MediaService._objects`)— 防止测试 swap 或 reconfigure 后子 service
+    仍持旧引用,致 reconcile_orphans / open_media_with_result 等按旧
+    backend 分支走
+  - **`retry_media` / `reveal_in_folder` / `_spawn_reveal` 留 facade 实现**
+    (未转子 service)— 测试 `app.downloader = stub` / `app._spawn_reveal =
+    staticmethod(fake)` 必须 facade 上生效,子 service 捕获的引用会让
+    monkeypatch 失效。facade 自己持 `self.downloader` 属性 + `_spawn_reveal`
+    静态方法,monkeypatch 后立即生效
+  - bootstrap / reconfigure 内 client swap / storage swap 后,必须**重建**
+    `SubscriptionService` / `AuthService` / `MediaService`(它们持旧
+    client / storage 引用)— `reconfigure` 末尾、`bootstrap` 检测到 401
+    rotate + rebuild client 时都加了重建子 service 的逻辑
+  - **公共方法签名 1:1 转发**,UI 现有调用面 `app.<method>` 不动
+  - 新增 `tests/test_app_service_facade.py`(+4 contract test)用
+    `unittest.mock.AsyncMock` patch 子 service 验证 facade 真的只 forward;
+    同时验证 `app.storage` / `app.objects` setter 同步子 service
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /
