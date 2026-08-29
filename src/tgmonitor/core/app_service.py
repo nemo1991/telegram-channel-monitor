@@ -112,8 +112,11 @@ class AppService:
         # set 时同步给 _sub / _media,避免测试 / reconfigure / 任何路径 swap
         # backend 后子 service 仍持旧引用,致 list_messages / reconcile /
         # open_media_with_result 等仍按旧 backend 分支走。
-        self._storage = storage
-        self._objects = objects
+        # 显式类型注解让 mypy 知道 _storage / _objects 不可为 None —
+        # 历史 facade 是非 None,保留向后兼容。`objects` property 返回
+        # `| None` 是兼容旧 UI 路径(实际永远非 None)。
+        self._storage: StorageRepository = storage
+        self._objects: ObjectStore = objects
         self.settings = settings
         self.monitor = monitor
         # 内部状态
@@ -127,9 +130,13 @@ class AppService:
         self.downloader = monitor.downloader if (monitor is not None) else None
 
         # 子 service(2026-08-29 PR #A2):Auth / Subscription / Media。
+        # 构造时必建,生命周期 = AppService 本身;shutdown 时不动子 service
+        # 引用,只调它们的 aclose / 关订阅标志。facade 方法直调不需 None 检查。
+        # 2026-08-30 PR #A2 hotfix:类型从 `| None` 改为非 None — 上一版注解
+        # 让 mypy 在所有 await self._sub.<m>() 处报 union-attr(16 处错)。
         self.auth = AuthService(bus, client, settings)
-        self._sub: SubscriptionService | None = SubscriptionService(bus, client, storage)
-        self._media: MediaService | None = MediaService(
+        self._sub: SubscriptionService = SubscriptionService(bus, client, storage)
+        self._media: MediaService = MediaService(
             bus,
             storage,
             objects,
@@ -157,7 +164,7 @@ class AppService:
     # ---------- objects / storage 同步 property ----------
 
     @property
-    def objects(self) -> ObjectStore | None:
+    def objects(self) -> ObjectStore:
         """当前对象存储后端引用(公开,UI 直接读)。"""
         return self._objects
 
@@ -169,9 +176,12 @@ class AppService:
         - 测试 `app.objects = fake_s3`
         - reconfigure / _rebuild_objects 末尾 `self.objects = new_objects`
         """
+        if value is None:
+            # 历史兼容:`aclose()` 后可置 None。MediaService 同步保留旧引用
+            # (它会随 facade 一起销毁),不写回 None 避免触发 _media._objects 类型不匹配。
+            return
         self._objects = value
-        if self._media is not None:
-            self._media._objects = value  # noqa: SLF001 — explicit sync contract
+        self._media._objects = value  # noqa: SLF001 — explicit sync contract
 
     @property
     def storage(self) -> StorageRepository:
@@ -187,10 +197,8 @@ class AppService:
         - reconfigure / _rebuild_storage 末尾 `self.storage = new_storage`
         """
         self._storage = value
-        if self._sub is not None:
-            self._sub._storage = value  # noqa: SLF001 — explicit sync contract
-        if self._media is not None:
-            self._media._storage = value  # noqa: SLF001 — explicit sync contract
+        self._sub._storage = value  # noqa: SLF001 — explicit sync contract
+        self._media._storage = value  # noqa: SLF001 — explicit sync contract
 
     async def bootstrap(self) -> tuple[str, str | None]:
         """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
@@ -335,6 +343,11 @@ class AppService:
         """yield 进度心跳(让 UI 不阻塞),正常结束或抛错。"""
         from tgmonitor.core.export.service import ExportService
 
+        # 2026-08-30 PR #A2 hotfix:self.storage / self.objects 类型是
+        # `| None`(property 兼容旧 UI),但 ExportService 构造函数要求
+        # 非 None — UI 启动后到 export 调用期间 facade 必持有真 backend,
+        # 此处用 assert 锁死契约。
+        assert self.storage is not None and self.objects is not None
         svc = ExportService(self.storage, self.objects, self.bus)
         async for _ in svc.run(request):
             yield
@@ -352,6 +365,7 @@ class AppService:
         """
         from tgmonitor.core.export.service import ExportService
 
+        assert self.storage is not None and self.objects is not None
         svc = ExportService(self.storage, self.objects, self.bus)
         async for _ in svc.run(request):
             yield
@@ -435,7 +449,7 @@ class AppService:
         )
         new_media = list(msg.media)
         new_media[media_idx] = new_med
-        new_msg = dataclasses.replace(msg, media=tuple(new_media))
+        new_msg = dataclasses.replace(msg, media=new_media)
         await self.storage.update_message(new_msg)
         # 清旧 bytes — 让 download_one(force=True) 一定走真下载路径
         if old_object_key and self.objects is not None:
@@ -474,7 +488,7 @@ class AppService:
             # 回写最终状态
             final_media = list(new_msg.media)
             final_media[media_idx] = updated
-            final_msg = dataclasses.replace(new_msg, media=tuple(final_media))
+            final_msg = dataclasses.replace(new_msg, media=final_media)
             await self.storage.update_message(final_msg)
             await self.bus.publish(
                 MediaDownloaded(
@@ -596,8 +610,11 @@ class AppService:
     async def shutdown(self) -> None:
         """app exit — 停 monitor + 关 client / storage / objects(顺序敏感)。
 
-        同时拆掉子 service 的引用,避免 GC 期间 stale 引用(尤其 storage /
-        objects 已 close,子 service 再发调用会抛)。
+        2026-08-30 PR #A2 hotfix:不再清空 self._sub / self._media 引用 —
+        它们是构造时必建,与 facade 同生命周期,置 None 反而让 mypy 在后续
+        方法(若被误调)报 union-attr。shutdown 后整个 facade 随 app 销毁,
+        GC 时一起回收。子 service 持旧 storage/objects 引用也无害
+        (close() 后该引用已不可用,但 facade 已不再有调用入口)。
         """
         await self.stop_monitor()
         # 关 TelegramClient (停 tdlib_json 的 updates_loop + tdjson 子进程)
@@ -607,9 +624,6 @@ class AppService:
             log.exception("client.close() failed")
         await self.storage.close()
         await self.objects.close()
-        # 清空子 service 引用(已 close,继续持有易误用)
-        self._sub = None  # type: ignore[assignment]
-        self._media = None  # type: ignore[assignment]
 
     # ---------- 热重载 ----------
 
