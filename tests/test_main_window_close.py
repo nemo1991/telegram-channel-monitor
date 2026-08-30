@@ -35,12 +35,19 @@ def qapp():
 
 
 class _FakeMainWindow(MainWindow):
-    """绕开真 MainWindow __init__ 的复杂依赖,只验 closeEvent 自己的逻辑。"""
+    """绕开真 MainWindow __init__ 的复杂依赖,只验 closeEvent 自己的逻辑。
+
+    2026-08-30 v1.5.0 PR #A4:closeEvent 现读 `_truly_quit` / `_tray`,
+    这里手装 stub — 走「无 tray → 默认路径」分支,保持原有断言不变。
+    """
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         QMainWindow.__init__(self)
         self.loop = loop
         self._shutdown_cb = None
+        self._truly_quit = False
+        self._tray = None  # 无 tray → 不进 minimize-to-tray 分支
+        self._tray_first_close_hint_shown = False
 
 
 class _LoopThread:

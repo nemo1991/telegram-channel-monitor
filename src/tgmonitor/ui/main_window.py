@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -62,6 +62,8 @@ from tgmonitor.core.events import (
     LoginStateChanged,
     MediaDownloaded,
     MessageDeleted,
+    NotificationRequested,
+    QuitRequested,
 )
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
@@ -80,6 +82,7 @@ from tgmonitor.ui.widgets.sync_dialog import (
     SyncOptionsDialog,
     SyncProgressDialog,
 )
+from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -130,6 +133,15 @@ class MainWindow(QMainWindow):
         self.loop = loop
         self._objects_error = objects_error
         self._objects_warn_label: QLabel | None = None
+        # 2026-08-30 v1.5.0 PR #A4:tray 图标「真退出」标志。False 时
+        # closeEvent 触发即最小化到托盘 + 状态栏提示,真退出走 File→Quit
+        # 菜单或 tray「退出」菜单项(都 → `qt_app.quit()` → `aboutToQuit` →
+        # `_shutdown_then_quit` 路径)。一旦置 True,后续 closeEvent 直走
+        # shutdown(防循环)。
+        self._truly_quit = False
+        # 2026-08-30 PR #A4:用户已通过 tray menu 看到首次关闭提示,
+        # 后续关窗不再弹通知,只在 tray 静默 hide。
+        self._tray_first_close_hint_shown = False
         # v1.0.1:env_path fallback 跟 app.py 同步 — platform-native
         # (~/.local/share/tgmonitor/.env / ~/Library/Application Support/tgmonitor/.env),
         # 不依赖 cwd。
@@ -141,7 +153,15 @@ class MainWindow(QMainWindow):
 
         self._vm = MonitorViewModel(app, monitor, loop)
         self._shutdown_cb: ShutdownCb | None = None
+        # 2026-08-30 v1.5.0 PR #A4:TrayIcon 实例。`is_active=False` 时
+        # (offscreen / Linux 无 indicator)closeEvent 不进入 minimize-to-tray。
+        self._tray: TrayIcon | None = None
+        # 2026-08-30 PR #A4:tray「退出」→ VM 收到 QuitRequested → emit
+        # `quit_requested` signal → 此 handler → 真退出 qt_app.quit。
+        self._vm.quit_requested.connect(self._on_vm_quit_requested)
         self._build_ui()
+        self._build_menu()
+        self._build_tray()
         self._wire_shortcuts()
         self._wire_events()
         self._refresh_state()
@@ -182,6 +202,30 @@ class MainWindow(QMainWindow):
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回
         主循环,否则会变 "Error calling Python override" 把窗口关成 fail。
         """
+        # 2026-08-30 v1.5.0 PR #A4:首次 close(用户点 X / Alt+F4)默认
+        # 最小化到 tray,不退出。File→Quit / tray「退出」菜单走
+        # `qt_app.quit()` → `aboutToQuit` → 关闭全部窗口(到这一步时
+        # `_truly_quit=True`),这里才走 shutdown。
+        if not self._truly_quit and self._tray is not None and self._tray.is_active:
+            self.hide()
+            if not self._tray_first_close_hint_shown:
+                self._tray_first_close_hint_shown = True
+                # 系统通知(若有 tray)+ 状态栏永久提示
+                self.app.bus.publish_threadsafe(
+                    self.loop,
+                    NotificationRequested(
+                        level="info",
+                        title="tgmonitor 已在后台运行",
+                        body="右键托盘图标可恢复窗口或退出应用",
+                        click_action="show_main",
+                    ),
+                )
+                self.statusBar().showMessage(
+                    "已在后台运行 · 右键托盘图标或 File 菜单恢复",
+                    8000,
+                )
+            event.ignore()
+            return
         if self._shutdown_cb is not None:
             try:
                 import concurrent.futures
@@ -408,6 +452,88 @@ class MainWindow(QMainWindow):
 
         # MessageView → MessageDetail(点击消息显示详情)
         self.live_view.message_selected.connect(self.message_detail.show_message)
+
+    def _build_menu(self) -> None:
+        """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
+
+        「暂停监听」对应 tray menu 同名动作 — 留作 v1.5.1,本 PR 行为同
+        tray 一致(发 QuitRequested(pause=True),目前无订阅者,只 log)。
+        「退出」走 `qt_app.quit()` → aboutToQuit 触发 setQuitOnLastWindowClosed
+        之前的 `window.close()`,此时 `_truly_quit=True` 已置,closeEvent
+        不会再 minimize-to-tray,直接走 shutdown。
+        """
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+        act_show = QAction("显示主窗口", self)
+        act_show.setShortcut("Ctrl+0")
+        act_show.triggered.connect(self._show_and_raise)
+        file_menu.addAction(act_show)
+        file_menu.addSeparator()
+        act_pause = QAction("暂停监听", self)
+        act_pause.triggered.connect(
+            lambda: self.app.bus.publish_threadsafe(self.loop, QuitRequested(pause=True))
+        )
+        file_menu.addAction(act_pause)
+        act_quit = QAction("退出", self)
+        act_quit.setShortcut("Ctrl+Q")
+        act_quit.triggered.connect(self._quit_app)
+        file_menu.addAction(act_quit)
+
+    def _build_tray(self) -> None:
+        """系统托盘图标(2026-08-30 v1.5.0 PR #A4)。
+
+        `isSystemTrayAvailable()` 假时(offscreen / Linux 无 indicator)— `_tray`
+        仍创建(订阅 handler 内部 no-op),但 `is_active=False`,closeEvent
+        不进入 minimize-to-tray 分支,直接走 shutdown。
+        """
+        self._tray = TrayIcon(self, self.app)
+        if self._tray.is_active:
+            self._tray.show()
+        # 订阅 NotificationRequested → 状态栏 fallback(无 tray 系统也
+        # 走通)。TrayIcon 内部已订阅一次,这里 main_window 再订阅一份做
+        # status bar 兜底,EventBus 广播 N 订阅者互不影响。
+        self.app.bus.subscribe(NotificationRequested, self._on_notification_fallback)
+
+    def _show_and_raise(self) -> None:
+        """File / tray「显示主窗口」共用 — unminimize + 顶置 + 焦点。"""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_app(self) -> None:
+        """File→Quit / Ctrl+Q — 标 `_truly_quit=True` 后调 `qt_app.quit()`。
+
+        路径:`qt_app.quit()` → Qt 主循环结束 → 各 QWindow 关 → closeEvent
+        触发 → `_truly_quit=True` → 直走 shutdown → 真退出。
+        """
+        self._truly_quit = True
+        # QApplication.instance() 静态返回 QCoreApplication | None;
+        # `_quit_app` 只在用户主动触发(File→Quit / Ctrl+Q / tray「退出」)
+        # 调起,此时 QApplication 必 alive(否则整个 UI 早关了)— assert 兜底。
+        qt_app = QApplication.instance()
+        assert qt_app is not None, "QApplication gone before quit"
+        qt_app.quit()
+
+    def _on_vm_quit_requested(self) -> None:
+        """2026-08-30 v1.5.0 PR #A4:tray menu「退出」→ VM 转发 → 真退出。
+
+        与 `_quit_app` 同义,但走 tray「退出」(不绕开 Qt 主循环)路径:
+        VM `quit_requested` signal → 此 slot → `qt_app.quit`。
+        """
+        self._quit_app()
+
+    async def _on_notification_fallback(self, event: object) -> None:
+        """无 tray 系统(Linux 无 indicator / offscreen)→ 状态栏 fallback。
+
+        `isinstance` 严格过滤:EventBus publish 任意事件都会触发此 handler
+        (因 subscribe 接的是 type object,会按 MRO 匹配),此 handler 只关心
+        NotificationRequested。
+        """
+        if not isinstance(event, NotificationRequested):
+            return
+        # 系统通知已由 TrayIcon 发出;此处只走状态栏(覆盖两种环境)
+        if self._tray is None or not self._tray.is_active:
+            self.statusBar().showMessage(f"{event.title}: {event.body}", 5000)
 
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键。

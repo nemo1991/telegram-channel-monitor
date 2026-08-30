@@ -207,6 +207,31 @@ class AuthErrorOccurred(ErrorOccurred):
 
 
 @dataclass
+class NotificationRequested(Event):
+    """2026-08-30 v1.5.0 PR #A4:通知请求 — UI 决定怎么呈现。
+
+    level = "info" | "warning" | "error"
+    click_action = None | "show_main" — 单击通知时 main_window 是否弹到顶。
+    """
+
+    level: str = "info"
+    title: str = ""
+    body: str = ""
+    click_action: str | None = None
+
+
+@dataclass
+class QuitRequested(Event):
+    """2026-08-30 v1.5.0 PR #A4:用户从 tray menu 选「退出」/「暂停监听」。
+
+    pause=True → 仅暂停 monitor(留作 v1.5.1,目前仅 emit 事件,无订阅)
+    pause=False → 真退出,UI 走 shutdown_then_quit 路径
+    """
+
+    pause: bool = False
+
+
+@dataclass
 class SettingsChanged(Event):
     """设置已变更(已热重载的部分)。"""
 

@@ -397,6 +397,14 @@ def run() -> None:
 
     qt_app.aboutToQuit.connect(_shutdown_then_quit)
 
+    # 2026-08-30 v1.5.0 PR #A4:关闭最后一个窗口时不退出(Qt 默认行为)
+    # — 关窗 → minimize 到 tray(由 MainWindow.closeEvent 拦截);真退出走
+    # File→Quit / tray「退出」→ `_quit_app` → `qt_app.quit()` →
+    # `aboutToQuit` → `_shutdown_then_quit` → 干净退出。
+    # PySide6 6.11 .pyi 缺 `setQuitOnLastWindowClosed`(运行期 QApplication /
+    # QGuiApplication 都有该方法)— type: ignore[attr-defined]。
+    qt_app.setQuitOnLastWindowClosed(False)  # type: ignore[attr-defined]
+
     # 信号:从任意线程触发 asyncio 的 quit
     def _on_signal(*_: object) -> None:
         log.info("signal received, shutting down…")

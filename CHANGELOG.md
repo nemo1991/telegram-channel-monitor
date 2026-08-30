@@ -85,6 +85,38 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
   - 新增 `tests/test_export_progress_dialog.py`(+7 测试:dialog
     connect/disconnect + 进度条 max/value + 取消按钮)
 
+- **系统托盘 + 桌面通知(PR #A4,UX quick win)** — 关闭主窗口不再
+  杀进程,首次关窗最小化到托盘,真退出走 File→Quit / tray「退出」菜单。
+  新消息/下载完成弹系统通知(offline 时降级 status bar)。
+  - `core/events.py` 新增 `NotificationRequested(level, title, body,
+    click_action)` + `QuitRequested(pause)` 两个事件类型
+  - 新增 `ui/widgets/tray_icon.py` — `TrayIcon(QObject)` 包装
+    `QSystemTrayIcon` + 3 项菜单(显示主窗口 / 暂停监听 / 退出);
+    `isSystemTrayAvailable()` 假时退化为 `_tray=None`(UI 走 fallback);
+    `on_notification` 转发到 `showMessage`(level=error → Critical 图标)
+  - `ui/main_window.py` 改造:
+    - `_build_menu` 加 File 菜单(显示主窗口 Ctrl+0 / 暂停监听 / 退出 Ctrl+Q)
+    - `_build_tray` 构造 TrayIcon + 订阅 `NotificationRequested` 走 status
+      bar fallback(无 system tray 系统也覆盖)
+    - closeEvent 拦截:首次关窗 → `hide()` + `event.ignore()` + 弹
+      「已在后台运行」通知 + status bar 8s 提示;第二次后静默
+    - `_quit_app` / `_on_vm_quit_requested` 走 `qt_app.quit()` →
+      `aboutToQuit` → `_shutdown_then_quit` 真退出(标 `_truly_quit=True`
+      后 closeEvent 不再 minimize,直走 shutdown)
+  - `app.py`:`qt_app.setQuitOnLastWindowClosed(False)` — 关最后一个窗口
+    不退出(Qt 默认行为),配合 closeEvent 拦截实现「关窗 → minimize → 真退出
+    走菜单」
+  - `viewmodels/monitor_vm.py`:`_on_media_downloaded` 在 `download_status ==
+    DONE` 时 publish `NotificationRequested`;`_on_quit_requested` 收到
+    `QuitRequested(pause=False)` 时 emit `quit_requested` Qt signal →
+    `MainWindow._on_vm_quit_requested` 调 `_quit_app`
+  - 新增 `tests/test_tray_icon.py`(+9 测试:is_active / 菜单动作 publish
+    / on_notification 转发到 showMessage / 双击 / 无 tray no-op)
+  - 新增 `tests/test_main_window_tray.py`(+7 测试:closeEvent 拦截 /
+    _truly_quit 走真退出 / 无 tray 走默认 / _quit_app 设 flag)
+  - 既有 `test_main_window_close.py` 的 `_FakeMainWindow` 补 `_truly_quit /
+    _tray` stub(避免 closeEvent AttributeError)
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /

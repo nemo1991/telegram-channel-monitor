@@ -38,6 +38,8 @@ from tgmonitor.core.events import (
     MediaRetried,
     MessageEdited,
     MessageReceived,
+    NotificationRequested,
+    QuitRequested,
     SettingsChanged,
 )
 from tgmonitor.ui._async import run_coro
@@ -108,6 +110,10 @@ class MonitorViewModel(QObject):
     # DeleteChannelPreview(只读)。MainWindow 接到后弹
     # `ClearChannelPreviewDialog` 二次确认,确认后才走 `vm.delete_by_channel`。
     delete_preview_ready = Signal(object)
+    # 2026-08-30 v1.5.0 PR #A4:tray menu「退出」事件转发 — MainWindow
+    # 接到 → qt_app.quit() 走 aboutToQuit → _shutdown_then_quit。
+    # `pause=True` 路径不发此 signal(VM 内部 log 即可)。
+    quit_requested = Signal()
 
     def __init__(
         self,
@@ -153,6 +159,9 @@ class MonitorViewModel(QObject):
         b.subscribe(MediaRetried, self._on_media_retried)
         b.subscribe(MediaDeleted, self._on_media_deleted)
         b.subscribe(MediaReconcileFinished, self._on_media_reconcile_done)
+        # 2026-08-30 v1.5.0 PR #A4:tray menu 退出事件 — MainWindow 接到
+        # `quit_requested` signal 走 qt_app.quit → aboutToQuit → 干净退出。
+        b.subscribe(QuitRequested, self._on_quit_requested)
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
 
@@ -176,6 +185,35 @@ class MonitorViewModel(QObject):
         if not isinstance(e, MediaDownloaded):
             return
         self.media_downloaded.emit(e)
+        # 2026-08-30 v1.5.0 PR #A4:成功下载 → 系统通知(走 TrayIcon /
+        # status bar fallback)。失败不发(避免失败频通知扰人)。
+        # 2026-08-30 PR #A4 简化:不实现 per-channel token bucket(plan 列了
+        # 但短期内高频下载场景少;先发成功通知,后续 v1.5.1 加去抖)。
+        if e.media and e.media.download_status == MediaDownloadStatus.DONE:
+            await self.app.bus.publish(
+                NotificationRequested(
+                    level="info",
+                    title="下载完成",
+                    body=e.media.object_key or "(无文件名)",
+                    click_action="show_main",
+                )
+            )
+
+    async def _on_quit_requested(self, e: Event) -> None:
+        """2026-08-30 v1.5.0 PR #A4:tray menu「退出」/「暂停监听」事件。
+
+        `pause=True` 留作 v1.5.1,本 PR 不实现暂停逻辑(仅消费事件)。
+        `pause=False` → emit Qt quit 信号,Qt 主循环走 aboutToQuit
+        → _shutdown_then_quit → 真退出。
+        """
+        if not isinstance(e, QuitRequested):
+            return
+        if e.pause:
+            log.info("QuitRequested(pause=True) — v1.5.1 实现暂停,本 PR 忽略")
+            return
+        # 真退出 — emit 到 main_window 持有 qt_app 信号;此处不便 import qt_app,
+        # 改发 signal 通知 main_window 真退出
+        self.quit_requested.emit()
 
     async def _on_login_state(self, e: Event) -> None:
         if not isinstance(e, LoginStateChanged):
