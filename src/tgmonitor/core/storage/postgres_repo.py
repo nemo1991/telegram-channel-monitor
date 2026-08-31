@@ -358,7 +358,16 @@ class PostgresRepository(StorageRepository):
     # ---- 消息 ----
 
     async def save_message(self, message: MessageDTO) -> int:
-        """幂等 upsert:返回 messages.id。"""
+        """幂等 upsert:返回 messages.id。
+
+        2026-08-31 v1.5.0 PR #A7 修 latent prod FK violation:`messages.channel_id`
+        外键引用 `channels.id`,但 monitor 路径可能先收到消息、再调
+        `sync_channels`(频道元数据从 TDLib 拉到 storage 有时延)— 若调用方
+        未显式 `upsert_channel`,PG 会抛 `ForeignKeyViolationError`。
+        InMemoryRepository / JsonlFileStore 都隐式建频道
+        (id + title="#<id>"),本实现对齐:INSERT 前 `ON CONFLICT DO NOTHING`
+        保底,绝不覆盖调用方已 upsert 的完整 metadata。
+        """
         assert self._pool is not None
         raw_json = json.dumps(message.raw) if message.raw is not None else None
         # 2026-08-27 v1.4.0 PR #9:forward_origin 序列化为 JSONB;
@@ -373,6 +382,20 @@ class PostgresRepository(StorageRepository):
             else None
         )
         async with self._pool.acquire() as conn, conn.transaction():
+            # 隐式频道占位 — 与 InMemoryRepository / JsonlFileStore 对齐。
+            # 用最小字段占位(`title=#<id>`),已有频道(完整 metadata)不动。
+            # 显式 subscribed=FALSE 而非依赖列默认值:旧库 `ALTER TABLE ... DEFAULT
+            # TRUE` 迁移可能让 placeholder 错标已订阅,与 InMemory/Jsonl 语义
+            # (ChannelDTO.is_subscribed=False) 不一致。
+            await conn.execute(
+                """
+                INSERT INTO channels (id, title, subscribed)
+                VALUES ($1, $2, FALSE)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                message.channel_id,
+                f"#{message.channel_id}",
+            )
             row = await conn.fetchrow(
                 """
                     INSERT INTO messages

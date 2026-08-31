@@ -285,6 +285,28 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     (PG skip 因无 Docker;CI ubuntu-latest 会全 47 通过);非集成测试
     **630 passed / 47 deselected**
 
+- **PR #A7 hotfix #2:PG `save_message` 隐式建频道**(commit 修) — CI
+  run `33350395143` 进展后 32 pass / 15 fail,**新失败根因**。
+  `messages.channel_id` FK 引用 `channels.id`,但 monitor 路径可能先收到
+  消息、再调 `sync_channels`(频道元数据从 TDLib 拉到 storage 有时延)
+  — 若调用方未显式 `upsert_channel`,PG 会抛 `ForeignKeyViolationError`。
+  InMemoryRepository / JsonlFileStore 都隐式建频道(`title="#<id>"`),
+  Postgres 漏了这步 — **latent prod bug**,任何收到新频道消息但
+  `sync_channels` 失败的场景都会炸。修 `postgres_repo.save_message`:
+  - INSERT messages 前 `INSERT INTO channels (id, title, subscribed)
+    VALUES ($1, $2, FALSE) ON CONFLICT (id) DO NOTHING` 占位 — 最小字段,
+    已有频道不动(metadata 不被覆盖)
+  - 显式 `subscribed=FALSE`:旧库 `ALTER TABLE ... DEFAULT TRUE` 迁移
+    会让 placeholder 错标已订阅;显式 FALSE 与 InMemory/Jsonl 语义
+    (`ChannelDTO.is_subscribed=False`) 一致
+  - Mongo 同问题但 mongomock 不强制 FK,测试不暴露 — **生产 Mongo 用户
+    也有这 bug**,但因真 mongo 无 FK schema(`db.channels` 是独立集合,
+    `db.messages.channel_id` 不约束)实际不会 crash,只会「消息写入,
+    频道 metadata 永远缺失 → UI 列表看不到此频道」
+  - 回归:本地 `uv run pytest -m integration` **26 passed / 21 skipped**
+    (PG 21 skip 因无 Docker,CI ubuntu-latest 47 全跑);非集成
+    **630 passed / 47 deselected**;ruff 双步骤 / mypy 0 新错
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /
