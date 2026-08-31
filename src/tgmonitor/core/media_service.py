@@ -396,6 +396,47 @@ class MediaService:
             )
             return None
 
+    async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
+        """读 media **原图** bytes — Lightbox 全屏预览用(2026-08-31 v1.5.0 PR #A8)。
+
+        与 `load_thumbnail_bytes` 区别:**不优先 thumb_key**,只读 `object_key`
+        原图(thumb 90×90 太小,Lightbox 显示会糊)。仅 DONE + 有 objectstore 时
+        才读;任何异常返 None。
+
+        设计取舍:
+        - 全量读 bytes(同 thumbnail)— 单图通常 ≤ 30MB,本地 FS / S3 都是
+          单次 GET;流式读 QtQPixmap 不支持(只能 in-memory decode)
+        - GIF / WebP / JPEG / PNG 都原样返回,Qt QPixmap.loadFromData 自动识别
+        """
+        if media.download_status != MediaDownloadStatus.DONE:
+            return None
+        if self._objects is None:
+            return None
+        backend = media.object_backend
+        if not backend:
+            return None
+        key = media.object_key
+        if not key:
+            return None
+        try:
+            stream = await self._objects.open_read(key)
+            try:
+                data = stream.read()
+            finally:
+                try:
+                    stream.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            return data
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "load_media_bytes failed: backend=%s key=%s",
+                backend,
+                key,
+                exc_info=True,
+            )
+            return None
+
     async def open_media(
         self,
         channel_id: int,

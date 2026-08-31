@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -29,7 +29,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ReactionDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaType, MessageDTO, ReactionDTO
+
+# 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 与 MediaManagerWidget 同源。
+# 媒体卡片可点 = 可点缩略图弹大图;非图 / 未下载 走系统查看器,保持原行为。
+_LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
+    {MediaType.PHOTO, MediaType.STICKER, MediaType.ANIMATION}
+)
 
 
 def _to_local_str(dt: datetime | None) -> str:
@@ -86,6 +92,11 @@ class _FieldRow(QWidget):
 
 class MessageDetail(QScrollArea):
     """详情面板 — 嵌入 LIVE 页的右侧。"""
+
+    # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点媒体卡(PHOTO/STICKER/ANIMATION
+    # 且 DONE 状态)→ 异步加载原图 bytes → 弹 LightboxDialog。MainWindow 接到信号
+    # 后处理流程同 `_on_media_preview`(复用 main_window.py 内的加载器)。
+    preview_requested = Signal(int, int, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """建空状态占位面板(无选中消息时显示)。"""
@@ -193,6 +204,18 @@ class MessageDetail(QScrollArea):
                 med_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
                 # 媒体卡背景 / 边框 / 圆角 / padding 都走 `#mediaItem`
                 med_label.setObjectName("mediaItem")
+                # 2026-08-31 v1.5.0 PR #A8:Lightbox 可点 — 图片类(photo/animation/sticker)
+                # 且已下载完成 → 设 PointingHandCursor + monkeypatch mousePressEvent;
+                # 非图 / 未下载 保持默认箭头 + 不响应(走系统查看器 fallback)。
+                if (
+                    med.type in _LIGHTBOX_PREVIEWABLE_TYPES
+                    and med.download_status == MediaDownloadStatus.DONE
+                ):
+                    med_label.setCursor(Qt.PointingHandCursor)
+                    med_label.setToolTip("点击查看大图")
+                    med_label.mousePressEvent = self._make_media_click_handler(  # type: ignore[method-assign, assignment]
+                        m.channel_id, m.telegram_msg_id, i
+                    )
                 v.addWidget(med_label)
 
         # ---- 原始 JSON ----
@@ -263,3 +286,26 @@ class MessageDetail(QScrollArea):
             if med.download_error:
                 lines.append(f"   原因: {med.download_error}")
         return "\n".join(lines)
+
+    def _make_media_click_handler(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> object:
+        """2026-08-31 v1.5.0 PR #A8:媒体卡 click → 发 preview_requested。
+
+        闭包绑死 (channel_id, telegram_msg_id, media_idx),monkeypatch 到
+        `med_label.mousePressEvent`(直接覆盖 Qt 实例方法;MediaManagerWidget
+        同样的 MVP 取舍,详见那里注释)。
+        """
+        outer = self
+
+        def _handler(event: QMouseEvent) -> None:
+            if event is None:
+                return
+            if event.button() != Qt.LeftButton:
+                return
+            outer.preview_requested.emit(channel_id, telegram_msg_id, media_idx)
+
+        return _handler

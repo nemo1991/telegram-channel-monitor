@@ -502,6 +502,10 @@ class AppService:
         """转发 MediaService.load_thumbnail_bytes。"""
         return await self._media.load_thumbnail_bytes(media)
 
+    async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
+        """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览转发 — 读原图 bytes。"""
+        return await self._media.load_media_bytes(media)
+
     async def open_media(
         self,
         channel_id: int,

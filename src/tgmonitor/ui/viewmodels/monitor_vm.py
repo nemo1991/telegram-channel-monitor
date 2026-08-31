@@ -483,6 +483,17 @@ class MonitorViewModel(QObject):
             error_label="load_thumbnail",
         )
 
+    async def load_media_bytes(self, media: object) -> bytes | None:
+        """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览 — 异步读原图 bytes。
+
+        走 `app.load_media_bytes` 转发到 MediaService。
+        """
+        from tgmonitor.core.dto import MediaDTO
+
+        if not isinstance(media, MediaDTO):
+            return None
+        return await self.app.load_media_bytes(media)
+
     # ---- UI 主动调用 ----
 
     def bootstrap_ui(self) -> None:

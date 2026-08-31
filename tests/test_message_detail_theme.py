@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
@@ -103,6 +104,81 @@ def test_media_item_label_has_objectname(qapp) -> None:
     assert len(items) == 1, "msg 里 1 条 media,应有 1 个 mediaItem"
     # 内容由 _format_media 生成
     assert "photo" in items[0].text()
+
+
+def test_previewable_media_label_emits_signal_on_click(qapp) -> None:
+    """2026-08-31 v1.5.0 PR #A8:Lightbox — 图片类(PHOTO)且 DONE 状态
+    的媒体卡点击 → emit preview_requested(channel_id, msg_id, idx)。
+
+    非图(PHOTO 之外 type)或未下载(PENDING)的媒体卡不响应 — 走 fallback
+    路径(系统查看器 / 下载队列)。
+    """
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QLabel
+
+    from tgmonitor.core.dto import MediaDownloadStatus, MediaType
+
+    done_photo = MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="a.jpg",
+        file_size=2048,
+        telegram_file_id="fid-photo",
+        object_key="media/a.jpg",
+        object_backend="local",
+        download_status=MediaDownloadStatus.DONE,
+    )
+    pending_video = MediaDTO(
+        type=MediaType.VIDEO,
+        mime_type="video/mp4",
+        file_name="b.mp4",
+        file_size=10_000_000,
+        telegram_file_id="fid-video",
+        download_status=MediaDownloadStatus.PENDING,
+    )
+    msg = MessageDTO(
+        id=0,
+        channel_id=77,
+        telegram_msg_id=99,
+        text="two-media",
+        media=[done_photo, pending_video],
+        raw={"_": "raw"},
+    )
+    detail = MessageDetail()
+    detail.show_message(msg)
+    inner = detail.widget()
+    items = [lbl for lbl in inner.findChildren(QLabel) if lbl.objectName() == "mediaItem"]
+    assert len(items) == 2
+
+    # 接信号 → 触发后 captured 收 (channel_id, msg_id, idx)
+    captured: list[tuple[int, int, int]] = []
+    detail.preview_requested.connect(lambda c, m, i: captured.append((c, m, i)))
+
+    photo_label, video_label = items[0], items[1]
+
+    # ---- 1. DONE PHOTO → 点击应 emit preview_requested(77, 99, 0) ----
+    assert photo_label.toolTip() == "点击查看大图"
+    click_photo = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPoint(5, 5),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    photo_label.mousePressEvent(click_photo)
+    assert captured == [(77, 99, 0)], f"PHOTO/DONE 点击未触发 lightbox 信号:captured={captured}"
+
+    # ---- 2. PENDING VIDEO → 点击不应 emit(走系统查看器 fallback 路径)----
+    click_video = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPoint(5, 5),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    video_label.mousePressEvent(click_video)
+    assert captured == [(77, 99, 0)], f"PENDING VIDEO 被错误标为可点:captured={captured}"
 
 
 def test_no_inlined_setstylesheet_on_detail_widgets(qapp) -> None:

@@ -40,7 +40,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QAction, QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -73,6 +74,7 @@ from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
 from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
+from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
@@ -448,11 +450,17 @@ class MainWindow(QMainWindow):
         self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
         # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
         self.media_manager.export_csv_requested.connect(self._on_media_export_csv)
+        # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点缩略图 → 异步加载
+        # 原图 bytes → QPixmap → 弹 LightboxDialog。
+        self.media_manager.preview_requested.connect(self._on_media_preview)
         # 2026-08-25 v1.3.0 PR #5:打开媒体失败 → QMessageBox.warning 带原因
         self._vm.open_media_failed.connect(self._on_open_media_failed)
 
         # MessageView → MessageDetail(点击消息显示详情)
         self.live_view.message_selected.connect(self.message_detail.show_message)
+        # 2026-08-31 v1.5.0 PR #A8:MessageDetail 媒体卡 click → Lightbox(与
+        # media_manager.preview_requested 走同一个加载器)
+        self.message_detail.preview_requested.connect(self._on_media_preview)
 
     def _build_menu(self) -> None:
         """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
@@ -999,6 +1007,61 @@ class MainWindow(QMainWindow):
             "打开媒体失败",
             f"无法打开频道 #{channel_id} 消息 #{telegram_msg_id} 第 {media_idx + 1} 个媒体:\n\n{reason}",
         )
+
+    def _on_media_preview(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> None:
+        """2026-08-31 v1.5.0 PR #A8:Media Manager 缩略图点击 → Lightbox。
+
+        流程:`app.storage.get_message` 找消息 → VM.load_media_bytes 异步读
+        原图 bytes → 主线程 QPixmap.loadFromData 渲染 → 弹 LightboxDialog。
+        全程 async,UI handler 立即返回不阻塞 event loop。
+        """
+        from tgmonitor.core.dto import MediaType
+
+        async def _load_and_show() -> None:
+            storage = self.app.storage
+            if storage is None:
+                return
+            msg = await storage.get_message(channel_id, telegram_msg_id)
+            if msg is None or media_idx >= len(msg.media):
+                return
+            med = msg.media[media_idx]
+            if med.type not in (
+                MediaType.PHOTO,
+                MediaType.STICKER,
+                MediaType.ANIMATION,
+            ):
+                # 非图片 — 不弹 lightbox,fallback 到系统查看器
+                self._vm.open_media(channel_id, telegram_msg_id, media_idx)
+                return
+            data = await self._vm.load_media_bytes(med)
+            if not data:
+                QMessageBox.information(
+                    self,
+                    "Lightbox",
+                    f"无法加载预览(可能未下载或 backend 不可用)。\n文件:{med.file_name or '(no name)'}",
+                )
+                return
+
+            def _show() -> None:
+                pix = QPixmap()
+                if not pix.loadFromData(data):
+                    QMessageBox.warning(self, "Lightbox", "图片解码失败。")
+                    return
+                dlg = LightboxDialog(
+                    pixmaps=[pix],
+                    current=-1,
+                    title=med.file_name or "",
+                )
+                dlg.showFullScreen()
+
+            QTimer.singleShot(0, _show)
+
+        run_coro(self.loop, _load_and_show(), error_label="media_preview")
 
     def _on_media_reveal(
         self,

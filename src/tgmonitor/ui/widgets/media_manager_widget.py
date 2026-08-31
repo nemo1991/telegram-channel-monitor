@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -69,6 +69,13 @@ _MEDIA_ICONS: dict[MediaType, str] = {
     MediaType.VIDEO_NOTE: "📹",
 }
 
+# 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 仅图片类(DONE 状态下)
+# 可点缩略图弹大图;视频/音频/文档走 Open/Reveal,不动 lightbox。
+# STICKER 算图片(WebP),ANIMATION 是 GIF。
+_LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
+    {MediaType.PHOTO, MediaType.STICKER, MediaType.ANIMATION}
+)
+
 _STATUS_TEXT: dict[MediaDownloadStatus, str] = {
     MediaDownloadStatus.PENDING: "⏳",
     MediaDownloadStatus.DOWNLOADING: "⏳",
@@ -112,6 +119,9 @@ class MediaManagerWidget(QWidget):
     # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 — 走相同的 (cid, mid, idx) 协议。
     reveal_requested = Signal(int, int, int)
     copy_requested = Signal(int, int, int)
+    # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点击缩略图触发,
+    # MainWindow 接到后异步加载原图 bytes → QPixmap → 弹 LightboxDialog。
+    preview_requested = Signal(int, int, int)
 
     # 批量操作 — payload 是 list[_RowKey]
     batch_retry_requested = Signal(list)
@@ -611,6 +621,27 @@ class MediaManagerWidget(QWidget):
             except Exception:  # noqa: BLE001
                 log.exception("vm.load_thumbnail dispatch failed")
 
+    def _make_thumb_click_handler(self, key: _RowKey, thumb: QLabel) -> Callable[[Any], None]:
+        """2026-08-31 v1.5.0 PR #A8:缩略图点击 → 发 preview_requested。
+
+        用闭包绑死 `_RowKey` + 缩略图 QLabel,monkeypatch 到
+        `thumb.mousePressEvent`(直接覆盖 Qt 实例方法,Qt 不推荐但 MVP
+        够用;真要标准做就上自定义 QLabel 子类 `_ClickableThumb`)。
+        返回的 handler 走 lambda(我们忽略 event 参数,只发信号)。
+        """
+        # 2026-08-31 v1.5.0 PR #A8:handler 必须返回 None(mousePressEvent 返
+        # None 表示事件已接受),否则 Qt 会报「return type mismatch」。
+        from PySide6.QtGui import QMouseEvent
+
+        def _handler(event: QMouseEvent) -> None:
+            if event is None:
+                return
+            if event.button() != Qt.LeftButton:  # type: ignore[attr-defined]
+                return
+            self.preview_requested.emit(key.channel_id, key.telegram_msg_id, key.media_idx)
+
+        return _handler
+
     def _row_widget_size_hint(self) -> Any:
         """单行自绘 widget 的 size hint(高度 = 缩略图 40px + 上下 margin)。"""
         from PySide6.QtCore import QSize
@@ -633,11 +664,23 @@ class MediaManagerWidget(QWidget):
 
         # 缩略图列(2026-08-25 PR #1)— 64×64,初始显 emoji,
         # VM 异步加载完后 setPixmap 替换。失败/非图保持 emoji。
+        # 2026-08-31 v1.5.0 PR #A8:可点击 — 图片类(photo/animation/sticker)
+        # DONE 时设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;
+        # 非图 / 未下载保持默认箭头 + 不响应。
         thumb = QLabel(_MEDIA_ICONS.get(med.type, "📎"))
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
         thumb.setStyleSheet("font-size: 22px;")
         self._thumb_labels[key] = thumb
+        if (
+            med.type in _LIGHTBOX_PREVIEWABLE_TYPES
+            and med.download_status == MediaDownloadStatus.DONE
+        ):
+            thumb.setCursor(Qt.PointingHandCursor)  # type: ignore[attr-defined]
+            thumb.setToolTip("点击查看大图")
+            thumb.mousePressEvent = self._make_thumb_click_handler(  # type: ignore[method-assign]
+                key, thumb
+            )
         hbox.addWidget(thumb)
 
         # channel name(优先 known_channels,否则 #channel_id)

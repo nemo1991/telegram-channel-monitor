@@ -14,6 +14,84 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
 > 本段为 v1.5.0 累积 changelog,各 PR 合入时**就近追加**到对应分类下,
 > 发版时统一转 `[1.5.0] - 2026-XX-XX` + bump 版本号。
 
+### ✨ Added
+- **Lightbox 图片内嵌预览(PR #A8,UX 收官)** — v1.4.0 PR #1 已落
+  64×64 缩略图,「点缩略图无反应」是长期痛点 — 用户只能 Open 走系统
+  查看器,app 内"看不到大图"。本 PR 落 `LightboxDialog` + 两处可点
+  缩略图接入(Media Manager + MessageDetail),把「缩略图 → 大图预览」
+  收进 app 内闭环。
+  - **新 `src/tgmonitor/ui/widgets/lightbox_dialog.py`**(`LightboxDialog`
+    + `show_lightbox()` 便利函数,~280 LOC):
+    - `QDialog` Frameless + WindowStaysOnTopHint + Tool + WA_TranslucentBackground,
+      半透黑底 + 中央 `QLabel` 居中显示原图;`showFullScreen()` 占满全屏
+    - **多图切换**:构造时 `pixmaps: Sequence[QPixmap]` + `current: int`
+      (`-1` = 单图模式),`← / → / ↑ / ↓` 翻页 + 首尾 wrap-around;
+      切图时自动重置缩放 1.0(体感清爽,不背老缩放)
+    - **鼠标滚轮缩放**:`_step = 1.25` 一档;clamp 到 `_min_zoom=0.25` /
+      `_max_zoom=8.0`;右下角小 `_zoom_label` 实时显示「百分比 + 当前位置」,
+      多图模式追加 `1/N` 位置指示
+    - **GIF 走 QMovie 留口**:`closeEvent` / `_render_current` 显式
+      `stop()` + `setMovie(None)` 防 dangling animation timer;当前
+      `setPixmap` 实现 GIF 仅显示第一帧(完整动画走 v1.5.1 `bytes + mime`
+      扩展,`media_service.load_media_bytes` 已返 raw bytes 可复用)
+    - **Esc 关闭** + **鼠标右键关闭** + **双击关闭**(单图模式体感);
+      单击空白处也关闭(避免「点了没反应」疑虑);左键点在图片本身
+      透传给 QLabel(不抢滚动 / 文本选择等子事件)
+    - **空 pixmaps 自动 reject**:`LightboxDialog(pixmaps=[])` 不弹窗,
+      `_render_current` 直接 reject;`show_lightbox([])` 仍返 dialog 实例
+      让 caller 自行 skip
+    - **null QPixmap graceful**:`isNull()` 时画布显 `(image unavailable)`
+      占位文字 + 缩放 hint 仍正常 — 不崩溃
+  - **`MediaService.load_media_bytes()` 新方法**(~40 LOC,与
+    `load_thumbnail_bytes` 对偶)— **不优先 thumb_key**,只读 `object_key`
+    原图(thumb 90×90 太小,Lightbox 显示会糊)。DONE + 有 objectstore 时
+    才读;异常返 None。`AppService.load_media_bytes` 1-行转发
+  - **`MediaManagerWidget._make_thumb_click_handler()`** — 缩略图列
+    `QLabel` 在 lightbox-previewable 类型(`PHOTO` / `STICKER` /
+    `ANIMATION`)且 `DONE` 状态时设 `Qt.PointingHandCursor` + tooltip
+    「点击查看大图」 + monkeypatch `mousePressEvent` 发
+    `preview_requested(channel_id, msg_id, idx)` 信号;非图 / 未下载保持
+    默认箭头不响应(走 Open / Reveal / 下载队列原路径)。`_LIGHTBOX_PREVIEWABLE_TYPES`
+    显式 `frozenset` 常量,test + 业务代码同源
+  - **`MessageDetail.preview_requested` 新信号 + 媒体卡可点** — 与
+    MediaManagerWidget 走同套白名单 + monkeypatch 套路;点媒体卡
+    → `preview_requested(channel_id, msg_id, idx)` → MainWindow 接到后
+    异步加载 → 弹 LightboxDialog(同一 `_on_media_preview` handler)
+  - **`MainWindow._on_media_preview()` 接线**(`~50 LOC`):
+    - 流程:`storage.get_message` → 校验 `media_idx` + `med.type` 在
+      lightbox 白名单 → `vm.load_media_bytes(med)` 异步读原图 bytes →
+      主线程 `QPixmap.loadFromData` 渲染 → `LightboxDialog.showFullScreen()`
+    - **非图 fallback**:PHOTO/STICKER/ANIMATION 之外(视频 / 音频 / 文档)
+      调 `_vm.open_media` 走系统查看器(原行为不变)
+    - **加载失败友好提示**:`QMessageBox.information` 提示「无法加载预览
+      (可能未下载或 backend 不可用)」+ 文件名
+    - **解码失败**:`QMessageBox.warning` 提示「图片解码失败」
+    - **`run_coro` 异常冒泡** → `app.bus.publish(ErrorReported)` 既有
+      路径,不静默吞
+  - **`MonitorViewModel.load_media_bytes(media: object) -> bytes | None`** —
+    `isinstance(media, MediaDTO)` 类型守门 + 转发 `app.load_media_bytes`;
+    简单 async def(无 `concurrent.futures.Future` 类型 hack,后续 PR
+    抄模式一致)
+  - **GIF 全动画留 v1.5.1**:本 PR MVP 只显第一帧;完整 QMovie 动画需要
+    `(bytes, mime_type)` API 扩展 + MediaService 返回值升级(目前返回
+    `bytes | None`,`mime_type` 信息丢失)
+  - **视频 codec 不做**:QtMultimedia 风险高 + 80 LOC,留 v1.5.1;
+    视频类型走 Open / 系统查看器 fallback
+  - **新增 `tests/test_lightbox_dialog.py`(+21 测试)**:dialog 弹/关 /
+    单图模式 / 多图模式 / 空 list 自动 reject / title 显示 / null pixmap
+    graceful / Esc 关闭 / →↓←↑ wrap-around / 切图重置缩放 / 滚轮缩放
+    clamp min/max / 单图模式 ←→ 不响应 / zoom_label 百分比 + 位置
+    / wheelEvent(None) 防御 / closeEvent 安全 / show_lightbox 便利函数
+  - **`tests/test_message_detail_theme.py` +1 测试**:PHOTO/DONE 媒体卡
+    点击 → emit `preview_requested(77, 99, 0)`;PENDING/VIDEO 媒体卡
+    不响应(走系统查看器 fallback)
+  - **回归验证**:`uv run pytest` **652 passed / 8 failed**(8 failed 是
+    pre-existing visual_regression DPI golden 不匹配,与本 PR 无关);
+    `uv run ruff check src tests && uv run ruff format --check src tests`
+    **0 错**;`uv run mypy src/tgmonitor` **41 错**(等同 v1.5.0 baseline,
+    PR #A8 新增 3 处 mypy 错已用 per-line `# type: ignore[attr-defined]`
+    / `[assignment]` 抑制,与项目内既有 ~32 处历史 tech debt 一致)
+
 ### 🔧 Changed
 - **`ruff format` 门控落地(PR #A1)** — `pyproject.toml` 新增
   `[tool.ruff.format]`(`quote-style="double"` / `line-ending="lf"` /
