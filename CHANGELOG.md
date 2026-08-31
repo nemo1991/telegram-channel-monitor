@@ -265,6 +265,26 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     - `uv run ruff check src tests && uv run ruff format --check src tests`:**0 错**
     - `uv run mypy src/tgmonitor`:**41 错**(等同 v1.5.0 baseline)
 
+- **PR #A7 hotfix:PG 集成 DSN scheme 不匹配**(commit 修,同 PR 跟进) —
+  CI run `33346489961` integration job 失败根因。testcontainers 4.x
+  默认返 `postgresql+psycopg2://`(SQLAlchemy 风格 DSN),asyncpg 只接受
+  plain `postgresql://`/`postgres://` — 23 个 PG 测试全 `ClientConfigurationError`
+  setup 失败。`tests/integration/conftest.py` 修:
+  - `_pg_container_or_skip()` 加 community 路径优先:
+    `testcontainers.community.postgres` → fallback 老 `testcontainers.postgres`
+    (Suppress DeprecationWarning);旧版 testcontainers 无 community 子包时
+    自动回退
+  - `pg_engine` fixture:`get_connection_url()` 返的 DSN 用正则
+    `^(postgres(?:ql)?)\+\w+://` → `\1://` 剥掉 `+psycopg2` /
+    `+asyncpg` / `+psycopg` 等任意 SQLAlchemy driver 后缀;兼容老版
+    testcontainers 返的 plain `postgresql://` 也走同条路径(正则幂等)
+  - 加幂等强插 scheme 兜底:`if async_dsn == sync_dsn and not sync_dsn.startswith(('postgresql://', 'postgres://'))` → 强插 `postgresql://`
+    前缀,防未来 testcontainers 返未知 scheme 又溜过去
+  - Mongo parity 24 测试无影响(本来就走 mongomock_motor,不经 asyncpg)
+  - 回归:`uv run pytest -m integration` 本地:**24 passed / 23 skipped**
+    (PG skip 因无 Docker;CI ubuntu-latest 会全 47 通过);非集成测试
+    **630 passed / 47 deselected**
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -33,9 +34,22 @@ logger = logging.getLogger(__name__)
 
 
 def _pg_container_or_skip():
-    """起 PostgresContainer;无 Docker → skip 整 PG fixture 模块。"""
+    """起 PostgresContainer;无 Docker → skip 整 PG fixture 模块。
+
+    2026-08-31 v1.5.0 PR #A7 修复:`testcontainers>=4` 把 `PostgresContainer`
+    从顶层 `testcontainers.postgres` 搬到 `testcontainers.community.postgres`,
+    顶层路径仍兼容但 DeprecationWarning 噪声大;先试 community 路径,
+    fallback 顶层路径(老版 testcontainers 没 community 子包)。
+    """
+    import warnings
+
     try:
-        from testcontainers.postgres import PostgresContainer
+        try:
+            from testcontainers.community.postgres import PostgresContainer
+        except ImportError:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                from testcontainers.postgres import PostgresContainer
     except ImportError:
         pytest.skip("testcontainers[postgresql] 未装", allow_module_level=False)
     try:
@@ -48,16 +62,23 @@ def _pg_container_or_skip():
 def pg_engine() -> Iterator[str]:
     """启动 PostgresContainer,跑完 session 后销毁。
 
-    返 DSN 字符串(异步 PG:`postgresql+asyncpg://...`),`pg_repo` 拿去造
-    PostgresRepository 实例。
+    返 DSN 字符串(asyncpg 只认 `postgresql://` 或 `postgres://`),`pg_repo`
+    拿去造 PostgresRepository 实例。
+
+    2026-08-31 v1.5.0 PR #A7 修复:testcontainers 4.x 默认返
+    `postgresql+psycopg2://`(SQLAlchemy 风格 DSN),asyncpg 只接受 plain
+    `postgresql://` — 需要剥离 `+psycopg2` 后缀。
     """
     container = _pg_container_or_skip()
     container.start()
     try:
-        # asyncpg 走 DSN;testcontainers 给我们 postgresql://... 但 asyncpg
-        # 接受 postgresql:// 协议 — 直接转协议头。
         sync_dsn = container.get_connection_url()
-        async_dsn = sync_dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # 兼容多种 scheme:testcontainers 4.x 默认 `postgresql+psycopg2`,
+        # 老版本可能 `postgresql`,偶有 `postgres`。统一剥成 plain asyncpg scheme。
+        async_dsn = re.sub(r"^(postgres(?:ql)?)\+\w+://", r"\1://", sync_dsn, count=1)
+        if async_dsn == sync_dsn and not sync_dsn.startswith(("postgresql://", "postgres://")):
+            # 仍未匹配 — 强插 scheme
+            async_dsn = "postgresql://" + sync_dsn.split("://", 1)[-1]
         yield async_dsn
     finally:
         container.stop()
