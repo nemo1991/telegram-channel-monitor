@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
         self._build_tray()
         self._wire_shortcuts()
         self._wire_events()
+        self._wire_theme_change_signal()
         self._refresh_state()
         self._vm.bootstrap_ui()
 
@@ -562,6 +563,23 @@ class MainWindow(QMainWindow):
         sc_theme = QShortcut(QKeySequence("Ctrl+T"), self)
         sc_theme.activated.connect(self._on_theme_toggle)
 
+        # 2026-08-30 v1.5.0 PR #A5:补齐快捷键(plan 列了 ~10)
+        # - Ctrl+Q 真退出(同 File→Quit)— 兜底 macOS cmd+Q 不发到 Qt 窗口
+        # - Ctrl+, 打开设置页(STTINGS tab index=4)
+        # - Esc 全局关闭 — 取消搜索框 focus / 关 dialog
+        # - Up/Down LIVE 流上下条(QListWidget 原生已支持,这里显式重绑
+        #   是为了 detail panel 已 focus 时也能跳行 — Qt shortcut context
+        #   = Window,任意子 widget focus 都触发)
+        # - Ctrl+C 复制当前消息 text 到剪贴板(只在 LIVE)
+        sc_quit = QShortcut(QKeySequence("Ctrl+Q"), self)
+        sc_quit.activated.connect(self._quit_app)
+        sc_settings = QShortcut(QKeySequence("Ctrl+,"), self)
+        sc_settings.activated.connect(lambda: self._switch_tab(4))
+        sc_esc = QShortcut(QKeySequence("Esc"), self)
+        sc_esc.activated.connect(self._on_global_escape)
+        sc_copy = QShortcut(QKeySequence("Ctrl+C"), self)
+        sc_copy.activated.connect(self._copy_current_message_text)
+
     def _switch_tab(self, idx: int) -> None:
         self.nav.set_current(idx)
         # nav.set_current 已经 emit current_changed,stack 会自动跟
@@ -597,6 +615,69 @@ class MainWindow(QMainWindow):
             f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题",
             2000,
         )
+
+    def _wire_theme_change_signal(self) -> None:
+        """2026-08-30 v1.5.0 PR #A5:ThemeManager.theme_changed → nav_bar 重画。
+
+        监听 ThemeManager 的全局 signal(SYSTEM 态 OS 切色时
+        `_on_system_scheme_changed` 也会 emit)— nav bar / channel panel
+        按新主题重 tint,免得 OS 切色后图标颜色 stale。
+        """
+        from tgmonitor.ui.theme import ThemeManager
+
+        ThemeManager._instance().theme_changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self) -> None:
+        """2026-08-30 v1.5.0 PR #A5:ThemeManager 主题变 → UI 同步。"""
+        from tgmonitor.ui.theme import ThemeManager
+
+        actual = ThemeManager.actual()
+        # 按钮图标按 actual(非 current)—— SYSTEM 态下按 OS 实际值显示
+        self.header.btn_theme.setText("☀" if actual.value == "dark" else "🌙")
+        self.nav.refresh_theme()
+        if hasattr(self.channel_panel, "refresh_theme"):
+            self.channel_panel.refresh_theme()
+
+    def _on_global_escape(self) -> None:
+        """2026-08-30 v1.5.0 PR #A5:Esc 全局快捷键。
+
+        优先级:
+        1. 搜索框有 focus → 清空搜索 + 失焦(回 LIVE)
+        2. 设置页 / 子 dialog 有 focus → 退到默认(LIVE)
+        3. 否则 no-op(避免误清 LIVE 选中)
+        """
+        sb = self.header.search_bar.edit
+        if sb.hasFocus():
+            sb.clear()
+            sb.clearFocus()
+            return
+        # 若当前不在 LIVE,回 LIVE(简化 — 用户感知的「取消」)
+        if self.stack.currentIndex() != 0:
+            self._switch_tab(0)
+
+    def _copy_current_message_text(self) -> None:
+        """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
+
+        MessageView 是 QListWidget,QListWidgetItem.data(Qt.UserRole)
+        存 MessageDTO(v1.4.0 PR #3 实装)— 取 text 字段放剪贴板。
+        """
+        if self.stack.currentIndex() != 0:
+            return  # 只在 LIVE 页生效
+        item = self.live_view.currentItem()
+        if item is None:
+            return
+        # data(Qt.UserRole) 存的是 MessageDTO
+        from PySide6.QtCore import Qt as QtNS
+
+        msg = item.data(QtNS.UserRole)
+        text = getattr(msg, "text", None) or ""
+        if not text:
+            self.statusBar().showMessage("当前消息无文本", 1500)
+            return
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(f"已复制 {len(text)} 字", 1500)
 
     # ======================== ViewModel 事件绑定 ========================
 

@@ -117,6 +117,39 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
   - 既有 `test_main_window_close.py` 的 `_FakeMainWindow` 补 `_truly_quit /
     _tray` stub(避免 closeEvent AttributeError)
 
+- **快捷键补齐 + 主题「跟随系统」(PR #A5,UX quick win)** — 补 ~5 个
+  全局快捷键(Ctrl+Q 真退出 / Ctrl+, 设置页 / Esc 全局取消 / Ctrl+C 复制当前
+  消息文本);主题新增 SYSTEM 态,OS 切深浅色时 UI 自动跟随(Qt 6.5+
+  `QStyleHints.colorSchemeChanged`)。
+  - `ui/theme.py` 改造:
+    - `Theme` enum 加 `SYSTEM` 第三态
+    - `ThemeManager` 继承 `QObject`,新增 `theme_changed` Signal(emit 给
+      nav_bar / settings_page 等 UI 端订阅)
+    - `actual()` 方法:在 SYSTEM 态按 `QStyleHints.colorScheme()` 解析到
+      LIGHT/DARK(SYSTEM 不直接给 QSS — nav_bar refresh_theme 走 actual())
+    - `apply()` 触发时:重渲 QSS + 挂 `colorSchemeChanged` listener(SYSTEM
+      态一次) + emit `theme_changed`
+    - `accent()` 在 SYSTEM 态按 actual() 选 accent 配色
+    - `toggle()` 保持 LIGHT↔DARK 二选循环(快捷键 Ctrl+T 语义不变);
+      SYSTEM 通过设置面板切换
+  - `ui/main_window.py` 改造:
+    - `_wire_shortcuts` 加 ~5 快捷键:Ctrl+Q 真退出(同 File→Quit)/
+      Ctrl+, 切到设置页(4)/ Esc 全局取消(搜索框有 focus 清空否则回 LIVE)/
+      Ctrl+C 复制当前 LIVE 消息文本到剪贴板
+    - `_wire_theme_change_signal` 订阅 `ThemeManager.theme_changed` →
+      nav bar / channel panel 重画
+    - `_on_theme_changed` slot:按 `actual()` 而非 `current()` 重设
+      btn_theme 图标(SYSTEM 态下按 OS 实际值显示)
+  - `ui/widgets/settings_page.py` 新增 `_build_appearance` group:
+    - 主题 3 选 QComboBox(LIGHT / DARK / SYSTEM),改值即时
+      `ThemeManager.apply`(不持久化到 `.env`,session 内生效,留 v1.5.1)
+    - 快捷键帮助 label(只读,v1.5.0 不改键位)
+  - 新增 `tests/test_theme_system.py`(+10 测试:Theme.SYSTEM enum /
+    actual() 解析 / accent 在 SYSTEM 态按 actual 选色 / load_qss 走
+    LIGHT/DARK qss / toggle 二选循环 / apply emit signal /
+    listener 连接一次)
+  - **Windows 路径分隔符 pre-existing failures 不在本 PR 范围**(task #348)
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -101,6 +102,9 @@ class SettingsPage(QWidget):
         self._build_storage(form_root)
         self._build_objectstore(form_root)
         self._build_policy(form_root)
+        # 2026-08-30 v1.5.0 PR #A5:外观组(主题 3 选)— 与策略平级,
+        # 不走「保存并应用」(主题是 session 内即时生效,不写 .env)。
+        self._build_appearance(form_root)
         self._build_sync(form_root)
 
         form_root.addStretch(1)
@@ -263,6 +267,58 @@ class SettingsPage(QWidget):
         )
 
         root.addWidget(g)
+
+    def _build_appearance(self, root: QVBoxLayout) -> None:
+        """2026-08-30 v1.5.0 PR #A5:外观设置 — 主题 3 选(LIGHT / DARK / SYSTEM)。
+
+        不走 settings 保存(主题是 session 内即时偏好,不持久化到 .env —
+        持久化留 v1.5.1 `TG_KEY_THEME`)。`ThemeManager.apply` 即时生效,
+        OS 切色 listener 在 SYSTEM 态下自动接。
+        """
+        from tgmonitor.ui.theme import Theme, ThemeManager
+
+        g = QGroupBox("🎨 外观")
+        f = QFormLayout(g)
+        f.setSpacing(6)
+
+        self.cmb_theme = QComboBox()
+        self.cmb_theme.addItem("浅色", Theme.LIGHT.value)
+        self.cmb_theme.addItem("暗色", Theme.DARK.value)
+        self.cmb_theme.addItem("跟随系统", Theme.SYSTEM.value)
+        # 同步当前 ThemeManager 状态
+        cur = ThemeManager.current()
+        for i in range(self.cmb_theme.count()):
+            if self.cmb_theme.itemData(i) == cur.value:
+                self.cmb_theme.setCurrentIndex(i)
+                break
+        self.cmb_theme.currentIndexChanged.connect(self._on_theme_change)
+        f.addRow("主题:", self.cmb_theme)
+
+        # 快捷键帮助(只读 label,PR #A5 plan 列「快捷键组可改(v1 不持久化,
+        # session 内生效)」)— v1.5.0 暂只显示帮助,不改键位。
+        help_text = QLabel(
+            "快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换\n"
+            "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
+            "        Ctrl+C 复制当前消息文本\n"
+            "\n"
+            "快捷键目前 session 内生效,不持久化(后续 v1.5.1 支持)."
+        )
+        help_text.setObjectName("helpText")
+        help_text.setWordWrap(True)
+        f.addRow(help_text)
+
+        root.addWidget(g)
+
+    def _on_theme_change(self, idx: int) -> None:
+        """2026-08-30 v1.5.0 PR #A5:主题下拉变化 → ThemeManager.apply。"""
+        from tgmonitor.ui.theme import Theme, ThemeManager
+
+        value = self.cmb_theme.itemData(idx)
+        try:
+            theme = Theme(value)
+        except ValueError:
+            return
+        ThemeManager.apply(theme)
 
     def _build_sync(self, root: QVBoxLayout) -> None:
         g = QGroupBox("🔄 同步参数")
