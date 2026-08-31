@@ -150,6 +150,56 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     listener 连接一次)
   - **Windows 路径分隔符 pre-existing failures 不在本 PR 范围**(task #348)
 
+- **conftest.py 拆分 + `repo_backend` parametrize(PR #A6,工程化主线)** —
+  原 `tests/conftest.py` 547 行跨 11 个 fixture 类 + `InMemoryRepository`
+  完整实现 + 工厂 + tdlib stub 全混在一起。本 PR 拆为 7 个域子模块
+  (`tests/fixtures/<域>.py`),`conftest.py` 缩到 42 行只做 plugin loader +
+  公开对象 re-export。
+  - 新增 `tests/fixtures/__init__.py` — 包 marker,文档列出全部子模块清单
+  - 新增 `tests/fixtures/_settings.py` — `settings` fixture(Settings +
+    tmp_path 注入,13 行)
+  - 新增 `tests/fixtures/_storage.py` — `storage` fixture + `repo_backend`
+    parametrize fixture(inmemory + jsonl 两后端;postgres / mongo 留 PR #A7
+    testcontainers 接入位)
+  - 新增 `tests/fixtures/_in_memory_repository.py` — 完整 `InMemoryRepository`
+    类,从 conftest 抽出(385 行),行为不变:`save_message` 隐式建频道 /
+    `_media_by_fid` 跨消息去重 / `list_messages` limit+offset 反向取 /
+    `aggregate_per_channel` 单轮扫聚合 / `update_message_interactions`
+    直接覆盖 DTO 字段 / `list_media` + `count_media` + `count_media_by_*`
+    全套筛选/排序
+  - 新增 `tests/fixtures/_objectstore.py` — `objectstore` fixture
+    (LocalObjectStore + tmp_path)
+  - 新增 `tests/fixtures/_bus_client.py` — `bus`(EventBus)/ `client`
+    (FakeTelegramClient)同步 fixture
+  - 新增 `tests/fixtures/_factories.py` — `make_message` / `make_photo`
+    测试数据工厂(原 conftest 内 factory,纯函数,非 fixture)
+  - 新增 `tests/fixtures/_tdlib_stub.py` — `stub_tdlib_init` fixture(
+    把 `tdlib_json.TdlibJsonClient.__init__` 换成 no-op,跳过 native libtdjson
+    加载;内部 stub-tdjson 用 `_async_iter([])` / `_noop_send` /
+    `_noop_close` / `_noop_execute` 占位)
+  - 新增 `tests/fixtures/_monitor_app.py` — `monitor`(MonitorService)/
+    `app`(AppService)fixtures,挂 `bus` / `client` / `storage` /
+    `objectstore` / `settings` 5 项依赖
+  - `tests/conftest.py` 547 → 42 行:只剩 `pytest_plugins` 列表(6 个
+    fixture 子模块,按依赖方向排序)+ `InMemoryRepository` / `make_message` /
+    `make_photo` 公开对象 re-export,**`__all__` 显式列出**
+  - **12 个现有 `from tests.conftest import X` 引用零改动**(
+    `InMemoryRepository` × 8 / `make_message, make_photo` × 4)— 后向兼容
+    shim 走通
+  - `pytest_plugins = [...]` 列举模式:每个 fixture 子模块作为 plugin
+    加载,其 `@pytest.fixture` 装饰器注册全局可用;`_in_memory_repository`
+    / `_factories` **不**列入(纯类 / 纯函数,无 fixture)
+  - **`tests/test_storage_backends.py` 33 对 in_mem/jsonl twin 暂未合并**
+    — 本 PR 仅做 fixture 拆分 + 暴露 parametrize 接口;test 文件合并是
+    机械 200+ LOC 改动,留 PR #A7(PG / Mongo 接入)统一合并(那时会变成
+    4 后端 × N case,合并必要性更高),避免本 PR 过度膨胀
+  - **回归验证**:`uv run pytest` 630 通过 / 8 失败(pre-existing
+    `test_visual_regression.py` DPI 缩放 golden 不匹配,与本 PR 无关);
+    `uv run ruff check tests/fixtures tests/conftest.py` 0 错;
+    `uv run ruff format --check tests/fixtures tests/conftest.py` 0 改;
+    `uv run mypy src/tgmonitor` 41 错(等同 PR #A5 baseline,v1.4.0 已存
+    历史 tech debt,集中清理留 task #348)
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /
