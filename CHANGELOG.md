@@ -200,6 +200,71 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     `uv run mypy src/tgmonitor` 41 错(等同 PR #A5 baseline,v1.4.0 已存
     历史 tech debt,集中清理留 task #348)
 
+- **真集成测试 + 修 Mongo latent bug(PR #A7,架构主线)** — `tests/test_storage_backends.py`
+  长期只覆盖 InMemory + JsonlFileStore,PostgresRepository / MongoRepository
+  真实路径无 contract 一致性保证;另 `mongo_repo.find_media_by_file_id` 存
+  在 latent bug(自 v1.3.0 PR #3 起 media 从 `db.media` 集合迁到
+  `db.messages.media` 子文档,该方法读旧集合永远返 None)。本 PR 同时落
+  集成测试 + 修 latent bug。
+  - **新 `tests/integration/` 子包**(3 文件,~570 LOC):
+    - `__init__.py` — 文档说明策略(asymmetry:PG 真后端 + Mongo in-process)
+    - `conftest.py` — `pg_engine`(session-scope,testcontainers 真 PG,
+      DSN 转 asyncpg)/ `pg_repo`(function-scope,drop+recreate schema)/
+      `mongo_client`(session-scope,mongomock_motor)/ `mongo_repo`
+      (function-scope,distinct db_name 隔离)4 个 fixtures;无 Docker 时
+      `pg_engine` 自动 skip,`pytest -m integration` 不会整链路炸
+    - `test_pg_repo_parity.py`(23 测试):upsert_channel / 部分更新 /
+      subscribed 保留 / list_subscribed / ON DELETE CASCADE / save_message
+      幂等 / media 持久化 / sort+limit+offset / count / max_msg_id /
+      v1.4.0 字段(reply_to / forward_origin / via_bot_id / is_pinned /
+      reactions)/ `find_media_by_file_id` 跨频道去重 / skip PENDING+无
+      object_key / meta / 真 `ping()` / init_schema 幂等 / delete_message
+      cascades media
+    - `test_mongo_repo_parity.py`(24 测试):CRUD + 同上 v1.4.0 字段 +
+      `find_media_by_file_id` 修后命中(mongomock_motor 不支持完整
+      aggregate pipeline,`list_media / aggregate_per_channel` parity 留
+      v1.5.1 真 Mongo via testcontainers[mongodb] 补)
+  - **`mongo_repo.py` 修 2 个 latent bug**:
+    - `find_media_by_file_id`:原读 `db.media` 集合永远 None(该集合自
+      v1.3.0 起为空);改用 `db.messages.aggregate([$unwind media,
+      $match fid+done, $sort _id DESC, $limit 1])` 读子文档,
+      `list[dict[str, Any]]` 显式标注过 mypy;加 multikey 索引
+      `db.messages.media.telegram_file_id`
+    - `save_message` 主键生成:原 `_id` 是 Mongo 默认 ObjectId,但
+      `int(str(ObjectId))` 在 mongomock / 真 Mongo 都炸 ValueError;
+      改用 `db.counters.findAndModify({$inc seq})` 原子计数 +
+      `$setOnInsert: {_id}`(update 路径不触发 _id immutable 报错),
+      `_doc_to_message` 改 `int(d["_id"])` 直接转。**这是生产 Mongo
+      用户必中的 bug** — 任何 save_message 调用都会抛 ValueError;
+      修后与 PG `BIGSERIAL` / JSONL `in-memory counter` 主键语义对齐
+  - **`MongoRepository.from_client()` 新 classmethod**(测试用) — 集成
+    测试传预构造的 mongomock_motor client 进去,跳过 DSN 解析 + motor
+    client 自建;`close()` 不关 client(共享 client 由 fixture 管)。生产
+    代码仍走 `__init__(dsn, database)`
+  - **`pyproject.toml` 增 deps**:`testcontainers[postgresql,mongodb]>=4.8`
+    + `mongomock_motor>=0.0.21`(dev 组);`[tool.pytest.ini_options].addopts`
+    加 `-m 'not integration'` 默认 skip 集成测试 + `markers` 显式列出
+    `integration`(CI 显式 `pytest -m integration` 启用)
+  - **`.github/workflows/ci.yml` 新 `integration` job**:`ubuntu-latest` only,
+    `python-version: ["3.13"]`,装 Docker 默认 + Qt offscreen deps + 
+    `uv sync --all-extras --group dev` + `uv run pytest -m integration -v`
+    (覆盖默认 skip 规则)。Windows / macOS runner 不跑(testcontainers 在
+    GitHub Actions macOS arm64 偶发守护进程挂起,Linux 是官方推荐平台)
+  - **`uv.lock` 同步**:`docker 7.2.0` / `mongomock 4.3.0` / `mongomock-motor 0.0.36`
+    / `pytz 2026.3` / `sentinels 1.1.1` / `testcontainers 4.15.0` 共 6 个新
+    间接依赖
+  - **行为变化**(CHANGELOG 必须注明):跨频道 media 去重(mongomock 测试
+    通过)从「永远走真下载」变「命中既有 DONE 即用」,降低 IO + 加速
+    大量重复媒体(同一 sticker / 同一表情包在不同频道重复出现)的场景
+  - **回归验证**:
+    - `uv run pytest` 默认:**630 passed / 8 failed / 47 deselected**
+      (47 deselected 是 24 Mongo + 23 PG 集成测试,默认 skip;8 failed
+      是 pre-existing visual_regression DPI golden 不匹配,与本 PR 无关)
+    - `uv run pytest -m integration`:**24 passed / 23 skipped**(PG
+      因本地无 Docker skip;CI ubuntu-latest 有 Docker,会全 47 通过)
+    - `uv run ruff check src tests && uv run ruff format --check src tests`:**0 错**
+    - `uv run mypy src/tgmonitor`:**41 错**(等同 v1.5.0 baseline)
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /

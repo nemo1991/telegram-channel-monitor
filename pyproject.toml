@@ -92,7 +92,12 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra -q"
+# 2026-08-31 v1.5.0 PR #A7:`-m 'not integration'` 默认 skip 集成测试 —
+# 显式 `uv run pytest -m integration` 才跑。CI integration job 自动加 marker 覆盖。
+addopts = "-ra -q -m 'not integration'"
+markers = [
+    "integration: requires Docker (testcontainers) or in-process mongomock_motor;off by default",
+]
 
 [tool.coverage.run]
 # 仓库内 Python 源码;branch on 看分支覆盖率
@@ -155,4 +160,9 @@ dev = [
     "moto[s3]>=5",
     # 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子(可选用,CI 不依赖)
     "pre-commit>=3.7",
+    # 2026-08-31 v1.5.0 PR #A7:集成测试 — testcontainers 启动真 PG 服务(
+    # CI-only;本地无 Docker 跑会 skip)/ mongomock_motor in-process Mongo mock(
+    # 本地 + CI 通用,aggregate pipeline 部分支持度参差,仅覆盖基础 CRUD + find_media_by_file_id)。
+    "testcontainers[postgresql,mongodb]>=4.8",
+    "mongomock_motor>=0.0.21",
 ]

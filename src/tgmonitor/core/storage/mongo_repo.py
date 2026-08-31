@@ -75,6 +75,8 @@ def _doc_to_media(d: dict[str, Any]) -> MediaDTO:
 
 
 def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
+    # 2026-08-31 v1.5.0 PR #A7:channels._id 是 int(沿用 int 主键,与 PG 对齐),
+    # 不再 ObjectId 强转。
     return ChannelDTO(
         id=int(d["_id"]),
         title=d["title"],
@@ -95,8 +97,10 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
     reactions: list[ReactionDTO] | None = (
         [ReactionDTO.from_dict(r) for r in reactions_raw] if reactions_raw is not None else None
     )
+    # 2026-08-31 v1.5.0 PR #A7:`_id` 是 int 计数(`save_message._next_message_id`),
+    # 直接 `int()`;旧 PR 强转 `int(str(ObjectId))` 在 mongomock / 真 Mongo 都炸。
     return MessageDTO(
-        id=int(str(d["_id"])),
+        id=int(d["_id"]),
         channel_id=int(d["channel_id"]),
         telegram_msg_id=int(d["telegram_msg_id"]),
         author=d.get("author"),
@@ -137,6 +141,28 @@ class MongoRepository(StorageRepository):
         self._client: AsyncIOMotorClient | None = None
         self._db: AsyncIOMotorDatabase | None = None
 
+    @classmethod
+    def from_client(
+        cls,
+        client: AsyncIOMotorClient,
+        database: str,
+    ) -> MongoRepository:
+        """2026-08-31 v1.5.0 PR #A7:用预构造 client 建实例 — 集成测试用。
+
+        生产代码仍走 `__init__(dsn, database)`,走 `connect()` 自建 motor client。
+        测试(mongomock_motor / 真 testcontainers mongodb)可传已构造好的对象,
+        跳过 motor 的 DSN 解析。
+
+        `from_client` 构造的实例:`close()` 不会关 client(测试可能多个 repo
+        共享同一 client;client 生命周期由 fixture 管理)。
+        """
+        instance = cls.__new__(cls)
+        instance._dsn = ""  # sentinel:from_client 路径
+        instance._db_name = database
+        instance._client = client
+        instance._db = client[database]
+        return instance
+
     @property
     def db(self) -> AsyncIOMotorDatabase:
         """当前 DB 句柄;调用前必须 connect()。"""
@@ -147,20 +173,26 @@ class MongoRepository(StorageRepository):
 
     async def connect(self) -> None:
         """建 motor 客户端 + 拿 db 句柄(不立即 ping)。"""
-        self._client = AsyncIOMotorClient(self._dsn)
-        self._db = self._client[self._db_name]
+        if self._client is None:
+            self._client = AsyncIOMotorClient(self._dsn)
+            self._db = self._client[self._db_name]
 
     async def close(self) -> None:
-        """关 motor 客户端;幂等。"""
-        if self._client is not None:
+        """关 motor 客户端;幂等。`from_client` 构造的实例不会关 client。"""
+        if self._dsn and self._client is not None:
             self._client.close()
-            self._client = None
-            self._db = None
+        self._client = None
+        self._db = None
 
     async def init_schema(self) -> None:
         """建索引:(channel_id, telegram_msg_id) 唯一 / (channel_id, date) /
         (date) / media.message_id / media.telegram_file_id — 幂等
         (create_index 同名 no-op)。
+
+        2026-08-31 v1.5.0 PR #A7:加 `media.telegram_file_id` 子文档索引 —
+        `find_media_by_file_id` 修后走 `$unwind + $match` 路径,需此索引
+        走 multikey 命中避免全表扫。旧 `db.media.telegram_file_id` 索引
+        保留向后兼容(空集合不影响 query planner)。
         """
         # 唯一索引
         await self.db.messages.create_index(
@@ -168,8 +200,10 @@ class MongoRepository(StorageRepository):
         )
         await self.db.messages.create_index([("channel_id", 1), ("date", 1)])
         await self.db.messages.create_index([("date", 1)])
+        # 子文档 multikey 索引 — find_media_by_file_id 用(2026-08-31 PR #A7)
+        await self.db.messages.create_index([("media.telegram_file_id", 1)])
+        # 旧 db.media 索引保留(空集合,无害)
         await self.db.media.create_index([("message_id", 1)])
-        # 跨消息媒体去重索引(2026-08-24):find_media_by_file_id 用
         await self.db.media.create_index([("telegram_file_id", 1)])
 
     async def ping(self) -> bool:
@@ -298,10 +332,38 @@ class MongoRepository(StorageRepository):
 
     # ---- 消息 ----
 
+    async def _next_message_id(self) -> int:
+        """2026-08-31 v1.5.0 PR #A7:原子计数器 — 给新消息分配 int 主键。
+
+        用 `db.counters` 集合 + `findAndModify` `$inc` 原子自增;与 Postgres
+        BIGSERIAL / JsonlFileStore in-memory counter 等价语义。
+
+        修前:`_id` 用 Mongo 默认 ObjectId,`int(str(ObjectId))` 永远
+        ValueError(实测 mongomock_motor 24-char hex)。这条路径在生产
+        永远炸 — 任何 save_message 调用都不能走通。本 PR 改用 int 计数,
+        让 Mongo 与 PG / JSONL 主键语义对齐。
+        """
+        doc = await self.db.counters.find_one_and_update(
+            {"_id": "message_id"},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=True,  # ReturnDocument.AFTER
+        )
+        return int(doc["seq"])
+
     async def save_message(self, message: MessageDTO) -> int:
-        """幂等 upsert;返回 ObjectId 字符串形式。media 作为子文档内嵌。"""
-        # ObjectId 形式的 _id 仍由 Mongo 生成;此处返回 message.id 字符串
+        """幂等 upsert;**显式 int 主键**(PR #A7 改:`_id` 是 int 计数,不再是
+        ObjectId)— 与 Postgres / JsonlFileStore 主键语义对齐。
+
+        `message.id` 若已存在(调用方先填):复用,不再分配新计数器。否则
+        调 `_next_message_id()` 拿新值。`upsert=True` 时若 (channel_id,
+        telegram_msg_id) 已存在,Mongo 用「update path」不会触发 insert,
+        主键是已有那行的 — 不会分配新计数器。
+        """
+        if not message.id:
+            message.id = await self._next_message_id()
         doc = {
+            "_id": message.id,
             "channel_id": message.channel_id,
             "telegram_msg_id": message.telegram_msg_id,
             "author": message.author,
@@ -325,9 +387,18 @@ class MongoRepository(StorageRepository):
                 [r.to_dict() for r in message.reactions] if message.reactions is not None else None
             ),
         }
+        # 2026-08-31 v1.5.0 PR #A7:`_id` 用 `$setOnInsert` 而非 `$set` —
+        # update 路径下 `_id` 是 immutable,改 `_id` 直接 WriteError 报错
+        # (`mongomock_motor: After applying the update, the (immutable)
+        # field '_id' was found to have been altered`)。`$setOnInsert` 只在
+        # 真的 insert 时生效,update 时复用旧 _id — 与 PG `ON CONFLICT DO
+        # NOTHING` / JSONL `replace` 等价语义。
         result = await self.db.messages.find_one_and_update(
             {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id},
-            {"$set": doc},
+            {
+                "$set": {k: v for k, v in doc.items() if k != "_id"},
+                "$setOnInsert": {"_id": message.id},
+            },
             upsert=True,
             return_document=True,  # ReturnDocument.AFTER
         )
@@ -336,7 +407,7 @@ class MongoRepository(StorageRepository):
             result = await self.db.messages.find_one(
                 {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id}
             )
-        message.id = int(str(result["_id"]))
+        message.id = int(result["_id"])
         return message.id
 
     async def update_message(self, message: MessageDTO) -> None:
@@ -489,21 +560,31 @@ class MongoRepository(StorageRepository):
         命中条件 `object_key 非 None AND download_status == 'done'`。返回最新写入
         的那条(`_id` 倒序 → 物理插入序倒序 = upsert 路径下最新优先)。
 
-        注意:media 在本实现里是 messages 子文档(2026-08-25),此方法从
-        `db.media` 集合查 — 现存 latent bug,不在 PR #3 范围;返回的命中会
-        一直是 None,调用方已有「命中即用,不命中走真下载」容错。
+        2026-08-31 v1.5.0 PR #A7:修 latent bug — media 自 v1.3.0 PR #3 起是
+        `db.messages` 子文档(不再单独写 `db.media`),原实现读 `db.media`
+        集合永远是空 → 跨频道去重全部不命中。本 PR 改用
+        `db.messages.aggregate([$unwind media, $match, $sort])`,与 PG 后端
+        `WHERE telegram_file_id = $1 ORDER BY id DESC LIMIT 1` 语义对齐。
+
+        调用方已有「命中即用,不命中走真下载」容错,所以这个 bug 在用户路径
+        上表现是「跨频道下载不命中 → 真下载每次重跑」(实际多花 IO 但功能
+        正确);修后跨频道去重生效。
         """
-        doc = await self.db.media.find_one(
+        pipeline: list[dict[str, Any]] = [
+            {"$unwind": "$media"},
             {
-                "telegram_file_id": telegram_file_id,
-                "object_key": {"$ne": None},
-                "download_status": "done",
+                "$match": {
+                    "media.telegram_file_id": telegram_file_id,
+                    "media.object_key": {"$ne": None},
+                    "media.download_status": "done",
+                }
             },
-            sort=[("_id", -1)],
-        )
-        if doc is None:
-            return None
-        return _doc_to_media(doc)
+            {"$sort": {"_id": -1}},
+            {"$limit": 1},
+        ]
+        async for doc in self.db.messages.aggregate(pipeline):
+            return _doc_to_media(doc["media"])
+        return None
 
     async def list_media(
         self,
