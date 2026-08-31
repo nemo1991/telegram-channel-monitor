@@ -307,6 +307,21 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
     (PG 21 skip 因无 Docker,CI ubuntu-latest 47 全跑);非集成
     **630 passed / 47 deselected**;ruff 双步骤 / mypy 0 新错
 
+- **PR #A7 hotfix #3:`update_message_interactions` asyncpg 参数位错位**
+  (commit 修) — CI run `33350951214` 进展后 46 pass / 1 fail,最后一击。
+  旧实现 views_clause / reactions_clause 硬编 `$4` / `$5`,只在
+  「views + reactions 同时给」时对齐;只给 `views=42`(`reactions=None`)
+  时 args=[42, 100, 1] 但 SQL 写 `views = $4`,asyncpg 抛
+  `IndeterminateDatatypeError: could not determine data type of
+  parameter $1`。
+  - 改用位置计数器构造 SET 子句:`args.append(views_arg); set_parts.append(f"views = ${len(args)}")` 按当前 args 长度算 `$N`,views / reactions 任意组合都覆盖
+  - WHERE 子句同步用 `channel_arg` / `msg_arg` 变量(不再 `len(args)-1` 隐式)
+  - 顺手清 `reactions_clause` / `views_clause` 两个 ruff F841 死变量
+  - 行为变化:**无** — 修复的是真 latent prod bug,只给 views 时
+    UPDATE 不再炸;既有用例(`views + reactions` / `reactions=[]`)语义不变
+  - 回归:本地非集成 **630 passed / 47 deselected**(PG 集成测试
+    本地 skip,CI ubuntu-latest 验证);ruff 双步骤 / mypy 0 新错
+
 ### 📦 Build / Tooling
 - **`.pre-commit-config.yaml` 引入(PR #A1)** — 本地 commit 前自动跑 ruff
   (check + format)/ trailing-whitespace / end-of-file-fixer / check-yaml /

@@ -482,36 +482,40 @@ class PostgresRepository(StorageRepository):
         assert self._pool is not None
         # 序列化 reactions → list[dict] → JSONB;None 跳过,[] 写空数组
         if reactions is None:
-            reactions_clause = ""  # 不动
             reactions_arg: Any = None
         else:
-            reactions_clause = "reactions = $4::jsonb"
             reactions_arg = json.dumps(
                 [r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions]
             )
         if views is None:
-            views_clause = ""
             views_arg: Any = None
         else:
-            views_clause = "views = $5" if reactions_clause else "views = $4"
             views_arg = views
 
+        # 2026-08-31 v1.5.0 PR #A7 hotfix #3:用位置计数器构 SET 子句 —
+        # 旧实现 views_clause / reactions_clause 硬编 $4 / $5,只在
+        # 「views + reactions 同时给」时对齐;只给 views(reactions=None)
+        # 时 args=[42, 100, 1] 但 SQL 写 $4,asyncpg 抛
+        # IndeterminateDatatypeError。改成按当前 args 长度算 $N。
         set_parts: list[str] = []
         args: list[Any] = []
-        if views_clause:
-            set_parts.append(views_clause)
+        if views_arg is not None:
             args.append(views_arg)
-        if reactions_clause:
-            set_parts.append(reactions_clause)
+            set_parts.append(f"views = ${len(args)}")
+        if reactions_arg is not None:
             args.append(reactions_arg)
+            set_parts.append(f"reactions = ${len(args)}::jsonb")
         if not set_parts:
             return  # 两边都 None → no-op
         set_sql = ", ".join(set_parts)
-        args.extend([channel_id, telegram_msg_id])
+        args.append(channel_id)
+        channel_arg = len(args)
+        args.append(telegram_msg_id)
+        msg_arg = len(args)
         sql = f"""
             UPDATE messages SET {set_sql}
-            WHERE channel_id = ${len(args) - 1}
-              AND telegram_msg_id = ${len(args)}
+            WHERE channel_id = ${channel_arg}
+              AND telegram_msg_id = ${msg_arg}
         """
         async with self._pool.acquire() as conn:
             await conn.execute(sql, *args)
