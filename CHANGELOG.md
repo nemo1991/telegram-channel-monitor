@@ -5,14 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased] - v1.5.0
+## [1.5.0] - 2026-08-31
 
 主题:**架构 + UX 双线推进** — 主线 3 个架构 / 性能 PR + 3 个主题 quick
 win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成测试
 + Lightbox UX 收官。共 8 PR / ~2300 LOC / +45-47 测试。
-
-> 本段为 v1.5.0 累积 changelog,各 PR 合入时**就近追加**到对应分类下,
-> 发版时统一转 `[1.5.0] - 2026-XX-XX` + bump 版本号。
 
 ### ✨ Added
 - **Lightbox 图片内嵌预览(PR #A8,UX 收官)** — v1.4.0 PR #1 已落
@@ -409,6 +406,29 @@ win(系统托盘 / 快捷键 / ruff format) + conftest 重构 + PG/Mongo 集成�
   `CONTRIBUTING.md`「准备」段:`uv run pre-commit install` + 首次
   `pre-commit run --all-files`。CI 仍跑 ruff 双步骤作为兜底,pre-commit
   本地钩子与 CI 门控完全等价
+
+### 🧪 Tests
+- **v1.5.0 测试覆盖总览**(PR #A1–A8):
+  - **PR #A1**:无新测试(纯工具链 — `ruff format --check` 是测试的钩子)
+  - **PR #A2**:`tests/test_app_service_facade.py` 新文件,+4 contract test
+    (facade → 子 service 转发 + storage/objects setter 同步)
+  - **PR #A3**:`tests/test_export_progress_dialog.py` +7 /
+    `tests/test_export_progress_vm.py` +10(进度 dialog + VM 行为)
+  - **PR #A4**:`tests/test_tray_icon.py` +9 / `tests/test_main_window_tray.py` +7 /
+    `tests/test_main_window_close.py` +1(tray icon 行为 + close 隐藏到托盘)
+  - **PR #A5**:`tests/test_theme_system.py` 新文件,+10(Theme.SYSTEM enum /
+    actual() 解析 / accent 按 actual 选色 / colorSchemeChanged 监听)
+  - **PR #A6**:无新测试(纯 fixture 拆分 — `tests/test_storage_backends.py`
+    parity 合并是机械 200+ LOC,留 PR #A7)
+  - **PR #A7**:`tests/integration/test_pg_repo_parity.py` 新,+23 /
+    `tests/integration/test_mongo_repo_parity.py` 新,+24(CI ubuntu-latest 跑,
+    本地无 Docker 时 skip)+ `tests/fixtures/_settings.py` 等 7 个 fixture 子模块
+  - **PR #A8**:`tests/test_lightbox_dialog.py` 新,+21 /
+    `tests/test_message_detail_theme.py` +1(Lightbox dialog + MessageDetail 媒体卡 click)
+- **测试总数**:**v1.4.0 baseline 630 → v1.5.0 652 passed / 47 deselected**(集成测试)
+- **lint / 格式**:`ruff check src tests` 0 错 + `ruff format --check src tests` 0 改
+- **mypy**:`src/tgmonitor` 41 错(等同 v1.4.0 baseline + v1.5.0 PR #A8 新增 0,
+  PR #A8 新增 3 处用 per-line `# type: ignore` 抑制)
 
 ## [1.4.0] - 2026-08-29
 
