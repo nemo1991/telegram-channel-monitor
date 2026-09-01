@@ -592,3 +592,21 @@ class MonitorViewModel(QObject):
                 pass
 
         run_coro(self.loop, _go(), error_label="export_media_list")
+
+    def export_zip(self, req: ExportRequest) -> None:
+        """2026-09-01 v1.5.1 PR #B4:Media Manager 当前视图 → ZIP 打包。
+
+        复用 `app.export(ExportRequest)` — `_run_messages` 检测到
+        `format == ZIP` 时把 `object_store` 一律传进去(不依赖
+        `include_thumbnails`),自动调 `ZipExporter.render` 完成打包。
+
+        `req.format` 必须是 `ExportFormat.ZIP`;`req.channel_ids` 通常是
+        `[<single_channel>]` 或 filter 出来的多条;`req.single_message_id`
+        非 None 时走单条消息出口(见 `_run_messages`)。
+        """
+
+        async def _go() -> None:
+            async for _ in self.app.export(req):
+                pass
+
+        run_coro(self.loop, _go(), error_label="export_zip")

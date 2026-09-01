@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from tgmonitor.core.dto import (
+    ExportFormat,
     ExportRequest,
     ExportResult,
     MediaExportRequest,
@@ -34,6 +35,7 @@ from tgmonitor.core.export import (  # noqa: F401
     json_exporter,
     markdown_exporter,
     media_list_csv_exporter,
+    zip_exporter,  # 2026-09-01 v1.5.1 PR #B4:ZIP 导出注册
 )
 from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.core.objectstore.base import ObjectStore
@@ -82,7 +84,12 @@ class ExportService:
             yield
 
     async def _run_messages(self, request: ExportRequest) -> AsyncIterator[None]:
-        """既有 per-message 导出 — 历史行为,6 个老测试不变。"""
+        """既有 per-message 导出 — 历史行为,6 个老测试不变。
+
+        2026-09-01 v1.5.1 PR #B4:若 `request.single_message_id` 非 None,
+        直接 `storage.get_message(...)` 拉单条,跳过 `list_messages` 分页
+        流(对 ZIP 走单条消息导出时省一趟 + 避免分页残留 N=0 的副作用)。
+        """
         req_id = uuid.uuid4().hex[:8]
         out_path = Path(request.out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,50 +103,79 @@ class ExportService:
         else:
             channels = all_channels
 
-        # 流式分页拉取(分页上限 PAGE_SIZE,累加并按时间排序)
-        #
-        # 2026-08-27 v1.4.0 PR #12:list_messages `limit` 语义是「最近 N 条」
-        # (取排序尾部);要向前翻历史页就靠 `offset` 从尾部继续跳过。
-        # 翻页方向:offset 0 → PAGE_SIZE → 2*PAGE_SIZE → ...
-        # 翻页终止:batch < PAGE_SIZE(到顶了)/ offset 超 10M 兜底。
-        all_messages: list = []
-        offset = 0
-        channel_ids = list(channels.keys())
-        while channel_ids:
-            batch = await self._storage.list_messages(
-                channel_ids=channel_ids,
-                date_from=request.date_from,
-                date_to=request.date_to,
-                limit=PAGE_SIZE,
-                offset=offset,
+        all_messages: list[MessageDTO] = []
+        # 2026-09-01 v1.5.1 PR #B4:单条消息入口 — `channel_ids[0]` 即
+        # 消息所在频道(用户从 message view / media manager 触发时已
+        # 隐含知道)。若 channel_ids 为空,降级到分页路径(避免误用)。
+        if request.single_message_id is not None and request.channel_ids:
+            ch_id = request.channel_ids[0]
+            msg = await self._storage.get_message(ch_id, request.single_message_id)
+            if msg is not None:
+                all_messages.append(msg)
+            await self._bus.publish(
+                ExportProgress(
+                    request_id=req_id, written=len(all_messages), total=len(all_messages)
+                )
             )
-            if not batch:
-                break
-            all_messages.extend(batch)
-            offset += len(batch)
-            await self._bus.publish(ExportProgress(request_id=req_id, written=offset, total=None))
             yield
-            # 最后一页:不足 PAGE_SIZE 说明数据耗尽。
-            if len(batch) < PAGE_SIZE:
-                break
-            # 死循环兜底:offset 已超数据上限(防 storage 端 race / bug)。
-            if offset > 10_000_000:
-                log.error("export pagination 超 10M 退出,channel_ids=%s", channel_ids)
-                break
+        else:
+            # 流式分页拉取(分页上限 PAGE_SIZE,累加并按时间排序)
+            #
+            # 2026-08-27 v1.4.0 PR #12:list_messages `limit` 语义是「最近 N 条」
+            # (取排序尾部);要向前翻历史页就靠 `offset` 从尾部继续跳过。
+            # 翻页方向:offset 0 → PAGE_SIZE → 2*PAGE_SIZE → ...
+            # 翻页终止:batch < PAGE_SIZE(到顶了)/ offset 超 10M 兜底。
+            offset = 0
+            channel_ids = list(channels.keys())
+            while channel_ids:
+                batch = await self._storage.list_messages(
+                    channel_ids=channel_ids,
+                    date_from=request.date_from,
+                    date_to=request.date_to,
+                    limit=PAGE_SIZE,
+                    offset=offset,
+                )
+                if not batch:
+                    break
+                all_messages.extend(batch)
+                offset += len(batch)
+                await self._bus.publish(
+                    ExportProgress(request_id=req_id, written=offset, total=None)
+                )
+                yield
+                # 最后一页:不足 PAGE_SIZE 说明数据耗尽。
+                if len(batch) < PAGE_SIZE:
+                    break
+                # 死循环兜底:offset 已超数据上限(防 storage 端 race / bug)。
+                if offset > 10_000_000:
+                    log.error("export pagination 超 10M 退出,channel_ids=%s", channel_ids)
+                    break
 
-        all_messages.sort(key=lambda m: (m.date or datetime.min, str(m.id)))
+            all_messages.sort(key=lambda m: (m.date or datetime.min, str(m.id)))
 
-        await self._bus.publish(
-            ExportProgress(request_id=req_id, written=len(all_messages), total=len(all_messages))
-        )
+            await self._bus.publish(
+                ExportProgress(
+                    request_id=req_id, written=len(all_messages), total=len(all_messages)
+                )
+            )
 
         try:
             exporter = EXPORTERS.get(request.format)
+            # 2026-09-01 v1.5.1 PR #B4:ZIP 永远需要 object_store(没数据
+            # 等于空包);其它 exporter 仅在 include_thumbnails=True 时传。
+            # `self._objects: ObjectStore`(非 Optional)— ExportService
+            # 构造时已 assert `objects is not None`;两个分支统一成
+            # `ObjectStore | None`,再交给 `render` 的协议签名。
+            object_store_arg: ObjectStore | None = (
+                self._objects
+                if request.format == ExportFormat.ZIP or request.include_thumbnails
+                else None
+            )
             bytes_written = await exporter.render(
                 out_path,
                 channels,
                 all_messages,
-                object_store=self._objects if request.include_thumbnails else None,
+                object_store=object_store_arg,
                 include_thumbnails=request.include_thumbnails,
             )
             result = ExportResult(

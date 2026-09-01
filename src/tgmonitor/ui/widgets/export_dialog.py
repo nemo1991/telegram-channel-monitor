@@ -29,6 +29,7 @@ _FORMAT_EXT = {
     ExportFormat.CSV: ".csv",
     ExportFormat.MARKDOWN: ".md",
     ExportFormat.HTML: ".html",
+    ExportFormat.ZIP: ".zip",  # 2026-09-01 v1.5.1 PR #B4:ZIP 导出
 }
 
 
@@ -79,12 +80,15 @@ class ExportDialog(QDialog):
         # 格式(combo_field 禁用滚轮切换 — 防滚动误改导出格式)
         self.cmb_fmt = combo_field(form, "格式:", ExportFormat)
 
-        # 选项
-        self.chk_thumbs = QCheckBox("HTML 导出时内嵌缩略图")
-        self.chk_thumbs.setEnabled(False)  # 默认 JSON/CSV,选 HTML 时启用
+        # 选项 — HTML(内嵌缩略图)+ ZIP(打包缩略图)都用到;其它格式
+        # 忽略该字段。2026-09-01 v1.5.1 PR #B4 加 ZIP 共享同一 checkbox。
+        self.chk_thumbs = QCheckBox("导出时包含缩略图(HTML / ZIP)")
+        self.chk_thumbs.setEnabled(False)  # 默认 JSON/CSV,选 HTML/ZIP 时启用
         form.addRow("", self.chk_thumbs)
         self.cmb_fmt.currentIndexChanged.connect(
-            lambda i: self.chk_thumbs.setEnabled(self.cmb_fmt.currentData() == ExportFormat.HTML)
+            lambda i: self.chk_thumbs.setEnabled(
+                self.cmb_fmt.currentData() in (ExportFormat.HTML, ExportFormat.ZIP)
+            )
         )
 
         # 输出路径(选文件而不是目录)
@@ -133,7 +137,11 @@ class ExportDialog(QDialog):
             date_to=dt,
             format=fmt,
             out_path=out,
-            include_thumbnails=(fmt == ExportFormat.HTML and self.chk_thumbs.isChecked()),
+            # 2026-09-01 v1.5.1 PR #B4:ZIP 与 HTML 共用同一 checkbox,
+            # 都把缩略图作为可选附件;其它格式该字段被 dispatcher 忽略。
+            include_thumbnails=(
+                fmt in (ExportFormat.HTML, ExportFormat.ZIP) and self.chk_thumbs.isChecked()
+            ),
         )
         self.accept()
 

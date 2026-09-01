@@ -218,6 +218,11 @@ class ExportFormat(str, Enum):
     # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图(filter + sort + page)
     # 一键导出 CSV — schema 与 ExportRequest 完全不同,走独立 dispatcher。
     MEDIA_CSV = "media_csv"
+    # 2026-09-01 v1.5.1 PR #B4:ZIP 打包 — 把消息附带的 media 二进制
+    # 连同 `_manifest.json`(元数据)打成一个 .zip 文件,支持单条消息 /
+    # 频道范围导出。可选打包缩略图(`include_thumbnails=True`)— 跟 HTML
+    # 共用同一个字段,语义一致。
+    ZIP = "zip"
 
 
 @dataclass
@@ -230,7 +235,12 @@ class ExportRequest:
     format: ExportFormat = ExportFormat.JSON
     out_path: str = ""
     include_media_meta: bool = True
-    include_thumbnails: bool = False  # HTML 用:把缩略图内嵌
+    include_thumbnails: bool = False  # HTML/ZIP 用:内嵌缩略图 / 打包缩略图
+    # 2026-09-01 v1.5.1 PR #B4:单条消息导出 — `None` 时按 `channel_ids +
+    # date_from/to` 拉范围;非 `None` 时直接走 `storage.get_message(...)`
+    # 取单条,跳过 `_run_messages` 的分页流(只对 ZIP 生效,其它 exporter
+    # 忽略该字段)。默认 None = 既有范围导出路径不变。
+    single_message_id: int | None = None
 
 
 @dataclass

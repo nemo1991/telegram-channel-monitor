@@ -32,6 +32,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -136,6 +137,10 @@ class MediaManagerWidget(QWidget):
     # MainWindow 接到 path 后构造 MediaExportRequest 调 vm.export_media_list。
     # Signal 带 str(out_path),UI 在 click handler 里 QFileDialog 选完文件后 emit。
     export_csv_requested = Signal(str)
+    # 2026-09-01 v1.5.1 PR #B4:ZIP 打包导出 — 同 CSV 流程,但 out 走
+    # .zip 扩展名;MainWindow 构造 ExportRequest(channel_ids=[本频道],
+    # single_message_id=None, include_thumbnails 可选)→ vm.export_zip。
+    export_zip_requested = Signal(str, bool)  # (out_path, include_thumbnails)
 
     # 2026-08-25 PR #4:按频道批量删除 — payload channel_id(MainWindow 收到后
     # 二次确认 + 调 vm.delete_by_channel)
@@ -322,6 +327,26 @@ class MediaManagerWidget(QWidget):
         )
         self.btn_export_csv.clicked.connect(self._on_export_csv)
         actions.addWidget(self.btn_export_csv)
+
+        # 2026-09-01 v1.5.1 PR #B4:ZIP 打包导出 — 镜像 CSV 流程,emit
+        # `export_zip_requested(out_path, include_thumbnails)`。缩略图勾
+        # 选用 widget 内的 `chk_zip_thumbs` 开关;MainWindow 接到后构造
+        # `ExportRequest(format=ZIP, include_thumbnails=...)`。
+        self.btn_export_zip = QPushButton("📦 Export ZIP")
+        self.btn_export_zip.setCursor(Qt.PointingHandCursor)
+        self.btn_export_zip.setToolTip(
+            "Pack current filter view's media bytes + manifest.json into .zip",
+        )
+        self.btn_export_zip.clicked.connect(self._on_export_zip)
+        actions.addWidget(self.btn_export_zip)
+        # 缩略图打包开关 — 默认 unchecked(纯媒体包);只在 ZIP 按钮旁,
+        # 不影响 CSV 流程。
+        self.chk_zip_thumbs = QCheckBox("含缩略图")
+        self.chk_zip_thumbs.setCursor(Qt.PointingHandCursor)
+        self.chk_zip_thumbs.setToolTip(
+            "When packing ZIP, also fetch each media's thumb_key and write thumb_<arcname>",
+        )
+        actions.addWidget(self.chk_zip_thumbs)
 
         actions.addStretch(1)
 
@@ -880,6 +905,28 @@ class MediaManagerWidget(QWidget):
         if not path:
             return
         self.export_csv_requested.emit(path)
+
+    def _on_export_zip(self) -> None:
+        """2026-09-01 v1.5.1 PR #B4:点 Export ZIP → QFileDialog 选 .zip 路径 →
+        emit `export_zip_requested(path, include_thumbnails)`。
+
+        `include_thumbnails` 来自同旁的 `chk_zip_thumbs` checkbox;默认
+        不勾选(纯媒体包),勾上后打包 thumb_<arcname>。
+        """
+        from datetime import datetime
+
+        from PySide6.QtWidgets import QFileDialog
+
+        default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 Media Manager 当前视图为 ZIP",
+            default_name,
+            "ZIP files (*.zip)",
+        )
+        if not path:
+            return
+        self.export_zip_requested.emit(path, self.chk_zip_thumbs.isChecked())
 
     def on_channel_cleared(self, channel_id: int, deleted: int) -> None:
         """2026-08-25 PR #4:VM 反馈 → status bar + 自动 reload 当前 filter 列表。"""

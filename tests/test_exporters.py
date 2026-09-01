@@ -103,8 +103,12 @@ async def test_export_htmlembeds_thumbnails(tmp_path):
     assert "data:image/jpeg;base64," in html
 
 
-async def test_registry_has_all_five():
-    """v1.3.0 PR #7:新增 MEDIA_CSV 后,registry 应有 5 个 format。"""
+async def test_registry_has_all_six():
+    """v1.5.1 PR #B4:加 ZIP 后,registry 应有 6 个 format(原 5 个 + ZIP)。
+
+    早期 `test_registry_has_all_five`(PR #7)已合并到这个更广的断言里 —
+    5-format 集合是 6-format 集合的子集,无需独立测试。
+    """
     available = EXPORTERS.available()
     assert set(available) == {
         ExportFormat.JSON,
@@ -112,6 +116,7 @@ async def test_registry_has_all_five():
         ExportFormat.MARKDOWN,
         ExportFormat.HTML,
         ExportFormat.MEDIA_CSV,
+        ExportFormat.ZIP,
     }
 
 
@@ -496,3 +501,183 @@ async def test_html_exporter_skips_oversized_thumb(tmp_path):
     assert "data:image/jpeg;base64," not in content
     # 占位文出现在(消息详情 span)
     assert "📎" in content
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-01 v1.5.1 PR #B4:ZIP 导出 — 单元级 + dispatcher + Zip Slip 防御
+# ---------------------------------------------------------------------------
+
+
+async def test_registry_includes_zip():
+    """PR #B4:ZIP 注册到 EXPORTERS,registry 应包含 `ExportFormat.ZIP`。
+    (更广的 6-format 集合断言见 `test_registry_has_all_six`,109 行)"""
+    available = EXPORTERS.available()
+    assert ExportFormat.ZIP in available
+
+
+async def test_zip_basic_skips_failed_media(tmp_path):
+    """PR #B4:ZipExporter — DONE media 入包,FAILED / PENDING 跳过,
+    `_manifest.json` 顶部写全 metadata。"""
+    import json as json_mod
+    import zipfile
+
+    from tgmonitor.core.dto import MediaDownloadStatus, MediaType
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    # 把 photo msg 的 object_key / status 填为 DONE 并 put bytes
+    await objects.put("media/abc.jpg", b"\xff\xd8FAKE_JPEG_BODY", None)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+    # 加一条 FAILED 的 photo(不应进 zip)
+    from tgmonitor.core.dto import MediaDTO
+
+    failed_msg = make_message(
+        channel_id=200,
+        msg_id=2,
+        text="失败 media",
+    )
+    failed_msg.media = [
+        MediaDTO(
+            type=MediaType.PHOTO,
+            file_name="bad.jpg",
+            download_status=MediaDownloadStatus.FAILED,
+            download_error="disk full",
+            object_key="media/missing.jpg",
+            object_backend="local",
+        )
+    ]
+    await storage.save_message(failed_msg)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "out.zip"
+    req = ExportRequest(
+        channel_ids=[100, 200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+    )
+    async for _ in svc.run(req):
+        pass
+
+    assert out.exists()
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        # DONE 那条 photo 入包 + _manifest.json;FAILED 那条跳过
+        assert any(n.endswith("abc.jpg") or n.endswith("pic.jpg") for n in names), names
+        assert "_manifest.json" in names
+        # FAILED 不入包
+        assert not any("bad.jpg" in n or "missing.jpg" in n for n in names), names
+        manifest = json_mod.loads(zf.read("_manifest.json"))
+        # manifest 含全部 messages 元数据(包括 FAILED 那条的 metadata)
+        assert len(manifest) >= 3  # ch100 msg1 + ch200 msg1 + ch200 msg2 (failed photo)
+        # verify zip 包里 photo 文件能读回原 bytes
+        for n in names:
+            if "abc.jpg" in n and "thumb" not in n:
+                assert zf.read(n) == b"\xff\xd8FAKE_JPEG_BODY"
+
+
+def test_zip_sanitize_arcname_zipslip():
+    """PR #B4:`_sanitize_arcname` 把 `../etc/passwd` 改成 `_/_/etc/passwd` —
+    Zip Slip 防御单元测,纯函数。每段 `..` 都替换成 `_`,不会越出 zip 根。
+    """
+    from tgmonitor.core.export.zip_exporter import _sanitize_arcname
+
+    # ../ 段全部替换成 _;`../../etc/passwd` 4 段 → 4 个 `_/_/_/etc/passwd`
+    assert _sanitize_arcname("../../etc/passwd") == "_/_/etc/passwd"
+    assert _sanitize_arcname("a/../../b") == "a/_/_/b"
+    # \\ 视作 / (Windows 解压工具也认):2 个 `..` 段 → 2 个 `_` 替换
+    assert _sanitize_arcname("..\\..\\windows\\system32") == "_/_/windows/system32"
+    # 前缀 / 去掉
+    assert _sanitize_arcname("/abs/path.jpg") == "abs/path.jpg"
+    # 控制字符替换(\x00 / \x07)
+    assert _sanitize_arcname("bad\x00name\x07.jpg") == "bad_name_.jpg"
+    # 纯 ../ 段(`../` 切出来 = [`..`, `..`, ``])
+    assert _sanitize_arcname("../") == "_/_"
+    # 单段 .. → _ 兜底
+    assert _sanitize_arcname("..") == "_"
+    # 正常文件名保持
+    assert _sanitize_arcname("media/p.jpg") == "media/p.jpg"
+
+
+async def test_zip_with_thumbnails(tmp_path):
+    """PR #B4:`include_thumbnails=True` 时同步打包 thumb_<arcname>。"""
+    import zipfile
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await objects.put("media/abc.jpg", b"\xff\xd8FAKE_JPEG_BODY", None)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "out.zip"
+    req = ExportRequest(
+        channel_ids=[200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+        include_thumbnails=True,
+    )
+    async for _ in svc.run(req):
+        pass
+
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        # thumb 文件存在(_setup 已 put `media/abc.jpg.thumb`)
+        thumb_names = [n for n in names if n.startswith("thumb_")]
+        assert len(thumb_names) >= 1, names
+        # thumb 内容与 put 的 bytes 一致
+        for n in thumb_names:
+            assert zf.read(n) == b"\xff\xd8\xff\xd9fake-jpeg"
+
+
+async def test_zip_single_message_dispatch(tmp_path):
+    """PR #B4:`ExportRequest.single_message_id` 非 None → dispatcher 走
+    `storage.get_message(...)` 拉单条,跳过 list_messages 分页。"""
+    import json as json_mod
+    import zipfile
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await objects.put("media/abc.jpg", b"\xff\xd8FAKE_JPEG_BODY", None)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "single.zip"
+    req = ExportRequest(
+        channel_ids=[200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+        single_message_id=1,  # 只取 ch200 msg1
+    )
+    async for _ in svc.run(req):
+        pass
+
+    with zipfile.ZipFile(out) as zf:
+        # 单条消息 zip → 只有 1 条 photo 入包,没有 ch100 msg1 / ch200 msg2
+        manifest = json_mod.loads(zf.read("_manifest.json"))
+        assert len(manifest) == 1
+        assert manifest[0]["channel_id"] == 200
+        assert manifest[0]["telegram_msg_id"] == 1

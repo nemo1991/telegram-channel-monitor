@@ -450,6 +450,9 @@ class MainWindow(QMainWindow):
         self.media_manager.clear_channel_requested.connect(self._on_media_clear_channel)
         # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
         self.media_manager.export_csv_requested.connect(self._on_media_export_csv)
+        # 2026-09-01 v1.5.1 PR #B4:ZIP 打包导出 — 镜像 CSV 流程,接收
+        # `(out_path, include_thumbnails)`,构造 ExportRequest(format=ZIP)。
+        self.media_manager.export_zip_requested.connect(self._on_media_export_zip)
         # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点缩略图 → 异步加载
         # 原图 bytes → QPixmap → 弹 LightboxDialog。
         self.media_manager.preview_requested.connect(self._on_media_preview)
@@ -995,6 +998,31 @@ class MainWindow(QMainWindow):
             out_path=out_path,
         )
         self._vm.export_media_list(req)
+
+    def _on_media_export_zip(self, out_path: str, include_thumbnails: bool) -> None:
+        """2026-09-01 v1.5.1 PR #B4:Media Manager 「Export ZIP」按钮 —
+        构造 `ExportRequest(format=ExportFormat.ZIP, include_thumbnails=...)`,
+        调 `vm.export_zip` 走 ExportService 异步生成器。
+
+        `channel_ids` 取自 widget 当前 filter 的 channel_id(若 All Channels
+        走空 list = 全频道)。`single_message_id=None` = 范围导出,与
+        CSV 流程保持一致(单条 ZIP 走 message view context menu,后续 PR)。
+        """
+        from tgmonitor.core.dto import ExportFormat, ExportRequest
+
+        f = self.media_manager.current_filters()
+        # 把 `All Channels` (channel_id is None) → 空 list,跟 ExportRequest
+        # 语义对齐(空 = 全频道)
+        ch = f.get("channel_id")
+        channel_ids = [int(ch)] if ch is not None else []
+        req = ExportRequest(
+            channel_ids=channel_ids,
+            format=ExportFormat.ZIP,
+            out_path=out_path,
+            include_thumbnails=include_thumbnails,
+            single_message_id=None,
+        )
+        self._vm.export_zip(req)
 
     def _on_open_media_failed(
         self,
