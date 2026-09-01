@@ -126,6 +126,25 @@ class MediaDownloaded(Event):
 
 
 @dataclass
+class MediaDownloadProgress(Event):
+    """2026-09-01 v1.5.1 PR #B3:Media Manager 下载进度反馈。
+
+    TDLib `local.downloaded_size`(从 `LocalFile.downloaded_size` 读)轮询
+    时节流(0.5s/次)发出。`total=None` 表示 file_size 未知(只显示已下载
+    字节);`total=downloaded` 表示已完成(终态,与 `MediaDownloaded` 配对)。
+
+    UI 据此在 Media Manager row 上实时显示「已下载 X / Y MB (50%)」。
+    50 并发媒体 = ~10 emits/s/channel;VM / UI 端可再加节流。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    media_idx: int = -1
+    downloaded: int = 0
+    total: int | None = None
+
+
+@dataclass
 class MediaDeleted(Event):
     """2026-08-24 Media Manager:一条 media 被用户从某 message 删除。
 

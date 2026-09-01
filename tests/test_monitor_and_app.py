@@ -574,11 +574,14 @@ class _SlowDownloadClient(FakeTelegramClient):
 
     让「先落库 DOWNLOADING → 后台下载 → 回写 DONE」的时序可确定性观察,
     而不是在 0.05s 的 sleep 里被秒完成下载的假 client 竞态掉。
+
+    2026-09-01 v1.5.1 PR #B3:接 `progress_callback` kwarg — 与 Protocol
+    签名对齐;SlowClient 不发进度(避免测试事件洪水)。
     """
 
-    async def download_file(self, file_id: str) -> bytes | None:
+    async def download_file(self, file_id: str, *, progress_callback=None) -> bytes | None:
         await asyncio.sleep(0.2)
-        return await super().download_file(file_id)
+        return await super().download_file(file_id, progress_callback=progress_callback)
 
 
 async def test_full_policy_downloads_media_async(bus, storage, objectstore, settings) -> None:

@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Protocol, runtime_checkable
+from typing import AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 
@@ -114,13 +114,23 @@ class TelegramClient(Protocol):
         ...
 
     # ---- 媒体下载 ----
-    async def download_file(self, file_id: str) -> bytes | None:
+    async def download_file(
+        self,
+        file_id: str,
+        *,
+        progress_callback: Callable[[int, int | None], Awaitable[None]] | None = None,
+    ) -> bytes | None:
         """下载 TDLib 文件原 bytes;失败 / 超时返 None,**不抛**。
 
         实现约定(给 MediaDownloader 用的契约):
           - 两步:异步 `DownloadFile` 触发 + `GetFile` 轮询到 `is_downloading_completed`。
           - 失败(网络 / 权限 / 30 min hard cap)→ 返 None,monitor 循环继续。
           - 真拿到 bytes 才返非 None bytes。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选 `await
+        callback(downloaded: int, total: int | None)`;实现约 0.5s 节流
+        一次,完成时发终值。`total=None` 表示 file_size 未知(只显示已
+        下载字节)。默认 None = 不上报(老调用方零改动)。
         """
         ...
 

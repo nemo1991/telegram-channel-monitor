@@ -448,3 +448,93 @@ async def test_download_one_force_bypasses_objectstore_skip(
     assert await objects.get(key) == new_payload
     # 不走 skip → file_size 应是新下载的真实大小
     assert out.file_size == len(new_payload)
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — MediaDownloader.download_one
+# 透传 progress_callback;FakeTelegramClient.download_file 模拟多 chunk。
+# ---------------------------------------------------------------------------
+
+
+async def test_download_one_invokes_progress_callback(
+    client: FakeTelegramClient, objects: LocalObjectStore, storage
+) -> None:
+    """PR #B3:`download_one` 把 `progress_callback` 透传给
+    `client.download_file`;Fake client 模拟 4 次回调(0% / 33% / 67% / 100%)。
+    """
+    payload = b"X" * 300
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage)
+    med = _make_media()
+
+    received: list[tuple[int, int | None]] = []
+
+    async def _cb(downloaded: int, total: int | None) -> None:
+        received.append((downloaded, total))
+
+    out = await dl.download_one(msg_pk=42, media=med, progress_callback=_cb)
+
+    # fake_client 模拟多 chunk:33% (100) → 67% (200) → 100% (300,终值)
+    # 注意:`if pct > 0` 跳过 0%,所以是 3 次回调(不含初始 0)
+    assert len(received) == 3, received
+    # 终值 == payload 字节数
+    assert received[-1] == (300, 300)
+    # 全部 callback total 与终值一致(fake 简化了)
+    assert all(t == 300 for _, t in received)
+    # 单调递增
+    assert received[0][0] < received[1][0] < received[2][0]
+    # 下载成功(MediaDownloader 路径完成)
+    assert out.download_status == MediaDownloadStatus.DONE
+    assert out.object_key is not None
+
+
+async def test_download_one_progress_callback_none_is_noop(
+    client: FakeTelegramClient, objects: LocalObjectStore, storage
+) -> None:
+    """PR #B3:`progress_callback=None`(老调用方默认值)→ 不报错,正常下载。
+
+    fake_client 内部 `if data is not None and progress_callback is not None`
+    跳过进度回调;只返 bytes。
+    """
+    payload = b"Y" * 50
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage)
+    med = _make_media()
+
+    out = await dl.download_one(msg_pk=1, media=med, progress_callback=None)
+
+    assert out.download_status == MediaDownloadStatus.DONE
+    assert await objects.get(out.object_key) == payload
+
+
+async def test_download_one_progress_not_invoked_when_skipped(
+    client: FakeTelegramClient, objects: LocalObjectStore, storage
+) -> None:
+    """PR #B3:skip-if-stored 命中(prior DONE)→ 不调 progress_callback。
+
+    没下载发生 = 没进度可报,callback 不调更直观(skip #1 #2 同理)。
+    """
+    from dataclasses import replace
+
+    # 先下 1 次让 storage 里有 prior DONE
+    payload = b"X" * 100
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage)
+    med = _make_media()
+    out1 = await dl.download_one(msg_pk=1, media=med)
+    assert out1.download_status == MediaDownloadStatus.DONE
+
+    # 第 2 次同 file_id → skip #1;但 progress_callback 仍传进去
+    received: list[tuple[int, int | None]] = []
+
+    async def _cb(d: int, t: int | None) -> None:
+        received.append((d, t))
+
+    out2 = await dl.download_one(
+        msg_pk=1,
+        media=replace(med, file_size=None),
+        progress_callback=_cb,
+    )
+    # skip 命中 → 没回调
+    assert received == []
+    assert out2.download_status == MediaDownloadStatus.DONE

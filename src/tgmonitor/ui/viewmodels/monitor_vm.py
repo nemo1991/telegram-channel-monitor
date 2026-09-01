@@ -34,6 +34,7 @@ from tgmonitor.core.events import (
     LoginStateChanged,
     MediaDeleted,
     MediaDownloaded,
+    MediaDownloadProgress,
     MediaReconcileFinished,
     MediaRetried,
     MessageEdited,
@@ -71,6 +72,11 @@ class MonitorViewModel(QObject):
     message_received = Signal(object)
     message_edited = Signal(object)  # 2026-08-24:编辑事件 MessageDTO
     media_downloaded = Signal(object)  # MediaDownloaded(下载结束,成功或失败)
+    # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发。`Signal(object)` 承载
+    # `MediaDownloadProgress` 事件本身;UI 在 media_manager_widget.on_download_progress
+    # 接到后查 row + 更新「已下载 X / Y (Z%)」文字。VM 不做节流(节流在
+    # tdlib_client 端 0.5s/次已完成;UI 端 Qt 内置 coalesce 也够用)。
+    media_download_progress = Signal(object)
     login_state = Signal(str)
     conn_state = Signal(
         str
@@ -143,6 +149,9 @@ class MonitorViewModel(QObject):
         b.subscribe(MessageReceived, self._on_message_received)
         b.subscribe(MessageEdited, self._on_message_edited)
         b.subscribe(MediaDownloaded, self._on_media_downloaded)
+        # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发 — TDLib 端 0.5s
+        # 节流,VM 不再节流,直接 emit 给 UI(Qt coalesce 自动批量)。
+        b.subscribe(MediaDownloadProgress, self._on_media_download_progress)
         b.subscribe(LoginStateChanged, self._on_login_state)
         b.subscribe(ConnectionStateChanged, self._on_conn_state)
         b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
@@ -198,6 +207,17 @@ class MonitorViewModel(QObject):
                     click_action="show_main",
                 )
             )
+
+    async def _on_media_download_progress(self, e: Event) -> None:
+        """2026-09-01 v1.5.1 PR #B3:`MediaDownloadProgress` 事件 → emit Qt signal。
+
+        UI 端 media_manager_widget.on_download_progress 接到后查 row +
+        更新「已下载 X / Y (Z%)」文字。节流已由 TDLib 客户端 0.5s/次
+        完成,这里直接透传。
+        """
+        if not isinstance(e, MediaDownloadProgress):
+            return
+        self.media_download_progress.emit(e)
 
     async def _on_quit_requested(self, e: Event) -> None:
         """2026-08-30 v1.5.0 PR #A4:tray menu「退出」/「暂停监听」事件。

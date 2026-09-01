@@ -171,6 +171,10 @@ class MediaManagerWidget(QWidget):
         # 当前行 → QLabel thumb 的映射;VM signal 进来时定位行用
         # 重渲后重建,所以不要跨渲染持有引用
         self._thumb_labels: dict[_RowKey, QLabel] = {}
+        # 2026-09-01 v1.5.1 PR #B3:同模式 status 列 label — 进度事件
+        # 进来时按 `(channel_id, telegram_msg_id, media_idx)` 定位 row
+        # 然后 setText 刷新「已下载 X / Y (Z%)」文字。重渲时清空重建。
+        self._status_labels: dict[_RowKey, QLabel] = {}
 
         # VM 引用延迟注入:MainWindow 在 init 后调 set_view_model(vm) 把
         # thumbnail_loaded / load_thumbnail 绑进来;widget 不直接 import VM
@@ -572,6 +576,7 @@ class MediaManagerWidget(QWidget):
         self.list.clear()
         self._last_keys = []
         self._thumb_labels.clear()  # 旧 label 全部失效
+        self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
 
         total_bytes = 0
         count_done = 0
@@ -743,7 +748,8 @@ class MediaManagerWidget(QWidget):
         # status
         status_text = _STATUS_TEXT.get(med.download_status, "?")
         lbl_status = QLabel(status_text)
-        lbl_status.setFixedWidth(24)
+        lbl_status.setFixedWidth(80)  # 2026-09-01 v1.5.1 PR #B3:扩宽
+        # 到 80px 容纳「X / Y (Z%)」进度文字(原来 24px 只够 emoji)。
         lbl_status.setAlignment(Qt.AlignCenter)
         if med.download_status == MediaDownloadStatus.FAILED:
             lbl_status.setStyleSheet("color: #c0392b;")
@@ -751,6 +757,12 @@ class MediaManagerWidget(QWidget):
                 lbl_status.setToolTip(f"Error: {med.download_error}")
         elif med.download_status == MediaDownloadStatus.DONE:
             lbl_status.setStyleSheet("color: #27ae60;")
+        elif med.download_status == MediaDownloadStatus.DOWNLOADING:
+            # 2026-09-01 v1.5.1 PR #B3:下载中状态颜色,跟 PENDING 区分
+            lbl_status.setStyleSheet("color: #2980b9;")
+        # 2026-09-01 v1.5.1 PR #B3:行映射存下来,on_download_progress
+        # 收到 MediaDownloadProgress 事件时按 _RowKey 定位行 + setText。
+        self._status_labels[key] = lbl_status
         hbox.addWidget(lbl_status)
 
         # Open 按钮 — DONE 才可点
@@ -935,6 +947,32 @@ class MediaManagerWidget(QWidget):
         )
         # 重 load 当前 filter(可能就是这个 channel)刷新 UI
         self.refresh_requested.emit()
+
+    def on_download_progress(self, event) -> None:
+        """2026-09-01 v1.5.1 PR #B3:`MediaDownloadProgress` 事件 → 刷新对应 row
+        status 列文字。
+
+        - 走 `_status_labels.get(key)`(行 widget 已渲染)→ setText
+        - 行被 filter 掉 / reload 中 → 静默 skip(`get` 返 None)
+        - 节流:TDLib 客户端 0.5s/次,UI 端不再节流(Qt coalesce 自动批量)
+        """
+        key = _RowKey(
+            channel_id=event.channel_id,
+            telegram_msg_id=event.telegram_msg_id,
+            media_idx=event.media_idx,
+        )
+        lbl = self._status_labels.get(key)
+        if lbl is None:
+            return
+        # 格式化「已下载 X / Y (Z%)」;`total=None` → "已下载 X / ?"
+        d = event.downloaded
+        t = event.total
+        if t and t > 0:
+            pct = int(d * 100 // t) if t > 0 else 0
+            text = f"{_format_size(d)}/{_format_size(t)} ({pct}%)"
+        else:
+            text = f"{_format_size(d)}/?"
+        lbl.setText(text)
 
     def _row_is_failed(self, key: _RowKey) -> bool:
         r = self._find_row_by_key(key)

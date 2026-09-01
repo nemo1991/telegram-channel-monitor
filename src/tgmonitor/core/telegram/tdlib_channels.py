@@ -359,7 +359,12 @@ class ChannelsApi:
     # 媒体下载(REVIEW M2.1 — 真实现)
     # ============================================================
 
-    async def download_file(self, file_id: str) -> bytes | None:
+    async def download_file(
+        self,
+        file_id: str,
+        *,
+        progress_callback=None,
+    ) -> bytes | None:
         """两步下载原文件 bytes;失败 / 超时返 None,**不抛**(让 monitor 循环继续)。
 
         步骤:
@@ -369,6 +374,13 @@ class ChannelsApi:
              - 入口 _check_alive():close 中 throw ClientClosingError(已有)。
              - 30 min hard cap:超过 → 返 None + WARNING。
              - getFile 返 None / path 缺失 → 返 None + WARNING。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
+        `await cb(downloaded: int, total: int | None)`;每 ~0.5s 调一次
+        (`asyncio.sleep(0.5)` 时刚好够一次轮询)。`is_downloading_completed
+        =True` 时立即发终值 (`total` = `downloaded` = `size`)。TDLib
+        `local.downloaded_size` 官方说明含 garbage — 仅用于显示百分比,
+        不能 seek。
         """
         import asyncio as _aio
         import time as _t
@@ -393,6 +405,7 @@ class ChannelsApi:
 
         # 2) 轮询直到 complete 或 hard cap
         deadline = _t.monotonic() + 1800.0  # 30 min
+        last_progress_emit = 0.0
         while _t.monotonic() < deadline:
             self._c._check_alive()
             try:
@@ -409,6 +422,21 @@ class ChannelsApi:
             if local is None:
                 log.warning("GetFile(%s).local is None", file_id)
                 return None
+            # 2026-09-01 v1.5.1 PR #B3:进度反馈 — 节流(0.5s)发一次,
+            # `is_downloading_completed=True` 时立即发终值。
+            if progress_callback is not None:
+                now = _t.monotonic()
+                downloaded = int(getattr(local, "downloaded_size", 0) or 0)
+                total_size = int(getattr(f, "size", 0) or 0)
+                total_arg = total_size if total_size > 0 else None
+                if local.is_downloading_completed:
+                    # 终值:`total` 已知就用,未知就退到 downloaded
+                    await progress_callback(
+                        downloaded, downloaded if total_arg is None else total_arg
+                    )
+                elif now - last_progress_emit >= 0.5:
+                    await progress_callback(downloaded, total_arg)
+                    last_progress_emit = now
             if getattr(local, "is_downloading_completed", False):
                 path = getattr(local, "path", None)
                 if not path:

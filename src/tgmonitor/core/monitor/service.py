@@ -28,6 +28,7 @@ from tgmonitor.core.events import (
     ErrorOccurred,
     EventBus,
     MediaDownloaded,
+    MediaDownloadProgress,
     MessageDeleted,
     MessageEdited,
     MessageInteractionsChanged,
@@ -527,16 +528,47 @@ class MonitorService:
 
         `download_one` 契约不抛(失败也返回带 FAILED 状态的 MediaDTO),
         这里仍包一层防御,worker 本身永不因单条失败退出。
+
+        2026-09-01 v1.5.1 PR #B3:每条 media 构造 `progress_callback`
+        闭包透传给 `client.download_file`,回调里发
+        `MediaDownloadProgress` 事件;UI 订阅后实时显示下载百分比。
         """
         assert self.downloader is not None
         assert self._download_queue is not None
         while True:
             msg, idx = await self._download_queue.get()
             med = msg.media[idx]
+
+            # ruff B023:闭包需显式绑 loop 变量(msg / idx)— 默认参数
+            # 在 def 时求值,每次循环绑定到当前值。
+            ch_id = msg.channel_id
+            tg_msg_id = msg.telegram_msg_id
+
+            async def _on_progress(
+                downloaded: int, total: int | None, _ch=ch_id, _mid=tg_msg_id, _idx=idx
+            ) -> None:
+                """TDLib 进度回调 → 发 MediaDownloadProgress 事件。
+
+                闭包捕获 `msg.channel_id / msg.telegram_msg_id / idx` —
+                MediaDownloader 不需要知道 EventBus,事件协议在 dispatcher
+                层完成注入(2026-09-01 PR #B3)。`_ch / _mid / _idx` 是
+                显式绑定的默认参数,绕开 ruff B023。
+                """
+                await self.bus.publish(
+                    MediaDownloadProgress(
+                        channel_id=_ch,
+                        telegram_msg_id=_mid,
+                        media_idx=_idx,
+                        downloaded=downloaded,
+                        total=total,
+                    )
+                )
+
             try:
                 updated = await self.downloader.download_one(
                     msg_pk=msg.id,
                     media=med,
+                    progress_callback=_on_progress,
                 )
             except asyncio.CancelledError:
                 raise
@@ -832,6 +864,7 @@ class MediaDownloader:
         media: MediaDTO,
         *,
         force: bool = False,
+        progress_callback=None,
     ) -> MediaDTO:
         """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
 
@@ -843,6 +876,11 @@ class MediaDownloader:
         `force=True` 时跳过 #1 + #2(2026-08-24 Media Manager retry 路径用):用户
         显式要求「重新尝试」,即使已下载也再发 TDLib 请求覆盖。调用方有责任
         先 `objects.delete(old_key)` 清理旧 bytes,否则写入会覆盖。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
+        `await cb(downloaded: int, total: int | None)`,透传给
+        `client.download_file`;skip-if-stored 命中时**不**调(没进度可报)。
+        默认 None = 不上报(老调用方零改动)。
 
         成功:`object_key` / `object_backend` / `file_size` 已填,`download_status=DONE`;
         失败:`download_status=FAILED` + `download_error`(原因可持久化 / UI 展示),
@@ -911,7 +949,7 @@ class MediaDownloader:
 
         if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
             return failed(f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节")
-        data = await self.client.download_file(fid)
+        data = await self.client.download_file(fid, progress_callback=progress_callback)
         if data is None:
             return failed("下载超时或未返回数据")
         # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)

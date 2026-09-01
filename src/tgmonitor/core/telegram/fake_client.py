@@ -205,16 +205,33 @@ class FakeTelegramClient(TelegramClient):
         return ChannelDTO(id=channel_id, title=f"#{channel_id}")
 
     # ---- 消息流 ----
-    async def download_file(self, file_id: str) -> bytes | None:
+    async def download_file(
+        self,
+        file_id: str,
+        *,
+        progress_callback=None,
+    ) -> bytes | None:
         """Fake 下载:返回 `set_download(file_id, ...)` 注入的 bytes。
 
         - set_download(file_id, bytes):返这些 bytes(模拟成功)。
         - set_download(file_id, None):返 None(模拟下载失败)。
         - 都没注入过 → KeyError → 走 `self._downloads.get(file_id)` 默认 None。
         - `await asyncio.sleep(0)` 让出 loop,模仿真网络 round-trip。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):若传,模拟 fake
+        多 chunk 进度 — 每 ~30% 调一次 `(downloaded, total)`,完成时
+        调 `(len(data), len(data))`。测试可由此断言 N 次回调 + 终值。
         """
         await asyncio.sleep(0)
-        return self._downloads.get(file_id)
+        data = self._downloads.get(file_id)
+        if data is not None and progress_callback is not None:
+            total = len(data)
+            # 模拟多 chunk:0% → 33% → 67% → 100%(4 次回调,含终值)
+            for pct in (0, total // 3, 2 * total // 3):
+                if pct > 0:
+                    await progress_callback(pct, total)
+            await progress_callback(total, total)
+        return data
 
     async def iter_chat_history(
         self,

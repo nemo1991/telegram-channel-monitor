@@ -139,8 +139,12 @@ class UnconfiguredTelegramClient(TelegramClient):
         raise TelegramNotConfiguredError()
 
     # ---- 消息流 ----
-    async def download_file(self, file_id: str) -> bytes | None:
-        """无凭据不可下载,返 None(monitor 循环继续)。"""
+    async def download_file(self, file_id: str, *, progress_callback=None) -> bytes | None:
+        """无凭据不可下载,返 None(monitor 循环继续)。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):与 Protocol 签名
+        对齐;无凭据场景无下载可报,不调。
+        """
         return None
 
     async def iter_chat_history(

@@ -367,3 +367,120 @@ def test_copy_button_disabled_when_not_done(
 
 # 显式 import,避免 ruff F401
 _ = Qt
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — on_download_progress 刷新 status 列
+# ---------------------------------------------------------------------------
+
+
+def _downloading(file_size: int = 1024) -> MediaDTO:
+    """DOWNLOADING 状态的 media — 行 status 列才会被 on_download_progress 更新。"""
+    return MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="x.jpg",
+        file_size=file_size,
+        telegram_file_id="fid",
+        download_status=MediaDownloadStatus.DOWNLOADING,
+    )
+
+
+def test_on_download_progress_updates_status_label(
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
+) -> None:
+    """PR #B3:`MediaDownloadProgress` 事件 → media_manager 按 (channel_id,
+    telegram_msg_id, media_idx) 定位行 → 改 status 列文字为「X/Y (Z%)」。
+    """
+    from tgmonitor.core.events import MediaDownloadProgress
+
+    msg = _msg(100, 42, [_downloading()])
+    widget.on_media_loaded(([(msg, 0, _downloading())], 1))
+    qt_app.processEvents()
+
+    # 进度事件:已下载 512 / 1024 = 50%
+    widget.on_download_progress(
+        MediaDownloadProgress(
+            channel_id=100,
+            telegram_msg_id=42,
+            media_idx=0,
+            downloaded=512,
+            total=1024,
+        )
+    )
+    qt_app.processEvents()
+
+    # 行 status label 的 text 应含「/」「50%」(总大小 1024 = 1.0KB)
+    lbl = widget._status_labels.get(_row_key(100, 42, 0))
+    assert lbl is not None
+    text = lbl.text()
+    assert "/" in text, f"progress text not formatted: {text!r}"
+    assert "%" in text, f"progress percentage missing: {text!r}"
+
+
+def test_on_download_progress_unknown_total_fallback(
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
+) -> None:
+    """PR #B3:`total=None`(file_size 未知)→ status 列 fallback「X/?」,
+    没有 %,没崩。"""
+    from tgmonitor.core.events import MediaDownloadProgress
+
+    msg = _msg(200, 7, [_downloading()])
+    widget.on_media_loaded(([(msg, 0, _downloading())], 1))
+    qt_app.processEvents()
+
+    widget.on_download_progress(
+        MediaDownloadProgress(
+            channel_id=200,
+            telegram_msg_id=7,
+            media_idx=0,
+            downloaded=300,
+            total=None,
+        )
+    )
+    qt_app.processEvents()
+
+    lbl = widget._status_labels.get(_row_key(200, 7, 0))
+    assert lbl is not None
+    text = lbl.text()
+    # fallback 文字:「300B/?」
+    assert "?" in text, f"unknown-total fallback not used: {text!r}"
+
+
+def test_on_download_progress_no_matching_row_silent(
+    widget: MediaManagerWidget,
+    qt_app: QApplication,
+) -> None:
+    """PR #B3:进度事件 key 不在 `_status_labels`(行被 filter 掉 / reload 中)
+    → 静默 skip,不抛 KeyError。"""
+    from tgmonitor.core.events import MediaDownloadProgress
+
+    # 渲染空 list
+    widget.on_media_loaded(([], 0))
+    qt_app.processEvents()
+
+    # 进度事件进,但行不存在 → 静默
+    widget.on_download_progress(
+        MediaDownloadProgress(
+            channel_id=999,  # 不存在的频道
+            telegram_msg_id=1,
+            media_idx=0,
+            downloaded=10,
+            total=100,
+        )
+    )
+    qt_app.processEvents()
+    # 不崩就过
+
+
+def _row_key(channel_id: int, telegram_msg_id: int, media_idx: int):
+    """构造 _RowKey(dataclass, frozen=True)— media_manager_widget 内部用。"""
+    from tgmonitor.ui.widgets.media_manager_widget import _RowKey
+
+    return _RowKey(
+        channel_id=channel_id,
+        telegram_msg_id=telegram_msg_id,
+        media_idx=media_idx,
+    )

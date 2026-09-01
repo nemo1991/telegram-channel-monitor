@@ -696,6 +696,9 @@ class MainWindow(QMainWindow):
         self._vm.message_received.connect(self._on_message_received)
         self._vm.message_edited.connect(self._on_message_edited)
         self._vm.media_downloaded.connect(self._on_media_downloaded)
+        # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
+        # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
+        self._vm.media_download_progress.connect(self.media_manager.on_download_progress)
         self._vm.login_state.connect(self._on_login_state)
         self._vm.conn_state.connect(self._on_conn_state)
         self._vm.channels_changed.connect(self._refresh_state)
