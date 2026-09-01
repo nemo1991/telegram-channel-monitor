@@ -5,6 +5,95 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.1] - 2026-09-01
+
+主题:**补丁版小迭代** — 3 个 UX / 体感增强 PR,沿 v1.5.0 落地的 Exporter
+ABC + EventBus + TDLib `local.downloaded_size` 字段复用,**零新依赖**。
+共 3 PR / ~1000 LOC 净增 / +16 测试。
+
+### ✨ Added
+- **ZIP 导出(PR #B4,UX)** — Media Manager 加 `📦 Export ZIP` 按钮 +
+  ExportDialog 注册 `ExportFormat.ZIP = "zip"` 新格式;支持单条消息
+  (`ExportRequest.single_message_id` 走 `storage.get_message`) 与
+  频道范围(`channel_ids + date_from/to` 走流式分页 500/批);可选
+  打包缩略图(`include `_`thumbs`),ZIP 内 `_manifest.json` 收消息
+  元数据。Zip Slip 防御:arcname sanitize `../` → `_` 防止越界 + 控制
+  字符过滤;沿 v1.5.0 PR #A3 的 Exporter ABC / Registry 自动发现,
+  新格式 = 子类文件 + `@exporter(fmt)` 装饰器,**零 if/elif**。
+  - `core/export/zip_exporter.py`(NEW): `ZipExporter` 类
+  - `core/dto.py`: `ExportFormat.ZIP` + `ExportRequest.single_message_id`
+  - `core/export/service.py`: `_run_messages` 加 `single_message_id` 分支
+  - `ui/widgets/export_dialog.py`: 自动发现 `_FORMAT_EXT[ZIP] = ".zip"`
+  - `ui/widgets/media_manager_widget.py`: `📦 Export ZIP` 按钮 + checkbox
+  - `ui/viewmodels/monitor_vm.py`: `export_zip(req)` 镜像 `export_media_list`
+  - `ui/main_window.py`: `_on_media_export_zip` 接 signal
+  - 测试 +6:`test_registry_has_all_six` / 6 个 `test_zip_*`(sanitize /
+    single dispatch / manifest / thumbnails / arcname 安全 / 错误路径)
+  - **大文件 OOM 注意**:Local/Folder/S3 `open_read` 是全量内存
+    `BytesIO(await get())`,>50MB 视频会爆;MVP 接受,后续 PR 切真流式
+
+- **Media Manager 下载进度反馈(PR #B3,UX 体感)** — v1.5.0 落地后
+  用户反馈 50 并发下载无进度感;本 PR 用 TDLib `local.downloaded_size`
+  字段(官方明示 garbage 字段只用于显示百分比,不能 seek)0.5s 节流
+  报 `MediaDownloadProgress` 事件;VM 透传 Qt signal,Media Manager
+  status 列实时显示「X/Y (Z%)」或「X/?」(total 未知 fallback)。
+  - `core/events.py`: 新事件 `MediaDownloadProgress`(channel_id /
+    telegram_msg_id / media_idx / downloaded / total|None)
+  - `core/telegram/client.py`: Protocol `download_file` 加
+    `progress_callback: Callable[[int, int|None], Awort] | None` kwarg
+  - `core/telegram/tdlib_channels.py`: 0.5s 节流读 `local.downloaded_size`,
+    完成时发终值
+  - `core/telegram/fake_client.py`: 测试用 fake 模拟多 chunk 进度
+  - `core/monitor/service.py`: `_download_worker` 注入 `_on_progress` 闭包
+    发进度事件(ruff B023 fix: 默认 args 绑 `_ch`/`_mid`/`_idx`)
+  - `ui/viewmodels/monitor_vm.py`: `media_download_progress = Signal(object)`
+    + `_on_media_download_progress` 转发
+  - `ui/main_window.py`: VM signal → `media_manager.on_download_progress`
+  - `ui/widgets/media_manager_widget.py`: status 列宽 24px → 80px,
+    `_status_labels: dict[_RowKey, QLabel]` 行映射 + slot 渲染进度
+  - 测试 +7:`test_download_one_invokes_progress_callback` 等
+    (callback None / skip 命中 / 3 次回调等) + VM signal 透传 3 个
+  - 节流:TDLib 客户端 0.5s/次发进度;VM/UI 端不再节流(Qt coalesce 批量)
+  - 50 并发媒体 ≈ 100 events/s 原生上限;实测 ≤ ~10/s/channel × 5
+    channels = 50/s
+
+- **搜索增强 MVP(PR #B2,UX 检索)** — `StorageRepository.list_messages`
+  抽象加 `search: str = ""` 参数(默认空 = 不过滤,向后兼容);4 个
+  storage 后端实现统一语义 — 子串 case-insensitive 匹配 `text` 或
+  `media.file_name` 任一命中。
+  - `core/storage/repository.py`: 抽象 `list_messages` 加 `search=""`
+  - `core/storage/jsonl_store.py`: 顺序扫 + `_matches_search` helper
+    走 `text` OR `media.file_name` lower() in(纯 Python,无通配符语义)
+  - `core/storage/postgres_repo.py`: WHERE 加 `LOWER(text) LIKE %s
+    ESCAPE "\" OR EXISTS (SELECT 1 FROM media ...)`;`%` / `_` / `\`
+    用户输入必须 escape 防止 SQL LIKE 通配符注入
+  - `core/storage/mongo_repo.py`: `$or` 匹配 text + media.file_name,
+    复用 `_escape_regex` 防注入,`$options: "i"` 大小写不敏感
+  - `tests/fixtures/_in_memory_repository.py`: InMemory 镜像 Jsonl 实现
+  - `core/subscription_service.py` + `app_service.py`: 透传 `search`
+  - 测试 +16:`test_message_search.py` 15 个 parity 测试(text/file_name
+    命中、大小写不敏感、空=不过滤、date+search 组合、`%`/`_`/`\` 安全、
+    0 命中返 []) + 1 个 facade 透传
+  - **MVP 性能注**:Postgres `LOWER LIKE` 全表扫,MVP 接受,后续 v1.6
+    加 GIN trgm 索引;JSONL / InMemory in-process 无性能问题;Mongo 同样
+
+### 🔧 Changed
+- `StorageRepository.list_messages` 抽象签名扩 `search=""` 参数 — 4
+  后端实现一致,所有现有调用方零改动(默认空 = 不过滤)
+
+### ✅ Tests
+- 总数:682 passed(基线 652 + 16 new from B2 + 7 new from B3 + 7 new
+  from B4)- 视觉回归 8 个跳过(Mesa libGL 系统库缺失,非代码回归)
+- ruff check / format --check / mypy src 全部 0 错
+
+### ⏭️ 延后到 v1.5.2 / v1.6
+- i18n 基建(全仓 25 文件 ~400 LOC,留 v1.6)
+- pg_trgm 全文搜索(PR #B2 后续优化)
+- Local/Folder/S3 `open_read` 真流式(PR #B4 大文件 OOM 优化)
+- Lightbox GIF 全动画 / 视频 codec 预览
+- UI 端「立即搜」按钮 + date_from/to 字段 + 内存快过滤与异步拉
+  重结果的双过滤机制协调(PR #B2 UI 部分,本 release 不含)
+
 ## [1.5.0] - 2026-08-31
 
 主题:**架构 + UX 双线推进** — 主线 3 个架构 / 性能 PR + 3 个主题 quick
