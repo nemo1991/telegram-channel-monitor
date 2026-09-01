@@ -296,9 +296,10 @@ class AppService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = 200,
+        search: str = "",
     ) -> list[MessageDTO]:
-        """转发 SubscriptionService.list_messages。"""
-        return await self._sub.list_messages(channel_ids, date_from, date_to, limit)
+        """转发 SubscriptionService.list_messages(2026-09-01 v1.5.1 PR #B2 加 `search`)。"""
+        return await self._sub.list_messages(channel_ids, date_from, date_to, limit, search=search)
 
     # ---------- 同步(直接转 channel_sync) ----------
 

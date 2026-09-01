@@ -95,12 +95,15 @@ class SubscriptionService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         limit: int | None = 200,
+        search: str = "",
     ) -> list[MessageDTO]:
         """查消息 — `channel_ids=None` 时走 storage「已订」真理(修 #B 双真理问题)。
 
         # `channel_ids=None` 时从 storage 取**当前真理**(已订频道列表),
         # 不用 in-memory cache — 跟 `list_subscribed_channels()` 是同一个真理。
         # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #B。
+        # 2026-09-01 v1.5.1 PR #B2:`search` 透传 storage.list_messages,
+        # 子串过滤 text + media.file_name,空 = 不过滤。
         """
         if channel_ids is None:
             channel_ids = [c.id for c in await self._storage.list_subscribed_channels()]
@@ -111,6 +114,7 @@ class SubscriptionService:
             date_from,
             date_to,
             limit,
+            search=search,
         )
 
     # ---------- 实时流 ----------

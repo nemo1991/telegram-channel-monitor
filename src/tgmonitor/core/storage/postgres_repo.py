@@ -553,6 +553,7 @@ class PostgresRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str = "",
     ) -> list[MessageDTO]:
         """按时间升序 + id 升序(与 Mongo / JSONL 对齐);media 二次查询拼回。
 
@@ -561,6 +562,9 @@ class PostgresRepository(StorageRepository):
         `offset` (v1.4.0 PR #12):从尾部跳过 offset 条再取 limit — 例
         limit=2 offset=2 倒数 [3,4] 条。SQL 用 `LIMIT $limit OFFSET $offset`
         配合 date DESC,再 reverse 转升序。
+
+        `search` (v1.5.1 PR #B2):`LOWER(text) LIKE` OR `EXISTS media.file_name LIKE`,
+        通配符 `\\` / `%` / `_` 必须 escape,否则用户输入 `%` 匹配一切。
         """
         assert self._pool is not None
         if not channel_ids:
@@ -573,6 +577,19 @@ class PostgresRepository(StorageRepository):
         if date_to is not None:
             params.append(date_to)
             where.append(f"date <= ${len(params)}")
+        if search:
+            # 转义 LIKE 通配符:`%` / `_` / `\`(用户输入的 `\` 也需转义为 `\\`)。
+            escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            # `ESCAPE '\'` 告诉 SQL 把 `\` 当作自定义 escape 字符;
+            # 子句顺序:先验 text,再验 media 子查询。
+            where.append(
+                f"(LOWER(text) LIKE ${len(params) + 1} ESCAPE '\\' "
+                f"OR EXISTS (SELECT 1 FROM media WHERE message_id=m.id "
+                f"AND LOWER(file_name) LIKE ${len(params) + 2} ESCAPE '\\'))"
+            )
+            params.append(like)
+            params.append(like)
         # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 jsonl/mongo 语义一致)。
         order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
         sql = "SELECT * FROM messages WHERE " + " AND ".join(where) + f" ORDER BY {order_by}"

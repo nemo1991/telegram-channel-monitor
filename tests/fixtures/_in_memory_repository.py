@@ -184,14 +184,18 @@ class InMemoryRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str = "",
     ) -> list[MessageDTO]:
         out = []
+        search_lo = search.lower() if search else ""
         for m in self.messages.values():
             if m.channel_id not in channel_ids:
                 continue
             if date_from and m.date < date_from:
                 continue
             if date_to and m.date > date_to:
+                continue
+            if search_lo and not self._matches_search(m, search_lo):
                 continue
             out.append(m)
         # 归一化为 aware UTC 再排序 — 测试 fixture 默认 datetime() 是 naive,
@@ -216,6 +220,13 @@ class InMemoryRepository(StorageRepository):
 
     async def count_messages(self, channel_id: int) -> int:
         return sum(1 for m in self.messages.values() if m.channel_id == channel_id)
+
+    @staticmethod
+    def _matches_search(msg: MessageDTO, search_lo: str) -> bool:
+        """v1.5.1 PR #B2:消息子串过滤 — text OR 任一 media.file_name(已 lower)。"""
+        if search_lo in (msg.text or "").lower():
+            return True
+        return any(search_lo in (med.file_name or "").lower() for med in msg.media)
 
     async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:InMemory 实现 — 单轮扫所有 message,

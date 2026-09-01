@@ -461,6 +461,7 @@ class MongoRepository(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str = "",
     ) -> list[MessageDTO]:
         """按 (date ASC, _id ASC) 排序 — 与 Postgres / JSONL 对齐;`$in` 走 channel_ids。
 
@@ -468,6 +469,9 @@ class MongoRepository(StorageRepository):
         `offset` (v1.4.0 PR #12):从尾部跳过 offset 条再取 limit — 与
         Postgres / JSONL 一致;大 offset 下 `$skip` 是 O(N),docstring
         写明建议收窄 date 过滤。
+
+        `search` (v1.5.1 PR #B2):`$or` 匹配 text 或 media.file_name 子串,
+        走 `$regex` + `$options: "i"` 大小写不敏感,`_escape_regex` 防注入。
         """
         if not channel_ids:
             return []
@@ -479,6 +483,14 @@ class MongoRepository(StorageRepository):
             if date_to is not None:
                 date_q["$lte"] = date_to
             q["date"] = date_q
+        if search:
+            # 复用 list_media 的 `_escape_regex`(已转义 regex 元字符);
+            # `text` 与 `media.file_name` 任一命中即过。
+            pattern = _escape_regex(search)
+            q["$or"] = [
+                {"text": {"$regex": pattern, "$options": "i"}},
+                {"media.file_name": {"$regex": pattern, "$options": "i"}},
+            ]
         if limit is not None:
             # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres / JSONL 对齐)。
             # v1.4.0 PR #12:`offset > 0` 时先 `$skip offset` 再 `$limit limit`。

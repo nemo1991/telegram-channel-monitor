@@ -585,14 +585,19 @@ class JsonlFileStore(StorageRepository):
         date_to: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str = "",
     ) -> list[MessageDTO]:
         """按时间升序;两实现必须排序一致(date asc, id asc 兜底)。
 
         `limit` = 只返回**最近** N 条(取排序尾部,仍按时间升序);损坏行 skip 不抛。
         `offset` (v1.4.0 PR #12):从尾部往前数 offset 条再开始取 limit
         — 例 limit=2 offset=2 倒数 [3,4] 条;offset=0 等同原行为。
+
+        `search` (v1.5.1 PR #B2):子串过滤(大小写不敏感),匹配 text 或
+        media.file_name 任一;空 = 不过滤。
         """
         out: list[MessageDTO] = []
+        search_lo = search.lower() if search else ""
         for cid in channel_ids:
             cf = await self._file_for(cid)
             for r in cf.rows:
@@ -603,6 +608,8 @@ class JsonlFileStore(StorageRepository):
                 if date_from and d.date and d.date < date_from:
                     continue
                 if date_to and d.date and d.date > date_to:
+                    continue
+                if search_lo and not self._matches_search(d, search_lo):
                     continue
                 out.append(d)
         out.sort(key=lambda m: (m.date or datetime.min, m.id or 0))
@@ -624,6 +631,17 @@ class JsonlFileStore(StorageRepository):
         """该频道已落库消息数;不应用 date 过滤。"""
         cf = await self._file_for(channel_id)
         return len(cf.rows)
+
+    @staticmethod
+    def _matches_search(msg: MessageDTO, search_lo: str) -> bool:
+        """v1.5.1 PR #B2:消息子串过滤 — text OR 任一 media.file_name。
+
+        `search_lo` 预先 lower(),内层不再重复;`file_name` 可能 None
+        (PENDING/FAILED 媒体),`or ""` 兜底避免 AttributeError。
+        """
+        if search_lo in (msg.text or "").lower():
+            return True
+        return any(search_lo in (med.file_name or "").lower() for med in msg.media)
 
     async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
         """2026-08-27 v1.4.0 PR #15:Jsonl 实现 — 单轮扫每个 channel 的 jsonl

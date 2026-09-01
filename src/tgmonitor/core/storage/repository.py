@@ -141,6 +141,7 @@ class StorageRepository(ABC):
         date_to: datetime | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str = "",
     ) -> list[MessageDTO]:
         """按时间升序返回。两实现必须排序一致。
 
@@ -148,6 +149,11 @@ class StorageRepository(ABC):
         `offset`:跳过前 N 条(2026-08-27 v1.4.0 PR #12 — export 真分页)。
         `offset` 与 `limit` 组合:跳过 offset 后取 limit 条(从尾取仍升序)。
         注意:`offset` 是相对排序后的位置,与 channel_ids 顺序无关。
+
+        `search` (2026-09-01 v1.5.1 PR #B2):子串过滤(大小写不敏感),匹配
+        `text` 或 `media.file_name` 任一字段即命中。默认 `""` 不过滤,
+        向后兼容所有现有调用方;Postgres / Mongo LIKE/REGRESS 通配符
+        必须 escape 防止注入。
         """
         ...
 

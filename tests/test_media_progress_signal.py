@@ -8,11 +8,7 @@ status label。这里只测 VM 层透传,UI 渲染走 visual_regression。
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
-
-import pytest
 
 from tgmonitor.core.events import EventBus, MediaDownloadProgress
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
@@ -29,9 +25,7 @@ def _make_message(channel_id: int = 100, msg_id: int = 42, media_count: int = 1)
     """构造测试用 MessageDTO;避开真实 TG 链路。"""
     from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
 
-    media = [
-        MediaDTO(type=MediaType.PHOTO, file_name=f"m{i}.jpg") for i in range(media_count)
-    ]
+    media = [MediaDTO(type=MediaType.PHOTO, file_name=f"m{i}.jpg") for i in range(media_count)]
     return MessageDTO(
         id=1,
         channel_id=channel_id,

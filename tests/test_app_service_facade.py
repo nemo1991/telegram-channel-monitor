@@ -90,6 +90,26 @@ async def test_facade_forwards_list_messages_to_subscription_service(app: AppSer
         None,
         None,
         10,
+        search="",
+    )
+    assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_facade_forwards_list_messages_search_kwarg(app: AppService) -> None:
+    """PR #B2:`app.list_messages(search="foo")` 把 search 透传给子 service。"""
+    expected = [MagicMock()]
+    sub_svc = _find_sub_service(app, "list_messages")
+    assert sub_svc is not None
+    sub_svc.list_messages = AsyncMock(return_value=expected)  # type: ignore[attr-defined]
+
+    result = await app.list_messages(channel_ids=[1], search="hello")
+    sub_svc.list_messages.assert_awaited_once_with(  # type: ignore[attr-defined]
+        [1],
+        None,
+        None,
+        200,
+        search="hello",
     )
     assert result is expected
 
