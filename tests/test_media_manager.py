@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 from typing import TYPE_CHECKING
 
 import aioboto3
@@ -788,7 +789,10 @@ async def test_reveal_in_folder_local_success(
     assert result.error is None
     assert len(spawn_calls) == 1
     abs_path_arg, platform_arg = spawn_calls[0]
-    assert str(abs_path_arg).endswith("media/p.jpg")
+    # 2026-08-31 Windows path 兼容:`os.sep`-aware 断言(Windows = `\`,
+    # Unix = `/`)。原写法 `endswith("media/p.jpg")` 在 Windows 上实际
+    # 路径是 `...\media\media\p.jpg`,分隔符不匹配会失败。
+    assert str(abs_path_arg).replace(os.sep, "/").endswith("media/p.jpg")
     # platform 来自 sys.platform,可能是 darwin / linux / win32;只断言是 str
     assert isinstance(platform_arg, str)
 
@@ -868,7 +872,8 @@ async def test_copy_media_path_local_returns_absolute_path(
     assert result.success is True
     assert result.error is None
     assert result.copied_value is not None
-    assert result.copied_value.endswith("media/p.jpg")
+    # 2026-08-31 Windows path 兼容:把 `os.sep` 统一为 `/` 后再 endswith 匹配。
+    assert result.copied_value.replace(os.sep, "/").endswith("media/p.jpg")
     # 必须是绝对路径
     from pathlib import Path
 
