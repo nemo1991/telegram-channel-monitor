@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import os
 from pathlib import Path
-from typing import AsyncIterator, BinaryIO
+from typing import AsyncIterator, BinaryIO, Iterator
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
@@ -132,11 +132,17 @@ class LocalObjectStore(ObjectStore):
         """
         root = self._root
 
-        def _walk() -> AsyncIterator[str]:  # type: ignore[misc]  — async gen 转 sync gen 的内部细节
+        def _walk() -> Iterator[str]:
             for dirpath, _dirnames, filenames in os.walk(root):
                 for fn in filenames:
                     full = Path(dirpath) / fn
                     rel = os.path.relpath(full, root)
+                    # object key 一律用 POSIX 分隔符(`/`)— Windows 上 `os.walk`
+                    # 与 `os.path.relpath` 返 `\` 分隔,与 put/get/delete 的 key
+                    # 入参(用户代码写 `media/x.jpg`)不一致会直接坏掉 prefix 过滤。
+                    # 2026-08-29 v1.5.0 CI 修复:Windows path 失败(`iter_keys`
+                    # 返 `media\abc.jpg` 但 prefix=`media/` 不匹配)。
+                    rel = rel.replace(os.sep, "/")
                     # 跳过探针文件(connect 时 probe_writable 创建/删除,可能短暂存在)
                     if ".tgmonitor_write_probe" in fn:
                         continue

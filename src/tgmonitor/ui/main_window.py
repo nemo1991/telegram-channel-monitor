@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QPixmap
@@ -978,16 +978,20 @@ class MainWindow(QMainWindow):
         调 `vm.export_media_list` 走 ExportService 异步生成器;完成 / 失败
         通过既有 `vm.export_done` 信号在 `_on_export_done` 弹消息框。
         """
-        from tgmonitor.core.dto import MediaExportRequest
+        from tgmonitor.core.dto import MediaExportRequest, SortDir, SortKey
 
         f = self.media_manager.current_filters()
+        # `current_filters()` 返回 dict[str, Any];sort/sort_dir 在 storage 层
+        # 已限制为 SortKey/Dir,但 f.get 默认 `Any | None` → 显式 cast。
+        sort_val = f.get("sort")
+        sort_dir_val = f.get("sort_dir")
         req = MediaExportRequest(
             channel_id=f.get("channel_id"),
             status=f.get("status"),
             media_type=f.get("media_type"),
             search=f.get("search", ""),
-            sort=f.get("sort"),
-            sort_dir=f.get("sort_dir"),
+            sort=cast(SortKey, sort_val) if sort_val is not None else SortKey.DATE,
+            sort_dir=cast(SortDir, sort_dir_val) if sort_dir_val is not None else SortDir.DESC,
             out_path=out_path,
         )
         self._vm.export_media_list(req)

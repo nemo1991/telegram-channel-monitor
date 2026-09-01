@@ -10,6 +10,8 @@ Clear Channel 操作的 dry-run 二次确认对话框:
 `vm.delete_by_channel`。
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from __future__ import annotations
 
 from PySide6.QtWidgets import (

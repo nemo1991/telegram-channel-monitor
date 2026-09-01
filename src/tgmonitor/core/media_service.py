@@ -301,7 +301,7 @@ class MediaService:
         )
         new_media = list(msg.media)
         new_media[media_idx] = new_med
-        new_msg = dataclasses.replace(msg, media=tuple(new_media))
+        new_msg = dataclasses.replace(msg, media=list(new_media))
         await self._storage.update_message(new_msg)
         # 清旧 bytes — 让 download_one(force=True) 一定走真下载路径
         if old_object_key and self._objects is not None:
@@ -340,7 +340,7 @@ class MediaService:
             # 回写最终状态
             final_media = list(new_msg.media)
             final_media[media_idx] = updated
-            final_msg = dataclasses.replace(new_msg, media=tuple(final_media))
+            final_msg = dataclasses.replace(new_msg, media=list(final_media))
             await self._storage.update_message(final_msg)
             await self._bus.publish(
                 MediaDownloaded(
@@ -670,6 +670,7 @@ class MediaService:
 
         # 3. 写文件
         tmp_path = tmp_dir / f"tgmonitor-{secrets.token_hex(8)}{suffix}"
+        assert self._objects is not None  # ensure_objects 已检查
         data = await self._objects.get(med.object_key or "")
         await asyncio.to_thread(tmp_path.write_bytes, data)
         return tmp_path

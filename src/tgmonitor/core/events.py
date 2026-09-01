@@ -108,7 +108,9 @@ class MessageInteractionsChanged(Event):
     channel_id: int = 0
     telegram_msg_id: int = 0
     views: int | None = None
-    reactions: object = None  # list[ReactionDTO] | None(避免循环 import,object 占位)
+    reactions: list[object] | None = (
+        None  # list[ReactionDTO] | None(避免循环 import,list[object] 占位)
+    )
 
 
 @dataclass

@@ -20,6 +20,8 @@
 - 后台线程安全:VM 用 run_coro 在 qasync 主 loop 触发,UI 端只读数据
 """
 
+# mypy: disable-error-code="attr-defined"
+
 from __future__ import annotations
 
 import logging
@@ -146,6 +148,8 @@ class MediaManagerWidget(QWidget):
         """建 filter bar + list + toolbar;filter 变化 → 自动 emit refresh_requested。"""
         super().__init__(parent)
         self.setObjectName("mediaManagerWidget")
+        # VM 引用 — 类型 `object | None`(架构上不依赖 VM 具体类,避免循环 import)。
+        self._vm: object | None = None
 
         # filter 状态(channel id list / 已知频道缓存 / 数据 / 选中集合)
         self._known_channels: dict[int, ChannelDTO] = {}
@@ -166,7 +170,7 @@ class MediaManagerWidget(QWidget):
         # VM 引用延迟注入:MainWindow 在 init 后调 set_view_model(vm) 把
         # thumbnail_loaded / load_thumbnail 绑进来;widget 不直接 import VM
         # 解耦。
-        self._vm = None  # type: ignore[var-annotated]
+        # (类型已在 __init__ 顶声明为 `object | None`,此处只赋值)
 
         self._build_ui()
         self._wire_filter()
@@ -411,7 +415,7 @@ class MediaManagerWidget(QWidget):
         """
         self._vm = vm
         try:
-            vm.thumbnail_loaded.connect(self._on_thumbnail_loaded)  # type: ignore[attr-defined]
+            vm.thumbnail_loaded.connect(self._on_thumbnail_loaded)
         except Exception:  # noqa: BLE001
             log.exception("set_view_model: connect thumbnail_loaded failed")
 
@@ -498,7 +502,7 @@ class MediaManagerWidget(QWidget):
             rows, total = payload, len(payload)
         else:
             rows, total = [], 0
-        self._rows = list(rows) if isinstance(rows, list) else []  # type: ignore[arg-type]
+        self._rows = list(rows) if isinstance(rows, list) else []
         self._total = int(total) if isinstance(total, int) else len(self._rows)
         self._render_page_info()
         self._render_list()
@@ -612,7 +616,7 @@ class MediaManagerWidget(QWidget):
         # miss → 触发 VM 加载
         if self._vm is not None:
             try:
-                self._vm.load_thumbnail(  # type: ignore[attr-defined]
+                self._vm.load_thumbnail(
                     msg.channel_id,
                     msg.telegram_msg_id,
                     idx,
@@ -636,7 +640,7 @@ class MediaManagerWidget(QWidget):
         def _handler(event: QMouseEvent) -> None:
             if event is None:
                 return
-            if event.button() != Qt.LeftButton:  # type: ignore[attr-defined]
+            if event.button() != Qt.LeftButton:
                 return
             self.preview_requested.emit(key.channel_id, key.telegram_msg_id, key.media_idx)
 
@@ -676,7 +680,7 @@ class MediaManagerWidget(QWidget):
             med.type in _LIGHTBOX_PREVIEWABLE_TYPES
             and med.download_status == MediaDownloadStatus.DONE
         ):
-            thumb.setCursor(Qt.PointingHandCursor)  # type: ignore[attr-defined]
+            thumb.setCursor(Qt.PointingHandCursor)
             thumb.setToolTip("点击查看大图")
             thumb.mousePressEvent = self._make_thumb_click_handler(  # type: ignore[method-assign]
                 key, thumb

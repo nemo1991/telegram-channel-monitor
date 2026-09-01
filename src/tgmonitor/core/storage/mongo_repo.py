@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
@@ -503,7 +503,7 @@ class MongoRepository(StorageRepository):
         """
         if not channel_ids:
             return {}
-        pipeline = [
+        pipeline: list[Mapping[str, Any]] = [
             {"$match": {"channel_id": {"$in": channel_ids}}},
             {
                 "$unwind": {
@@ -726,7 +726,7 @@ class MongoRepository(StorageRepository):
         Mongo 5+ 支持直接 `$count`;走 `messages.media` 子文档。O(扫描)
         + 索引 `media.object_key` 可走 IXSCAN(2026-08-25 未建,后续按需加)。
         """
-        pipeline = [
+        pipeline: list[Mapping[str, Any]] = [
             {"$unwind": "$media"},
             {"$match": {"media.object_key": object_key}},
             {"$count": "n"},
@@ -740,7 +740,7 @@ class MongoRepository(StorageRepository):
 
         `$match` channel + `$project` 用 `$size media` + `$group sum`。
         """
-        pipeline = [
+        pipeline: list[Mapping[str, Any]] = [
             {"$match": {"channel_id": channel_id}},
             {"$project": {"n": {"$size": {"$ifNull": ["$media", []]}}}},
             {"$group": {"_id": None, "total": {"$sum": "$n"}}},
