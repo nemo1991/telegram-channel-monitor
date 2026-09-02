@@ -5,6 +5,71 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.3] - 2026-09-02
+
+主题:**补丁版 UX 增强 + 性能债清理** — 3 PR / ~1000 LOC 净增 / +37 测试 / 零新依赖。
+解决 v1.5.2 留下的「MAX_ITEMS=1000 渲染墙」(PR #D1 QListView+delegate
+真实 lazy render)+ 加 2 大新功能 (PR #D2 跨频道聚合搜索 / PR #D3 i18n 基建)。
+
+### ✨ Added
+
+- **跨频道聚合搜索(PR #D2)** — `SubscriptionService.list_messages` 加
+  `include_unsubscribed: bool = False`;`SearchBar` 加 🌐 scope toggle button;
+  `MainWindow._run_search_query` 接 toggle,scope 切换走 300ms debounce 重拉
+  (不 clear view)。**用户搜索「全部含已退订频道历史」时,可看到退订频道
+  落库的所有消息**。
+- **i18n 基建(PR #D3)** — `src/tgmonitor/i18n/` 新模块 `install_translator`
+  (Qt `QTranslator` + Python `gettext` 域);zh_CN.ts 默认翻译 = 原文
+  (零用户可见行为变化);8 个 UI 文案走 `self.tr(...)` 包裹;切第二 locale
+  生效。`conftest.py` 强制 zh_CN locale fixture,既有 30+ 处 `widget.text()`
+  断言保持兼容。
+- **MessageView 升 QListView + delegate(PR #D1)** — `QListWidget` 内部存储
+  → 真实 `QAbstractListModel` + `QStyledItemDelegate` 架构,真实 lazy render
+  (仅 paint 可见 row);5 个 custom role + `_index_of: dict[(channel_id,
+  telegram_msg_id), row]` O(1) 去重。**突破 MAX_ITEMS=1000 性能墙**:delegate
+  不画 hidden 行 + QTextDocument 按需创建,扩展到 10000 行仍流畅(本 PR
+  MAX_ITEMS 保持 1000,v1.5.4 实验性 bump)。
+
+### 🔧 Changed
+
+- **MessageView 公开 API 不变(PR #D1)** — `append` / `set_messages` /
+  `set_filter` / `set_channel_titles` / `remove_row` / `clear_view` /
+  `replace_message` / `update_media_status` / `message_selected` signal /
+  `count()` / `MAX_ITEMS` 全部保留;新增 `current_message()` helper 替代旧
+  `currentItem().data(Qt.UserRole)`。
+- **tr() 包裹(PR #D3)** — main_window.py setWindowTitle + LoginDialog
+  placeholder + SearchBar placeholder/tooltip/「不限」走 Qt translation
+  协议;既有 widget.text() 断言保持兼容。
+
+### ✅ Tests
+
+- PR #D2:**+14 测试** — search_bar scope toggle × 4、SubscriptionService
+  include_unsubscribed × 3、storage 层跨频道 search × 4(4 后端 parametrize)。
+- PR #D3:**+5 测试** — install_translator 三态(成功/不存在 locale/
+  idempotent)+ get_i18n_dir 路径 + zh_CN tr() 返原文。
+- PR #D1:**+18 净测试** — 23 既有测试重写到 model 协议;14 新测试覆盖
+  current_message / rowCount / DtoRole / MsgIdRole / reset / MAX_ITEMS
+  截断 / HiddenRole / set_filter emit dataChanged / delegate paint skip
+  hidden / _plain_to_html HTML escape / replace_message in-place /
+  update_media_status re-render。
+
+### 📦 Packaging
+
+- **PR #D3**:`pyproject.toml` hatchling wheel include `i18n/*.qm`;`tgmonitor.spec`
+  PyInstaller datas 加 `('src/tgmonitor/i18n', 'tgmonitor/i18n')`;`.gitignore`
+  排除 `pyside6-lrelease` 编译产物 `*.qm`。
+- **PR #D1**:`tgmonitor.spec` 不变(无新增资源文件,delegate paint 走
+  `QTextDocument` 内置能力)。
+
+### 📊 Verification
+
+- `ruff check src tests`:**0 errors**(等同 v1.5.2 baseline)
+- `ruff format --check src tests`:**0 errors**(等同 v1.5.2 baseline)
+- `mypy src/tgmonitor`:**0 errors**(等同 v1.5.2 baseline)
+- **总数:v1.5.2 baseline 709 → v1.5.3 737 passed / 47 deselected**(集成测试)
+- 安全约束保留:无 `TG_API_ID` / `TG_API_HASH` / `TG_PHONE` / 验证码 /
+  2FA 密码 / session 文件进入 commit / PR。
+
 ## [1.5.2] - 2026-09-02
 
 主题:**补丁版性能债清理** — 2 PR / ~770 LOC 净增 / +25 测试 / 零新依赖。
