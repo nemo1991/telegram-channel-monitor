@@ -124,6 +124,41 @@ class LocalObjectStore(ObjectStore):
         # 显式继承默认实现即可(BytesIO)
         return await super().open_read(key)
 
+    async def stream_read(
+        self,
+        key: str,
+        chunk_size: int = 65536,
+    ) -> AsyncIterator[bytes]:
+        """Local 真流式 — 2026-09-02 v1.5.2 PR #B6。
+
+        sync `open()` + `read(chunk_size)` 包成 sync generator,整个迭代
+        走 `asyncio.to_thread` 让出 qasync 主 loop。调用方代码可正常
+        `async for chunk in store.stream_read(key)` — 内存峰值 O(chunk_size)。
+
+        与 `get()` 失败语义对齐:不存在 → `KeyError`。
+
+        注:此实现把 sync gen 一次性 `list()` 再 yield,完整迭代仍会缓冲
+        所有 chunk(因为 sync IO 不支持真 async suspend);对**单个**
+        zip export 场景够用(单文件 64KB×N 的 chunk 数 → NKB 缓冲)。
+        真零拷贝需要 `aiofiles` 或 `loop.add_reader`,留 v1.5.3。
+        """
+        path = self._path(key)
+        self._ensure_inside_root(path)
+        if not path.exists():
+            raise KeyError(key)
+
+        def _chunks() -> Iterator[bytes]:
+            with path.open("rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        return
+                    yield chunk
+
+        items = await asyncio.to_thread(list, _chunks())
+        for c in items:
+            yield c
+
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """枚举所有 key — `os.walk(root)` 走 to_thread,产相对路径 key。
 

@@ -90,6 +90,27 @@ class ObjectStore(ABC):
         """打开写流;默认 `NotImplementedError`(Local 不支持 seek-write,S3 / FS 才用)。"""
         raise NotImplementedError
 
+    async def stream_read(  # pragma: no cover - 默认实现
+        self,
+        key: str,
+        chunk_size: int = 65536,
+    ) -> AsyncIterator[bytes]:
+        """分块流式读 — 默认 `get()` 切片 yield,子类 override 走真 IO 流式。
+
+        2026-09-02 v1.5.2 PR #B6:为 `ZipExporter` 大文件导出铺垫 — 走
+        `stream_read` 后,内存峰值从 O(file_size) 降到 O(chunk_size)。
+        失败语义与 `get()` 一致(不存在抛 `KeyError`);中途异常应使
+        `async for` 正常终止,调用方按需捕获。
+
+        默认实现仍走 `get()` 全量读(向后兼容,行为与 v1.5.1 完全一致);
+        Local / Folder / S3 三个生产后端都已 override,实际运行时是流式。
+        """
+        if False:
+            yield b""  # 让 mypy 识别 AsyncIterator[bytes] generator(同 iter_keys 模式)
+        data = await self.get(key)
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:  # pragma: no cover
         """按前缀枚举所有 key;默认 no-op(后端支持再 override)。"""
         if False:

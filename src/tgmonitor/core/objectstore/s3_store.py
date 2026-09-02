@@ -161,6 +161,27 @@ class S3ObjectStore(ObjectStore):
 
         return BytesIO(await self.get(key))
 
+    async def stream_read(
+        self,
+        key: str,
+        chunk_size: int = 65536,
+    ) -> AsyncIterator[bytes]:
+        """S3 真流式 — 2026-09-02 v1.5.2 PR #B6。
+
+        用 boto3 原生 `iter_chunks(chunk_size)` async iterator — 内部走
+        HTTP chunked transfer,内存峰值 O(chunk_size)。`async with resp["Body"]`
+        在 `async for` 正常结束 / break / 异常时都会正确释放 S3 连接。
+
+        `chunk_size=64KB` 是经验值:Local 单次 read 64KB 在 SSD 上 ~150μs,
+        async gen overhead 可忽略;S3 网络往返 ~50ms,与 chunk size 无关
+        (boto3 内部按网络 buffer 大小切,64KB 是给 Local 的友好默认值)。
+        """
+        async with self._client() as s3:
+            resp = await s3.get_object(Bucket=self._bucket, Key=key)
+            async with resp["Body"] as stream:
+                async for chunk in stream.iter_chunks(chunk_size):
+                    yield chunk
+
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """S3 后端 — 用 `list_objects_v2` paginator 枚举桶里所有 key(2026-08-25 PR #2)。
 

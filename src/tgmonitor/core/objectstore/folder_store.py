@@ -14,7 +14,7 @@ import asyncio
 import os
 import re
 from pathlib import Path
-from typing import AsyncIterator, BinaryIO
+from typing import AsyncIterator, BinaryIO, Iterator
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
@@ -131,6 +131,33 @@ class FolderObjectStore(ObjectStore):
         from io import BytesIO
 
         return BytesIO(await self.get(key))
+
+    async def stream_read(
+        self,
+        key: str,
+        chunk_size: int = 65536,
+    ) -> AsyncIterator[bytes]:
+        """Folder 真流式 — 2026-09-02 v1.5.2 PR #B6。
+
+        同 Local override 的 sync-gen + to_thread 模式,只是路径走两级
+        分片布局(`_path()` 内部把 key 重组为 `<root>/<parent>/<head>/<tail>/<name>`)。
+        """
+        path = self._path(key)
+        self._ensure_inside_root(path)
+        if not path.exists():
+            raise KeyError(key)
+
+        def _chunks() -> Iterator[bytes]:
+            with path.open("rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        return
+                    yield chunk
+
+        items = await asyncio.to_thread(list, _chunks())
+        for c in items:
+            yield c
 
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """枚举所有 key — 把分片布局展开成原始 key(2026-08-24 orphan reconcile)。
