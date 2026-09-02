@@ -174,6 +174,36 @@ class MessageView(QListWidget):
         self._seen.clear()
         self._refresh_empty_state()
 
+    def set_messages(self, messages: list[MessageDTO]) -> None:
+        """VM 搜索结果批量替换 — 2026-09-02 v1.5.2 PR #B5。
+
+        与 `clear_view` + 多次 `append` 等价,但一次性重建 `_seen` 表 + 复用
+        `append` 的 newest-first + MAX_ITEMS 截断 + filter 应用逻辑,避免
+        N 次 `QListWidgetItem` 信号洪水。
+
+        `messages` 通常按 date ASC 从 storage 拉回 — 正常顺序逐条 `append()`,
+        最新一条最后 append → `append` 内部走 `insertItem(0)` 自然落到 row 0
+        (newest-first),与 LIVE 流约定一致。**不要 reversed** —— 反向迭代会让
+        最旧消息最后 append → 顶到 row 0,顺序颠倒。
+
+        race 处理:live `MessageReceived` 在 `set_messages` 期间到达 → 落到
+        `_seen` 表已存在的 key 上,`append()` line 130-140 的"已存在替换"
+        分支正确处理(替换 text 不增 row)。这是预期行为。
+
+        空列表 = 清空视图 + `_seen` 表(同 `clear_view()`)。
+        """
+        self.clear_view()
+        # 保持 newest-first:`messages` 按 date ASC 拉回 — 正常顺序逐条
+        # `append()`,最新一条最后 append → 走 `append` 的 `insertItem(0)` →
+        # 自然落到 row 0(`_seen[key] = 0`)。`reversed` 会反过来,旧消息
+        # 反而顶到 row 0 — 错。
+        for m in messages:
+            self.append(m)
+        # 截断后 apply 现有 filter(set_filter 在每条 append 时已逐条应用,
+        # 但 set_messages 整体替换完后再保险跑一次 — 处理 filter 在中途变化的情况)
+        if self._filter_text:
+            self.set_filter(self._filter_text)
+
     def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
         """外部调 — 删一行(LIVE 流中 `MessageDeleted` 事件消费处)。
 
