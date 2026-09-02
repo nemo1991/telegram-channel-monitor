@@ -363,3 +363,96 @@ def test_remove_row_then_append(qapp):
     # 删 100 后,#101 在 row 0;append #200 时 insertItem(0) → #201 在 row 0,#101 在 row 1
     assert view._seen[(2, 200)] == 0
     assert view._seen[(1, 101)] == 1
+
+
+# ============================================================
+# 2026-09-02 v1.5.2 PR #B5:MessageView.set_messages 批量替换。
+# ============================================================
+
+
+def test_set_messages_replaces_view(qapp):
+    """PR #B5:set_messages(m1, m2) → count == 2 + `_seen` 表只含这 2 个 key。"""
+    view = MessageView()
+    msgs = [_make_msg(1, 100), _make_msg(1, 101)]
+    view.set_messages(msgs)
+    assert view.count() == 2
+    assert set(view._seen.keys()) == {(1, 100), (1, 101)}
+
+
+def test_set_messages_clears_seen_dict(qapp):
+    """PR #B5:set_messages 调用前先 clear_view(),`_seen` 表清空后重建。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    assert (1, 100) in view._seen
+    view.set_messages([_make_msg(2, 200)])
+    # 旧的 (1, 100) 已清掉,只剩新 set 的 key
+    assert (1, 100) not in view._seen
+    assert (2, 200) in view._seen
+
+
+def test_set_messages_preserves_newest_first_order(qapp):
+    """PR #B5:`messages` 按 date ASC 传入 → 渲染后 row 0 是最新(append 走 insertItem(0))。"""
+    view = MessageView()
+    # 假设 storage 返 [m_old, m_new](date ASC)
+    m_old = _make_msg(1, 100)
+    m_new = _make_msg(1, 101)
+    view.set_messages([m_old, m_new])
+
+    # newest 在 row 0(m_new 先 append,自然 insertItem(0) 落顶部)
+    assert view._seen[(1, 101)] == 0
+    assert view._seen[(1, 100)] == 1
+
+
+def test_set_messages_preserves_filter(qapp):
+    """PR #B5:set_messages 后,已有的 `_filter_text` 仍生效 — 新行被 filter。"""
+    view = MessageView()
+    view.set_filter("foo")
+    m_match = MessageDTO(
+        id=0,
+        channel_id=1,
+        telegram_msg_id=100,
+        text="foo bar",  # 含 "foo" → 匹配
+        author=None,
+        date=datetime(2026, 7, 15, 13, 0, 0),
+        media=[],
+    )
+    m_no_match = MessageDTO(
+        id=0,
+        channel_id=1,
+        telegram_msg_id=101,
+        text="baz",  # 不含 "foo"
+        author=None,
+        date=datetime(2026, 7, 15, 13, 1, 0),
+        media=[],
+    )
+    view.set_messages([m_match, m_no_match])
+    assert view.count() == 2  # 都进列表
+    # 但 filter 应用:不匹配的行 hidden=True
+    item_match = view.item(view._seen[(1, 100)])
+    item_nomatch = view.item(view._seen[(1, 101)])
+    assert item_match.isHidden() is False
+    assert item_nomatch.isHidden() is True
+
+
+def test_set_messages_empty_clears_view(qapp):
+    """PR #B5:set_messages([]) → 清空视图 + `_seen` 表。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    assert view.count() == 1
+    view.set_messages([])
+    assert view.count() == 0
+    assert view._seen == {}
+
+
+def test_set_messages_then_live_append_no_duplicate(qapp):
+    """PR #B5:set_messages 后 live append 已有 key → 不增行(走 append 的 replace 分支)。"""
+    view = MessageView()
+    m = _make_msg(1, 100)
+    view.set_messages([m])
+    assert view.count() == 1
+
+    # live 推一条同 key 的更新消息
+    view.append(m)
+    # 没增行 — count 仍 1
+    assert view.count() == 1
+    assert (1, 100) in view._seen

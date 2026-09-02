@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
@@ -120,6 +121,10 @@ class MonitorViewModel(QObject):
     # 接到 → qt_app.quit() 走 aboutToQuit → _shutdown_then_quit。
     # `pause=True` 路径不发此 signal(VM 内部 log 即可)。
     quit_requested = Signal()
+    # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 — payload list[MessageDTO]。
+    # MainWindow 接到 → live_view.set_messages(messages) 批量替换。
+    # 空 list = 清空视图(query 没命中或被 clear)。
+    message_search_results = Signal(object)
 
     def __init__(
         self,
@@ -569,6 +574,46 @@ class MonitorViewModel(QObject):
                 self.message_received.emit(m)
 
         run_coro(self.loop, _go(), error_label="load_recent_messages")
+
+    def search_messages(
+        self,
+        text: str = "",
+        *,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 200,
+        channel_ids: list[int] | None = None,
+    ) -> None:
+        """2026-09-02 v1.5.2 PR #B5:VM 异步拉搜索结果 → emit message_search_results。
+
+        行为契约:
+        - `text=""` 且 `date_from/to` 全 None → 无意义查询,emit `[]`(清空视图)。
+          MainWindow 用此判定"清空搜索框 = 恢复 LIVE 流(空 search 视为清空)"。
+        - `channel_ids=None` → 走全已订阅频道(`app.list_messages` 默认 None
+          等同 storage 端"全部"语义);UI 一般显式传已订阅 id,减少误命中。
+        - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
+
+        走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
+        线程 loop,Qt signal 安全 → `live_view.set_messages(...)` 主线程 op。
+
+        UI 端双过滤(在 MainWindow._on_search_changed):text 一变即时
+        `live_view.set_filter(text)` 快过滤 LIVE 流;同时启 300ms debounce
+        调本方法 — search_messages 结果到时 `set_messages` 替换视图
+        (search 命中的命中子集)。两者不冲突:即时快过滤不重 IO,异步拉
+        替换视图是「权威」。
+        """
+
+        async def _go() -> None:
+            msgs = await self.app.list_messages(
+                channel_ids=channel_ids,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                search=text,
+            )
+            self.message_search_results.emit(msgs)
+
+        run_coro(self.loop, _go(), error_label="search_messages")
 
     def start_export(self, req: ExportRequest) -> asyncio.Future[None]:
         """后台 fire `app.export(req)` 异步生成器,UI 不阻塞。

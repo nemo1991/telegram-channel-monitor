@@ -418,7 +418,20 @@ class MainWindow(QMainWindow):
         self.header.btn_logout.clicked.connect(self._on_logout_clicked)
         self.header.btn_action.clicked.connect(self._on_header_action)
         self.header.search_bar.text_changed.connect(self._on_search_changed)
+        # 2026-09-02 v1.5.2 PR #B5:date_from/to 折叠面板变化 → 立即拉
+        # (不需要 debounce — 用户主动调日历 = 期望立刻响应)
+        self.header.search_bar.date_changed.connect(self._on_search_date_changed)
         self.header.btn_theme.clicked.connect(self._on_theme_toggle)
+
+        # 2026-09-02 v1.5.2 PR #B5:300ms debounce — 文本输入 300ms 内无新
+        # 字符才触发 vm.search_messages。parent=self 确保 MainWindow 关闭
+        # 时 timer deleteLater 自然清理,无悬挂。
+        from PySide6.QtCore import QTimer
+
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(300)
+        self._search_debounce.timeout.connect(self._on_search_debounce_fire)
 
         # Dashboard 快速操作
         self.dashboard.on_refresh = self._on_refresh_channels
@@ -656,11 +669,20 @@ class MainWindow(QMainWindow):
         1. 搜索框有 focus → 清空搜索 + 失焦(回 LIVE)
         2. 设置页 / 子 dialog 有 focus → 退到默认(LIVE)
         3. 否则 no-op(避免误清 LIVE 选中)
+
+        2026-09-02 v1.5.2 PR #B5:搜索框 clear 同时清 date panel + 折叠按钮 +
+        stop debounce timer(避免 stale fetch 跑到空 query 上)。
         """
         sb = self.header.search_bar.edit
         if sb.hasFocus():
-            sb.clear()
+            # 2026-09-02 PR #B5:stop timer 防 stale search 在 clear 后继续
+            # 触发(用户在 300ms 内按 Esc 但 search 已 emit 过);直接 clear()
+            # 会走 SearchBar._on_text_changed → 启新 timer,这里提前 stop。
+            self._search_debounce.stop()
+            self.header.search_bar.clear()  # SearchBar.clear() 重置 text + dates + adv
             sb.clearFocus()
+            # 主动 emit `[]` → 清空视图(后续 live 消息自然 append 重建 LIVE 流)
+            self.live_view.set_messages([])
             return
         # 若当前不在 LIVE,回 LIVE(简化 — 用户感知的「取消」)
         if self.stack.currentIndex() != 0:
@@ -705,6 +727,10 @@ class MainWindow(QMainWindow):
         self._vm.export_done.connect(self._on_export_done)
         self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
+        # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
+        # vm.search_messages(...) 完成后 emit `message_search_results(list[MessageDTO])`,
+        # MainWindow 接到直接 `set_messages` 替换视图(覆盖原有 LIVE 流)。
+        self._vm.message_search_results.connect(self.live_view.set_messages)
         # Media Manager 转发(2026-08-24)
         self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
         self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
@@ -753,8 +779,57 @@ class MainWindow(QMainWindow):
         run_coro(self.loop, self.app.client.logout(), error_label="logout")
 
     def _on_search_changed(self, txt: str) -> None:
-        """搜索框内容变化 → 透传给 LIVE view 的 MessageView 过滤。"""
+        """2026-09-02 v1.5.2 PR #B5:搜索框变化 → 双过滤。
+
+        1) 即时:`live_view.set_filter(txt)` 内存快过滤已加载 LIVE 流(无 IO,
+        UI 立即响应 — 当前 200 条 LIVE 的 hide/show)。
+        2) 300ms debounce:启动 `_search_debounce` QTimer;到点触发
+           `vm.search_messages(...)` → 异步拉 storage 服务端命中 →
+           emit `message_search_results` → `live_view.set_messages(...)`
+           批量替换视图。
+
+        双过滤不冲突:快过滤是「视觉欺骗」(本地 hide/show),set_messages 是
+        「权威」(server-side 命中替换)。
+        """
+        # 1) 即时快过滤(无 IO)
         self.live_view.set_filter(txt)
+        # 2) debounce 启动 timer;每次输入重置,只有 300ms 内没新输入才触发
+        self._search_debounce.start()
+
+    def _on_search_date_changed(self, dt_from, dt_to) -> None:
+        """2026-09-02 v1.5.2 PR #B5:日期范围变化 → 走同一 debounce 拉结果。"""
+        # 日期变化立即触发(不需要 300ms 等待 — 用户主动调整日历 = 期望立刻响应)
+        self._run_search_query()
+
+    def _on_search_debounce_fire(self) -> None:
+        """300ms debounce 到点 → 调 vm.search_messages。"""
+        self._run_search_query()
+
+    def _run_search_query(self) -> None:
+        """拉一次搜索结果:空 query → emit `[]` 清空视图(回 LIVE 流占位)。
+
+        `live_view.set_messages([])` 行为是 clear_view — 但 LIVE 流真正
+        恢复需要重新 `vm.load_recent_messages()` 重新拉 200 条。这里简化为
+        「空 query = 清空列表」(用户清空搜索时视觉上是「无结果」,后续如有
+        新 LIVE 消息到达,append 会加进空表 — 等于 LIVE 流以增量形式
+        重建)。如果未来需要"清空 = 重拉 LIVE 200 条",改成 emit 触发
+        `vm.load_recent_messages()` 即可。
+        """
+        sb = self.header.search_bar
+        txt = sb.text()
+        df, dt = sb.date_range()
+        if not txt and df is None and dt is None:
+            # 空 query → 清空视图(后续 live 消息 append 进去会自然重建 LIVE 流)
+            self.live_view.set_messages([])
+            return
+        # 走已订阅频道 id 列表(从 known_channels 拿 — VM 已维护)
+        self._vm.search_messages(
+            text=txt,
+            date_from=df,
+            date_to=dt,
+            limit=200,
+            channel_ids=list(self._vm.known_channels.keys()),
+        )
 
     def _on_header_action(self) -> None:
         """头栏「登录」按钮 — 弹 LoginDialog(复用现有代码)"""
