@@ -5,6 +5,60 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.2] - 2026-09-02
+
+主题:**补丁版性能债清理** — 2 PR / ~770 LOC 净增 / +25 测试 / 零新依赖。
+解决 v1.5.1 PR #B4 留下的「单文件 > 100MB 触发 OOM」隐患(PR #B6
+流式改造)+ 把 v1.5.1 PR #B2 storage 端搜索能力消费到 UI
+(PR #B5 date + debounce + VM signal)。
+
+### ✨ Added
+- **UI 搜索面板(PR #B5,UX)** — SearchBar 扩「📅 高级」折叠按钮 +
+  `QDateTimeEdit × 2`(`date_from` / `date_to`)+ 新信号
+  `date_changed(datetime | None, datetime | None)`;`setSpecialValueText
+  ("不限")` + `setMinimumDateTime(1900-01-01)` 让「未设」显示占位文字。
+  `MessageView.set_messages(list[MessageDTO])` 批量替换 LIVE 视图
+  (复用 `append` 的 `insertItem(0)` + `_seen` 维护 + filter 应用逻辑)。
+  `MonitorViewModel.search_messages(text, *, date_from=None, date_to=
+  None, limit=200, channel_ids=None)` 走 `run_coro` 后台 fire +
+  `message_search_results = Signal(object)` emit。`MainWindow` 用 300ms
+  `QTimer` debounce(text 即时 `set_filter` + 300ms 后异步拉结果)双过滤;
+  `_on_global_escape` 同步 `stop` timer + `clear` search + emit `[]`。
+  limit 保留 v1.5.1 默认 **200**(用户决定不 bump)。
+  - `ui/widgets/search_bar.py`:date panel + `date_changed` 信号
+  - `ui/widgets/message_view.py`:`set_messages()` 批量替换
+  - `ui/viewmodels/monitor_vm.py`:`search_messages()` + `message_search_results` 信号
+  - `ui/main_window.py`:QTimer debounce + `_on_search_*` 三件套
+  - 测试 +15:`tests/test_search_bar.py`(9,NEW) + `test_message_view.py`
+    `test_set_messages_*`(6)
+
+### 🔧 Changed
+- **ObjectStore `stream_read(key, chunk_size=64KB) -> AsyncIterator[bytes]`
+  (PR #B6,性能)** — ABC 加默认实现(回退 `get()` 切片 yield,完全向后
+  兼容)+ Local / Folder / S3 三后端 override 走真流式(Local/Folder 用
+  `asyncio.to_thread` 包 sync open + chunked read;S3 用 boto3 原生
+  `iter_chunks(chunk_size)` async iterator)。`ZipExporter.render` 改
+  `zf.open(arcname, "w")` + `async for chunk in stream_read: writer
+  .write(chunk)`,内存峰值从 `O(file_size)` 降到 `O(chunk_size)`
+  (64KB),单文件 100MB+ 不再 OOM。
+  - `core/objectstore/base.py`:`stream_read` ABC 默认实现
+  - `core/objectstore/{local_store,folder_store,s3_store}.py`:三后端 override
+  - `core/export/zip_exporter.py`:chunked write + arcname 错误时 KeyError 跳过
+  - 测试 +10:`tests/test_objectstore.py` + `tests/test_exporters.py`
+
+### 🐛 Fixed
+- **大文件 ZIP 导出 OOM 隐患(PR #B6 缓解)** — v1.5.1 PR #B4 注释明确
+  标注「建议单文件 < 100MB,否则进程内存峰值会爆」(走 `object_store
+  .get()` 全量读 + `BytesIO` 缓冲);v1.5.2 切真流式后 100MB+ 单文件可正常
+  zip,内存峰值仅 64KB chunk 缓冲。
+
+### 🧪 Tests
+- 总数:**v1.5.1 baseline 690 → v1.5.2 709 passed / 47 deselected**(集成
+  测试),新增 +19(10 PR #B6 + 15 PR #B5 中实际生效 9 + 6)
+- `ruff check src tests`:**0 errors**
+- `ruff format --check src tests`:**137 files already formatted**
+- `mypy src/tgmonitor`:**0 errors**(等同 v1.5.1 baseline)
+
 ## [1.5.1] - 2026-09-01
 
 主题:**补丁版小迭代** — 3 个 UX / 体感增强 PR,沿 v1.5.0 落地的 Exporter
