@@ -1300,7 +1300,7 @@ def test_edited_message_ui_replace_message_renders_new_text():
     from datetime import UTC, datetime
 
     from tgmonitor.core.dto import MessageDTO
-    from tgmonitor.ui.widgets.message_view import MessageView
+    from tgmonitor.ui.widgets.message_view import MessageListModel, MessageView
 
     view = MessageView()
     # 频道标题缓存,让 _format 输出稳定
@@ -1330,14 +1330,15 @@ def test_edited_message_ui_replace_message_renders_new_text():
     view.replace_message(msg2)
     # row 数不变
     assert view.count() == 1
-    # 内容更新
-    item = view.item(0)
-    assert item is not None
-    dto_after = item.data(MessageView._ROLE_DTO)
+    # 内容更新 — 2026-09-02 v1.5.3 PR #D1:从 `view.item(0).data()` / `text()` 协议
+    # 改为走 `model.data(idx, DtoRole)` / `FormattedRole`(QListWidget API 废除)。
+    idx = view._model.index(0, 0)
+    dto_after = view._model.data(idx, MessageListModel.DtoRole)
     assert isinstance(dto_after, MessageDTO)
     assert dto_after.text == "v2-edited"
     # 显示文本含 "v2-edited"
-    assert "v2-edited" in item.text()
+    formatted = view._model.data(idx, MessageListModel.FormattedRole)
+    assert "v2-edited" in formatted
 
 
 # ============================================================

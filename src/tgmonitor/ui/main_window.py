@@ -694,18 +694,16 @@ class MainWindow(QMainWindow):
     def _copy_current_message_text(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
 
-        MessageView 是 QListWidget,QListWidgetItem.data(Qt.UserRole)
-        存 MessageDTO(v1.4.0 PR #3 实装)— 取 text 字段放剪贴板。
+        2026-09-02 v1.5.3 PR #D1:MessageView 由 `QListWidget` 升级为 `QListView`
+        + `MessageListModel`,`currentItem().data(Qt.UserRole)` 协议废除,
+        改用 `live_view.current_message()` helper(MessageView 新增 method)
+        走 `model.data(currentIndex, DtoRole)` 拿 MessageDTO。
         """
         if self.stack.currentIndex() != 0:
             return  # 只在 LIVE 页生效
-        item = self.live_view.currentItem()
-        if item is None:
+        msg = self.live_view.current_message()
+        if msg is None:
             return
-        # data(Qt.UserRole) 存的是 MessageDTO
-        from PySide6.QtCore import Qt as QtNS
-
-        msg = item.data(QtNS.UserRole)
         text = getattr(msg, "text", None) or ""
         if not text:
             self.statusBar().showMessage("当前消息无文本", 1500)

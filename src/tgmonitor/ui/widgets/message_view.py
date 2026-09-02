@@ -1,9 +1,19 @@
 # mypy: disable-error-code="attr-defined"
-"""MessageView — 实时消息流,带过滤 + 富格式。
+"""MessageView — 实时消息流,带过滤 + 富格式(QListView + delegate 重写)。
+
+2026-09-02 v1.5.3 PR #D1:QListWidget → QListView + QAbstractListModel +
+QStyledItemDelegate,真实 lazy render。**公开 API 全部保留**:`append` /
+`set_messages` / `set_filter` / `set_channel_titles` / `remove_row` /
+`clear_view` / `replace_message` / `update_media_status` / `message_selected`
+signal / `_seen` / `count()` / `MAX_ITEMS`,`main_window._copy_current_message_text`
+改用新 `current_message()` helper。
 
 存储:
-  每条消息存为 QListWidgetItem,UserRole 存 msg_id,UserRole+1 存 MessageDTO。
-  用 `hide()` / `show()` 控制可见性,实现过滤(避免重画已渲染的 row)。
+  每条消息存于 `MessageListModel._items: list[MessageDTO]`,`_index_of:
+  dict[(channel_id, telegram_msg_id), row]` 提供 O(1) 去重 + 编辑/删除定位。
+  `data(role)` 按需返 DTO / msg_id / hidden flag / formatted 富文本;
+  delegate `paint()` 调 `index.data(FormattedRole)` 拿文本,QTextDocument
+  渲染。hidden=True 的行 delegate 直接 return,不画。
 
 格式(单行紧凑):
   ⏱ 14:23:10  [新闻]  👤 @author  #msg_id
@@ -18,261 +28,223 @@ from __future__ import annotations
 
 from datetime import UTC
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QListWidget, QListWidgetItem
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import QColor, QTextDocument
+from PySide6.QtWidgets import QListView, QStyledItemDelegate, QStyleOptionViewItem
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.ui.widgets.form_row import empty_hint
 
+# ============================================================
+# MessageListModel — QAbstractListModel 子类 + 业务方法
+# ============================================================
 
-class MessageView(QListWidget):
-    """实时消息流 QListWidget 子类 — 去重 + 过滤 + 富格式 + 空状态 overlay。"""
 
-    MAX_ITEMS = 1000
-    _ROLE_MSG_ID = Qt.UserRole
-    _ROLE_DTO = Qt.UserRole + 1
+class MessageListModel(QAbstractListModel):
+    """消息列表 model — DTO list + _seen dict + filter state + channel_titles。
 
-    # 用户点击一条消息 → emit MessageDTO 给详情面板
-    message_selected = Signal(object)
+    2026-09-02 v1.5.3 PR #D1:`QListWidgetItem` 内部存储 → 真实 Qt model,
+    delegate 按需 paint。**对外通过 role 协议暴露数据**:`data(idx, role)`
+    按 role 返 DTO / msg_id / hidden flag / formatted 富文本 / has_media。
+    """
 
-    def __init__(self) -> None:
-        """初始化去重表 + channel_titles 缓存 + 过滤状态 + 空状态 overlay。"""
-        super().__init__()
-        self.setAlternatingRowColors(True)
-        self.setUniformItemSizes(False)
-        self.setWordWrap(True)
-        # 去重表:key = (channel_id, telegram_msg_id) → list row index
-        self._seen: dict[tuple[int, int], int] = {}
-        # 频道 id → title;MainWindow 在 channels_changed 时调 set_channel_titles 同步
+    DtoRole = Qt.UserRole + 1
+    MsgIdRole = Qt.UserRole + 2
+    HiddenRole = Qt.UserRole + 3
+    FormattedRole = Qt.UserRole + 4
+    HasMediaRole = Qt.UserRole + 5
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._items: list[MessageDTO] = []
+        self._index_of: dict[tuple[int, int], int] = {}
         self._channel_titles: dict[int, str] = {}
-        # 过滤文本(空 = 不过滤)
         self._filter_text: str = ""
 
-        self.itemClicked.connect(self._on_item_clicked)
+    # ---- Qt model 接口 ----
 
-        # 空状态占位(默认显示,首条消息到达自动隐藏)。
-        # QListWidget 是 QAbstractScrollArea,接受 child widget 作为
-        # overlay;setParent 后用 raise_() 把它顶到 viewport 上方。
-        self._empty_overlay = empty_hint(
-            icon="💬",
-            title="暂无消息",
-            hint="先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
-            parent=self,
-        )
-        self._empty_overlay.raise_()
-        self._refresh_empty_state()
+    def rowCount(  # noqa: N802 — Qt override
+        self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()
+    ) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._items)
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        """窗口尺寸变 → overlay 重新居中(视觉重心偏上 1/3 高度)。"""
-        super().resizeEvent(event)
-        # 把 overlay 居中放在 list 上方 1/3 高度(视觉重心偏上,留底给 scrollbar)
-        hint_size = self._empty_overlay.sizeHint()
-        x = max(0, (self.width() - hint_size.width()) // 2)
-        y = max(0, self.height() // 3 - hint_size.height() // 2)
-        self._empty_overlay.setGeometry(x, y, hint_size.width(), hint_size.height())
-        self._empty_overlay.raise_()
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._items):
+            return None
+        m = self._items[row]
+        if role == self.DtoRole:
+            return m
+        if role == self.MsgIdRole:
+            return m.telegram_msg_id
+        if role == self.HasMediaRole:
+            return bool(m.has_media)
+        if role == self.HiddenRole:
+            if not self._filter_text:
+                return False
+            return not self._matches(m, self._filter_text)
+        if role == self.FormattedRole or role == Qt.DisplayRole:
+            return self._format(m)
+        return None
 
-    def _refresh_empty_state(self) -> None:
-        """count() == 0 → 显示 overlay,else 隐藏。"""
-        self._empty_overlay.setVisible(self.count() == 0)
-        self._empty_overlay.raise_()
+    def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.NoItemFlags
+        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
-    def _on_item_clicked(self, item: QListWidgetItem) -> None:
-        """点击一条消息 → 透传 MessageDTO。"""
-        dto = item.data(self._ROLE_DTO)
-        if isinstance(dto, MessageDTO):
-            self.message_selected.emit(dto)
-
-    def set_channel_titles(self, titles: dict[int, str]) -> None:
-        """外部注入频道 id → title 映射(由 `MainWindow` 在 channels_changed 时同步)。"""
-        self._channel_titles = dict(titles)
-
-    def set_filter(self, text: str) -> None:
-        """按文本过滤。空 = 显示全部。
-
-        匹配规则:消息正文 OR 作者 OR 频道名 OR #msg_id(数字)。
-        大小写不敏感。
-        """
-        text = text.strip().lower()
-        self._filter_text = text
-        for i in range(self.count()):
-            item = self.item(i)
-            if item is None:
-                continue
-            if not text:
-                item.setHidden(False)
-                continue
-            dto = item.data(self._ROLE_DTO)
-            if isinstance(dto, MessageDTO) and self._matches(dto, text):
-                item.setHidden(False)
-            else:
-                item.setHidden(True)
-
-    def _matches(self, m: MessageDTO, text: str) -> bool:
-        if m.text and text in m.text.lower():
-            return True
-        if m.author and text in m.author.lower():
-            return True
-        title = self._channel_titles.get(m.channel_id, "")
-        return bool(title and text in title.lower()) or (
-            str(m.telegram_msg_id) == text or text.lstrip("#") == str(m.telegram_msg_id)
-        )
+    # ---- 业务接口(给 MessageView 调) ----
 
     def append(self, m: MessageDTO) -> None:
-        """实时追加一条消息 — 已存在则替换并保留 row index,否则插入头部。
-
-        # 同时维护 `_seen` 去重表 + 行 index 同步(Messages 接收时 `_seen`
-        # 全部 +1,删除底部时按 row index 偏移修复)+ 应用当前过滤 +
-        # 触发空状态刷新。`MAX_ITEMS` 限制总条数。
-        """
+        """实时追加一条 — 已存在替换,否则插入头部(newest-first)。"""
         key = (m.channel_id, m.telegram_msg_id)
-        if key in self._seen:
+        if key in self._index_of:
             # 已存在 — 文本可能更新(edit),替换那一行
-            row = self._seen[key]
-            item = self.item(row)
-            if item is not None:
-                item.setText(self._format(m))
-                item.setData(self._ROLE_DTO, m)
-                # 重检过滤
-                if self._filter_text and not self._matches(m, self._filter_text):
-                    item.setHidden(True)
+            row = self._index_of[key]
+            self._items[row] = m
+            idx = self.index(row, 0)
+            self.dataChanged.emit(
+                idx,
+                idx,
+                [self.DtoRole, self.FormattedRole, self.HiddenRole, self.HasMediaRole],
+            )
             return
-        text = self._format(m)
-        item = QListWidgetItem(text)
-        item.setData(self._ROLE_MSG_ID, m.telegram_msg_id)
-        item.setData(self._ROLE_DTO, m)
-        # 媒体行加底色
-        if m.has_media:
-            item.setBackground(QColor(232, 240, 248))
-        self.insertItem(0, item)
-        # 更新所有 row index(insertItem(0) 后 +1)
-        for k in self._seen:
-            self._seen[k] += 1
-        self._seen[key] = 0
-        # 应用过滤
-        if self._filter_text and not self._matches(m, self._filter_text):
-            item.setHidden(True)
-        # 限制条数
-        while self.count() > self.MAX_ITEMS:
-            old_row = self.count() - 1
-            old_item = self.takeItem(old_row)
-            # 同步 _seen:任何指向 == old_row 的删除,> old_row 的 -= 1
-            if old_item is not None:
-                for k, v in list(self._seen.items()):
-                    if v == old_row:
-                        del self._seen[k]
-                        break
-            for k in self._seen:
-                if self._seen[k] > old_row:
-                    self._seen[k] -= 1
-        self._refresh_empty_state()
+        # 插入头部
+        self.beginInsertRows(QModelIndex(), 0, 0)
+        self._items.insert(0, m)
+        # _index_of 全部 +1
+        for k in self._index_of:
+            self._index_of[k] += 1
+        self._index_of[key] = 0
+        self.endInsertRows()
+        # MAX_ITEMS 截断(尾部删)
+        while len(self._items) > MessageView.MAX_ITEMS:
+            self._truncate_tail()
 
-    def clear_view(self) -> None:
-        """外部调 — 清空列表 + 去重表(例如启动时)。"""
-        self.clear()
-        self._seen.clear()
-        self._refresh_empty_state()
+    def _truncate_tail(self) -> None:
+        """删尾部一行 — 同步 _index_of 偏移。"""
+        last = len(self._items) - 1
+        if last < 0:
+            return
+        self.beginRemoveRows(QModelIndex(), last, last)
+        # 找 key → row == last
+        removed_key = next((k for k, v in self._index_of.items() if v == last), None)
+        if removed_key is not None:
+            del self._index_of[removed_key]
+        del self._items[last]
+        self.endRemoveRows()
 
-    def set_messages(self, messages: list[MessageDTO]) -> None:
-        """VM 搜索结果批量替换 — 2026-09-02 v1.5.2 PR #B5。
-
-        与 `clear_view` + 多次 `append` 等价,但一次性重建 `_seen` 表 + 复用
-        `append` 的 newest-first + MAX_ITEMS 截断 + filter 应用逻辑,避免
-        N 次 `QListWidgetItem` 信号洪水。
-
-        `messages` 通常按 date ASC 从 storage 拉回 — 正常顺序逐条 `append()`,
-        最新一条最后 append → `append` 内部走 `insertItem(0)` 自然落到 row 0
-        (newest-first),与 LIVE 流约定一致。**不要 reversed** —— 反向迭代会让
-        最旧消息最后 append → 顶到 row 0,顺序颠倒。
-
-        race 处理:live `MessageReceived` 在 `set_messages` 期间到达 → 落到
-        `_seen` 表已存在的 key 上,`append()` line 130-140 的"已存在替换"
-        分支正确处理(替换 text 不增 row)。这是预期行为。
-
-        空列表 = 清空视图 + `_seen` 表(同 `clear_view()`)。
-        """
-        self.clear_view()
-        # 保持 newest-first:`messages` 按 date ASC 拉回 — 正常顺序逐条
-        # `append()`,最新一条最后 append → 走 `append` 的 `insertItem(0)` →
-        # 自然落到 row 0(`_seen[key] = 0`)。`reversed` 会反过来,旧消息
-        # 反而顶到 row 0 — 错。
-        for m in messages:
-            self.append(m)
-        # 截断后 apply 现有 filter(set_filter 在每条 append 时已逐条应用,
-        # 但 set_messages 整体替换完后再保险跑一次 — 处理 filter 在中途变化的情况)
-        if self._filter_text:
-            self.set_filter(self._filter_text)
-
-    def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
-        """外部调 — 删一行(LIVE 流中 `MessageDeleted` 事件消费处)。
-
-        2026-08-24:Media Manager 删 message 后,MonitorService 已发
-        `MessageDeleted(channel_id, telegram_msg_id)`,MainWindow 收到调这里
-        把对应 row 从 LIVE 流摘掉。找不到 idempotent — 不抛异常。
-        """
+    def remove_by_key(self, channel_id: int, telegram_msg_id: int) -> None:
+        """按 (channel_id, telegram_msg_id) 删一行 — 找不到 idempotent。"""
         key = (channel_id, telegram_msg_id)
-        row = self._seen.pop(key, None)
+        row = self._index_of.pop(key, None)
         if row is None:
             return
-        self.takeItem(row)
-        # 后面的 row index -= 1
-        for k in self._seen:
-            if self._seen[k] > row:
-                self._seen[k] -= 1
-        self._refresh_empty_state()
+        self.beginRemoveRows(QModelIndex(), row, row)
+        del self._items[row]
+        # 后面 row index -1
+        for k in self._index_of:
+            if self._index_of[k] > row:
+                self._index_of[k] -= 1
+        self.endRemoveRows()
+
+    def reset(self, messages: list[MessageDTO]) -> None:
+        """整批替换(给 set_messages / clear_view 用)— atomic reset。
+
+        `messages` 按 date ASC 传入(latest 在末尾)— model 保持传入顺序,
+        caller 负责保证 newest-last。**不要 reversed** —— 反向迭代会让
+        最旧消息顶到 row 0,顺序颠倒(同 v1.5.2 PR #B5 set_messages 语义)。
+        """
+        self.beginResetModel()
+        self._items = list(messages)
+        self._index_of = {(m.channel_id, m.telegram_msg_id): i for i, m in enumerate(self._items)}
+        # MAX_ITEMS 截断(尾部删,不走 beginRemoveRows 因为已在 resetModel 中)
+        while len(self._items) > MessageView.MAX_ITEMS:
+            self._truncate_tail_inplace()
+        self.endResetModel()
+
+    def _truncate_tail_inplace(self) -> None:
+        """reset 中用 — 不走 beginRemoveRows/endRemoveRows(已在 resetModel 中)。"""
+        if not self._items:
+            return
+        last = len(self._items) - 1
+        # 找 key → row == last
+        removed_key = next((k for k, v in self._index_of.items() if v == last), None)
+        if removed_key is not None:
+            del self._index_of[removed_key]
+        del self._items[last]
+
+    def set_filter(self, text: str) -> None:
+        """设过滤文本 — 所有 row 的 HiddenRole 变化 → emit dataChanged。"""
+        self._filter_text = text.strip().lower()
+        if self.rowCount() == 0:
+            return
+        top = self.index(0, 0)
+        bottom = self.index(self.rowCount() - 1, 0)
+        self.dataChanged.emit(top, bottom, [self.HiddenRole])
+
+    def set_channel_titles(self, titles: dict[int, str]) -> None:
+        """设 channel_titles + FormattedRole 全部失效(影响 head 频道名)。"""
+        self._channel_titles = dict(titles)
+        if self.rowCount() == 0:
+            return
+        top = self.index(0, 0)
+        bottom = self.index(self.rowCount() - 1, 0)
+        self.dataChanged.emit(top, bottom, [self.FormattedRole])
+
+    def replace_message(self, msg: MessageDTO) -> None:
+        """编辑事件:按 key 找 row,重 format + 重检 filter。"""
+        key = (msg.channel_id, msg.telegram_msg_id)
+        row = self._index_of.get(key)
+        if row is None:
+            # 罕见:编辑事件先于 new message 到达 — 当新增处理
+            self.append(msg)
+            return
+        self._items[row] = msg
+        idx = self.index(row, 0)
+        self.dataChanged.emit(
+            idx,
+            idx,
+            [self.DtoRole, self.FormattedRole, self.HiddenRole, self.HasMediaRole],
+        )
 
     def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
-        """异步下载结束回调:找到对应行,更新 DTO 里的 media 并重绘文本。
-
-        `media` 是 `_download_worker` 回写后的新对象(`dataclasses.replace`
-        产物);UI 里 `_ROLE_DTO` 与 worker 持有同一 `MessageDTO` 引用,通常
-        `dto.media[i] is media` 直接命中,这里再用 file_id 兜底匹配。
-        """
-        row = self._seen.get((channel_id, telegram_msg_id))
+        """异步下载结束回调:更新 DTO.media + 重 format。"""
+        row = self._index_of.get((channel_id, telegram_msg_id))
         if row is None:
             return
-        item = self.item(row)
-        if item is None:
-            return
-        dto = item.data(self._ROLE_DTO)
-        if not isinstance(dto, MessageDTO):
-            return
+        dto = self._items[row]
         for i, med in enumerate(dto.media):
             if med is media or (
                 media.telegram_file_id and med.telegram_file_id == media.telegram_file_id
             ):
                 dto.media[i] = media
                 break
-        item.setText(self._format(dto))
-        item.setData(self._ROLE_DTO, dto)
-        # 重检过滤(状态变化不影响匹配结果,但保持与 append 一致)
-        if self._filter_text and not self._matches(dto, self._filter_text):
-            item.setHidden(True)
+        idx = self.index(row, 0)
+        self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
 
-    def replace_message(self, msg: MessageDTO) -> None:
-        """编辑事件触发(2026-08-24):整条 cell 重渲 — 文本/views/forwards/edited/media 都可能变。
+    # ---- 过滤 / 格式化工具 ----
 
-        按 (channel_id, telegram_msg_id) 找现有 row,调 _format 重渲 + 替换 DTO,
-        不增加 / 删除 row。找不到(理论上不该 — 编辑事件来自已落库消息)则
-        fallthrough 当作新消息 append。
-        """
-        key = (msg.channel_id, msg.telegram_msg_id)
-        row = self._seen.get(key)
-        if row is None:
-            # 罕见:编辑事件先于 new message 到达 / 重启期间发生 — 当新增处理
-            self.append_message(msg)
-            return
-        item = self.item(row)
-        if item is None:
-            return
-        item.setText(self._format(msg))
-        item.setData(self._ROLE_DTO, msg)
-        # 重检过滤
-        if self._filter_text and not self._matches(msg, self._filter_text):
-            item.setHidden(True)
-        else:
-            item.setHidden(False)
+    def _matches(self, m: MessageDTO, text: str) -> bool:
+        """匹配规则:正文 / 作者 / 频道名 / #msg_id(大小写不敏感)。"""
+        if m.text and text in m.text.lower():
+            return True
+        if m.author and text in m.author.lower():
+            return True
+        title = self._channel_titles.get(m.channel_id, "")
+        if title and text in title.lower():
+            return True
+        return str(m.telegram_msg_id) == text or text.lstrip("#") == str(m.telegram_msg_id)
 
     def _format(self, m: MessageDTO) -> str:
         # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂
@@ -309,3 +281,220 @@ class MessageView(QListWidget):
                 parts.append(label)
             body += f"  📎 {','.join(parts)}"
         return f"{head}\n  {body}"
+
+
+# ============================================================
+# MessageItemDelegate — paint + sizeHint(QTextDocument)
+# ============================================================
+
+
+class MessageItemDelegate(QStyledItemDelegate):
+    """2026-09-02 v1.5.3 PR #D1:lazy paint delegate。
+
+    - hidden=True → 不画(节省 paint 开销)
+    - media 行 → fillRect 底色(232,240,248)
+    - 普通行 → QTextDocument 渲 rich text(支持 word wrap)
+    """
+
+    MEDIA_BG = QColor(232, 240, 248)
+
+    def paint(
+        self,
+        painter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        if index.data(MessageListModel.HiddenRole):
+            return
+        has_media = bool(index.data(MessageListModel.HasMediaRole))
+        if has_media:
+            painter.fillRect(option.rect, self.MEDIA_BG)
+        text = index.data(MessageListModel.FormattedRole) or ""
+        if not text:
+            return
+        doc = QTextDocument()
+        doc.setDefaultFont(option.font)
+        doc.setHtml(self._plain_to_html(text))
+        painter.save()
+        painter.translate(option.rect.topLeft())
+        doc.setTextWidth(option.rect.width())
+        doc.drawContents(painter)
+        painter.restore()
+
+    def sizeHint(  # noqa: N802 — Qt override
+        self,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ):
+        text = index.data(MessageListModel.FormattedRole) or ""
+        if not text:
+            return super().sizeHint(option, index)
+        doc = QTextDocument()
+        doc.setDefaultFont(option.font)
+        doc.setHtml(self._plain_to_html(text))
+        doc.setTextWidth(option.rect.width() if option.rect.width() > 0 else 280)
+        # 高度 = 内容 + 上下各 4px padding
+        from PySide6.QtCore import QSize
+
+        return QSize(int(doc.idealWidth()), int(doc.size().height()) + 8)
+
+    @staticmethod
+    def _plain_to_html(text: str) -> str:
+        """QListWidget.setText 走 plain text;delegate 走 QTextDocument
+        需 HTML。换行符 `\n` → `<br>`,`&` `<` `>` 转义避免被当 HTML 解析。
+
+        旧实现 `QListWidgetItem.text` 自动处理换行 + escape;这里需要手动。
+        """
+        esc = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f"<pre style='margin:0; padding:0;'>{esc.replace(chr(10), '<br>')}</pre>"
+
+
+# ============================================================
+# MessageView — QListView 子类
+# ============================================================
+
+
+class MessageView(QListView):
+    """实时消息流 — QListView + MessageListModel + MessageItemDelegate。
+
+    2026-09-02 v1.5.3 PR #D1:从 QListWidget 子类改为 QListView + 自定义
+    model + delegate。公开 API 全部保留(append / set_messages /
+    set_filter / set_channel_titles / remove_row / clear_view /
+    replace_message / update_media_status / message_selected signal /
+    count / MAX_ITEMS / _format),内部 model + delegate 换皮。
+    """
+
+    MAX_ITEMS = 1000
+
+    # 用户点击一条消息 → emit MessageDTO 给详情面板
+    message_selected = Signal(object)
+
+    def __init__(self) -> None:
+        """初始化 model + delegate + channel_titles + filter + empty overlay。"""
+        super().__init__()
+        self.setAlternatingRowColors(True)
+        self.setUniformItemSizes(False)  # delegate 动态 size
+        self.setWordWrap(True)
+        self.setSelectionMode(QListView.SelectionMode.SingleSelection)
+
+        self._model = MessageListModel(self)
+        self.setModel(self._model)
+
+        self._delegate = MessageItemDelegate(self)
+        self.setItemDelegate(self._delegate)
+
+        # 点击 → 取 DTO → emit
+        self.clicked.connect(self._on_clicked)
+
+        # 空状态占位(默认显示,首条消息到达自动隐藏)
+        self._empty_overlay = empty_hint(
+            icon="💬",
+            title="暂无消息",
+            hint="先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
+            parent=self,
+        )
+        self._empty_overlay.raise_()
+        self._refresh_empty_state()
+        # model 行数变化时刷新 overlay
+        self._model.rowsInserted.connect(self._refresh_empty_state)
+        self._model.rowsRemoved.connect(self._refresh_empty_state)
+        self._model.modelReset.connect(self._refresh_empty_state)
+
+    # ---- 公开 API(全部保留) ----
+
+    def append(self, m: MessageDTO) -> None:
+        """实时追加一条 — 委托 model。"""
+        self._model.append(m)
+
+    def set_messages(self, messages: list[MessageDTO]) -> None:
+        """VM 搜索结果批量替换 — 与 `clear_view` + 多次 `append` 等价。
+
+        `messages` 通常按 date ASC 从 storage 拉回 — 正常顺序逐条 `append()`,
+        最新一条最后 append → `append` 走 `model.append` 的 `beginInsertRows(0,0)`
+        自然落到 row 0(newest-first),与 LIVE 流约定一致。**不要 reversed** ——
+        反向迭代会让最旧消息最后 append → 顶到 row 0,顺序颠倒。
+
+        race 处理:live `MessageReceived` 在 `set_messages` 期间到达 → 落到
+        `_index_of` 表已存在的 key 上,`append()` 的「已存在替换」分支
+        正确处理(替换 text 不增 row)。这是预期行为。
+
+        空列表 = 清空视图 + `_index_of` 表(同 `clear_view()`)。
+        """
+        self.clear_view()
+        # 保持 newest-first:`messages` 按 date ASC 拉回 — 正常顺序逐条
+        # `append()`,最新一条最后 append → 走 model.append 的 beginInsertRows(0,0) →
+        # 自然落到 row 0(`_index_of[key] = 0`)。`reversed` 会反过来,旧消息
+        # 反而顶到 row 0 — 错。
+        for m in messages:
+            self.append(m)
+        # 截断后 apply 现有 filter(set_filter 在每条 append 时已逐条应用,
+        # 但 set_messages 整体替换完后再保险跑一次 — 处理 filter 在中途变化的情况)
+        if self._model._filter_text:
+            self._model.set_filter(self._model._filter_text)
+
+    def set_channel_titles(self, titles: dict[int, str]) -> None:
+        """外部注入频道 id → title 映射 — 委托 model。"""
+        self._model.set_channel_titles(titles)
+
+    def set_filter(self, text: str) -> None:
+        """按文本过滤。空 = 显示全部。"""
+        self._model.set_filter(text)
+
+    def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删一行 — 委托 model。"""
+        self._model.remove_by_key(channel_id, telegram_msg_id)
+
+    def clear_view(self) -> None:
+        """清空列表 — model reset + empty overlay 显示。"""
+        self._model.reset([])
+
+    def replace_message(self, msg: MessageDTO) -> None:
+        """编辑事件触发 — 委托 model。"""
+        self._model.replace_message(msg)
+
+    def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
+        """异步下载结束回调 — 委托 model。"""
+        self._model.update_media_status(channel_id, telegram_msg_id, media)
+
+    def count(self) -> int:
+        """行数 — 兼容 QListWidget.count()。"""
+        return self._model.rowCount()
+
+    def current_message(self) -> MessageDTO | None:
+        """2026-09-02 v1.5.3 PR #D1:`main_window._copy_current_message_text` 用。
+
+        替代旧 `currentItem().data(Qt.UserRole)`。
+        """
+        idx = self.currentIndex()
+        if not idx.isValid():
+            return None
+        return self._model.data(idx, MessageListModel.DtoRole)
+
+    def _format(self, m: MessageDTO) -> str:
+        """shim — 既有测试 `view._format(m)` 走这里(内部调 model._format)。"""
+        return self._model._format(m)
+
+    # ---- 内部 ----
+
+    def _on_clicked(self, index: QModelIndex) -> None:
+        dto = self._model.data(index, MessageListModel.DtoRole)
+        if isinstance(dto, MessageDTO):
+            self.message_selected.emit(dto)
+
+    def _refresh_empty_state(self, *_args) -> None:
+        """count() == 0 → 显示 overlay,else 隐藏。
+
+        signal 回调签名兼容 `rowsInserted(parent, first, last)` /
+        `rowsRemoved(parent, first, last)` / `modelReset()`,所以接 *args。
+        """
+        self._empty_overlay.setVisible(self.count() == 0)
+        self._empty_overlay.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """窗口尺寸变 → overlay 重新居中(视觉重心偏上 1/3 高度)。"""
+        super().resizeEvent(event)
+        hint_size = self._empty_overlay.sizeHint()
+        x = max(0, (self.width() - hint_size.width()) // 2)
+        y = max(0, self.height() // 3 - hint_size.height() // 2)
+        self._empty_overlay.setGeometry(x, y, hint_size.width(), hint_size.height())
+        self._empty_overlay.raise_()

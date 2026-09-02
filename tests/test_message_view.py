@@ -1,6 +1,11 @@
 """MessageView 渲染格式测试 — 本地时区 / 频道名 / msg id。
 
-不测交互(点击/双击),只验 `_format()` 输出格式与 `set_channel_titles()` 行为。
+2026-09-02 v1.5.3 PR #D1:`QListWidget` → `QListView` + `MessageListModel` +
+`MessageItemDelegate`。所有 `_format` 走 `view._format(m)` shim(内部调
+`model._format`);`view._seen` 改为 property(读 `model._index_of`);
+`view.item(i).text()` / `.isHidden()` / `.background()` 改为 adapter
+走 `model.data(idx, role)` — 保持测试 focus 在渲染语义而非 model 协议。
+
 需要 QApplication:widget 实例化要求 QGuiApplication 存活。
 """
 
@@ -14,10 +19,15 @@ import pytest
 # offscreen 平台:CI / 无显示器 macOS 也能跑
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QBrush  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO  # noqa: E402
-from tgmonitor.ui.widgets.message_view import MessageView  # noqa: E402
+from tgmonitor.ui.widgets.message_view import (  # noqa: E402
+    MessageItemDelegate,
+    MessageListModel,
+    MessageView,
+)
 
 
 @pytest.fixture(scope="session")
@@ -25,6 +35,37 @@ def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
     # 不主动 quit — session 级共享,留给 pytest 进程退出时清理
+
+
+# ---- shim helpers — 把 model 协议包成测试熟悉的 API ----
+
+
+def _item_text(view: MessageView, row: int) -> str:
+    """2026-09-02 v1.5.3 PR #D1:`view.item(i).text()` 替代品。
+
+    走 `model.data(model.index(i, 0), FormattedRole)` — delegate paint 时
+    也是这条路径。
+    """
+    if row < 0 or row >= view.count():
+        return ""
+    idx = view._model.index(row, 0)
+    return view._model.data(idx, MessageListModel.FormattedRole) or ""
+
+
+def _item_is_hidden(view: MessageView, row: int) -> bool:
+    """`view.item(i).isHidden()` 替代品。"""
+    if row < 0 or row >= view.count():
+        return True
+    idx = view._model.index(row, 0)
+    return bool(view._model.data(idx, MessageListModel.HiddenRole))
+
+
+def _item_has_media_bg(view: MessageView, row: int) -> bool:
+    """`view.item(i).background() != QBrush()` 替代品 — 判媒体行底色。"""
+    if row < 0 or row >= view.count():
+        return False
+    idx = view._model.index(row, 0)
+    return bool(view._model.data(idx, MessageListModel.HasMediaRole))
 
 
 # ---- _format 时间显示 ----
@@ -144,16 +185,16 @@ def test_set_channel_titles_replaces_not_merges(qapp):
     view = MessageView()
     view.set_channel_titles({1: "Old", 2: "Still"})
     view.set_channel_titles({2: "New", 3: "Three"})
-    assert 1 not in view._channel_titles  # 已退订的频道 title 被清
-    assert view._channel_titles[2] == "New"
-    assert view._channel_titles[3] == "Three"
+    assert 1 not in view._model._channel_titles  # 已退订的频道 title 被清
+    assert view._model._channel_titles[2] == "New"
+    assert view._model._channel_titles[3] == "Three"
 
 
 # ---- append → 实际渲染 ----
 
 
 def test_append_renders_correct_text(qapp):
-    """append → item.text() 应包含本地时区 / 频道名 / msg id。"""
+    """append → FormattedRole 应包含本地时区 / 频道名 / msg id。"""
     view = MessageView()
     view.set_channel_titles({100: "My Channel"})
     msg = MessageDTO(
@@ -165,16 +206,14 @@ def test_append_renders_correct_text(qapp):
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
     view.append(msg)
-    item = view.item(0)
-    assert item is not None
-    text = item.text()
+    text = _item_text(view, 0)
     assert "[My Channel]" in text
     assert "#1234" in text
     assert "hello world" in text
 
 
 def test_append_media_has_dedicated_bg(qapp):
-    """带媒体的消息应有背景色(底色区分)。"""
+    """带媒体的消息应有 HasMediaRole=True(delegate paint 时填底色)。"""
     view = MessageView()
     msg = MessageDTO(
         id=0,
@@ -186,11 +225,8 @@ def test_append_media_has_dedicated_bg(qapp):
         media=[MediaDTO(type=MediaType.PHOTO, mime_type="image/jpeg")],
     )
     view.append(msg)
-    item = view.item(0)
-    # MediaDTO 单非空 → has_media=True → 背景被设;不验证具体颜色(QPalette 跨平台)
-    from PySide6.QtGui import QBrush
-
-    assert item.background() != QBrush()  # 非默认 brush
+    # HasMediaRole=True → delegate paint fillRect(232,240,248)
+    assert _item_has_media_bg(view, 0) is True
 
 
 def test_append_dedup_updates_existing_row(qapp):
@@ -215,7 +251,7 @@ def test_append_dedup_updates_existing_row(qapp):
     view.append(m1)
     view.append(m2)
     assert view.count() == 1
-    assert "edited" in view.item(0).text()
+    assert "edited" in _item_text(view, 0)
 
 
 # ---- 媒体 DTO 回归(Signal(object) 路径) ----
@@ -251,7 +287,7 @@ def test_append_with_media_dto_does_not_crash(qapp):
     )
     # 不应抛 AttributeError
     view.append(msg)
-    text = view.item(0).text()
+    text = _item_text(view, 0)
     assert "look at this" in text
     assert "📎" in text
     assert "photo" in text  # med.type.value 正确渲染
@@ -324,7 +360,7 @@ def _make_msg(channel_id: int, telegram_msg_id: int) -> MessageDTO:
 
 
 def test_remove_row_drops_matching_key(qapp):
-    """remove_row(channel_id, telegram_msg_id) → 该行从 list 消失,_seen 同步。"""
+    """remove_row(channel_id, telegram_msg_id) → 该行从 list 消失,_index_of 同步。"""
     view = MessageView()
     view.append(_make_msg(1, 100))
     view.append(_make_msg(1, 101))
@@ -333,11 +369,11 @@ def test_remove_row_drops_matching_key(qapp):
     # 删中间那条(#101)
     view.remove_row(1, 101)
     assert view.count() == 2
-    assert (1, 101) not in view._seen
-    # 剩两条的 _seen row index 仍连续(append 时 102 在 row 0,101 在 row 1,100 在 row 2,
+    assert (1, 101) not in view._model._index_of
+    # 剩两条的 _index_of row 仍连续(append 时 102 在 row 0,101 在 row 1,100 在 row 2,
     # 删 row 1 → 102 在 0 不变,100 在 1(原 2-1))
-    assert view._seen[(1, 102)] == 0
-    assert view._seen[(1, 100)] == 1
+    assert view._model._index_of[(1, 102)] == 0
+    assert view._model._index_of[(1, 100)] == 1
 
 
 def test_remove_row_no_match_is_noop(qapp):
@@ -346,10 +382,10 @@ def test_remove_row_no_match_is_noop(qapp):
     view.append(_make_msg(1, 100))
     view.append(_make_msg(1, 101))
     before = view.count()
-    before_seen = dict(view._seen)
+    before_index = dict(view._model._index_of)
     view.remove_row(999, 999)
     assert view.count() == before
-    assert view._seen == before_seen
+    assert view._model._index_of == before_index
 
 
 def test_remove_row_then_append(qapp):
@@ -360,9 +396,9 @@ def test_remove_row_then_append(qapp):
     view.remove_row(1, 100)
     view.append(_make_msg(2, 200))
     assert view.count() == 2
-    # 删 100 后,#101 在 row 0;append #200 时 insertItem(0) → #201 在 row 0,#101 在 row 1
-    assert view._seen[(2, 200)] == 0
-    assert view._seen[(1, 101)] == 1
+    # 删 100 后,#101 在 row 0;append #200 时走 beginInsertRows(0,0) → #200 在 row 0,#101 在 row 1
+    assert view._model._index_of[(2, 200)] == 0
+    assert view._model._index_of[(1, 101)] == 1
 
 
 # ============================================================
@@ -371,23 +407,23 @@ def test_remove_row_then_append(qapp):
 
 
 def test_set_messages_replaces_view(qapp):
-    """PR #B5:set_messages(m1, m2) → count == 2 + `_seen` 表只含这 2 个 key。"""
+    """PR #B5:set_messages(m1, m2) → count == 2 + `_index_of` 表只含这 2 个 key。"""
     view = MessageView()
     msgs = [_make_msg(1, 100), _make_msg(1, 101)]
     view.set_messages(msgs)
     assert view.count() == 2
-    assert set(view._seen.keys()) == {(1, 100), (1, 101)}
+    assert set(view._model._index_of.keys()) == {(1, 100), (1, 101)}
 
 
 def test_set_messages_clears_seen_dict(qapp):
-    """PR #B5:set_messages 调用前先 clear_view(),`_seen` 表清空后重建。"""
+    """PR #B5:set_messages 调用前先 clear_view(),`_index_of` 表清空后重建。"""
     view = MessageView()
     view.append(_make_msg(1, 100))
-    assert (1, 100) in view._seen
+    assert (1, 100) in view._model._index_of
     view.set_messages([_make_msg(2, 200)])
     # 旧的 (1, 100) 已清掉,只剩新 set 的 key
-    assert (1, 100) not in view._seen
-    assert (2, 200) in view._seen
+    assert (1, 100) not in view._model._index_of
+    assert (2, 200) in view._model._index_of
 
 
 def test_set_messages_preserves_newest_first_order(qapp):
@@ -399,8 +435,8 @@ def test_set_messages_preserves_newest_first_order(qapp):
     view.set_messages([m_old, m_new])
 
     # newest 在 row 0(m_new 先 append,自然 insertItem(0) 落顶部)
-    assert view._seen[(1, 101)] == 0
-    assert view._seen[(1, 100)] == 1
+    assert view._model._index_of[(1, 101)] == 0
+    assert view._model._index_of[(1, 100)] == 1
 
 
 def test_set_messages_preserves_filter(qapp):
@@ -428,20 +464,18 @@ def test_set_messages_preserves_filter(qapp):
     view.set_messages([m_match, m_no_match])
     assert view.count() == 2  # 都进列表
     # 但 filter 应用:不匹配的行 hidden=True
-    item_match = view.item(view._seen[(1, 100)])
-    item_nomatch = view.item(view._seen[(1, 101)])
-    assert item_match.isHidden() is False
-    assert item_nomatch.isHidden() is True
+    assert _item_is_hidden(view, view._model._index_of[(1, 100)]) is False
+    assert _item_is_hidden(view, view._model._index_of[(1, 101)]) is True
 
 
 def test_set_messages_empty_clears_view(qapp):
-    """PR #B5:set_messages([]) → 清空视图 + `_seen` 表。"""
+    """PR #B5:set_messages([]) → 清空视图 + `_index_of` 表。"""
     view = MessageView()
     view.append(_make_msg(1, 100))
     assert view.count() == 1
     view.set_messages([])
     assert view.count() == 0
-    assert view._seen == {}
+    assert view._model._index_of == {}
 
 
 def test_set_messages_then_live_append_no_duplicate(qapp):
@@ -455,4 +489,203 @@ def test_set_messages_then_live_append_no_duplicate(qapp):
     view.append(m)
     # 没增行 — count 仍 1
     assert view.count() == 1
-    assert (1, 100) in view._seen
+    assert (1, 100) in view._model._index_of
+
+
+# ============================================================
+# 2026-09-02 v1.5.3 PR #D1:QListView + MessageListModel + delegate 新协议测试。
+# ============================================================
+
+
+def test_current_message_returns_dto(qapp):
+    """PR #D1:current_message() helper — 替代旧 `currentItem().data(Qt.UserRole)`。"""
+    view = MessageView()
+    msg = _make_msg(1, 100)
+    view.append(msg)
+    # setCurrentIndex → currentIndex().row() == 0
+    view.setCurrentIndex(view._model.index(0, 0))
+    cur = view.current_message()
+    assert isinstance(cur, MessageDTO)
+    assert cur.channel_id == 1
+    assert cur.telegram_msg_id == 100
+
+
+def test_current_message_none_when_no_selection(qapp):
+    """PR #D1:无 selection 时 current_message() 返 None(不崩)。"""
+    view = MessageView()
+    # 没 setCurrentIndex → currentIndex() invalid
+    assert view.current_message() is None
+
+
+def test_model_rowcount_matches_list(qapp):
+    """PR #D1:rowCount() == 实际 DTO 数量。"""
+    view = MessageView()
+    assert view._model.rowCount() == 0
+    view.append(_make_msg(1, 1))
+    view.append(_make_msg(1, 2))
+    view.append(_make_msg(2, 3))
+    assert view._model.rowCount() == 3
+
+
+def test_model_data_returns_dto_role(qapp):
+    """PR #D1:`data(idx, DtoRole)` 返 MessageDTO 引用本身(非 dict)。"""
+    view = MessageView()
+    msg = _make_msg(1, 100)
+    view.append(msg)
+    idx = view._model.index(0, 0)
+    dto = view._model.data(idx, MessageListModel.DtoRole)
+    assert dto is msg  # 同一引用
+
+
+def test_model_data_msgid_role(qapp):
+    """PR #D1:`data(idx, MsgIdRole)` 返 telegram_msg_id(整数)。"""
+    view = MessageView()
+    view.append(_make_msg(1, 999))
+    idx = view._model.index(0, 0)
+    assert view._model.data(idx, MessageListModel.MsgIdRole) == 999
+
+
+def test_model_reset_clears_index(qapp):
+    """PR #D1:`reset([])` 后 rowCount==0,_index_of 清空。"""
+    view = MessageView()
+    view.append(_make_msg(1, 1))
+    view.append(_make_msg(1, 2))
+    assert view._model.rowCount() == 2
+    view._model.reset([])
+    assert view._model.rowCount() == 0
+    assert view._model._index_of == {}
+
+
+def test_model_truncates_at_max_items(qapp):
+    """PR #D1:`append` 触发 MAX_ITEMS=1000 截断 — 超过 N+1 条后只保留 N 条。"""
+    view = MessageView()
+    # MAX_ITEMS = 1000,append 1001 条
+    for i in range(1001):
+        view.append(_make_msg(1, i))
+    assert view._model.rowCount() == MessageView.MAX_ITEMS
+    # 最早 append 的 (1, 0) 应被截断(最新 1001 条留)
+    assert (1, 0) not in view._model._index_of
+    assert (1, 1000) in view._model._index_of
+
+
+def test_model_data_hidden_role_when_filter_empty(qapp):
+    """PR #D1:filter 为空时所有行 HiddenRole=False(可见)。"""
+    view = MessageView()
+    view.append(_make_msg(1, 1))
+    view.append(_make_msg(1, 2))
+    idx_0 = view._model.index(0, 0)
+    idx_1 = view._model.index(1, 0)
+    assert view._model.data(idx_0, MessageListModel.HiddenRole) is False
+    assert view._model.data(idx_1, MessageListModel.HiddenRole) is False
+
+
+def test_set_filter_via_model_emits_datachanged(qapp):
+    """PR #D1:model.set_filter() → emit dataChanged(HiddenRole)。"""
+    view = MessageView()
+    view.append(_make_msg(1, 1))
+    view.append(_make_msg(1, 2))
+
+    spy_hidden = []
+    view._model.dataChanged.connect(
+        lambda top, bot, roles: spy_hidden.append((top.row(), bot.row(), list(roles)))
+    )
+    view._model.set_filter("foo")
+    assert len(spy_hidden) >= 1
+    last = spy_hidden[-1]
+    # 顶到底 — 全表 HiddenRole 变化
+    assert last[0] == 0
+    assert last[1] == 1
+    assert MessageListModel.HiddenRole in last[2]
+
+
+def test_delegate_paint_skips_hidden(qapp):
+    """PR #D1:delegate paint 对 HiddenRole=True 的 index 直接 return。
+
+    用 QStyleOptionViewItem mock 不易 — 改为验证 HiddenRole 协议(model
+    侧)— HiddenRole=True 时 delegate paint 第 1 行就 return,跳过 fillRect
+    + QTextDocument 渲富文本(节省 paint 开销)。
+    """
+    MessageItemDelegate()  # 实例化证明不抛
+    view = MessageView()
+    view.append(_make_msg(1, 1))
+    view.set_filter("never_match")
+    idx = view._model.index(0, 0)
+    assert view._model.data(idx, MessageListModel.HiddenRole) is True
+
+
+def test_plain_to_html_escapes_special_chars(qapp):
+    """PR #D1:delegate `_plain_to_html` 转义 < > & 避免被当 HTML 解析。"""
+    from tgmonitor.ui.widgets.message_view import MessageItemDelegate
+
+    out = MessageItemDelegate._plain_to_html("a < b & c > d\neol")
+    assert "&lt;" in out
+    assert "&gt;" in out
+    assert "&amp;" in out
+    assert "<br>" in out  # 换行
+
+
+def test_replace_message_updates_row_in_place(qapp):
+    """PR #D1:replace_message 编辑事件 — 已存在 row 重 format 不增行。"""
+    view = MessageView()
+    m_orig = _make_msg(1, 1)
+    view.append(m_orig)
+    m_edited = MessageDTO(
+        id=0,
+        channel_id=1,
+        telegram_msg_id=1,
+        text="edited!",
+        author=None,
+        date=datetime(2026, 7, 15, 13, 50, 10),
+    )
+    view.replace_message(m_edited)
+    assert view.count() == 1
+    assert "edited!" in _item_text(view, 0)
+
+
+def test_update_media_status_re_renders(qapp):
+    """PR #D1:update_media_status 改 DTO.media 后 → 重 format(DONE 状态有 ✓ 标记)。"""
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    view = MessageView()
+    msg = MessageDTO(
+        id=0,
+        channel_id=1,
+        telegram_msg_id=1,
+        text="x",
+        author=None,
+        date=datetime(2026, 7, 15, 13, 0, 0),
+        media=[
+            MediaDTO(
+                type=MediaType.PHOTO,
+                mime_type="image/jpeg",
+                telegram_file_id="file_abc",
+            )
+        ],
+    )
+    view.append(msg)
+    # 初始 formatted 不含 ✓
+    text_before = _item_text(view, 0)
+    assert "✓" not in text_before
+    # 更新 media[0] 走 download_status=DONE — 必须传 telegram_file_id 才能
+    # 匹配上原 DTO 的 media(media is media 不命中,因为是 fresh object)
+    media_done = MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        telegram_file_id="file_abc",
+        download_status=MediaDownloadStatus.DONE,
+    )
+    view.update_media_status(1, 1, media_done)
+    text_after = _item_text(view, 0)
+    assert "✓" in text_after
+
+
+# ============================================================
+# legacy helper — 旧测试用 `QBrush()` 判底色,保留 1 个测试 shim 验证迁移路径
+# ============================================================
+
+
+def test_brush_default_unchanged_in_qtgui(qapp):
+    """纯 sanity — QBrush() 默认构造仍是无色 brush(无关 PR #D1,防 Qt 版本漂移)。"""
+    from PySide6.QtGui import QColor
+
+    assert QBrush() != QBrush(QColor(232, 240, 248))
