@@ -232,14 +232,50 @@ def test_submit_email_invokes_app_and_unlocks(qapp, qloop):
 
 
 def test_submit_email_busy_blocks_reentry(qapp, qloop):
-    """PR #13:busy 期间重复 _submit_email → 不触发第二次。"""
-    dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
+    """PR #13:busy 期间重复 _submit_email → 不触发第二次。
+
+    注:测试不能用「连续两次 _submit_email()」的写法的根本原因是 — 第二次
+    调用前,后台 loop 线程可能已经 tick 完整个 coroutine(AsyncMock
+    是瞬时返回),触发 `_set_busy(False)` 让 `_busy` 重新落回 False,
+    第二次调用「合法」进入分支,触发 `mock.submit_email.await_count == 2`。
+    本机 macOS 通常赢在「主线程同步代码 > 后台 loop tick」,但 Linux /
+    Windows CI 上后台 loop 调度更早,出现 flaky。改用同文件
+    `test_submit_phone_busy_locks_then_unlocks` 的 `gate` 模式:让 mock
+    `submit_email` 阻塞在 `gate.wait()`,主线程就有时间观察 busy 标志
+    + 重复提交拦截。
+    """
+    gate = asyncio.Event()
+    call_count = 0
+
+    async def submit_email(_email: str):
+        nonlocal call_count
+        call_count += 1
+        await gate.wait()
+        return ("email_code_required", None)
+
+    # 自己建 mock_app + dlg(替换 _make_email_dlg 的瞬时 AsyncMock)
+    mock_app = Mock()
+    mock_app.settings.phone = ""
+    mock_app.client.state = "email_required"
+    mock_app.submit_email = submit_email
+    mock_app.submit_email_code = AsyncMock(return_value=("ready", None))
+    mock_app.submit_registration = AsyncMock(return_value=("ready", None))
+    dlg = LoginDialog(app=mock_app, loop=qloop)
+    dlg._expected_state = "email_required"  # 强制 _render 走 email 页
+    dlg._render("email_required")
+
     dlg.in_email.setText("user@example.com")
     dlg._submit_email()
-    # 立即第二次 — busy=True 直接 return
+    # 等后台 loop 真开始跑 submit_email 协程(call_count == 1 表示协程已
+    # 进入 body、busy 标志稳定为 True)
+    _wait_until(lambda: call_count == 1)
+    assert dlg._busy is True
+    # busy 期间第二次提交 — 被拦截,不二次调度
     dlg._submit_email()
+    # 即使放开 gate,只应触发第一个 submit_email 完成,无第二次
+    qloop.call_soon_threadsafe(gate.set)
     _wait_until(lambda: dlg._busy is False)
-    assert mock_app.submit_email.await_count == 1
+    assert call_count == 1
 
 
 def test_submit_email_code_invokes_app(qapp, qloop):
