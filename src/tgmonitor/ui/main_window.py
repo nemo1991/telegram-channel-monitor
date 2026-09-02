@@ -421,6 +421,9 @@ class MainWindow(QMainWindow):
         # 2026-09-02 v1.5.2 PR #B5:date_from/to 折叠面板变化 → 立即拉
         # (不需要 debounce — 用户主动调日历 = 期望立刻响应)
         self.header.search_bar.date_changed.connect(self._on_search_date_changed)
+        # 2026-09-03 v1.5.3 PR #D2:scope toggle(已订阅/全部)→ 走同一
+        # debounce 重拉(不 clear view,让用户对比已订 vs 全部结果)
+        self.header.search_bar.scope_changed.connect(self._on_search_scope_changed)
         self.header.btn_theme.clicked.connect(self._on_theme_toggle)
 
         # 2026-09-02 v1.5.2 PR #B5:300ms debounce — 文本输入 300ms 内无新
@@ -801,6 +804,15 @@ class MainWindow(QMainWindow):
         # 日期变化立即触发(不需要 300ms 等待 — 用户主动调整日历 = 期望立刻响应)
         self._run_search_query()
 
+    def _on_search_scope_changed(self, is_all: bool) -> None:
+        """2026-09-03 v1.5.3 PR #D2:scope toggle(已订阅/全部)→ 走同一
+        debounce 重拉(不 clear view,让用户对比结果差异)。
+
+        重启 debounce timer:用户在 300ms 内连切 toggle(罕见)只触发 1 次
+        `vm.search_messages`(最新 scope 值生效)。
+        """
+        self._search_debounce.start()
+
     def _on_search_debounce_fire(self) -> None:
         """300ms debounce 到点 → 调 vm.search_messages。"""
         self._run_search_query()
@@ -814,21 +826,28 @@ class MainWindow(QMainWindow):
         新 LIVE 消息到达,append 会加进空表 — 等于 LIVE 流以增量形式
         重建)。如果未来需要"清空 = 重拉 LIVE 200 条",改成 emit 触发
         `vm.load_recent_messages()` 即可。
+
+        2026-09-03 v1.5.3 PR #D2:`scope_btn` toggle 控制搜索范围:
+        - 已订阅(默认)→ 走 VM `search_messages(scope="subscribed")`
+        - 全部(含已退订频道历史)→ 走 `scope="all"`(VM 内部转
+          `include_unsubscribed=True`)
         """
         sb = self.header.search_bar
         txt = sb.text()
         df, dt = sb.date_range()
+        scope = "all" if sb.scope() else "subscribed"
         if not txt and df is None and dt is None:
             # 空 query → 清空视图(后续 live 消息 append 进去会自然重建 LIVE 流)
             self.live_view.set_messages([])
             return
-        # 走已订阅频道 id 列表(从 known_channels 拿 — VM 已维护)
+        # 走 VM search_messages;scope 由 sb.scope() 控制
+        # (channel_ids 不显式传,VM 根据 scope 自动拉「已订」或「全部」)
         self._vm.search_messages(
             text=txt,
             date_from=df,
             date_to=dt,
             limit=200,
-            channel_ids=list(self._vm.known_channels.keys()),
+            scope=scope,
         )
 
     def _on_header_action(self) -> None:

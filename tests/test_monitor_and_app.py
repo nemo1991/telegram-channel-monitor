@@ -474,6 +474,112 @@ async def test_no_subscribed_attribute_remains(app) -> None:
 
 
 # ============================================================
+# 2026-09-03 v1.5.3 PR #D2:跨频道聚合搜索(include_unsubscribed)
+# ============================================================
+
+
+async def test_app_list_messages_include_unsubscribed_returns_all_channels(app, storage):
+    """PR #D2:`include_unsubscribed=True` → 拉 storage 所有有记录的频道(含已退订)。
+
+    准备:2 个频道已订 + 1 个频道退订(有历史消息)。默认(False)只返已订
+    频道消息;True 返全部 3 频道消息(含退订频道历史)。
+    """
+    from datetime import UTC, datetime
+
+    from tgmonitor.core.dto import ChannelDTO, MessageDTO
+
+    # 准备 3 个频道:2 已订 + 1 退订
+    await storage.upsert_channel(ChannelDTO(id=200, title="c200", is_subscribed=True))
+    await storage.upsert_channel(ChannelDTO(id=300, title="c300", is_subscribed=True))
+    await storage.upsert_channel(
+        ChannelDTO(id=400, title="c400", is_subscribed=False)  # 已退订
+    )
+    # 各插一条消息
+    for cid in (200, 300, 400):
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=cid,
+                telegram_msg_id=1,
+                text=f"from-{cid}",
+                date=datetime(2026, 7, 15, 13, 0, tzinfo=UTC),
+            )
+        )
+
+    # 默认(include_unsubscribed=False) → 仅已订 2 个频道
+    msgs_default = await app.list_messages(channel_ids=None)
+    assert {m.channel_id for m in msgs_default} == {200, 300}, (
+        f"默认应只返已订频道,got {sorted(m.channel_id for m in msgs_default)}"
+    )
+
+    # include_unsubscribed=True → 全部 3 个频道(含退订 400)
+    msgs_all = await app.list_messages(channel_ids=None, include_unsubscribed=True)
+    assert {m.channel_id for m in msgs_all} == {200, 300, 400}, (
+        f"include_unsubscribed=True 应返全部 3 频道(含 400),"
+        f"got {sorted(m.channel_id for m in msgs_all)}"
+    )
+
+
+async def test_app_list_messages_channel_ids_explicit_overrides_include_unsubscribed(app, storage):
+    """PR #D2:`channel_ids` 显式传时覆盖 `include_unsubscribed`(精细控制场景)。"""
+    from datetime import UTC, datetime
+
+    from tgmonitor.core.dto import ChannelDTO, MessageDTO
+
+    await storage.upsert_channel(ChannelDTO(id=200, title="c200", is_subscribed=True))
+    await storage.upsert_channel(ChannelDTO(id=400, title="c400", is_subscribed=False))
+    for cid in (200, 400):
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=cid,
+                telegram_msg_id=1,
+                text=f"from-{cid}",
+                date=datetime(2026, 7, 15, 13, 0, tzinfo=UTC),
+            )
+        )
+
+    # 显式传 channel_ids=[200] + include_unsubscribed=True → 仅 200
+    msgs = await app.list_messages(channel_ids=[200], include_unsubscribed=True)
+    assert {m.channel_id for m in msgs} == {200}, (
+        f"显式 channel_ids 应覆盖 include_unsubscribed,got {sorted(m.channel_id for m in msgs)}"
+    )
+
+
+async def test_search_messages_scope_all_passes_include_unsubscribed(app, storage):
+    """PR #D2:`app.list_messages(include_unsubscribed=...)` 透传到 SubscriptionService。
+
+    直接验证 SubscriptionService.list_messages 的 `include_unsubscribed`
+    参数被正确接收并影响 channel_ids 解析(不需要 mock VM,直接调
+    SubscriptionService 即可)。
+    """
+    from datetime import UTC, datetime
+
+    from tgmonitor.core.dto import ChannelDTO, MessageDTO
+
+    await storage.upsert_channel(ChannelDTO(id=200, title="c200", is_subscribed=True))
+    await storage.upsert_channel(ChannelDTO(id=400, title="c400", is_subscribed=False))
+    for cid in (200, 400):
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=cid,
+                telegram_msg_id=1,
+                text=f"from-{cid}",
+                date=datetime(2026, 7, 15, 13, 0, tzinfo=UTC),
+            )
+        )
+
+    # include_unsubscribed=False(默认)→ 仅 200
+    msgs_default = await app.list_messages(channel_ids=None)
+    assert {m.channel_id for m in msgs_default} == {200}
+
+    # include_unsubscribed=True → 全部
+    msgs_all = await app.list_messages(channel_ids=None, include_unsubscribed=True)
+    assert {m.channel_id for m in msgs_all} == {200, 400}
+
+
+# ============================================================
 # 心跳 debug 日志(排查"一段时间不监听"的诊断信号)
 # ============================================================
 

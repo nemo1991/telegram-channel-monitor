@@ -292,3 +292,38 @@ async def test_jsonl_search_no_match_returns_empty(jsonl_repo_search):
         search="zzz_no_match_xyz",
     )
     assert rows == []
+
+
+# ============================================================
+# 2026-09-03 v1.5.3 PR #D2:storage 层 — 已退订频道历史消息可被搜索
+# (StorageRepository.list_messages 接 channel_ids 显式列表时,
+#  不关心 is_subscribed — 退订频道历史仍可拉回,本组测试验证 storage
+#  这一行为 + 验证 PR #D2 路径正确)
+# ============================================================
+
+
+async def test_in_mem_search_returns_messages_from_unsubscribed_channel(
+    in_mem_repo_search,
+):
+    """PR #D2:in_mem repo 验证 — 把频道退订 + 该频道消息仍在 → 显式
+    channel_ids 仍能搜到(storage 层不关心订阅状态,订阅状态归
+    SubscriptionService 过滤)。"""
+    # 退订频道 200(原 fixture 已订 100/200/300,这里 set False)
+    await in_mem_repo_search.set_channel_subscribed(200, False)
+    # 显式查 channel_ids=[200](避开 SubscriptionService 的「已订」过滤)
+    # → 该频道历史消息应可搜到
+    # fixture 里 200 频道没有 Hello 文本(只有 100 频道有);改搜 200 的现有文本
+    rows2 = await in_mem_repo_search.list_messages(channel_ids=[200], search="")
+    # 200 频道有 1 条消息(从 fixture 看)
+    assert len(rows2) >= 1, f"已退订频道 200 的历史消息应仍可查,got {len(rows2)} rows"
+    assert all(r.channel_id == 200 for r in rows2)
+
+
+async def test_jsonl_search_returns_messages_from_unsubscribed_channel(
+    jsonl_repo_search,
+):
+    """PR #D2:Jsonl repo 同上 — storage 层与订阅状态无关。"""
+    await jsonl_repo_search.set_channel_subscribed(200, False)
+    rows = await jsonl_repo_search.list_messages(channel_ids=[200], search="")
+    assert len(rows) >= 1
+    assert all(r.channel_id == 200 for r in rows)

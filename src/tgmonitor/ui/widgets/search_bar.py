@@ -41,10 +41,15 @@ from PySide6.QtWidgets import (
 
 
 class SearchBar(QWidget):
-    """紧凑搜索框 — 280×32 宽,带 icon + 占位 + 清除按钮 + 高级日期折叠。"""
+    """紧凑搜索框 — 280×32 宽,带 icon + 占位 + 清除按钮 + 高级日期折叠。
+
+    2026-09-03 v1.5.3 PR #D2:加 🌐 scope toggle button + `scope_changed`
+    signal — 控制搜索范围("已订阅" / "全部含已退订")。
+    """
 
     text_changed = Signal(str)
     date_changed = Signal(object, object)  # (datetime | None, datetime | None)
+    scope_changed = Signal(bool)  # True = all(全部) / False = subscribed(已订阅,默认)
 
     def __init__(
         self,
@@ -94,6 +99,16 @@ class SearchBar(QWidget):
         self.adv_btn.setToolTip("按日期范围过滤")
         hbox.addWidget(self.adv_btn)
 
+        # 范围 toggle:🌐 默认未选(已订阅),选中后切「全部(含已退订频道历史)」
+        # 2026-09-03 v1.5.3 PR #D2
+        self.scope_btn = QToolButton()
+        self.scope_btn.setText("🌐")
+        self.scope_btn.setCheckable(True)
+        self.scope_btn.setFixedSize(24, 24)
+        self.scope_btn.setCursor(Qt.PointingHandCursor)
+        self.scope_btn.setToolTip("搜索范围:已订阅(默认)/ 全部(含已退订频道历史)")
+        hbox.addWidget(self.scope_btn)
+
         # 固定第一行 32px
         row1 = QWidget()
         row1.setFixedHeight(32)
@@ -135,6 +150,7 @@ class SearchBar(QWidget):
         self.adv_btn.toggled.connect(self._date_panel.setVisible)
         self.dt_from.dateTimeChanged.connect(self._emit_date)
         self.dt_to.dateTimeChanged.connect(self._emit_date)
+        self.scope_btn.toggled.connect(self._on_scope_changed)
 
         self.setStyleSheet(
             "SearchBar, #searchBar {"
@@ -155,6 +171,13 @@ class SearchBar(QWidget):
         """当前 date_from / date_to(不限 → None)。"""
         return self._date_to_python(self.dt_from), self._date_to_python(self.dt_to)
 
+    def scope(self) -> bool:
+        """搜索范围:`True` = 全部(含已退订频道历史)/ `False` = 已订阅(默认)。
+
+        2026-09-03 v1.5.3 PR #D2:`scope_btn` toggle 状态。
+        """
+        return self.scope_btn.isChecked()
+
     @staticmethod
     def _date_to_python(editor: QDateTimeEdit) -> datetime | None:
         """QDateTimeEdit → Python datetime。"不限"特殊值(= 1900-01-01)→ None。"""
@@ -167,10 +190,11 @@ class SearchBar(QWidget):
         # 实际是 datetime(QTime=0,0,0 时)或 QDate(无 time)。displayFormat 含
         # HH:mm → 必有 time → to_python 实际就是 datetime。cast 走通 mypy strict。
         from typing import cast
+
         return cast(datetime, qt.toPython())
 
     def clear(self) -> None:
-        """清空输入 + 重置日期 + 隐藏 date panel + 折叠按钮。"""
+        """清空输入 + 重置日期 + 隐藏 date panel + 折叠按钮 + 重置 scope。"""
         self.edit.clear()
         self.btn_clear.setVisible(False)
         # 重置日期为 "不限" 状态
@@ -178,8 +202,11 @@ class SearchBar(QWidget):
         self.dt_to.setDateTime(self.dt_to.minimumDateTime())
         self._date_panel.setVisible(False)
         self.adv_btn.setChecked(False)
-        # 不显式 emit text_changed / date_changed — Qt 自己触发(QDateTimeEdit
-        # reset → dateTimeChanged signal;QLineEdit clear → textChanged signal)。
+        # 2026-09-03 v1.5.3 PR #D2:重置 scope 到「已订阅」(默认)
+        self.scope_btn.setChecked(False)
+        # 不显式 emit text_changed / date_changed / scope_changed — Qt 自己
+        # 触发(QDateTimeEdit reset → dateTimeChanged signal;QLineEdit
+        # clear → textChanged signal;QToolButton.setChecked → toggled signal)。
 
     def _on_text_changed(self, txt: str) -> None:
         self.btn_clear.setVisible(bool(txt))
@@ -189,3 +216,11 @@ class SearchBar(QWidget):
         """date_from / date_to 任一变化 → emit date_changed。"""
         f, t = self.date_range()
         self.date_changed.emit(f, t)
+
+    def _on_scope_changed(self, checked: bool) -> None:
+        """2026-09-03 v1.5.3 PR #D2:scope toggle → emit scope_changed。
+
+        `True` = 全部(含已退订频道历史)/ `False` = 已订阅(默认)。
+        MainWindow 用此触发 `_search_debounce` 重拉(不 clear view)。
+        """
+        self.scope_changed.emit(checked)

@@ -583,14 +583,20 @@ class MonitorViewModel(QObject):
         date_to: datetime | None = None,
         limit: int = 200,
         channel_ids: list[int] | None = None,
+        scope: str = "subscribed",
     ) -> None:
-        """2026-09-02 v1.5.2 PR #B5:VM 异步拉搜索结果 → emit message_search_results。
+        """2026-09-02 v1.5.2 PR #B5 + 2026-09-03 v1.5.3 PR #D2:
+        VM 异步拉搜索结果 → emit `message_search_results`。
 
         行为契约:
         - `text=""` 且 `date_from/to` 全 None → 无意义查询,emit `[]`(清空视图)。
           MainWindow 用此判定"清空搜索框 = 恢复 LIVE 流(空 search 视为清空)"。
-        - `channel_ids=None` → 走全已订阅频道(`app.list_messages` 默认 None
-          等同 storage 端"全部"语义);UI 一般显式传已订阅 id,减少误命中。
+        - `channel_ids=None` + `scope="subscribed"`(默认)→ 走已订阅频道
+          (与 v1.5.2 行为一致)。
+        - `channel_ids=None` + `scope="all"`(PR #D2)→ 走
+          `include_unsubscribed=True`,跨频道聚合(含已退订但 storage 仍
+          有历史消息的频道)。
+        - `channel_ids=...` 显式传 → 忽略 scope(精细控制场景)。
         - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
 
         走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
@@ -604,12 +610,14 @@ class MonitorViewModel(QObject):
         """
 
         async def _go() -> None:
+            include_unsub = scope == "all" and channel_ids is None
             msgs = await self.app.list_messages(
                 channel_ids=channel_ids,
                 date_from=date_from,
                 date_to=date_to,
                 limit=limit,
                 search=text,
+                include_unsubscribed=include_unsub,
             )
             self.message_search_results.emit(msgs)
 

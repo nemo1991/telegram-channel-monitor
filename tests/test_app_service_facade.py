@@ -91,6 +91,7 @@ async def test_facade_forwards_list_messages_to_subscription_service(app: AppSer
         None,
         10,
         search="",
+        include_unsubscribed=False,
     )
     assert result is expected
 
@@ -110,6 +111,7 @@ async def test_facade_forwards_list_messages_search_kwarg(app: AppService) -> No
         None,
         200,
         search="hello",
+        include_unsubscribed=False,
     )
     assert result is expected
 

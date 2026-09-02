@@ -171,3 +171,43 @@ def test_search_bar_text_strip(qapp):
     bar.edit.setText("  hello  ")
     QApplication.processEvents()
     assert bar.text() == "hello"
+
+
+# ============================================================
+# 2026-09-03 v1.5.3 PR #D2:scope toggle(已订阅 / 全部)
+# ============================================================
+
+
+def test_search_bar_initial_scope_is_subscribed(qapp):
+    """PR #D2:新建 SearchBar → scope 默认 False(已订阅)。"""
+    bar = SearchBar()
+    assert bar.scope() is False
+
+
+def test_search_bar_scope_changed_fires_on_toggle(qapp):
+    """PR #D2:toggle scope_btn → emit scope_changed(True)。"""
+    bar = SearchBar()
+    spy = _SignalSpy()
+    bar.scope_changed.connect(spy.slot)
+    bar.scope_btn.setChecked(True)
+    QApplication.processEvents()
+    assert spy.args[-1] is True
+
+
+def test_search_bar_scope_in_clear_resets(qapp):
+    """PR #D2:clear() 重置 scope 回 False(已订阅默认)。"""
+    bar = SearchBar()
+    bar.scope_btn.setChecked(True)
+    QApplication.processEvents()
+    assert bar.scope() is True
+    bar.clear()
+    QApplication.processEvents()
+    assert bar.scope() is False
+
+
+def test_search_bar_scope_btn_tooltip_set(qapp):
+    """PR #D2:scope_btn tooltip 含 "已订阅" / "全部" 字样提示用户。"""
+    bar = SearchBar()
+    tooltip = bar.scope_btn.toolTip()
+    assert "已订阅" in tooltip
+    assert "全部" in tooltip

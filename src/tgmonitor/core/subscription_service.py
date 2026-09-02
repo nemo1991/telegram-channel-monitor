@@ -96,17 +96,31 @@ class SubscriptionService:
         date_to: datetime | None = None,
         limit: int | None = 200,
         search: str = "",
+        include_unsubscribed: bool = False,
     ) -> list[MessageDTO]:
         """查消息 — `channel_ids=None` 时走 storage「已订」真理(修 #B 双真理问题)。
 
-        # `channel_ids=None` 时从 storage 取**当前真理**(已订频道列表),
+        # `channel_ids=None` 时从 storage 取**当前真理**:
+        #   - `include_unsubscribed=False`(默认):走 `list_subscribed_channels`
+        #     (与 `list_subscribed_channels()` 同真理,已订频道)
+        #   - `include_unsubscribed=True`(v1.5.3 PR #D2):走 `list_channels()`
+        #     拉所有 storage 有记录的频道(含已退订但 storage 未 hard-delete)
         # 不用 in-memory cache — 跟 `list_subscribed_channels()` 是同一个真理。
         # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #B。
         # 2026-09-01 v1.5.1 PR #B2:`search` 透传 storage.list_messages,
         # 子串过滤 text + media.file_name,空 = 不过滤。
+        # 2026-09-03 v1.5.3 PR #D2:加 `include_unsubscribed`,默认 False 与
+        # 现状一致,True 时跨频道聚合搜索(UI SearchBar scope toggle 控制)。
         """
         if channel_ids is None:
-            channel_ids = [c.id for c in await self._storage.list_subscribed_channels()]
+            if include_unsubscribed:
+                # 拉 storage 所有有记录的频道(含已退订但 storage 未 hard-delete)
+                # `list_channels()` 返回所有元数据行,与 `list_subscribed_channels`
+                # 仅差 is_subscribed flag。退订频道历史消息继续可搜。
+                all_channels = await self._storage.list_channels()
+                channel_ids = [c.id for c in all_channels]
+            else:
+                channel_ids = [c.id for c in await self._storage.list_subscribed_channels()]
         if not channel_ids:
             return []
         return await self._storage.list_messages(
