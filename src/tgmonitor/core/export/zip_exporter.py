@@ -1,4 +1,4 @@
-"""ZIP 导出 — 2026-09-01 v1.5.1 PR #B4。
+"""ZIP 导出 — 2026-09-01 v1.5.1 PR #B4,2026-09-02 v1.5.2 PR #B6 升级。
 
 把 messages 里附带 media 的二进制文件打成 .zip:
 - 每条 media 一个 entry(只打包 `download_status == DONE` 的)
@@ -13,8 +13,10 @@
 - `MediaDownloadStatus != DONE` 的 media 直接 skip(没文件可打);FAILED
   / DOWNLOADING / PENDING 的 media **不会进 zip**(在 manifest 还能看到
   元数据,便于用户回查)
-- `object_store.get` 当前是全量内存(BytesIO) — 2026-09-01 PR #B4 接受
-  限制:建议单文件 < 100MB,否则进程内存峰值会爆。后续 PR 切真流式。
+- **PR #B6 升级**:`object_store.stream_read(key)` 分块流式读 +
+  `zf.open(name, "w", ZIP_DEFLATED)` chunked write。每个 media 的内存
+  峰值从 O(file_size) 降到 O(chunk_size=64KB);zip 一个含 200MB 视频
+  的频道不再 OOM。
 
 实现约束:沿用 `Exporter.render` ABC 签名;dispatcher(`ExportService.
 _run_messages`)把拉好的 messages 一次性传进来 — `ZipExporter` 不用
@@ -117,8 +119,19 @@ class ZipExporter(Exporter):
                         continue
                     if not media.object_key:
                         continue
+                    arcname = _sanitize_arcname(
+                        f"{msg.telegram_msg_id}_{idx}_{media.file_name or media.object_key}"
+                    )
                     try:
-                        blob = await object_store.get(media.object_key)
+                        # 2026-09-02 PR #B6:zf.open() 返 ZipExtFile(seek-write),
+                        # write() 自动按 chunk_size 分块 IO + ZIP_DEFLATED 压缩。
+                        # 配合 `stream_read` async iterator,内存峰值 O(chunk_size)。
+                        written_this = 0
+                        with zf.open(arcname, "w") as writer:
+                            async for chunk in object_store.stream_read(media.object_key):
+                                writer.write(chunk)
+                                written_this += len(chunk)
+                        written += written_this
                     except KeyError:
                         log.warning(
                             "zip export: media object_key 不存在,跳过: msg_id=%s idx=%d key=%s",
@@ -127,15 +140,12 @@ class ZipExporter(Exporter):
                             media.object_key,
                         )
                         continue
-                    arcname = _sanitize_arcname(
-                        f"{msg.telegram_msg_id}_{idx}_{media.file_name or media.object_key}"
-                    )
-                    zf.writestr(arcname, blob)
-                    written += len(blob)
                     # 缩略图(可选):命名 `thumb_<arcname>`,失败也跳
                     if include_thumbnails and media.thumb_key:
                         try:
-                            thumb_blob = await object_store.get(media.thumb_key)
+                            with zf.open(f"thumb_{arcname}", "w") as writer:
+                                async for chunk in object_store.stream_read(media.thumb_key):
+                                    writer.write(chunk)
                         except KeyError:
                             log.warning(
                                 "zip export: thumb_key 不存在,跳过: msg_id=%s idx=%d key=%s",
@@ -144,6 +154,4 @@ class ZipExporter(Exporter):
                                 media.thumb_key,
                             )
                             continue
-                        zf.writestr(f"thumb_{arcname}", thumb_blob)
-                        written += len(thumb_blob)
         return out_path.stat().st_size  # noqa: ASYNC240 — 同步 stat 写盘后的路径

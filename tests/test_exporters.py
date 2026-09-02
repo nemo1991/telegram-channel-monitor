@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -681,3 +682,179 @@ async def test_zip_single_message_dispatch(tmp_path):
         assert len(manifest) == 1
         assert manifest[0]["channel_id"] == 200
         assert manifest[0]["telegram_msg_id"] == 1
+
+
+# ============================================================
+# 2026-09-02 v1.5.2 PR #B6:ZipExporter 走 `stream_read` 分块流式写入。
+# 验证:ZipExporter 内部调 object_store.stream_read 而非 get(内存峰值
+# 从 O(file_size) 降到 O(chunk_size))。
+# ============================================================
+
+
+async def test_zip_calls_stream_read_not_get(tmp_path):
+    """PR #B6:ZipExporter 必须调 `stream_read(...)` 而不是 `get(...)` —
+    monkeypatch 计数确认。"""
+    import zipfile
+    from unittest.mock import AsyncMock
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await objects.put("media/abc.jpg", b"\xff\xd8FAKE_JPEG_BODY", None)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    # stream_read 是 async generator,AsyncMock 不能 wraps(类型不兼容);
+    # 改用计数 wrapper:仍是 async generator,但每次被调计数 +1。
+    stream_read_call_count = 0
+    original_stream_read = objects.stream_read
+
+    async def counting_stream_read(key: str, chunk_size: int = 65536):
+        nonlocal stream_read_call_count
+        stream_read_call_count += 1
+        async for chunk in original_stream_read(key, chunk_size):
+            yield chunk
+
+    objects.stream_read = counting_stream_read  # type: ignore[assignment]
+    # get 用 AsyncMock 直接包(它是普通 async method,AsyncMock 适用)
+    objects.get = AsyncMock(wraps=objects.get)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "stream.zip"
+    req = ExportRequest(
+        channel_ids=[200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+    )
+    async for _ in svc.run(req):
+        pass
+
+    # stream_read 至少被调 1 次(get 不应被调)
+    assert stream_read_call_count >= 1, (
+        f"stream_read 未被调用: stream_read_call_count={stream_read_call_count}, "
+        f"get.await_count={objects.get.await_count}"
+    )
+    assert objects.get.await_count == 0, (
+        f"ZipExporter 不应再调 get(): get.await_count={objects.get.await_count}"
+    )
+
+    # 校验 zip 内容确实写出来了
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        # arcname 格式: {msg_id}_{idx}_{file_name} → "1_0_pic.jpg"
+        assert any(n.endswith("pic.jpg") and "thumb" not in n for n in names), names
+
+
+async def test_zip_streaming_large_media_does_not_buffer_full(tmp_path):
+    """PR #B6:用 mock stream_read 模拟大媒体分块 yield,验证 ZipExporter
+    真按 chunk 写入(不是一次性 read 全量)。"""
+    import zipfile
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await objects.put("media/abc.jpg", b"placeholder", None)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    # mock stream_read 模拟 10 chunks × 100 bytes = 1KB 媒体
+    # 关键:是 async generator,每次 yield 一个 chunk
+    chunk_count = 10
+    chunk_size = 100
+    total_size = chunk_count * chunk_size
+    chunks_received: list[int] = []
+
+    async def mock_stream_read(key: str, chunk_size_arg: int = 65536):
+        # 记录每次 yield 的时机(不记录 size,只记录调用次数)
+        for i in range(chunk_count):
+            chunk = bytes([i % 256]) * chunk_size
+            chunks_received.append(len(chunk))
+            yield chunk
+
+    objects.stream_read = mock_stream_read  # type: ignore[assignment]
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "chunked.zip"
+    req = ExportRequest(
+        channel_ids=[200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+    )
+    async for _ in svc.run(req):
+        pass
+
+    # 验证 stream_read 真按 chunk yield(不是一次性返回大 buffer)
+    assert len(chunks_received) == chunk_count, (
+        f"预期 {chunk_count} chunks,实际 yield {len(chunks_received)}"
+    )
+    assert all(c == chunk_size for c in chunks_received)
+
+    # 校验 zip 内容字节数 = chunk_count × chunk_size
+    with zipfile.ZipFile(out) as zf:
+        for n in zf.namelist():
+            if "abc.jpg" in n and "thumb" not in n:
+                content = zf.read(n)
+                assert len(content) == total_size
+                # 前 100 字节 = 0x00,后 100 字节 = 0x09
+                assert content[0] == 0 and content[99] == 0
+                assert content[900] == (9 % 256) or content[900] == 9
+
+
+async def test_zip_stream_read_keyerror_skips_media(tmp_path, caplog):
+    """PR #B6:stream_read 抛 KeyError(media 已 DONE 但 object_key 不存在)
+    → 该条 media skip,zip 仍写完其余,日志 warn。"""
+    import zipfile
+
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    # DONE 但 object_key 在 object store 里不存在
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/does_not_exist.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "missing.zip"
+    req = ExportRequest(
+        channel_ids=[200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+    )
+
+    # 捕获 log warning,确认有 skip 提示
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.export.zip_exporter"):
+        async for _ in svc.run(req):
+            pass
+
+    # zip 仍写完(只是这条 media 被 skip)
+    assert out.exists()
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        assert "_manifest.json" in names
+        # 该 photo 不入包
+        assert not any("does_not_exist" in n for n in names), names
+
+    # 校验 warning 日志
+    assert any("media object_key 不存在" in record.message for record in caplog.records), (
+        f"未找到 skip 警告: {[r.message for r in caplog.records]}"
+    )

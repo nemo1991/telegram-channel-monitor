@@ -513,3 +513,208 @@ async def test_s3_iter_keys_empty_bucket(monkeypatch):
 # `pytest.raises` + `async for` 不容易捕获(generator body 延迟到 __anext__),
 # 而且这个 case 在 `connect()` 已经覆盖(未 connect 时其它 op 同样会 raise)。
 # 这里只测真路径。
+
+
+# ---- stream_read(2026-09-02 v1.5.2 PR #B6)----
+
+
+class _FakeStreamChunked:
+    """模拟 aioboto3 StreamingBody:支持 `iter_chunks(chunk_size)` async iter。
+
+    把传入的 bytes 按 chunk_size 切片,逐次 yield — 与真 boto3 StreamingBody
+    `iter_chunks` 行为一致(boto3 也是按 chunk_size 切 HTTP body)。
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def __aenter__(self) -> _FakeStreamChunked:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    def iter_chunks(self, chunk_size: int) -> _FakeChunkIter:
+        return _FakeChunkIter(self._data, chunk_size)
+
+
+class _FakeChunkIter:
+    def __init__(self, data: bytes, chunk_size: int) -> None:
+        self._data = data
+        self._chunk_size = chunk_size
+        self._offset = 0
+
+    def __aiter__(self) -> _FakeChunkIter:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._offset >= len(self._data):
+            raise StopAsyncIteration
+        end = min(self._offset + self._chunk_size, len(self._data))
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
+
+
+async def test_local_stream_read_basic(tmp_path):
+    """PR #B6:Local 后端 stream_read 按 chunk_size 分块 yield。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    data = b"x" * (10 * 1024)  # 10KB
+    await s.put("media/big.bin", data)
+
+    chunks: list[bytes] = []
+    async for chunk in s.stream_read("media/big.bin", chunk_size=4096):
+        chunks.append(chunk)
+    assert b"".join(chunks) == data
+    # 10KB / 4KB = 2.5 → 3 chunks
+    assert len(chunks) == 3
+
+
+async def test_local_stream_read_chunk_size_boundary(tmp_path):
+    """PR #B6:文件大小 = chunk_size 整倍数 → 最后一 chunk 是空,正常终止。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    data = b"y" * 8192  # 8KB = 2 × 4KB
+    await s.put("media/exact.bin", data)
+
+    chunks = [c async for c in s.stream_read("media/exact.bin", chunk_size=4096)]
+    assert len(chunks) == 2
+    assert all(len(c) == 4096 for c in chunks)
+    assert b"".join(chunks) == data
+
+
+async def test_local_stream_read_missing_key_raises(tmp_path):
+    """PR #B6:stream_read 不存在 key → KeyError,与 get() 一致。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    with pytest.raises(KeyError):
+        async for _ in s.stream_read("media/nope.bin"):
+            pass  # async generator 首次 __anext__ 时才抛
+
+
+async def test_local_stream_read_default_chunk_size(tmp_path):
+    """PR #B6:默认 chunk_size=65536(64KB)生效。"""
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    data = b"z" * 70000  # > 64KB → 2 chunks
+    await s.put("media/default.bin", data)
+
+    chunks = [c async for c in s.stream_read("media/default.bin")]
+    assert len(chunks) == 2
+    assert len(chunks[0]) == 65536
+    assert len(chunks[1]) == 70000 - 65536
+
+
+async def test_folder_stream_read_basic(tmp_path):
+    """PR #B6:Folder 后端 stream_read 同样分块流式(走两级分片路径)。"""
+    s = FolderObjectStore(root=tmp_path)
+    await s.connect()
+    data = b"f" * (8 * 1024)
+    await s.put("media/abcdef.bin", data)
+
+    chunks = [c async for c in s.stream_read("media/abcdef.bin", chunk_size=2048)]
+    assert b"".join(chunks) == data
+    assert len(chunks) == 4  # 8KB / 2KB
+
+
+async def test_folder_stream_read_missing_key_raises(tmp_path):
+    """PR #B6:Folder 后端 stream_read 不存在 → KeyError。"""
+    s = FolderObjectStore(root=tmp_path)
+    await s.connect()
+    with pytest.raises(KeyError):
+        async for _ in s.stream_read("media/missing.bin"):
+            pass
+
+
+async def test_s3_stream_read_basic(monkeypatch):
+    """PR #B6:S3 后端 stream_read 走 boto3 `iter_chunks` 原生流式。"""
+
+    class _ChunkedS3Client(_FakeS3Client):
+        """覆盖 get_object 返 _FakeStreamChunked(支持 iter_chunks)。"""
+
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            return {"Body": _FakeStreamChunked(b"s3-data-12345")}
+
+    fake = _FakeSession()
+    fake._fake_client = _ChunkedS3Client()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    chunks = [c async for c in store.stream_read("media/s3.bin", chunk_size=4)]
+    assert b"".join(chunks) == b"s3-data-12345"
+    # 13 bytes / 4 → ceil(13/4) = 4 chunks: [s3-, dat, a-1, 2345]
+    assert len(chunks) == 4
+    # 校验 get_object 被调 + Body 上下文管理
+    gets = [c for c in fake._fake_client.calls if c[0] == "get_object"]
+    assert gets[0][1] == {"Bucket": "test-bucket", "Key": "media/s3.bin"}
+
+
+async def test_s3_stream_read_empty(monkeypatch):
+    """PR #B6:S3 stream_read 空文件 → 0 chunks,正常终止。"""
+
+    class _EmptyStreamClient(_FakeS3Client):
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            return {"Body": _FakeStreamChunked(b"")}
+
+    fake = _FakeSession()
+    fake._fake_client = _EmptyStreamClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    chunks = [c async for c in store.stream_read("media/empty.bin")]
+    assert chunks == []
+
+
+async def test_default_stream_read_falls_back_to_get(tmp_path):
+    """PR #B6:不 override stream_read 的后端走默认实现(get() + chunk_size 切片)。"""
+    # LocalObjectStore 显式继承默认实现(实际已 override,这里测默认路径)
+    # 用 FolderObjectStore 也已 override → 测一个 minimal 自定义后端走默认
+    from tgmonitor.core.objectstore.base import ObjectStore
+
+    class _MinimalStore(ObjectStore):
+        """不 override stream_read,只实现 get/connect/close,验证默认实现。"""
+
+        backend_name = "minimal"
+
+        def __init__(self) -> None:
+            self._data: dict[str, bytes] = {}
+
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+        async def put(self, key: str, data: bytes, meta: object = None) -> str:  # type: ignore[override]
+            self._data[key] = data
+            return key
+
+        async def get(self, key: str) -> bytes:
+            if key not in self._data:
+                raise KeyError(key)
+            return self._data[key]
+
+        async def exists(self, key: str) -> bool:
+            return key in self._data
+
+        async def delete(self, key: str) -> None:
+            self._data.pop(key, None)
+
+        async def stat(self, key: str) -> ObjectMeta | None:
+            return ObjectMeta(size=len(self._data[key])) if key in self._data else None
+
+    s = _MinimalStore()
+    await s.connect()
+    await s.put("k", b"x" * 100)
+    chunks = [c async for c in s.stream_read("k", chunk_size=30)]
+    assert b"".join(chunks) == b"x" * 100
+    assert len(chunks) == 4  # [30, 30, 30, 10]
+    # 不存在 → KeyError
+    with pytest.raises(KeyError):
+        async for _ in s.stream_read("nope"):
+            pass
