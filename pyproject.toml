@@ -61,6 +61,10 @@ include = [
     "src/tgmonitor/resources/*.svg",
     "src/tgmonitor/resources/icons/*.svg",
     "src/tgmonitor/ui/resources/*.qss",
+    # 2026-09-02 v1.5.3 PR #D3:i18n 翻译文件 — Qt 走 QTranslator.load(str(qm)),
+    # 缺则 fallback 原文(.ts 由 pyside6-lupdate 生成,git 提交;.qm 由
+    # pyside6-lrelease 编,运行时需要 — 兜底源码即默认翻译,无需翻译 .qm)
+    "src/tgmonitor/i18n/*.qm",
 ]
 
 [tool.ruff]

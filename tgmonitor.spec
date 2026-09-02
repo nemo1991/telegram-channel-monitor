@@ -51,6 +51,8 @@ _DATA_DIRS = [
     (_SPEC_DIR / "packages/tdlib_json/src/tdlib_json/tdlib", "tdlib_json/tdlib"),
     (_SPEC_DIR / "src/tgmonitor/resources", "tgmonitor/resources"),
     (_SPEC_DIR / "src/tgmonitor/ui/resources", "tgmonitor/ui/resources"),
+    # 2026-09-02 v1.5.3 PR #D3:i18n 翻译文件(.*.qm — pyside6-lrelease 编译产物)
+    (_SPEC_DIR / "src/tgmonitor/i18n", "tgmonitor/i18n"),
 ]
 
 datas = []

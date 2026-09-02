@@ -24,3 +24,6 @@ tgmonitor.app.zip
 packages/tdlib_json/src/tdlib_json/tdlib/
 # aiotdlib 参考源码备份中的二进制 dylib(与 src 下同一产物,不提交)
 packages/tdlib_json/_vendor_ref/aiotdlib/tdlib/
+# i18n 编译产物(2026-09-02 v1.5.3 PR #D3)— pyside6-lrelease 从 .ts 编,本地重生成;
+# wheel / PyInstaller 打包在 hatch / spec 显式声明
+src/tgmonitor/i18n/*.qm

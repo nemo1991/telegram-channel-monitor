@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         from tgmonitor.core.config import _user_data_dir
 
         self.env_path = env_path or (_user_data_dir() / ".env")
-        self.setWindowTitle("tgmonitor · Telegram 频道监听")
+        self.setWindowTitle(self.tr("tgmonitor · Telegram 频道监听"))
         self.resize(1180, 740)
 
         self._vm = MonitorViewModel(app, monitor, loop)

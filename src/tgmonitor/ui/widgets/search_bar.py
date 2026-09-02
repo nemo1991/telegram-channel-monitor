@@ -53,7 +53,7 @@ class SearchBar(QWidget):
 
     def __init__(
         self,
-        placeholder: str = "搜索消息、频道…",
+        placeholder: str = "",
         parent: QWidget | None = None,
     ) -> None:
         """建 280px 宽紧凑搜索条 + 折叠 date panel(默认隐藏)+ 内联样式。"""
@@ -76,7 +76,8 @@ class SearchBar(QWidget):
         hbox.addWidget(ico)
 
         self.edit = QLineEdit()
-        self.edit.setPlaceholderText(placeholder)
+        # 2026-09-03 v1.5.3 PR #D3:placeholder 走 tr() 包裹;默认 "搜索消息、频道…"
+        self.edit.setPlaceholderText(placeholder if placeholder else self.tr("搜索消息、频道…"))
         self.edit.setFrame(False)
         self.edit.setFixedHeight(28)
         self.edit.textChanged.connect(self._on_text_changed)
@@ -96,7 +97,7 @@ class SearchBar(QWidget):
         self.adv_btn.setCheckable(True)
         self.adv_btn.setFixedSize(24, 24)
         self.adv_btn.setCursor(Qt.PointingHandCursor)
-        self.adv_btn.setToolTip("按日期范围过滤")
+        self.adv_btn.setToolTip(self.tr("按日期范围过滤"))
         hbox.addWidget(self.adv_btn)
 
         # 范围 toggle:🌐 默认未选(已订阅),选中后切「全部(含已退订频道历史)」
@@ -106,7 +107,7 @@ class SearchBar(QWidget):
         self.scope_btn.setCheckable(True)
         self.scope_btn.setFixedSize(24, 24)
         self.scope_btn.setCursor(Qt.PointingHandCursor)
-        self.scope_btn.setToolTip("搜索范围:已订阅(默认)/ 全部(含已退订频道历史)")
+        self.scope_btn.setToolTip(self.tr("搜索范围:已订阅(默认)/ 全部(含已退订频道历史)"))
         hbox.addWidget(self.scope_btn)
 
         # 固定第一行 32px
@@ -131,7 +132,7 @@ class SearchBar(QWidget):
         # QDateTime(y, m, d) 三参签名,需 6 参或 QDate+QTime)。
         min_dt = QDateTime(QDate(1900, 1, 1), QTime(0, 0, 0))
         self.dt_from.setMinimumDateTime(min_dt)
-        self.dt_from.setSpecialValueText("不限")
+        self.dt_from.setSpecialValueText(self.tr("不限"))
         self.dt_from.setDateTime(min_dt)  # 初始 = 不限
         date_layout.addWidget(self.dt_from)
 
@@ -140,7 +141,7 @@ class SearchBar(QWidget):
         self.dt_to.setCalendarPopup(True)
         self.dt_to.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.dt_to.setMinimumDateTime(min_dt)
-        self.dt_to.setSpecialValueText("不限")
+        self.dt_to.setSpecialValueText(self.tr("不限"))
         self.dt_to.setDateTime(min_dt)  # 初始 = 不限
         date_layout.addWidget(self.dt_to)
 

@@ -49,7 +49,7 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.app = app
         self.loop = loop
-        self.setWindowTitle("Telegram 登录")
+        self.setWindowTitle(self.tr("Telegram 登录"))
         self.setModal(True)
         self._expected_state: str = ""
         # 提交期间锁定输入/按钮,防止用户在等待响应时重复提交
@@ -90,7 +90,7 @@ class LoginDialog(QDialog):
         p_code = QWidget()
         cl = QVBoxLayout(p_code)
         self.in_code = QLineEdit()
-        self.in_code.setPlaceholderText("Telegram 发到手机的 5 位验证码")
+        self.in_code.setPlaceholderText(self.tr("Telegram 发到手机的 5 位验证码"))
         self.in_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.addWidget(self.in_code)
         self.stack.addWidget(p_code)
@@ -101,7 +101,7 @@ class LoginDialog(QDialog):
         pwl = QVBoxLayout(p_pwd)
         self.in_pwd = QLineEdit()
         self.in_pwd.setEchoMode(QLineEdit.Password)
-        self.in_pwd.setPlaceholderText("二步验证 2FA 密码")
+        self.in_pwd.setPlaceholderText(self.tr("二步验证 2FA 密码"))
         self.in_pwd.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pwl.addWidget(self.in_pwd)
         self.stack.addWidget(p_pwd)
@@ -121,7 +121,7 @@ class LoginDialog(QDialog):
         p_email_code = QWidget()
         ecl = QVBoxLayout(p_email_code)
         self.in_email_code = QLineEdit()
-        self.in_email_code.setPlaceholderText("邮箱 6 位验证码")
+        self.in_email_code.setPlaceholderText(self.tr("邮箱 6 位验证码"))
         self.in_email_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ecl.addWidget(self.in_email_code)
         self.stack.addWidget(p_email_code)
