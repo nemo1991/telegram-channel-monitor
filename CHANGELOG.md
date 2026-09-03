@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [1.6.0] - Unreleased
+## [1.6.0] - 2026-09-03
 
 主题:**渠道深化 — 全文索引 + 实时元数据** — 2 PR 已完成。
 PR #Q1 把 v1.5.1 PR #B2 引入的 `LOWER LIKE` 全表扫升级为 GIN trgm
