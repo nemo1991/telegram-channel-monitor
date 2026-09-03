@@ -5,6 +5,82 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.4] - 2026-09-03
+
+主题:**补丁版性能债 + UX 收尾** — 4 PR / ~350 LOC 净增 / +29 测试 / 零新依赖。
+解决 v1.5.3 留下的「`_truncate_tail` 退化为 O(N²)」(PR #P1 双向索引 +
+MAX_ITEMS 10K)+ 测试覆盖 hot-spot(PR #P2 SubscriptionService 单测 —
+2026-07-31 修过的 SUBSCRIBED_DRIFT_ANALYSIS #A 兜底)+ UX 修复
+(PR #P3 S3 stale tooltip)+ 主题持久化(PR #P4 填 v1.5.0 PR #A5 尾巴)。
+
+### ✨ Added
+
+- **主题持久化(PR #P4)** — 填 v1.5.0 PR #A5 尾巴。`Settings.key_theme:
+  str = ""` 字段(`TG_KEY_THEME` .env 入口);`settings_page` 加
+  `chk_theme_persist` checkbox,勾选时切换主题**立即**写 .env,启动时
+  `app.settings.key_theme` 非空 → ThemeManager.apply 启动即应用。空字符串
+  = 与 v1.5.0 行为一致(session 内即时,不持久化)。
+
+### 🔧 Changed
+
+- **`_truncate_tail` O(N) → O(1)(PR #P1)** — 加 `_row_to_key: dict[int,
+  tuple[int, int]]` 反向索引(与 `_index_of` 镜像),`_truncate_tail`
+  单次调 O(1) 拿 key(原 O(N) dict scan,高频频道 append 周期累计
+  O(N²) — v1.5.3 PR #D1 CHANGELOG 已埋钩子)。
+- **`MAX_ITEMS` 1000 → 10000 实验性 bump(PR #P1)** — v1.5.3 PR #D1
+  delegate lazy render 已就绪,本 PR 纯收尾。
+- **MediaManager S3 stale tooltip 删除(PR #P3)** — `_on_reconcile_done`
+  不再分支 `backend == "s3"` setEnabled(False) + 误导 tooltip;S3
+  backend 现在**真**支持 prune(`objectstore/s3_store.py:185` 有
+  `iter_keys`,`media_service.reconcile_orphans` 走 `hasattr` 识别),
+  一律 enabled + backend 名拼入 tooltip。
+
+### ✅ Tests
+
+- **PR #P1:+7 测试** — `_truncate_tail O(1)` 性能阈值
+  (`< 10ms`)、`_row_to_key ↔ _index_of` 镜像 invariant、reset 批量
+  构反向索引、`remove_by_key` shift + boundary case、MAX_ITEMS=10K
+  常量、`set_messages` 走 append 循环 + 截断 head、**stress 10K
+  append + 100 remove** 镜像 + rowCount 验证。
+- **PR #P2:+12 测试** — `SubscriptionService` 全方法直接单测:
+  list 转发的两条 + subscribe/unsubscribe 顺序约束与异常 propagate
+  (核心 2026-07-31 SUBSCRIBED_DRIFT_ANALYSIS #A 回归 hot-spot 兜底)+
+  list_messages 4 种 scope(默认 / include_unsubscribed / 显式 / 空
+  短路)+ date / search / limit 透传 + 实时流转发。
+- **PR #P3:+6 测试** — S3 stale tooltip 修复兜底(S3 backend 后
+  btn_prune enabled + tooltip 不含 "not supported")、local backend
+  行为不变 + tooltip 含 backend 名、status label 更新、批量 retry
+  只发 FAILED 契约、批量 delete 不过滤、__init__ 默认 tooltip 干净。
+- **PR #P4:+4 测试** — `Settings.key_theme` 默认空 + env 加载、
+  `EditableSettings.key_theme` round-trip。
+
+### 📦 Packaging
+
+- `pyproject.toml`:1.5.3 → 1.5.4
+- `tgmonitor.spec`:`CFBundleShortVersionString` / `CFBundleVersion`
+  1.5.3 → 1.5.4
+
+### 📊 Verification
+
+- `ruff check src tests`:**0 errors**
+- `ruff format --check src tests`:**0 errors**
+- `mypy src/tgmonitor`:**0 errors**
+- **总数:v1.5.3 baseline 737 → v1.5.4 766 passed / 47 deselected**
+  (+29:7 + 12 + 6 + 4)
+- 安全约束保留:无 `TG_API_ID` / `TG_API_HASH` / `TG_PHONE` / 验证码 /
+  2FA 密码 / session 文件进入 commit / PR。
+
+### 🚧 范围外(留 v1.5.5 后续)
+
+- Settings 3 tab 拆分(账户 / 存储 / 偏好)— 660 LOC 大改造,需独立
+  session + TabWidget 重构。PR #P4 范围只填 v1.5.0 PR #A5 尾巴。
+- 快捷键持久化 + 编辑 UI — 新 `shortcuts.py` 模块 + `ShortcutTable`
+  编辑器 + `key_shortcuts` 字段 + `DEFAULT_SHORTCUTS` parse / dump。
+- MediaManager 979 LOC 拆 `viewmodels/media_list_model.py` —
+  QListWidget → QListView + QStyledItemDelegate paint 大改造。
+- `MediaManagerWidget._row_is_failed` 内部 `r[2]` 既有 bug(已知,
+  pre-#P3 留下)— 在本 PR 范围外,fix 时一并重做 model 拆分。
+
 ## [1.5.3] - 2026-09-02
 
 主题:**补丁版 UX 增强 + 性能债清理** — 3 PR / ~1000 LOC 净增 / +37 测试 / 零新依赖。
