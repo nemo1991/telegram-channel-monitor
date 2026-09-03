@@ -161,6 +161,11 @@ class EditableSettings:
     sync_page_delay_ms: int = 1000
     sync_resume_from_saved: bool = True
 
+    # 2026-09-03 v1.5.4 PR #P4:主题持久化(填 v1.5.0 PR #A5 尾巴)
+    # - 非空 = checkbox「持久化主题」勾选 + 用户选定的主题名("light"/"dark"/"system")
+    # - 空 = checkbox 取消(与 v1.5.0 行为一致,主题不写 .env)
+    key_theme: str = ""
+
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
         """Settings → EditableSettings(给 UI 编辑用)。bytes/MB 单位转换在这里做。"""
@@ -188,6 +193,7 @@ class EditableSettings:
             sync_chat_delay_ms=s.sync_chat_delay_ms,
             sync_page_delay_ms=s.sync_page_delay_ms,
             sync_resume_from_saved=s.sync_resume_from_saved,
+            key_theme=s.key_theme,
         )
 
     def validate(self) -> list[str]:
@@ -242,6 +248,7 @@ class EditableSettings:
             sync_chat_delay_ms=self.sync_chat_delay_ms,
             sync_page_delay_ms=self.sync_page_delay_ms,
             sync_resume_from_saved=self.sync_resume_from_saved,
+            key_theme=self.key_theme,
         )
 
 

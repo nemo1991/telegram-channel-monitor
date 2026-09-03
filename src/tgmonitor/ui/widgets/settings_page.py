@@ -269,11 +269,16 @@ class SettingsPage(QWidget):
         root.addWidget(g)
 
     def _build_appearance(self, root: QVBoxLayout) -> None:
-        """2026-08-30 v1.5.0 PR #A5:外观设置 — 主题 3 选(LIGHT / DARK / SYSTEM)。
+        """2026-09-03 v1.5.4 PR #P4:外观设置 — 主题 3 选(LIGHT / DARK / SYSTEM)
+        + **持久化 checkbox**(填 v1.5.0 PR #A5 尾巴)。
 
-        不走 settings 保存(主题是 session 内即时偏好,不持久化到 .env —
-        持久化留 v1.5.1 `TG_KEY_THEME`)。`ThemeManager.apply` 即时生效,
-        OS 切色 listener 在 SYSTEM 态下自动接。
+        - 主题下拉 → `ThemeManager.apply` 即时生效(原 v1.5.0 行为不变)
+        - checkbox「持久化主题(写 .env `TG_KEY_THEME`)」勾选时:
+          1. 立即写 .env 的 `key_theme` 字段(走既有 `update_env_with_settings`)
+          2. 启动时 `app.settings.key_theme` 非空 → `ThemeManager.apply` 启动即应用
+        - checkbox 取消勾选:清空 `key_theme`(.env 字段移除),与 v1.5.0 行为一致
+        - 「仅保存到 .env」/「保存并应用」按钮不感知 theme 字段(主题是 session
+          内即时生效,与 settings 表单分离;这是 v1.5.0 设计延续)
         """
         from tgmonitor.ui.theme import Theme, ThemeManager
 
@@ -294,6 +299,11 @@ class SettingsPage(QWidget):
         self.cmb_theme.currentIndexChanged.connect(self._on_theme_change)
         f.addRow("主题:", self.cmb_theme)
 
+        # 2026-09-03 v1.5.4 PR #P4:主题持久化 checkbox
+        self.chk_theme_persist = QCheckBox("持久化主题(写 .env `TG_KEY_THEME`,重启应用仍生效)")
+        self.chk_theme_persist.toggled.connect(self._on_theme_persist_toggled)
+        f.addRow("", self.chk_theme_persist)
+
         # 快捷键帮助(只读 label,PR #A5 plan 列「快捷键组可改(v1 不持久化,
         # session 内生效)」)— v1.5.0 暂只显示帮助,不改键位。
         help_text = QLabel(
@@ -301,7 +311,7 @@ class SettingsPage(QWidget):
             "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
             "        Ctrl+C 复制当前消息文本\n"
             "\n"
-            "快捷键目前 session 内生效,不持久化(后续 v1.5.1 支持)."
+            "快捷键目前 session 内生效,不持久化(后续 v1.5.5 支持)."
         )
         help_text.setObjectName("helpText")
         help_text.setWordWrap(True)
@@ -310,7 +320,9 @@ class SettingsPage(QWidget):
         root.addWidget(g)
 
     def _on_theme_change(self, idx: int) -> None:
-        """2026-08-30 v1.5.0 PR #A5:主题下拉变化 → ThemeManager.apply。"""
+        """2026-09-03 v1.5.4 PR #P4:主题下拉变化 → 即时 ThemeManager.apply +
+        (若 checkbox 勾选)持久化当前主题到 .env。
+        """
         from tgmonitor.ui.theme import Theme, ThemeManager
 
         value = self.cmb_theme.itemData(idx)
@@ -319,6 +331,38 @@ class SettingsPage(QWidget):
         except ValueError:
             return
         ThemeManager.apply(theme)
+        # 持久化:checkbox 勾选时把当前 theme 写 .env
+        if self.chk_theme_persist.isChecked():
+            self._write_theme_to_env(theme.value)
+
+    def _on_theme_persist_toggled(self, checked: bool) -> None:
+        """2026-09-03 v1.5.4 PR #P4:勾选 = 写当前 theme,取消 = 清空字段。
+
+        走与 ThemeManager 解耦的 `update_env_with_settings` 路径(传
+        只带 key_theme 的 EditableSettings,其他字段保持原样)。
+        """
+        from tgmonitor.ui.theme import ThemeManager
+
+        current_theme_value = ThemeManager.current().value
+        e = EditableSettings(key_theme=current_theme_value if checked else "")
+        # validate() 宽松,只校验 enum / 数值 — key_theme 不会被它管
+        # 但 EditableSettings 的其他必填字段(api_id 等)会 fail。
+        # 改走 EditableSettings 全部字段 + 仅改 key_theme
+        e = EditableSettings.from_settings(self._app.settings)
+        e.key_theme = current_theme_value if checked else ""
+        try:
+            update_env_with_settings(self._env_path, e.to_settings())
+        except OSError:
+            log.exception("write theme to .env failed")
+
+    def _write_theme_to_env(self, theme_value: str) -> None:
+        """2026-09-03 v1.5.4 PR #P4:写单一 key_theme 到 .env — 不动其他字段。"""
+        e = EditableSettings.from_settings(self._app.settings)
+        e.key_theme = theme_value
+        try:
+            update_env_with_settings(self._env_path, e.to_settings())
+        except OSError:
+            log.exception("write theme to .env failed")
 
     def _build_sync(self, root: QVBoxLayout) -> None:
         g = QGroupBox("🔄 同步参数")
@@ -492,6 +536,11 @@ class SettingsPage(QWidget):
         self.in_chat_delay.setValue(s.sync_chat_delay_ms)
         self.in_page_delay.setValue(s.sync_page_delay_ms)
         self.chk_resume.setChecked(s.sync_resume_from_saved)
+
+        # 2026-09-03 v1.5.4 PR #P4:主题持久化 checkbox 状态同步
+        # (空 = 不勾选,与 v1.5.0 行为一致;非空 = 勾选)
+        if hasattr(self, "chk_theme_persist"):
+            self.chk_theme_persist.setChecked(bool(s.key_theme))
 
     # ------ 槽 ------
 

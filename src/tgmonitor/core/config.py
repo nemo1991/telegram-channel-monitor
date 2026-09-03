@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     # `resume_from_saved` 续拉:True 时从 storage 已有 max_msg_id 之后拉
     sync_resume_from_saved: bool = Field(default=True)
 
+    # 2026-09-03 v1.5.4 PR #P4:主题持久化(空 = 不持久化,ThemeManager 走 session 内应用)。
+    # 填 v1.5.0 PR #A5 的尾巴:settings_page 加 checkbox,勾选时启动从 .env 读
+    # 主题并在 ThemeManager.apply 时回写;空字符串 = 与 v1.5.0 行为一致(不持久化)。
+    key_theme: str = Field(default="", description="persisted Theme name; '' = session only")
+
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。"""
         self.session_dir.mkdir(parents=True, exist_ok=True)

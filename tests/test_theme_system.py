@@ -169,3 +169,45 @@ def test_apply_with_light_does_not_connect_listener(
     assert ThemeManager._system_listener_connected is False
     ThemeManager.apply(Theme.DARK)
     assert ThemeManager._system_listener_connected is False
+
+
+# ============================================================
+# 2026-09-03 v1.5.4 PR #P4:主题持久化
+# ============================================================
+
+
+def test_settings_has_key_theme_default_empty(qt_app: QApplication) -> None:
+    """PR #P4:`Settings.key_theme` 字段默认空字符串(不持久化,兼容 v1.5.0)。"""
+    from tgmonitor.core.config import Settings
+
+    s = Settings(env_file=None)
+    assert s.key_theme == ""
+
+
+def test_settings_key_theme_round_trip_via_env(qt_app: QApplication) -> None:
+    """PR #P4:`Settings.key_theme` 走 pydantic-settings env 加载路径。"""
+    from tgmonitor.core.config import Settings
+
+    s = Settings(env_file=None, key_theme="dark")
+    assert s.key_theme == "dark"
+
+
+def test_editable_settings_key_theme_round_trip(qt_app: QApplication) -> None:
+    """PR #P4:EditableSettings.key_theme 字段 + from_settings / to_settings 透传。"""
+    from tgmonitor.core.config import Settings
+    from tgmonitor.core.settings_store import EditableSettings
+
+    s = Settings(env_file=None, key_theme="light")
+    e = EditableSettings.from_settings(s)
+    assert e.key_theme == "light"
+    # to_settings 透传
+    s2 = e.to_settings()
+    assert s2.key_theme == "light"
+
+
+def test_editable_settings_key_theme_default_empty(qt_app: QApplication) -> None:
+    """PR #P4:EditableSettings 默认 key_theme 空字符串(与 Settings 对齐)。"""
+    from tgmonitor.core.settings_store import EditableSettings
+
+    e = EditableSettings()
+    assert e.key_theme == ""
