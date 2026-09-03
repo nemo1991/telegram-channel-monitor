@@ -977,3 +977,67 @@ async def test_jsonl_aggregate_empty_input(jsonl_repo):
     """PR #15:Jsonl 同上。"""
     bucket = await jsonl_repo.aggregate_per_channel([])
     assert bucket == {}
+
+
+# ---- v1.6.0 PR #Q2:photo_local_key 部分更新 parity(InMemory + Jsonl) -----
+
+
+async def test_in_mem_update_channel_metadata_photo_local_key(in_mem_repo):
+    """PR #Q2:`update_channel_metadata(photo_local_key=...)` 部分更新。"""
+    await in_mem_repo.upsert_channel(ChannelDTO(id=100, title="Old", member_count=10))
+    await in_mem_repo.update_channel_metadata(100, photo_local_key="/tmp/avatar.jpg")
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"
+    assert got.title == "Old"  # 未动
+    assert got.member_count == 10  # 未动
+
+
+async def test_jsonl_update_channel_metadata_photo_local_key(jsonl_repo):
+    """PR #Q2:Jsonl 同上 + 落盘 roundtrip。"""
+    await jsonl_repo.upsert_channel(ChannelDTO(id=100, title="Old", member_count=10))
+    await jsonl_repo.update_channel_metadata(100, photo_local_key="/tmp/avatar.jpg")
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"
+    assert got.title == "Old"
+    # 重启 — 重新 open 应看到 photo_local_key(测试 JsonlFileStore 持久化)
+    await jsonl_repo.close()
+    jsonl_repo2 = JsonlFileStore(root=jsonl_repo._root)  # type: ignore[attr-defined]
+    await jsonl_repo2.connect()
+    got2 = await jsonl_repo2.get_channel(100)
+    assert got2 is not None
+    assert got2.photo_local_key == "/tmp/avatar.jpg"
+    await jsonl_repo2.close()
+
+
+async def test_in_mem_update_channel_metadata_preserves_other_fields_on_photo_update(
+    in_mem_repo,
+):
+    """PR #Q2:`photo_local_key` 单独更新不动 title / username / member_count。"""
+    await in_mem_repo.upsert_channel(
+        ChannelDTO(id=100, title="Title", username="@u", member_count=99)
+    )
+    await in_mem_repo.update_channel_metadata(100, photo_local_key="/tmp/x.png")
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/x.png"
+    assert got.title == "Title"
+    assert got.username == "@u"
+    assert got.member_count == 99
+
+
+async def test_jsonl_update_channel_metadata_preserves_other_fields_on_photo_update(
+    jsonl_repo,
+):
+    """PR #Q2:Jsonl 同上。"""
+    await jsonl_repo.upsert_channel(
+        ChannelDTO(id=100, title="Title", username="@u", member_count=99)
+    )
+    await jsonl_repo.update_channel_metadata(100, photo_local_key="/tmp/x.png")
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/x.png"
+    assert got.title == "Title"
+    assert got.username == "@u"
+    assert got.member_count == 99

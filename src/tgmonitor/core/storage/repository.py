@@ -295,11 +295,14 @@ class StorageRepository(ABC):
         title: str | None = None,
         username: str | None = None,
         member_count: int | None = None,
+        photo_local_key: str | None = None,
     ) -> None:
         """部分更新频道元数据(2026-08-27 PR #14)。
 
-        TDLib `updateChannel` / `updateSupergroup` 推送可能只动 1 个字段
-        (如 member_count 改、title 不变);`title=None` 表示不动 title。
+        TDLib `updateChannel` / `updateSupergroup` / `updateChatTitle` /
+        `updateChatPhoto` 推送可能只动 1 个字段(如 member_count 改、title
+        不变);`title=None` 表示不动 title。`photo_local_key=None` 表示
+        不动(不是「删头像」 — 删头像语义需走显式参数,见 PR #Q2 设计)。
 
         与 `upsert_channel_metadata` 不同:本方法**只**动传入字段(其它字段
         保留旧值);`upsert_channel_metadata` 是覆盖式写入全字段。

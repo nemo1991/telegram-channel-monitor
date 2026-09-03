@@ -32,6 +32,9 @@ class ChannelDTO:
     created_at: datetime | None = None
     is_subscribed: bool = False
     last_synced_at: datetime | None = None
+    # 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推 TDLib 本地头像文件路径;
+    # None = 头像被删 / 从未设。UI `_ChannelListCard` 据此决定是否走 placeholder。
+    photo_local_key: str | None = None
 
     @property
     def display(self) -> str:

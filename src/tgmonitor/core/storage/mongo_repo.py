@@ -87,6 +87,8 @@ def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
         # 旧文档没 subscribed → True(保留"存即订"语义)
         is_subscribed=bool(d.get("subscribed", True)),
         last_synced_at=d.get("last_synced_at"),
+        # 2026-09-03 v1.6.0 PR #Q2:Mongo schema-less,旧 doc 无此字段 → None
+        photo_local_key=d.get("photo_local_key"),
     )
 
 
@@ -242,7 +244,10 @@ class MongoRepository(StorageRepository):
     # ---- 频道 ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
-        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。"""
+        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        """
         doc = {
             "_id": channel.id,
             "title": channel.title,
@@ -253,11 +258,15 @@ class MongoRepository(StorageRepository):
             "first_seen_at": datetime.now(UTC),
             "subscribed": channel.is_subscribed,
             "last_synced_at": channel.last_synced_at,
+            "photo_local_key": channel.photo_local_key,
         }
         await self.db.channels.update_one({"_id": channel.id}, {"$set": doc}, upsert=True)
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
-        """只更元数据字段;subscribed 保持旧值。"""
+        """只更元数据字段;subscribed 保持旧值。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
+        """
         await self.db.channels.update_one(
             {"_id": channel.id},
             {
@@ -268,6 +277,7 @@ class MongoRepository(StorageRepository):
                     "member_count": channel.member_count,
                     "created_at": channel.created_at,
                     "last_synced_at": channel.last_synced_at,
+                    "photo_local_key": channel.photo_local_key,
                 }
             },
             upsert=True,
@@ -280,10 +290,14 @@ class MongoRepository(StorageRepository):
         title: str | None = None,
         username: str | None = None,
         member_count: int | None = None,
+        photo_local_key: str | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Mongo `$set` 子集 — 只在传入字段上 $set,
         缺省 None 字段不进 dict(保留旧值)。0 rows matched 是合法的
-        (TDLib 偶发对陈年 channel 推 metadata update)。"""
+        (TDLib 偶发对陈年 channel 推 metadata update)。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        """
         update: dict[str, Any] = {}
         if title is not None:
             update["title"] = title
@@ -291,6 +305,8 @@ class MongoRepository(StorageRepository):
             update["username"] = username
         if member_count is not None:
             update["member_count"] = member_count
+        if photo_local_key is not None:
+            update["photo_local_key"] = photo_local_key
         if not update:
             return
         await self.db.channels.update_one(

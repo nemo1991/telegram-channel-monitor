@@ -7,10 +7,14 @@
 
 ## [1.6.0] - Unreleased
 
-主题:**渠道深化 — 全文索引 + 实时元数据** — 2 PR 进行中。
+主题:**渠道深化 — 全文索引 + 实时元数据** — 2 PR 已完成。
 PR #Q1 把 v1.5.1 PR #B2 引入的 `LOWER LIKE` 全表扫升级为 GIN trgm
 索引,补全 PG / Mongo 集成测试对 `list_messages(search=...)` 的
-parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler。
+parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler
+(`updateChatTitle` / `updateChatPhoto` / `updateChatPermissions` /
+`updateChatReadInbox` / `updateChatReadOutbox` /
+`updateChatDefaultBannedRights`)+ 2 个新事件 + schema 加
+`channels.photo_local_key` 字段。
 
 ### ✨ Added
 
@@ -27,6 +31,31 @@ parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler。
 - **pg_trgm 幂等迁移(PR #Q1)** — `init_schema()` 检测到 superuser
   权限不足时 log warning + 跳过 GIN 索引创建,`LOWER LIKE` 全表扫
   仍可用(只是慢)。生产部署由 README 段引导首次手动授权。
+- **6 类 TDLib chat update handler(PR #Q2)** — `tdlib_client.py`
+  注册 6 个新 handler,覆盖 TDLib 全部「频道级元数据」update 路径:
+  `_on_chat_title`(改名)、`_on_chat_photo`(改头像 — 含 photo=None
+  表示头像被删)、`_on_chat_permissions`(成员权限)、`_on_chat_read_inbox`
+  (已读位置)、`_on_chat_read_outbox`(已发被读)、
+  `_on_chat_default_banned_rights`(默认封禁权)。前 2 类走「log + publish
+  事件」路径,后 4 类仅 log(暂无 storage 字段映射,保留 handler 防
+  未知 update 静默丢失)。
+- **2 个新事件(PR #Q2)** — `ChannelTitleChanged(channel_id, new_title)`
+  与 `ChannelPhotoChanged(channel_id, local_path)`,由 `tdlib_client`
+  的 `_on_chat_title` / `_on_chat_photo` 发布,MonitorService 订阅后
+  落库 + UI (`channel_widget.py`) 实时刷卡片 title / icon。
+- **`channels.photo_local_key` schema 字段(PR #Q2)** — 4 后端
+  (Postgres / Mongo / Jsonl / InMemory) 同步加字段;`ChannelDTO.
+  photo_local_key: str | None = None`;PG 走 `ALTER TABLE ... ADD
+  COLUMN IF NOT EXISTS` 幂等迁移,`update_channel_metadata` 用
+  `COALESCE($4, photo_local_key)` 模式让 None = 不动,空字符串 =
+  显式清空(头像被删),非空 = 设新值(三态语义)。
+- **TDLib handler 单测(PR #Q2)** — `tests/test_telegram_handlers.py`
+  全新,9 个 case 覆盖 6 个 handler 的「发事件 / 仅 log / 不抛」三类
+  行为,含 `None` / 缺字段等 garbage update 兜底。
+- **photo_local_key 存储 parity 测试(PR #Q2)** — `test_pg_repo_
+  parity.py` +3、`test_mongo_repo_parity.py` +3、`test_storage_
+  backends.py` +4(2 后端 × 2 用例)覆盖 partial update / 保留其他
+  字段 / upsert 三类行为。
 
 ### 🔧 Changed
 
@@ -34,6 +63,10 @@ parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler。
   `init_schema()` 整体 `try/except` + log.warning,**不抛**(此前任一
   SQL 失败都直接 raise,会让 `LOWER LIKE` 仍工作的环境被误判「schema
   损坏」)。
+- **`update_channel_metadata` partial update 扩字段(PR #Q2)** —
+  abstract 新增 `photo_local_key: str | None = None` 关键字;Postgres
+  走 `COALESCE` 模式,`$set` / Jsonl dict 走条件写 — 旧调用者签名
+  完全向后兼容。
 
 ### 📝 Notes
 
@@ -41,6 +74,11 @@ parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler。
   SQL / 阿里 RDS 默认允许;self-hosted 首次部署需 `CREATE EXTENSION
   pg_trgm;` 手动授权。`init_schema()` 失败兜底已加,用户**不必**手动
   执行即可启动应用(只是搜索性能降级)。
+- **`updateChatPhoto` 的 `local.path` 在 frozen / sandbox 不可访问**
+  (PR #Q2)— TDLib 给的绝对路径在 macOS .app / Linux AppImage 沙箱内
+  可能读不到。UI 走 placeholder fallback(与 lightbox 同模式),不报错。
+- **「持久化主题 / 快捷键」opt-in 默认行为不变** — `key_theme=""` /
+  `key_shortcuts=""` 走 v1.5.0 PR #A5 的 session 内即时应用,无需迁移。
 
 ## [1.5.4] - 2026-09-03
 

@@ -471,3 +471,48 @@ async def test_list_messages_search_escaped_wildcard_safe(
     msgs = await mongo_repo.list_messages([100], search="%")
     # mongomock 走 `_escape_regex` → re.escape("%") = "\\%",命中字面 `%` 那条
     assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+# ---- v1.6.0 PR #Q2:photo_local_key 部分更新 parity ----
+
+
+async def test_update_channel_metadata_photo_local_key_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q2:Mongo `$set` 子集 — 只动 photo_local_key。"""
+    ch = ChannelDTO(id=100, title="Old", username="@u", member_count=10)
+    await mongo_repo.upsert_channel(ch)
+    await mongo_repo.update_channel_metadata(100, photo_local_key="/tmp/avatar.jpg")
+    got = await mongo_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"
+    assert got.title == "Old"
+    assert got.username == "@u"
+    assert got.member_count == 10
+
+
+async def test_update_channel_metadata_photo_local_key_preserves_other_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q2:只动 photo_local_key,不动其他字段。"""
+    await mongo_repo.upsert_channel(
+        ChannelDTO(id=100, title="Title", username="@u", member_count=99)
+    )
+    await mongo_repo.update_channel_metadata(100, photo_local_key="/tmp/x.png")
+    got = await mongo_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/x.png"
+    assert got.title == "Title"
+    assert got.username == "@u"
+    assert got.member_count == 99
+
+
+async def test_upsert_channel_with_photo_local_key_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q2:`upsert_channel` 含 photo_local_key 字段。"""
+    ch = ChannelDTO(id=100, title="X", photo_local_key="/tmp/avatar.jpg")
+    await mongo_repo.upsert_channel(ch)
+    got = await mongo_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"

@@ -61,8 +61,13 @@ class InMemoryRepository(StorageRepository):
         title: str | None = None,
         username: str | None = None,
         member_count: int | None = None,
+        photo_local_key: str | None = None,
     ) -> None:
-        """2026-08-27 v1.4.0 PR #14:InMemory 部分更新 — 只动非 None 字段。"""
+        """2026-08-27 v1.4.0 PR #14:InMemory 部分更新 — 只动非 None 字段。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段 — TDLib
+        `updateChatPhoto` 推本地路径时落库;`None` 表示不动。
+        """
         existing = self.channels.get(channel_id)
         if existing is None:
             return  # 不存在 idempotent 不抛
@@ -75,6 +80,9 @@ class InMemoryRepository(StorageRepository):
             created_at=existing.created_at,
             is_subscribed=existing.is_subscribed,
             last_synced_at=existing.last_synced_at,
+            photo_local_key=(
+                photo_local_key if photo_local_key is not None else existing.photo_local_key
+            ),
         )
 
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:

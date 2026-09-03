@@ -69,6 +69,29 @@ class ChannelUnsubscribed(Event):
 
 
 @dataclass
+class ChannelTitleChanged(Event):
+    """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatTitle` 推送频道改名。
+
+    UI `_ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
+    """
+
+    channel_id: int = 0
+    new_title: str = ""
+
+
+@dataclass
+class ChannelPhotoChanged(Event):
+    """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatPhoto` 推送频道头像变化。
+
+    `local_path` 是 TDLib 给的本地缓存绝对路径(frozen / sandbox 下路径
+    可能不可访问 — UI 走 placeholder 兜底)。None = 头像被删。
+    """
+
+    channel_id: int = 0
+    local_path: str | None = None
+
+
+@dataclass
 class MessageReceived(Event):
     """一条新消息已成功落库(可被 UI 视为"立即可见")。"""
 

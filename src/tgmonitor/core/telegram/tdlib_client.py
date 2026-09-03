@@ -252,6 +252,32 @@ class TdlibTelegramClient(_AiClient):
             self._on_supergroup_updated,
             update_type="updateSupergroup",
         )
+        # 2026-09-03 v1.6.0 PR #Q2:补 6 类 chat update handler
+        # (普通 chat 路径,与 channel/supergroup 区分;TDLib 区分三者)
+        self.add_event_handler(
+            self._on_chat_title,
+            update_type="updateChatTitle",
+        )
+        self.add_event_handler(
+            self._on_chat_photo,
+            update_type="updateChatPhoto",
+        )
+        self.add_event_handler(
+            self._on_chat_permissions,
+            update_type="updateChatPermissions",
+        )
+        self.add_event_handler(
+            self._on_chat_read_inbox,
+            update_type="updateChatReadInbox",
+        )
+        self.add_event_handler(
+            self._on_chat_read_outbox,
+            update_type="updateChatReadOutbox",
+        )
+        self.add_event_handler(
+            self._on_chat_default_banned_rights,
+            update_type="updateChatDefaultBannedRights",
+        )
 
         # 全局 catch:任何 update 进来都看一眼,把 Error 包的 code 记录下来。
         # tdlib_json 用 `await handler(self, update)` 调用,所以必须 (self, update)。
@@ -750,6 +776,123 @@ class TdlibTelegramClient(_AiClient):
                 )
         except Exception:  # noqa: BLE001
             log.exception("updateSupergroup handling failed")
+
+    # ---- 2026-09-03 v1.6.0 PR #Q2:补 6 类 TDLib chat update handler ----
+    # `updateChannel` / `updateSupergroup` 只覆盖 channel / supergroup 元数据;
+    # 普通频道(chat)改名 / 改头像 / 改权限 / 读位置 / 默认封禁权 由独立
+    # update 推送。本段 6 个 handler 全部仅「log + publish 事件」,落库走
+    # MonitorService 订阅事件统一处理(避免 handler 与 service 双向耦合)。
+
+    async def _on_chat_title(self, client_self, update) -> None:
+        """TDLib `updateChatTitle`(2026-09-03 v1.6.0 PR #Q2):普通频道标题变化。
+
+        update 结构:`{chat_id: int, title: str}`。chat_id 即 channel_id
+        (Telegram 全局 chat_id,与 channel 一致)。改名后 UI 实时刷 +
+        落库走 ChannelTitleChanged 事件订阅方。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            title = getattr(update, "title", None)
+            if not isinstance(chat_id, int) or not isinstance(title, str):
+                return
+            log.debug("updateChatTitle: chat_id=%s title=%r", chat_id, title)
+            if self._bus is not None:
+                from tgmonitor.core.events import ChannelTitleChanged
+
+                asyncio.create_task(
+                    self._bus.publish(ChannelTitleChanged(channel_id=chat_id, new_title=title))
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatTitle handling failed chat_id=%s", chat_id)
+
+    async def _on_chat_photo(self, client_self, update) -> None:
+        """TDLib `updateChatPhoto`(2026-09-03 v1.6.0 PR #Q2):频道头像变化。
+
+        update 结构:`{chat_id: int, photo: {local: {path: str}} | None}`。
+        `photo=None` 表示头像被删;`photo.local.path` 是 TDLib 本地缓存
+        绝对路径(frozen / sandbox 不可访问时 UI 走 placeholder)。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            if not isinstance(chat_id, int):
+                return
+            photo = getattr(update, "photo", None)
+            local_path: str | None = None
+            if isinstance(photo, dict):
+                local = photo.get("local")
+                if isinstance(local, dict):
+                    path = local.get("path")
+                    if isinstance(path, str):
+                        local_path = path
+            log.debug("updateChatPhoto: chat_id=%s local_path=%r", chat_id, local_path)
+            if self._bus is not None:
+                from tgmonitor.core.events import ChannelPhotoChanged
+
+                asyncio.create_task(
+                    self._bus.publish(
+                        ChannelPhotoChanged(channel_id=chat_id, local_path=local_path)
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatPhoto handling failed chat_id=%s", chat_id)
+
+    async def _on_chat_permissions(self, client_self, update) -> None:
+        """TDLib `updateChatPermissions`(2026-09-03 v1.6.0 PR #Q2):频道成员权限变化。
+
+        目前仅 log — 暂无 storage 字段映射(后续如需 ban / mute 元数据可加)。
+        保留 handler 防未知 update 静默丢失。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            permissions = getattr(update, "permissions", None)
+            log.info("updateChatPermissions: chat_id=%s perms=%r", chat_id, permissions)
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatPermissions handling failed")
+
+    async def _on_chat_read_inbox(self, client_self, update) -> None:
+        """TDLib `updateChatReadInbox`(2026-09-03 v1.6.0 PR #Q2):已读位置变化。
+
+        目前仅 log — 暂无 storage 字段映射。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            last_read = getattr(update, "last_read_inbox_message_id", None)
+            log.info(
+                "updateChatReadInbox: chat_id=%s last_read_msg_id=%s",
+                chat_id,
+                last_read,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatReadInbox handling failed")
+
+    async def _on_chat_read_outbox(self, client_self, update) -> None:
+        """TDLib `updateChatReadOutbox`(2026-09-03 v1.6.0 PR #Q2):已发送消息被读位置。
+
+        目前仅 log。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            last_read = getattr(update, "last_read_outbox_message_id", None)
+            log.info(
+                "updateChatReadOutbox: chat_id=%s last_read_msg_id=%s",
+                chat_id,
+                last_read,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatReadOutbox handling failed")
+
+    async def _on_chat_default_banned_rights(self, client_self, update) -> None:
+        """TDLib `updateChatDefaultBannedRights`(2026-09-03 v1.6.0 PR #Q2):
+        频道「默认封禁权」变化(新成员加入时的初始权限)。
+
+        目前仅 log。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            rights = getattr(update, "default_banned_rights", None)
+            log.info("updateChatDefaultBannedRights: chat_id=%s rights=%r", chat_id, rights)
+        except Exception:  # noqa: BLE001
+            log.exception("updateChatDefaultBannedRights handling failed")
 
     async def _safe_publish_channel_metadata(
         self,

@@ -162,6 +162,8 @@ def _channel_to_dict(c: ChannelDTO) -> dict[str, Any]:
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "is_subscribed": c.is_subscribed,
         "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
+        # 2026-09-03 v1.6.0 PR #Q2:头像本地路径,None 时省略(老库 roundtrip 干净)
+        "photo_local_key": c.photo_local_key,
     }
 
 
@@ -169,6 +171,8 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
     # 旧 channels.json 缺 is_subscribed / last_synced_at 字段 →
     # 旧库 migration:is_subscribed 默认 True(保留"存即订"语义),
     #               last_synced_at 留空。
+    # 2026-09-03 v1.6.0 PR #Q2:photo_local_key 同样模式 — 旧库无此字段
+    # → 默认 None(从未设过头像或被删)。
     return ChannelDTO(
         id=int(d["id"]),
         title=d["title"],
@@ -180,6 +184,7 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
         last_synced_at=(
             datetime.fromisoformat(d["last_synced_at"]) if d.get("last_synced_at") else None
         ),
+        photo_local_key=d.get("photo_local_key"),
     )
 
 
@@ -340,6 +345,13 @@ class JsonlFileStore(StorageRepository):
             created_at=channel.created_at,
             is_subscribed=(existing.is_subscribed if existing else False),
             last_synced_at=channel.last_synced_at,
+            # 2026-09-03 v1.6.0 PR #Q2:photo_local_key — sync 路径(无 update
+            # event 单独推头像)若 caller 给了就走 caller 的,否则保留旧值。
+            photo_local_key=(
+                channel.photo_local_key
+                if channel.photo_local_key is not None
+                else (existing.photo_local_key if existing else None)
+            ),
         )
         self._channels[channel.id] = merged
         self._flush_registry()
@@ -351,9 +363,14 @@ class JsonlFileStore(StorageRepository):
         title: str | None = None,
         username: str | None = None,
         member_count: int | None = None,
+        photo_local_key: str | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Jsonl 部分更新 — 只动非 None 字段,
-        其余保留旧值。is_subscribed 不动(本方法是「真元数据」更新)。"""
+        其余保留旧值。is_subscribed 不动(本方法是「真元数据」更新)。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段 — TDLib
+        `updateChatPhoto` 推本地路径时落库。
+        """
         existing = self._channels.get(channel_id)
         if existing is None:
             return  # 不存在 idempotent 不抛
@@ -366,6 +383,9 @@ class JsonlFileStore(StorageRepository):
             created_at=existing.created_at,
             is_subscribed=existing.is_subscribed,
             last_synced_at=existing.last_synced_at,
+            photo_local_key=(
+                photo_local_key if photo_local_key is not None else existing.photo_local_key
+            ),
         )
         self._channels[channel_id] = merged
         self._flush_registry()
@@ -388,6 +408,7 @@ class JsonlFileStore(StorageRepository):
                 created_at=existing.created_at,
                 is_subscribed=subscribed,
                 last_synced_at=existing.last_synced_at,
+                photo_local_key=existing.photo_local_key,  # 2026-09-03 PR #Q2
             )
         self._flush_registry()
 
@@ -462,7 +483,9 @@ class JsonlFileStore(StorageRepository):
             # 确保频道存在
             if message.channel_id not in self._channels:
                 self._channels[message.channel_id] = ChannelDTO(
-                    id=message.channel_id, title=f"#{message.channel_id}"
+                    id=message.channel_id,
+                    title=f"#{message.channel_id}",
+                    photo_local_key=None,  # 2026-09-03 PR #Q2:占位 stub 无头像
                 )
                 self._flush_registry()
             cf = await self._file_for(message.channel_id)

@@ -70,6 +70,8 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
         created_at=row["created_at"],
         is_subscribed=bool(row.get("subscribed", True)),
         last_synced_at=row.get("last_synced_at"),
+        # 2026-09-03 v1.6.0 PR #Q2:旧库可能没这列,get 兜底 None
+        photo_local_key=row.get("photo_local_key"),
     )
 
 
@@ -203,15 +205,18 @@ class PostgresRepository(StorageRepository):
     # ---- 频道 ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
-        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。"""
+        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     subscribed, last_synced_at, photo_local_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     username = EXCLUDED.username,
@@ -219,7 +224,8 @@ class PostgresRepository(StorageRepository):
                     member_count = EXCLUDED.member_count,
                     created_at = EXCLUDED.created_at,
                     subscribed = EXCLUDED.subscribed,
-                    last_synced_at = EXCLUDED.last_synced_at
+                    last_synced_at = EXCLUDED.last_synced_at,
+                    photo_local_key = EXCLUDED.photo_local_key
                 """,
                 channel.id,
                 channel.title,
@@ -229,25 +235,30 @@ class PostgresRepository(StorageRepository):
                 channel.created_at,
                 channel.is_subscribed,
                 channel.last_synced_at,
+                channel.photo_local_key,
             )
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
-        """只更元数据字段;subscribed 保持旧值(sync 用)。"""
+        """只更元数据字段;subscribed 保持旧值(sync 用)。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
+        """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     subscribed, last_synced_at, photo_local_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     username = EXCLUDED.username,
                     kind = EXCLUDED.kind,
                     member_count = EXCLUDED.member_count,
                     created_at = EXCLUDED.created_at,
-                    last_synced_at = EXCLUDED.last_synced_at
+                    last_synced_at = EXCLUDED.last_synced_at,
+                    photo_local_key = EXCLUDED.photo_local_key
                 """,
                 channel.id,
                 channel.title,
@@ -258,6 +269,7 @@ class PostgresRepository(StorageRepository):
                 # 首次插入时给个合理默认(False),后续 DO UPDATE 不动 subscribed
                 channel.is_subscribed,
                 channel.last_synced_at,
+                channel.photo_local_key,
             )
 
     async def update_channel_metadata(
@@ -267,23 +279,28 @@ class PostgresRepository(StorageRepository):
         title: str | None = None,
         username: str | None = None,
         member_count: int | None = None,
+        photo_local_key: str | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Postgres 部分更新 — `COALESCE($N, 列名)`
         把 None 映射成「保留旧值」,只动传入字段。
+
+        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
         """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 UPDATE channels SET
-                    title        = COALESCE($1, title),
-                    username     = COALESCE($2, username),
-                    member_count = COALESCE($3, member_count)
-                WHERE id = $4
+                    title           = COALESCE($1, title),
+                    username        = COALESCE($2, username),
+                    member_count    = COALESCE($3, member_count),
+                    photo_local_key = COALESCE($4, photo_local_key)
+                WHERE id = $5
                 """,
                 title,
                 username,
                 member_count,
+                photo_local_key,
                 channel_id,
             )
 
@@ -309,7 +326,7 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at "
+                "subscribed, last_synced_at, photo_local_key "
                 "FROM channels ORDER BY id"
             )
         return [_row_to_channel(r) for r in rows]
@@ -320,7 +337,7 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at "
+                "subscribed, last_synced_at, photo_local_key "
                 "FROM channels WHERE subscribed = TRUE ORDER BY id"
             )
         return [_row_to_channel(r) for r in rows]
@@ -331,7 +348,7 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at "
+                "subscribed, last_synced_at, photo_local_key "
                 "FROM channels WHERE id = $1",
                 channel_id,
             )

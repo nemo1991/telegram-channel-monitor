@@ -428,6 +428,53 @@ async def test_init_schema_pg_trgm_extension_idempotent(
     assert ext_exists is True
 
 
+# ---- v1.6.0 PR #Q2:photo_local_key 部分更新 parity ----
+
+
+async def test_update_channel_metadata_photo_local_key_pg(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q2:`COALESCE($4, photo_local_key)` 让 None 不动、其他字段保留。"""
+    ch = ChannelDTO(id=100, title="Old", username="@u", member_count=10)
+    await pg_repo.upsert_channel(ch)
+    await pg_repo.update_channel_metadata(100, photo_local_key="/tmp/avatar.jpg")
+    got = await pg_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"
+    assert got.title == "Old"
+    assert got.username == "@u"
+    assert got.member_count == 10
+
+
+async def test_update_channel_metadata_photo_local_key_preserves_other_pg(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q2:只动 photo_local_key,不动其他字段。"""
+    await pg_repo.upsert_channel(
+        ChannelDTO(id=100, title="Title", username="@u", member_count=99)
+    )
+    await pg_repo.update_channel_metadata(100, photo_local_key="/tmp/x.png")
+    got = await pg_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/x.png"
+    assert got.title == "Title"
+    assert got.username == "@u"
+    assert got.member_count == 99
+
+
+async def test_upsert_channel_with_photo_local_key_pg(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q2:`upsert_channel` 全字段 upsert 含 photo_local_key。"""
+    ch = ChannelDTO(
+        id=100, title="X", photo_local_key="/tmp/avatar.jpg"
+    )
+    await pg_repo.upsert_channel(ch)
+    got = await pg_repo.get_channel(100)
+    assert got is not None
+    assert got.photo_local_key == "/tmp/avatar.jpg"
+
+
 # ---- schema 幂等性 ----
 
 

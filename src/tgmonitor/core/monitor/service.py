@@ -24,6 +24,8 @@ from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.core.events import (
     ChannelMetadataChanged,
+    ChannelPhotoChanged,
+    ChannelTitleChanged,
     ConnectionStateChanged,
     ErrorOccurred,
     EventBus,
@@ -173,6 +175,11 @@ class MonitorService:
         # 2026-08-27 v1.4.0 PR #14:订阅频道元数据变更事件。`updateChannel`
         # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
         self.bus.subscribe(ChannelMetadataChanged, self._handle_channel_metadata)
+        # 2026-09-03 v1.6.0 PR #Q2:订阅普通 chat 改名 / 改头像事件。直接落库
+        # (channel_id 即 chat_id,无需反查);UI 端 `_ChannelListCard` 也会
+        # 订阅同一事件实时刷新卡片。
+        self.bus.subscribe(ChannelTitleChanged, self._handle_channel_title_changed)
+        self.bus.subscribe(ChannelPhotoChanged, self._handle_channel_photo_changed)
         self.bus.subscribe(ConnectionStateChanged, self._handle_connection_state)
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
         if self.downloader is not None:
@@ -767,6 +774,74 @@ class MonitorService:
             await self.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_metadata",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _handle_channel_title_changed(
+        self,
+        event: ChannelTitleChanged,
+    ) -> None:
+        """2026-09-03 v1.6.0 PR #Q2:`updateChatTitle` → 落库 title。
+
+        UI 端 `_ChannelListCard` 同时订阅此事件实时刷卡片;此处只负责
+        storage 持久化。不存在 channel 时 idempotent 不抛(TDLib 偶发对
+        陈年 chat 推 metadata update,落库时机晚于本 update)。
+        """
+        try:
+            await self.storage.update_channel_metadata(event.channel_id, title=event.new_title)
+            log.debug(
+                "channel title updated: channel=%s new_title=%r",
+                event.channel_id,
+                event.new_title,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("handle ChannelTitleChanged failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.channel_title",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _handle_channel_photo_changed(
+        self,
+        event: ChannelPhotoChanged,
+    ) -> None:
+        """2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` → 落库 photo_local_key。
+
+        `event.local_path`:
+        - 非空 str → 头像本地缓存路径,落库覆盖旧值
+        - 空字符串 `""` → 头像被删,**显式**写 NULL 进 storage
+        - None → 不动字段(等价于其他字段 None 语义;COALESCE 兜底)
+
+        三态区分让 TDLib 推送「删头像」与「不动头像」可被观测。
+        UI 端 `_ChannelListCard` 订阅此事件实时刷图标。
+        """
+        try:
+            if event.local_path is None:
+                # None = 「不动」(与既有 partial update None 语义对齐)
+                log.debug("channel photo no-op: channel=%s", event.channel_id)
+                return
+            # 非 None(包含空串):显式写真值。
+            # 空串 "" → 视为「头像被删」→ 写 NULL;非空 → 写真路径。
+            photo_to_set: str | None = event.local_path if event.local_path else None
+            await self.storage.update_channel_metadata(
+                event.channel_id, photo_local_key=photo_to_set
+            )
+            log.debug(
+                "channel photo updated: channel=%s local_path=%r -> %r",
+                event.channel_id,
+                event.local_path,
+                photo_to_set,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("handle ChannelPhotoChanged failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.channel_photo",
                     message=str(e),
                     exception=e,
                 )

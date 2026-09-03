@@ -31,7 +31,12 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import ChannelDTO
-from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
+from tgmonitor.core.events import (
+    ChannelPhotoChanged,
+    ChannelSubscribed,
+    ChannelTitleChanged,
+    ChannelUnsubscribed,
+)
 from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
@@ -386,9 +391,47 @@ class ChannelWidget(QWidget):
                 self._add_to_subscribed_list(e.channel)
             elif isinstance(e, ChannelUnsubscribed):
                 self._remove_from_subscribed_list(e.channel_id)
+            elif isinstance(e, ChannelTitleChanged):
+                # 2026-09-03 v1.6.0 PR #Q2:实时刷新卡片标题。
+                # 不重启应用 = 数据 stale 的问题修掉。
+                self._apply_title_changed(e.channel_id, e.new_title)
+            elif isinstance(e, ChannelPhotoChanged):
+                # 2026-09-03 v1.6.0 PR #Q2:实时刷新头像(local 路径可能不可访问,
+                # 由 _ChannelListCard 兜底 placeholder)。
+                self._apply_photo_changed(e.channel_id, e.local_path)
 
         bus.subscribe(ChannelSubscribed, _on)
         bus.subscribe(ChannelUnsubscribed, _on)
+        bus.subscribe(ChannelTitleChanged, _on)
+        bus.subscribe(ChannelPhotoChanged, _on)
+
+    def _apply_title_changed(self, channel_id: int, new_title: str) -> None:
+        """2026-09-03 v1.6.0 PR #Q2:更新 _joined 缓存 + 重建两张卡上对应 item 的
+        display 文本(`ch.display` 用 title 拼)。
+        """
+        ch = self._joined.get(channel_id)
+        if ch is None:
+            return  # 频道不在 joined 卡,可能未刷新过
+        ch.title = new_title
+        # 重建 item 文本(简单路径 — QListWidgetItem.setText)
+        for card in (self.joined_card, self.subs_card):
+            for i in range(card.lst.count()):
+                it = card.lst.item(i)
+                if it and it.data(Qt.UserRole) == channel_id:
+                    it.setText(ch.display)
+
+    def _apply_photo_changed(self, channel_id: int, local_path: str | None) -> None:
+        """2026-09-03 v1.6.0 PR #Q2:更新 _joined 缓存 + 重建两张卡上对应 item 的
+        图标。`_kind_icon` 当前用 kind 而非 photo,这里**保留占位** —
+        真头像路径需要 lightbox 路径适配(frozen / sandbox 不可访问),
+        留给后续 PR。MVP 仅更新内存缓存与 storage。
+        """
+        ch = self._joined.get(channel_id)
+        if ch is None:
+            return
+        ch.photo_local_key = local_path
+        # 后续 PR:实际加载 `local_path` 头像并 `item.setIcon(QIcon(local_path))`,
+        # 失败则保持 _kind_icon placeholder。MVP 不实现 icon 实时刷新。
 
     def _add_to_subscribed_list(self, ch: ChannelDTO) -> None:
         if ch.id in self._subscribed_ids:

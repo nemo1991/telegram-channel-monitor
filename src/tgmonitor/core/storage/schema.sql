@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS channels (
 -- subscribed 默认 TRUE 保留"存即订"语义 — 旧用户不会被升级变成未订阅。
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribed BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
+-- 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推本地路径缓存 — UI 实时刷新头像
+-- 用。IF NOT EXISTS 幂等,旧库自动迁移加列。
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS photo_local_key TEXT;
 
 CREATE TABLE IF NOT EXISTS messages (
     id                  BIGSERIAL PRIMARY KEY,
