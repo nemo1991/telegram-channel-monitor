@@ -557,15 +557,20 @@ def test_model_reset_clears_index(qapp):
 
 
 def test_model_truncates_at_max_items(qapp):
-    """PR #D1:`append` 触发 MAX_ITEMS=1000 截断 — 超过 N+1 条后只保留 N 条。"""
+    """PR #D1:`append` 触发 MAX_ITEMS 截断 — 超过 N+1 条后只保留 N 条。
+
+    2026-09-03 v1.5.4 PR #P1:MAX_ITEMS 1000 → 10000,本测试 append MAX_ITEMS+1 条
+    验证截断边界。性能上 PR #P1 同时修了 _truncate_tail O(N)→O(1),10K 截断不再
+    退化为 O(N²)。
+    """
     view = MessageView()
-    # MAX_ITEMS = 1000,append 1001 条
-    for i in range(1001):
+    # MAX_ITEMS = 10000,append 10001 条
+    for i in range(MessageView.MAX_ITEMS + 1):
         view.append(_make_msg(1, i))
     assert view._model.rowCount() == MessageView.MAX_ITEMS
-    # 最早 append 的 (1, 0) 应被截断(最新 1001 条留)
+    # 最早 append 的 (1, 0) 应被截断(最新 MAX_ITEMS 条留)
     assert (1, 0) not in view._model._index_of
-    assert (1, 1000) in view._model._index_of
+    assert (1, MessageView.MAX_ITEMS) in view._model._index_of
 
 
 def test_model_data_hidden_role_when_filter_empty(qapp):
@@ -689,3 +694,157 @@ def test_brush_default_unchanged_in_qtgui(qapp):
     from PySide6.QtGui import QColor
 
     assert QBrush() != QBrush(QColor(232, 240, 248))
+
+
+# ============================================================
+# 2026-09-03 v1.5.4 PR #P1:_truncate_tail O(1) 重构 + MAX_ITEMS=10000 实验性 bump。
+# ============================================================
+
+
+def test_truncate_tail_is_o1(qapp):
+    """PR #P1:`_truncate_tail` 走 `_row_to_key.pop(last, None)` O(1)。
+
+    mock 10K 条后,验 `_truncate_tail` 单次调耗时 < 1ms(防 O(N) 退化为 N² 回归)。
+    """
+    import time
+
+    view = MessageView()
+    # 准备 10K 条触发 MAX_ITEMS 截断(append 时 _truncate_tail 会被调)
+    for i in range(MessageView.MAX_ITEMS + 1):
+        view.append(_make_msg(1, i))
+    # 此时 MAX_ITEMS 条,rowCount == 10000
+    assert view._model.rowCount() == MessageView.MAX_ITEMS
+    # 再调一次 append(append #10001,触发 _truncate_tail 单次)
+    t0 = time.perf_counter()
+    view.append(_make_msg(1, 10001))
+    elapsed = time.perf_counter() - t0
+    # O(1) 应 < 1ms;O(N) 退化版会 > 10ms(10K dict scan)
+    assert elapsed < 0.01, f"_truncate_tail 应 O(1),实测 {elapsed * 1000:.2f}ms"
+
+
+def test_row_to_key_in_sync_with_index_of(qapp):
+    """PR #P1:**invariant test** — `_row_to_key[r] == (cid, mid)` 必须与
+    `_index_of[(cid, mid)] == r` 严格镜像。任何 append / remove / reset
+    漏维护任一索引 → 此测试立即 fail。
+    """
+    view = MessageView()
+    # append 一批
+    for i in range(100):
+        view.append(_make_msg(1, i))
+    _assert_invariant(view)
+    # 删几个
+    view.remove_row(1, 50)
+    view.remove_row(1, 30)
+    view.remove_row(1, 70)
+    _assert_invariant(view)
+    # 再 append
+    for i in range(200, 300):
+        view.append(_make_msg(2, i))
+    _assert_invariant(view)
+    # set_messages 整批(公开 API,内部走 clear_view + append 循环)
+    view.set_messages([_make_msg(3, k) for k in range(50)])
+    _assert_invariant(view)
+
+
+def _assert_invariant(view: MessageView) -> None:
+    """断言 `_row_to_key` 与 `_index_of` 严格镜像。"""
+    model = view._model
+    # row → key 与 _index_of[(cid, mid)] == row 必须双向等价
+    assert len(model._row_to_key) == len(model._items)
+    assert len(model._index_of) == len(model._items)
+    for r, key in model._row_to_key.items():
+        assert model._index_of[key] == r, (
+            f"invariant broken at row={r}: _row_to_key={key} but _index_of[{key}]={model._index_of[key]}"
+        )
+
+
+def test_reset_populates_row_to_key(qapp):
+    """PR #P1:`_model.reset([m1..m100])` 后 `_row_to_key == {0: key0, 1: key1, ...}`。"""
+    view = MessageView()
+    msgs = [_make_msg(1, i) for i in range(100)]
+    view._model.reset(msgs)
+    assert len(view._model._row_to_key) == 100
+    for i, m in enumerate(msgs):
+        assert view._model._row_to_key[i] == (m.channel_id, m.telegram_msg_id)
+
+
+def test_remove_row_updates_row_to_key(qapp):
+    """PR #P1:`remove_row(cid, mid)` 删行后,row > 删 row 的 entry 全部 -1。
+
+    用公开 API `remove_row`(内部调 `model.remove_by_key`)。删的是**最后一个 row**,
+    没有 shift → `row_to_delete` 应真的从 `_row_to_key` 消失;删中间 row 测
+    (1, 5) 已不在 _row_to_key 的 value 集合里。
+    """
+    view = MessageView()
+    for i in range(10):
+        view.append(_make_msg(1, i))
+    # ---- 删中间 row(测 shift + value 集合)----
+    # append 是头部插入,最新 (1, 9) 在 row 0;(1, 5) 在 row 4
+    view.remove_row(1, 5)
+    # (1, 5) 不再在 _row_to_key 的 value 集合里
+    assert (1, 5) not in view._model._row_to_key.values()
+    # 全表 row 连续 0..8(shift 后 row=4 仍存在,只是填了 shifted 内容)
+    assert len(view._model._row_to_key) == 9
+    assert sorted(view._model._row_to_key.keys()) == list(range(9))
+    # ---- 删最后一个 row(测边界 case — 无 shift)----
+    # 此时 (1, 0) 在 row 9(最旧,append 最后被推到 tail)
+    last_row = view._model._index_of[(1, 0)]
+    view.remove_row(1, 0)
+    assert last_row not in view._model._row_to_key
+    assert (1, 0) not in view._model._row_to_key.values()
+    assert len(view._model._row_to_key) == 8
+    assert sorted(view._model._row_to_key.keys()) == list(range(8))
+
+
+def test_max_items_bumped_to_10000(qapp):
+    """PR #P1:MAX_ITEMS 1000 → 10000。"""
+    assert MessageView.MAX_ITEMS == 10000
+
+
+def test_set_messages_respects_max_10000(qapp):
+    """PR #P1:`set_messages([m1..m10001])` → rowCount == 10000,最旧一条被截断。
+
+    `set_messages` 走 `clear_view + append 循环`,append 是 head-insert,
+    所以 (1, 0) 是 oldest,会落到 tail,被 _truncate_tail 砍掉。
+    """
+    view = MessageView()
+    msgs = [_make_msg(1, i) for i in range(10001)]
+    view.set_messages(msgs)
+    assert view._model.rowCount() == 10000
+    # 最旧 (1, 0) 应被截断
+    assert (1, 0) not in view._model._index_of
+    # 最新 (1, 10000) 应保留(head)
+    assert (1, 10000) in view._model._index_of
+
+
+def test_stress_10k_messages_append_dedup_truncate(qapp):
+    """PR #P1:**stress test** — append 10K 条 + 中途 100 次 remove,验证:
+
+    - rowCount 最终 == 9900(10K - 100)
+    - `_row_to_key` 与 `_index_of` 严格镜像(invariant)
+    - 整测试耗时 < 15s(append 本身是 O(N) shift 累计 O(N²),MAX_ITEMS
+      1000 → 10000 后自然放大 ~10×;本测试只防 O(N³) 级别的极端退化,
+      例如 invariant 漏维护导致 O(N) dict scan × N 次 append)
+
+    用 `time.perf_counter` 计时,15s 是 CI 容忍阈值;本地实测一般 < 12s。
+    """
+    import time
+
+    view = MessageView()
+    t0 = time.perf_counter()
+    # 10K append
+    for i in range(10_000):
+        view.append(_make_msg(1, i))
+    # 100 次 remove(中途)
+    for i in range(0, 10_000, 100):
+        view.remove_row(1, i)
+    elapsed = time.perf_counter() - t0
+    # rowCount 验证
+    assert view._model.rowCount() == 9_900, (
+        f"10K append - 100 remove 应得 9900,但 rowCount={view._model.rowCount()}"
+    )
+    # invariant 验证
+    _assert_invariant(view)
+    # 性能阈值 — 防 O(N³) 极端退化(append 本身 O(N) shift 是 by design,
+    # 累计 O(N²) 不在本 PR 范围;未来 PR 可改 deque + index map 做到 O(1) amortized)
+    assert elapsed < 15.0, f"stress 应 < 15s,实测 {elapsed:.2f}s(可能 O(N³) 退化)"

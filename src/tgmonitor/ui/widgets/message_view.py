@@ -65,6 +65,12 @@ class MessageListModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list[MessageDTO] = []
         self._index_of: dict[tuple[int, int], int] = {}
+        # 2026-09-03 v1.5.4 PR #P1:反向索引 — row → key,_truncate_tail O(1) 拿 key。
+        # 旧版 `next((k for k, v in self._index_of.items() if v == last), None)`
+        # 是 O(N) 扫表,高频频道 append 时累计退化为 O(N²);新索引与 _index_of 严格
+        # 镜像(任何 append / remove / reset 都必须同步维护两索引 — 由
+        # `test_row_to_key_in_sync_with_index_of` invariant test 兜底)。
+        self._row_to_key: dict[int, tuple[int, int]] = {}
         self._channel_titles: dict[int, str] = {}
         self._filter_text: str = ""
 
@@ -122,23 +128,31 @@ class MessageListModel(QAbstractListModel):
         # 插入头部
         self.beginInsertRows(QModelIndex(), 0, 0)
         self._items.insert(0, m)
-        # _index_of 全部 +1
+        # _index_of 全部 +1(现有 row 都向后挪 1)
         for k in self._index_of:
             self._index_of[k] += 1
         self._index_of[key] = 0
+        # 2026-09-03 v1.5.4 PR #P1:同步维护反向索引 — 镜像 _index_of 偏移。
+        # **必须反向迭代** sorted(keys, reverse=True):正向迭代时,先 pop(r) 再 set
+        # _row_to_key[r+1] 会**覆盖**下一个迭代要 pop 的位置(后续 r+1 拿到的是刚
+        # set 的值,而非原值,链式覆盖最终只剩最后一个 entry)。反向迭代 r 从大到小,
+        # set r+1 不影响当前/更小的 keys — 安全。
+        for r in sorted(self._row_to_key.keys(), reverse=True):
+            self._row_to_key[r + 1] = self._row_to_key.pop(r)
+        self._row_to_key[0] = key
         self.endInsertRows()
         # MAX_ITEMS 截断(尾部删)
         while len(self._items) > MessageView.MAX_ITEMS:
             self._truncate_tail()
 
     def _truncate_tail(self) -> None:
-        """删尾部一行 — 同步 _index_of 偏移。"""
+        """删尾部一行 — 同步 _index_of + _row_to_key 偏移。"""
         last = len(self._items) - 1
         if last < 0:
             return
         self.beginRemoveRows(QModelIndex(), last, last)
-        # 找 key → row == last
-        removed_key = next((k for k, v in self._index_of.items() if v == last), None)
+        # 2026-09-03 v1.5.4 PR #P1:O(1) 拿 key(原 O(N) `next(... if v == last)` 退化为 N²)
+        removed_key = self._row_to_key.pop(last, None)
         if removed_key is not None:
             del self._index_of[removed_key]
         del self._items[last]
@@ -152,7 +166,19 @@ class MessageListModel(QAbstractListModel):
             return
         self.beginRemoveRows(QModelIndex(), row, row)
         del self._items[row]
-        # 后面 row index -1
+        # 2026-09-03 v1.5.4 PR #P1:同步删 _row_to_key + row > row 的 entry -1。
+        # 先显式 pop(row),然后剩下的 > row 全部 -1。
+        # 若不先 pop,删除最后一行的边界 case(row == len-1)会留下 stale entry —
+        # 因为 `r > row` 分支不会触碰 r == row,row 自己永远不会被清。
+        self._row_to_key.pop(row, None)
+        # 2026-09-03 v1.5.4 PR #P1:必须按**数值升序**处理 — append 阶段用 reverse 写,
+        # 导致 `_row_to_key` 的插入顺序与 key 数值顺序相反(大 key 先插入);
+        # 用 `list(self._row_to_key.keys())` 按插入序遍历会先 pop 大 row,但 set r-1
+        # 又把刚移走的值塞回去 — cascading overwrite 丢 entry。sorted() 按数值序遍历,
+        # set r-1 不影响更小的 row,安全。
+        for r in sorted(r for r in self._row_to_key if r > row):
+            self._row_to_key[r - 1] = self._row_to_key.pop(r)
+        # 后面 row index -1(_index_of 镜像)
         for k in self._index_of:
             if self._index_of[k] > row:
                 self._index_of[k] -= 1
@@ -168,6 +194,8 @@ class MessageListModel(QAbstractListModel):
         self.beginResetModel()
         self._items = list(messages)
         self._index_of = {(m.channel_id, m.telegram_msg_id): i for i, m in enumerate(self._items)}
+        # 2026-09-03 v1.5.4 PR #P1:批量构反向索引(与 _index_of 镜像)
+        self._row_to_key = {i: (m.channel_id, m.telegram_msg_id) for i, m in enumerate(self._items)}
         # MAX_ITEMS 截断(尾部删,不走 beginRemoveRows 因为已在 resetModel 中)
         while len(self._items) > MessageView.MAX_ITEMS:
             self._truncate_tail_inplace()
@@ -178,8 +206,8 @@ class MessageListModel(QAbstractListModel):
         if not self._items:
             return
         last = len(self._items) - 1
-        # 找 key → row == last
-        removed_key = next((k for k, v in self._index_of.items() if v == last), None)
+        # 2026-09-03 v1.5.4 PR #P1:O(1) 拿 key(原 O(N) `next(... if v == last)` 退化为 N²)
+        removed_key = self._row_to_key.pop(last, None)
         if removed_key is not None:
             del self._index_of[removed_key]
         del self._items[last]
@@ -364,7 +392,9 @@ class MessageView(QListView):
     count / MAX_ITEMS / _format),内部 model + delegate 换皮。
     """
 
-    MAX_ITEMS = 1000
+    MAX_ITEMS = (
+        10000  # 2026-09-03 v1.5.4 PR #P1:实验性 bump(原 1000,CHANGELOG v1.5.3 PR #D1 已埋钩子)
+    )
 
     # 用户点击一条消息 → emit MessageDTO 给详情面板
     message_selected = Signal(object)
