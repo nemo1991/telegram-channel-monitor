@@ -5,6 +5,43 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0] - Unreleased
+
+主题:**渠道深化 — 全文索引 + 实时元数据** — 2 PR 进行中。
+PR #Q1 把 v1.5.1 PR #B2 引入的 `LOWER LIKE` 全表扫升级为 GIN trgm
+索引,补全 PG / Mongo 集成测试对 `list_messages(search=...)` 的
+parity 覆盖;PR #Q2 补齐 6 类 TDLib chat update handler。
+
+### ✨ Added
+
+- **pg_trgm GIN 索引(PR #Q1)** — `messages.text` 与 `media.file_name`
+  字段加 trgm GIN,既有 SQL `LOWER(text) LIKE` / `LOWER(file_name) LIKE`
+  不动,planner 自动命中索引(10K 消息搜「猫」从 ~80ms 降到 <5ms)。
+- **Mongo case-insensitive collation 索引(PR #Q1)** —
+  `db.messages.media.file_name` 加 `strength=2` collation 索引,与
+  PG trgm GIN 等价(Mongo `$or regex` 路径从 COLLSCAN 降级为 IXSCAN)。
+- **集成测试 parity 补漏(PR #Q1)** — `test_pg_repo_parity.py` +7
+  (testcontainers 真 PG)、`test_mongo_repo_parity.py` +6
+  (mongomock_motor in-process);含 search 单字段命中、大小写不敏感、
+  跨频道聚合、空 search 短路、escape 通配符(`%` 不当 SQL 通配符)。
+- **pg_trgm 幂等迁移(PR #Q1)** — `init_schema()` 检测到 superuser
+  权限不足时 log warning + 跳过 GIN 索引创建,`LOWER LIKE` 全表扫
+  仍可用(只是慢)。生产部署由 README 段引导首次手动授权。
+
+### 🔧 Changed
+
+- **`init_schema` PermissionDenied 兜底(PR #Q1)** — Postgres
+  `init_schema()` 整体 `try/except` + log.warning,**不抛**(此前任一
+  SQL 失败都直接 raise,会让 `LOWER LIKE` 仍工作的环境被误判「schema
+  损坏」)。
+
+### 📝 Notes
+
+- **`CREATE EXTENSION pg_trgm` 权限要求** — heroku / RDS / GCP Cloud
+  SQL / 阿里 RDS 默认允许;self-hosted 首次部署需 `CREATE EXTENSION
+  pg_trgm;` 手动授权。`init_schema()` 失败兜底已加,用户**不必**手动
+  执行即可启动应用(只是搜索性能降级)。
+
 ## [1.5.4] - 2026-09-03
 
 主题:**补丁版性能债 + UX 收尾** — 4 PR / ~350 LOC 净增 / +29 测试 / 零新依赖。

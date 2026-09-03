@@ -186,13 +186,19 @@ class MongoRepository(StorageRepository):
 
     async def init_schema(self) -> None:
         """建索引:(channel_id, telegram_msg_id) 唯一 / (channel_id, date) /
-        (date) / media.message_id / media.telegram_file_id — 幂等
-        (create_index 同名 no-op)。
+        (date) / media.message_id / media.telegram_file_id / media.file_name
+        (case-insensitive collation) — 幂等(create_index 同名 no-op)。
 
         2026-08-31 v1.5.0 PR #A7:加 `media.telegram_file_id` 子文档索引 —
         `find_media_by_file_id` 修后走 `$unwind + $match` 路径,需此索引
         走 multikey 命中避免全表扫。旧 `db.media.telegram_file_id` 索引
         保留向后兼容(空集合不影响 query planner)。
+
+        2026-09-03 v1.6.0 PR #Q1:加 `media.file_name` case-insensitive
+        collation 索引 — list_messages(search=...) 命中 `$or` 走
+        `media.file_name regex` 路径,collation 索引让大小写不敏感匹配
+        走 IXSCAN 而非全表扫。mongomock_motor collation 部分支持,集成测试
+        见 `test_mongo_repo_parity.py`。
         """
         # 唯一索引
         await self.db.messages.create_index(
@@ -202,6 +208,25 @@ class MongoRepository(StorageRepository):
         await self.db.messages.create_index([("date", 1)])
         # 子文档 multikey 索引 — find_media_by_file_id 用(2026-08-31 PR #A7)
         await self.db.messages.create_index([("media.telegram_file_id", 1)])
+        # 2026-09-03 v1.6.0 PR #Q1:file_name collation 索引 — strength=2
+        # 表示大小写不敏感、重音敏感,覆盖「搜索大小写不敏感」的 list_messages
+        # 行为。collation 名 `en_US` 跟随业务默认(locale 影响排序 / 索引,
+        # 与既有 `db.messages` 主索引一致)。
+        try:
+            await self.db.messages.create_index(
+                [("media.file_name", 1)],
+                name="idx_messages_media_file_name_ci",
+                collation={"locale": "en", "strength": 2},
+            )
+        except Exception:
+            # mongomock_motor 部分版本不支持 collation 参数;集成测试 mongomock
+            # 路径可能 IndexOptionsConflict。吞掉,功能仍可用(只是扫表)。
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "create_index(file_name collation) failed, fallback to table scan",
+                exc_info=True,
+            )
         # 旧 db.media 索引保留(空集合,无害)
         await self.db.media.create_index([("message_id", 1)])
         await self.db.media.create_index([("telegram_file_id", 1)])

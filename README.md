@@ -135,6 +135,14 @@ tgmonitor/
 - **macOS 首次启动**:`.app` 未签名会被 Gatekeeper 拦截 → 「系统设置 → 隐私与安全性 → 仍要打开」
 - **Linux**:缺 Qt 系统库报 `could not load Qt platform plugin "xcb"` 时:
   `sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxcb-cursor0`
+- **Postgres(2026-09-03 v1.6.0 PR #Q1)**:搜索加速用 `pg_trgm` 扩展。
+  首次部署**需 superuser** 手动授权:
+  ```sql
+  CREATE EXTENSION pg_trgm;
+  ```
+  heroku / GCP Cloud SQL / 阿里 RDS / AWS RDS 默认允许;self-hosted
+  PostgreSQL 需手动跑一次。`init_schema()` 检测到无权限会 log
+  warning + 跳过 GIN 索引创建,`LOWER LIKE` 全表扫仍可用(只是慢)。
 
 ---
 

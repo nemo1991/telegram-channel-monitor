@@ -297,6 +297,137 @@ async def test_ping(pg_repo: PostgresRepository) -> None:
     assert await pg_repo.ping() is True
 
 
+# ---- v1.6.0 PR #Q1:pg_trgm GIN 索引 + 搜索 parity -----------------------
+
+
+async def test_list_messages_search_hits_text(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:`LOWER(text) LIKE` 命中 pg_trgm GIN 索引(走 planner 自动命中)。
+
+    验证搜索功能正确:4 条种子数据,search="猫" 只命中 msg1(text 含「猫」)。
+    """
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await pg_repo.save_message(
+        _mk_msg(channel_id=100, msg_id=1, text="今天见到一只猫"),
+    )
+    await pg_repo.save_message(
+        _mk_msg(channel_id=100, msg_id=2, text="今天天气好"),
+    )
+    msgs = await pg_repo.list_messages([100], search="猫")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_list_messages_search_case_insensitive(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:大小写不敏感命中 — schema.sql 索引是 `LOWER(text) gin_trgm_ops`,
+    SQL 端 `LOWER(text) LIKE` 自动 case-fold 命中。
+    """
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await pg_repo.save_message(
+        _mk_msg(channel_id=100, msg_id=1, text="CAT meow"),
+    )
+    await pg_repo.save_message(
+        _mk_msg(channel_id=100, msg_id=2, text="dog woof"),
+    )
+    msgs = await pg_repo.list_messages([100], search="cat")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+    # 反向大小写也命中(索引已 case-fold,无需重建)
+    msgs2 = await pg_repo.list_messages([100], search="CAT")
+    assert [m.telegram_msg_id for m in msgs2] == [1]
+
+
+async def test_list_messages_search_hits_media_file_name(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:`EXISTS (SELECT 1 FROM media ... LOWER(file_name) LIKE ...)` 命中
+    `idx_media_file_name_trgm` GIN 索引 — 子串搜媒体文件名。
+    """
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await pg_repo.save_message(
+        _mk_msg(
+            channel_id=100,
+            msg_id=1,
+            text="无文字",
+            media=[_photo(fid="f1", file_name="screenshot_2026.png")],
+        ),
+    )
+    await pg_repo.save_message(
+        _mk_msg(
+            channel_id=100,
+            msg_id=2,
+            text="无文字",
+            media=[_photo(fid="f2", file_name="photo.jpg")],
+        ),
+    )
+    msgs = await pg_repo.list_messages([100], search="screenshot")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_list_messages_search_across_channels(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:跨频道聚合 search(v1.5.3 PR #D2 引入的聚合 scope)。
+    5 频道各 10 消息,搜「猫」应横跨 5 频道命中所有含「猫」消息。
+    """
+    for cid in range(101, 106):
+        await pg_repo.upsert_channel(ChannelDTO(id=cid, title=f"c{cid}"))
+        for mid in range(1, 11):
+            text = f"消息{mid} 包含猫的图片" if mid % 2 == 0 else f"消息{mid} 普通内容"
+            await pg_repo.save_message(_mk_msg(channel_id=cid, msg_id=mid, text=text))
+    msgs = await pg_repo.list_messages([101, 102, 103, 104, 105], search="猫")
+    # 每频道 mid=2,4,6,8,10 共 5 条 × 5 频道 = 25 条
+    assert len(msgs) == 25
+    channels_hit = {m.channel_id for m in msgs}
+    assert channels_hit == {101, 102, 103, 104, 105}
+
+
+async def test_list_messages_search_empty_no_filter(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:`search=""` 不走 LIKE 子句,返全部。
+    验证空 search 不命中任何 LIKE path(planner 短路)。
+    """
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    for mid in (1, 2, 3):
+        await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    msgs = await pg_repo.list_messages([100], search="")
+    assert len(msgs) == 3
+
+
+async def test_list_messages_search_escaped_wildcard_safe(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:user 输入 `%` 不应被当作 SQL 通配符 — LIKE ESCAPE '\\'
+    把 `%` 转义为字面字符。这是 v1.5.1 PR #B2 既有逻辑,本 PR 加真 PG
+    集成测试兜底(防回归 — 之前只用 in-memory mock 测)。
+    """
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=1, text="100% complete"))
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=2, text="half done"))
+    # 搜 `%` 应只命中字面 % 的那条,不是所有
+    msgs = await pg_repo.list_messages([100], search="%")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_init_schema_pg_trgm_extension_idempotent(
+    pg_repo: PostgresRepository,
+) -> None:
+    """PR #Q1:`CREATE EXTENSION IF NOT EXISTS pg_trgm` 幂等 — 二次跑
+    init_schema 不抛错,且 pg_trgm extension 存在。
+    """
+    # pg_repo fixture 已经跑过一次 init_schema;再跑一次验证幂等
+    await pg_repo.init_schema()
+    assert await pg_repo.ping() is True
+    # 验证 extension 真的装上了
+    async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
+        ext_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')"
+        )
+    assert ext_exists is True
+
+
 # ---- schema 幂等性 ----
 
 

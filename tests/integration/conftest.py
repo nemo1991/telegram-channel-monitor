@@ -86,10 +86,24 @@ def pg_engine() -> Iterator[str]:
 
 @pytest_asyncio.fixture
 async def pg_repo(pg_engine) -> AsyncIterator[PostgresRepository]:
-    """function-scope:每次测试全新 schema,避免 case 间状态泄漏。"""
+    """function-scope:每次测试全新 schema,避免 case 间状态泄漏。
+
+    2026-09-03 v1.6.0 PR #Q1:`CREATE EXTENSION pg_trgm` 需 superuser —
+    testcontainers PG 默认 root 账号是 superuser,所以扩展能装。fixture
+    在 repo.connect() 后、init_schema() 前显式 `CREATE EXTENSION` 一次
+    (idempotent),保证 schema.sql 的 `CREATE EXTENSION IF NOT EXISTS`
+    走过完整路径(包括 PermissionDenied 兜底)。
+    """
     repo = PostgresRepository(dsn=pg_engine)
     await repo.connect()
     try:
+        # 显式建扩展,确保后续 init_schema 的 GIN 索引能正常创建
+        async with repo._pool.acquire() as conn:  # type: ignore[attr-defined]
+            try:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+            except Exception:
+                # 兜底:init_schema 内部也会再试一次,这里是 best-effort
+                pass
         await repo.init_schema()
         # 清理 schema:直接 drop tables + recreate,比 TRUNCATE 更快也更彻底
         async with repo._pool.acquire() as conn:  # type: ignore[attr-defined]

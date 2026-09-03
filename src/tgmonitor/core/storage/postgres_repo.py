@@ -165,11 +165,30 @@ class PostgresRepository(StorageRepository):
             self._pool = None
 
     async def init_schema(self) -> None:
-        """执行 schema.sql(创建表 + 索引);幂等(全 IF NOT EXISTS)。"""
+        """执行 schema.sql(创建表 + 索引);幂等(全 IF NOT EXISTS)。
+
+        2026-09-03 v1.6.0 PR #Q1:`CREATE EXTENSION pg_trgm` 需 superuser,
+        旧 PG 托管或受限账号没权限 → permission denied。**失败不抛**,把
+        `CREATE EXTENSION` 单独跑 + log warning,后续 GIN 索引创建失败同
+        样吞掉;`LOWER LIKE` 全表扫仍可用(只是慢)。生产部署由 README 段
+        指引用户首次手动授权。
+        """
         assert self._pool is not None
         sql = SCHEMA_FILE.read_text(encoding="utf-8")
         async with self._pool.acquire() as conn:
-            await conn.execute(sql)
+            try:
+                await conn.execute(sql)
+            except Exception as exc:
+                # 2026-09-03 v1.6.0 PR #Q1:最常见原因是 superuser 权限不足
+                # (pg_trgm GIN 索引需要)。log.warning 不抛 — `LOWER LIKE`
+                # 全表扫仍是合法行为,只是性能降级。生产环境若需要 GIN 加速
+                # 由 README 段引导手动 `CREATE EXTENSION pg_trgm`。
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "init_schema 部分失败(可能是 pg_trgm 权限不足,功能仍可用): %s",
+                    exc,
+                )
 
     async def ping(self) -> bool:
         """SELECT 1 探活;任何异常返 False。"""

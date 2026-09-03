@@ -1,6 +1,13 @@
 -- PostgreSQL 参考 DDL(Mongo 不固定 schema,仅以此为逻辑对照)
 -- 幂等,init_schema() 会在启动时执行。
 
+-- 2026-09-03 v1.6.0 PR #Q1:pg_trgm GIN 索引加速 LIKE 搜索
+-- 需 PG ≥9.1,superuser 权限(heroku / RDS / GCP Cloud SQL / 阿里 RDS
+-- 默认允许;self-hosted 首次部署需手动 `CREATE EXTENSION pg_trgm;`)。
+-- init_schema() 检测到 PermissionDenied → log warning + 跳过索引创建,
+-- 功能仍可用(LOWER LIKE 仍工作,只是慢)。生产部署指引见 README 段。
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 CREATE TABLE IF NOT EXISTS channels (
     id              BIGINT PRIMARY KEY,              -- Telegram chat_id
     title           TEXT        NOT NULL,
@@ -50,6 +57,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_channel_date
 CREATE INDEX IF NOT EXISTS idx_messages_date
     ON messages (date);
 
+-- 2026-09-03 v1.6.0 PR #Q1:全文搜索加速(v1.5.1 PR #B2 引入的 LOWER LIKE 全表扫)。
+-- trgm GIN 把每行 text 拆成 3-gram,子串匹配走索引(B-tree LIKE '%x%' 走不到)。
+-- 既有 SQL `LOWER(text) LIKE ...` 不动,planner 自动命中本索引。
+CREATE INDEX IF NOT EXISTS idx_messages_text_trgm
+    ON messages USING gin (lower(text) gin_trgm_ops);
+
 CREATE TABLE IF NOT EXISTS media (
     id                  BIGSERIAL PRIMARY KEY,
     message_id          BIGINT      NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -86,6 +99,12 @@ CREATE INDEX IF NOT EXISTS idx_media_message
 -- media 行不会被收录。
 CREATE INDEX IF NOT EXISTS idx_media_telegram_file_id
     ON media (telegram_file_id) WHERE object_key IS NOT NULL;
+
+-- 2026-09-03 v1.6.0 PR #Q1:file_name 子串搜索加速。list_messages(search=...) 命中
+-- `EXISTS (SELECT 1 FROM media WHERE message_id=m.id AND LOWER(file_name) LIKE ...)`。
+-- trgm GIN 把 file_name 拆 3-gram,与 idx_messages_text_trgm 对齐。
+CREATE INDEX IF NOT EXISTS idx_media_file_name_trgm
+    ON media USING gin (lower(file_name) gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS meta (
     key     TEXT PRIMARY KEY,

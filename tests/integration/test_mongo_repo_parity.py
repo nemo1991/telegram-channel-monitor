@@ -376,3 +376,98 @@ async def test_ping(mongo_repo: MongoRepository) -> None:
     # mongomock_motor 的 db.command("ping") 可能 raise;我们的实现 catch 所有异常返 False
     result = await mongo_repo.ping()
     assert result is False or result is True  # 兼容任意结果
+
+
+# ---- v1.6.0 PR #Q1:case-insensitive collation 索引 + 搜索 parity --------
+
+
+async def test_list_messages_search_hits_text(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:`$or` 走 `$regex` + `$options: "i"` 大小写不敏感匹配 text。
+    mongomock_motor 路径与真 Mongo 一致(regex 实现直接调 Python re)。
+    """
+    await mongo_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=1, text="今天见到一只猫"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=2, text="今天天气好"))
+    msgs = await mongo_repo.list_messages([100], search="猫")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_list_messages_search_case_insensitive(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:Mongo `$options: "i"` 已 case-fold;collation 索引(可能 mongomock
+    不支持)不影响 correctness,只是性能。
+    """
+    await mongo_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=1, text="CAT meow"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=2, text="dog woof"))
+    msgs = await mongo_repo.list_messages([100], search="cat")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_list_messages_search_hits_media_file_name(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:`media.file_name` 子串命中 — `$regex` 走 collation 索引或全表扫。"""
+    await mongo_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await mongo_repo.save_message(
+        _mk_msg(
+            channel_id=100,
+            msg_id=1,
+            text="无文字",
+            media=[_photo(fid="f1", file_name="screenshot_2026.png")],
+        ),
+    )
+    await mongo_repo.save_message(
+        _mk_msg(
+            channel_id=100,
+            msg_id=2,
+            text="无文字",
+            media=[_photo(fid="f2", file_name="photo.jpg")],
+        ),
+    )
+    msgs = await mongo_repo.list_messages([100], search="screenshot")
+    assert [m.telegram_msg_id for m in msgs] == [1]
+
+
+async def test_list_messages_search_across_channels(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:跨频道聚合 search — `$in` + `$or regex` 路径,与 PG 等价。"""
+    for cid in range(101, 106):
+        await mongo_repo.upsert_channel(ChannelDTO(id=cid, title=f"c{cid}"))
+        for mid in range(1, 11):
+            text = f"消息{mid} 包含猫的图片" if mid % 2 == 0 else f"消息{mid} 普通内容"
+            await mongo_repo.save_message(_mk_msg(channel_id=cid, msg_id=mid, text=text))
+    msgs = await mongo_repo.list_messages([101, 102, 103, 104, 105], search="猫")
+    assert len(msgs) == 25
+    channels_hit = {m.channel_id for m in msgs}
+    assert channels_hit == {101, 102, 103, 104, 105}
+
+
+async def test_list_messages_search_empty_no_filter(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:空 search 不走 `$or regex`,返全部。"""
+    await mongo_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    for mid in (1, 2, 3):
+        await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    msgs = await mongo_repo.list_messages([100], search="")
+    assert len(msgs) == 3
+
+
+async def test_list_messages_search_escaped_wildcard_safe(
+    mongo_repo: MongoRepository,
+) -> None:
+    """PR #Q1:`re.escape` 防 regex 注入 — 用户输入 `%` / `_` / `\\` / `[`
+    都被转义为字面字符。这是 v1.5.1 PR #B2 既有逻辑,加真 Mongo 集成
+    测试(防回归 — 之前用 in-memory mock 测)。
+    """
+    await mongo_repo.upsert_channel(ChannelDTO(id=100, title="c100"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=1, text="100% complete"))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=2, text="half done"))
+    msgs = await mongo_repo.list_messages([100], search="%")
+    # mongomock 走 `_escape_regex` → re.escape("%") = "\\%",命中字面 `%` 那条
+    assert [m.telegram_msg_id for m in msgs] == [1]
