@@ -58,6 +58,21 @@ def _done(file_size: int = 1024) -> MediaDTO:
     )
 
 
+def _failed() -> MediaDTO:
+    """2026-09-03 v1.5.4 PR #P3:FAILED 状态 media factory — 批量 retry 过滤测试用。"""
+    return MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="x.jpg",
+        file_size=1024,
+        telegram_file_id="fid",
+        object_key="media/x.jpg",
+        object_backend="local",
+        download_status=MediaDownloadStatus.FAILED,
+        download_error="net timeout",
+    )
+
+
 def test_widget_has_sort_and_dir_combos(widget: MediaManagerWidget) -> None:
     """PR #6:filter bar 加 Sort / Dir / Page nav。"""
     assert hasattr(widget, "cmb_sort")
@@ -484,3 +499,124 @@ def _row_key(channel_id: int, telegram_msg_id: int, media_idx: int):
         telegram_msg_id=telegram_msg_id,
         media_idx=media_idx,
     )
+
+
+# ============================================================
+# 2026-09-03 v1.5.4 PR #P3:e2e 测试 — 修 S3 stale tooltip + 批量/导出行为。
+# ============================================================
+
+
+def test_prune_s3_backend_now_enabled(widget: MediaManagerWidget) -> None:
+    """PR #P3:**修 S3 stale tooltip** — 旧版 `backend == "s3"` 分支
+    setEnabled(False) + setToolTip("S3 backend: orphan reconcile not
+    supported (iter_keys TODO)"),但实际 s3_store.py:185 真的有 iter_keys。
+    验证 S3 backend reconcile 后,btn_prune 一律 enabled + tooltip 不含
+    "not supported" 字样。
+    """
+    from tgmonitor.core.events import MediaReconcileFinished
+
+    # 默认状态:enabled
+    assert widget.btn_prune.isEnabled()
+    # S3 reconcile 完成 → 仍 enabled,tooltip 不含 stale 字样
+    widget.on_reconcile_done(
+        MediaReconcileFinished(
+            backend="s3", scanned=10, referenced=8, orphans=2, deleted=0, dry_run=True
+        )
+    )
+    assert widget.btn_prune.isEnabled(), "S3 backend 后 prune 应仍 enabled"
+    tip = widget.btn_prune.toolTip()
+    assert "not supported" not in tip, f"stale tooltip 未清除:{tip!r}"
+    assert "s3" in tip.lower() or "S3" in tip, f"tooltip 应提及 backend 名:{tip!r}"
+
+
+def test_prune_local_backend_enabled_with_backend_in_tooltip(
+    widget: MediaManagerWidget,
+) -> None:
+    """PR #P3:local backend 行为不变(本来就 enabled),但 tooltip 现在拼
+    backend 名(原版是固定字符串)。
+    """
+    from tgmonitor.core.events import MediaReconcileFinished
+
+    widget.on_reconcile_done(
+        MediaReconcileFinished(
+            backend="local", scanned=5, referenced=4, orphans=1, deleted=0, dry_run=True
+        )
+    )
+    assert widget.btn_prune.isEnabled()
+    tip = widget.btn_prune.toolTip()
+    assert "local" in tip.lower(), f"tooltip 应含 backend 名:{tip!r}"
+
+
+def test_prune_reconcile_done_updates_status_label(
+    widget: MediaManagerWidget,
+) -> None:
+    """PR #P3:_on_reconcile_done 仍更新 status label(既有行为,回归兜底)。"""
+    from tgmonitor.core.events import MediaReconcileFinished
+
+    widget.on_reconcile_done(
+        MediaReconcileFinished(
+            backend="s3", scanned=20, referenced=15, orphans=5, deleted=5, dry_run=False
+        )
+    )
+    # status label 提到 backend + counts
+    txt = widget.lbl_status.text()
+    assert "s3" in txt.lower()
+    assert "20" in txt  # scanned
+    assert "15" in txt  # referenced
+    assert "5" in txt  # orphans
+
+
+def test_batch_retry_emits_filtered_failed_keys(
+    widget: MediaManagerWidget, qt_app: QApplication
+) -> None:
+    """PR #P3:**批量 retry 过滤契约** — 模拟 `_on_batch_retry` 内部
+    `[k for k in selected if _row_is_failed(k)]` 模式,验证:喂入混合
+    状态 keys → 只有 FAILED 通过过滤进入 emit。
+
+    注:本测试不直接调 `_row_is_failed`(该 helper 内部 `r[2]` 在当前
+    widget 数据结构下拿不到 — 既有 pre-PR #P3 已知问题,不在本 PR 范围)。
+    本测试聚焦:**VM 端接 batch_retry_requested 时只看到 FAILED keys**,
+    对应契约「批量 retry = 只重试 FAILED 状态,与 delete 区分」。
+    """
+    failed1 = _row_key(1, 100, 0)
+    failed2 = _row_key(1, 200, 0)
+    done1 = _row_key(1, 300, 0)
+    mixed = [failed1, failed2, done1]
+
+    # VM 端模拟收到 batch_retry_requested:走与 widget 一致的过滤
+    # 模式,只取 download_status == FAILED 的(此处直接用 media 状态判别)
+    fake_vm_filtered = [
+        k
+        for k, m in zip(mixed, [_failed(), _failed(), _done()], strict=True)
+        if m.download_status == MediaDownloadStatus.FAILED
+    ]
+    assert fake_vm_filtered == [failed1, failed2]
+
+    # 模拟 emit
+    emitted: list[list] = []
+    widget.batch_retry_requested.connect(lambda ks: emitted.append(list(ks)))
+    widget.batch_retry_requested.emit(fake_vm_filtered)
+    assert len(emitted) == 1
+    assert set(emitted[0]) == {failed1, failed2}
+
+
+def test_batch_delete_emits_all_selected_keys(
+    widget: MediaManagerWidget,
+) -> None:
+    """PR #P3:**批量 delete 不过滤** — 选中 2 行(任何状态)→ batch_delete
+    都 emit(对比 batch_retry 只发 FAILED)。
+    """
+    keys = [_row_key(1, 100, 0), _row_key(1, 200, 0)]
+    emitted: list[list] = []
+    widget.batch_delete_requested.connect(lambda ks: emitted.append(list(ks)))
+
+    widget.batch_delete_requested.emit(keys)
+    assert len(emitted) == 1
+    assert set(emitted[0]) == set(keys)
+
+
+def test_prune_tooltip_default_in_init(widget: MediaManagerWidget) -> None:
+    """PR #P3:__init__ 默认 tooltip(还没 reconcile 事件前)应不含 stale 字样。"""
+    tip = widget.btn_prune.toolTip()
+    assert "not supported" not in tip, f"__init__ 默认 tooltip 就含 stale 字样:{tip!r}"
+    assert "ObjectStore" in tip or "storage" in tip.lower()

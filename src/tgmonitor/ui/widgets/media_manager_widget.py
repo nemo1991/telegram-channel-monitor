@@ -539,7 +539,16 @@ class MediaManagerWidget(QWidget):
     def on_reconcile_done(self, evt: object) -> None:
         """VM.media_reconcile_done 接到 → 更新 footer + 显示结果。
 
-        只在 `evt.backend != 's3'` 时启用 prune 按钮;S3 用户看到灰按钮。
+        2026-09-03 v1.5.4 PR #P3:**修 S3 stale tooltip** — 旧版
+        `backend == "s3"` 分支 setEnabled(False) + setToolTip("S3 backend:
+        orphan reconcile not supported (iter_keys TODO)"),但实际
+        `objectstore/s3_store.py:185` 真的有 `iter_keys`,且
+        `media_service.reconcile_orphans` 走 `hasattr(self._objects, "iter_keys")`
+        识别 — S3 backend 现在**真**支持 prune,与本地 FS 行为一致。
+        一律 enabled + 正确 tooltip,避免误导用户「不敢点 Prune」。
+
+        reconcile 失败仍走 `app.bus.publish(ErrorOccurred)`,UI 走既有
+        toast 错误提示路径 — 本方法不感知后端可用性(那由 storage 决定)。
         """
         try:
             backend = getattr(evt, "backend", "")
@@ -552,15 +561,12 @@ class MediaManagerWidget(QWidget):
             log.exception("on_reconcile_done parse evt failed")
             return
 
-        # 启用 / 灰 prune 按钮
-        if backend == "s3":
-            self.btn_prune.setEnabled(False)
-            self.btn_prune.setToolTip("S3 backend: orphan reconcile not supported (iter_keys TODO)")
-        else:
-            self.btn_prune.setEnabled(True)
-            self.btn_prune.setToolTip(
-                "Scan ObjectStore vs storage and delete orphan bytes (irreversible)"
-            )
+        # 2026-09-03 v1.5.4 PR #P3:删 S3 stale 灰按钮分支 — 统一 enabled
+        # + 与 __init__ 一致的 tooltip(backend 名拼进去,信息更明确)。
+        self.btn_prune.setEnabled(True)
+        self.btn_prune.setToolTip(
+            f"Scan ObjectStore ({backend}) vs storage and delete orphan bytes (irreversible)"
+        )
 
         # 更新 status
         verb = "Scanned" if dry_run else "Pruned"
