@@ -822,11 +822,15 @@ def test_stress_10k_messages_append_dedup_truncate(qapp):
 
     - rowCount 最终 == 9900(10K - 100)
     - `_row_to_key` 与 `_index_of` 严格镜像(invariant)
-    - 整测试耗时 < 15s(append 本身是 O(N) shift 累计 O(N²),MAX_ITEMS
+    - 整测试耗时 < 30s(append 本身是 O(N) shift 累计 O(N²),MAX_ITEMS
       1000 → 10000 后自然放大 ~10×;本测试只防 O(N³) 级别的极端退化,
       例如 invariant 漏维护导致 O(N) dict scan × N 次 append)
 
-    用 `time.perf_counter` 计时,15s 是 CI 容忍阈值;本地实测一般 < 12s。
+    用 `time.perf_counter` 计时,**30s 是 CI 容差**(GitHub Actions
+    ubuntu runner + 多 job 资源争抢比本地慢 ~2×,2026-09-04 v1.6.1 CI
+    上 15s 阈值不够 — 实测 20.67s 失败;阈值不是性能 SLA,放宽后仍能
+    catch 真正退化 — invariant 漏维护会让单次 `_truncate_tail` 从
+    O(1) 退到 O(N) × 10K ≈ 80s+,30s 阈值仍 fail)。本地实测 < 12s。
     """
     import time
 
@@ -847,4 +851,4 @@ def test_stress_10k_messages_append_dedup_truncate(qapp):
     _assert_invariant(view)
     # 性能阈值 — 防 O(N³) 极端退化(append 本身 O(N) shift 是 by design,
     # 累计 O(N²) 不在本 PR 范围;未来 PR 可改 deque + index map 做到 O(1) amortized)
-    assert elapsed < 15.0, f"stress 应 < 15s,实测 {elapsed:.2f}s(可能 O(N³) 退化)"
+    assert elapsed < 30.0, f"stress 应 < 30s,实测 {elapsed:.2f}s(可能 O(N³) 退化)"

@@ -5,6 +5,29 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.2] - 2026-09-04
+
+主题:**CI flake 修复** — v1.6.1 release 触发的 CI main run 在
+ubuntu / macos / windows 三平台 pytest 都因同一个 stress test
+超阈值失败,根因是 v1.5.4 PR #P1 设的 15s 阈值在 GitHub Actions
+runner 上不够(GHA ubuntu runner + 多 job 资源争抢比本地慢 ~2×,
+实测 20.67s 超 15s 阈值)。本 patch 单点放宽到 30s,留 50% 余量,
+仍能 catch 真正退化(invariant 漏维护会让单次 `_truncate_tail` 从
+O(1) 退到 O(N) × 10K ≈ 80s+,30s 阈值仍 fail)。
+
+### ✅ Fixed
+
+- **`test_stress_10k_messages_append_dedup_truncate` 在 CI 上 flake**
+  (v1.5.4 PR #P1 引入的 15s 阈值太紧) — 放宽到 30s,docstring
+  明确「阈值是 CI 容差,不是性能 SLA」。
+
+### 🧪 Tests
+
+- **本地 stress test 通过** — `pytest tests/test_message_view.py::
+  test_stress_10k_messages_append_dedup_truncate` 在 macOS < 12s 通过
+- **全仓 801 passed** — 与 v1.6.1 同 baseline,4 个 visual regression
+  HiDPI 黄金图问题是 v1.6.0 已存在的已知问题,与本 patch 无关
+
 ## [1.6.1] - 2026-09-04
 
 主题:**「暂停监听」托盘 action 真正生效** — v1.5.0 PR #A4 立的 v1.5.1
