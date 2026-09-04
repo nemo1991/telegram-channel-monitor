@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.3] - 2026-09-04
+
+主题:**PG `list_messages(search=...)` SQL bug 修复** — v1.6.0 PR #Q1
+在 `postgres_repo.list_messages` 写的 search 子查询引用了外层
+SELECT 没定义的别名 `m`,在 asyncpg 真 PG 上跑 `UndefinedTableError:
+missing FROM-clause entry for table "m"`。本地集成测试用
+`InMemoryRepository` 兜底,没走到 PG SQL,只有 CI testcontainers 真
+PG 集成测试在 5 个 search 用例全部失败。
+
+### ✅ Fixed
+
+- **`postgres_repo.list_messages` search 子查询外层没给 `messages` 别名**
+  (v1.6.0 PR #Q1 引入) — 子查询里用 `media.message_id=messages.id` +
+  `media.file_name`(全表名),去掉对外层别名的依赖。5 个 search
+  集成测试恢复:`test_list_messages_search_hits_text` /
+  `_case_insensitive` / `_hits_media_file_name` / `_across_channels` /
+  `_escaped_wildcard_safe`。
+
+### 🧪 Tests
+
+- **本地无法验**(Docker daemon 未起,testcontainers PG 容器拒连),
+  CI testcontainers 真 PG 集成测试覆盖 5 个 search 用例
+- **非集成 801 通过** — 单测不受本 PR 影响,baseline 不变
+
 ## [1.6.2] - 2026-09-04
 
 主题:**CI flake 修复** — v1.6.1 release 触发的 CI main run 在

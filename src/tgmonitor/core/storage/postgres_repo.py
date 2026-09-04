@@ -621,8 +621,13 @@ class PostgresRepository(StorageRepository):
             # 子句顺序:先验 text,再验 media 子查询。
             where.append(
                 f"(LOWER(text) LIKE ${len(params) + 1} ESCAPE '\\' "
-                f"OR EXISTS (SELECT 1 FROM media WHERE message_id=m.id "
-                f"AND LOWER(file_name) LIKE ${len(params) + 2} ESCAPE '\\'))"
+                # 2026-09-04 v1.6.3 patch:子查询里用 messages 全表名,外层
+                # `SELECT * FROM messages` 没给别名 `m`,原 `m.id` 在
+                # asyncpg 真 PG 上 UndefinedTableError(本地集成测试用
+                # InMemoryRepository 测不到这条路径,只有 CI testcontainers
+                # 真 PG 才暴露)。
+                f"OR EXISTS (SELECT 1 FROM media WHERE media.message_id=messages.id "
+                f"AND LOWER(media.file_name) LIKE ${len(params) + 2} ESCAPE '\\'))"
             )
             params.append(like)
             params.append(like)
