@@ -728,6 +728,10 @@ class MonitorService:
         `updateChannel` 推时 `channel_id` 已就绪,直接落库;`updateSupergroup`
         推时只有 `supergroup_id`,需通过 username 反查 channel_id
         (storage 现存 — InMemory/Jsonl/Postgres/Mongo 都按 username 找)。
+
+        2026-09-04 v1.6.4:同时透传 4 个 spammer 过滤字段
+        (`is_verified` / `is_scam` / `is_fake` / `has_protected_content`)。
+        `None` 字段保持现有 partial-update 语义(不动该列)。
         """
         try:
             if event.channel_id == 0 and event.supergroup_id is not None:
@@ -744,6 +748,12 @@ class MonitorService:
                                 title=event.title,
                                 username=event.username,
                                 member_count=event.member_count,
+                                # 2026-09-04 v1.6.4:4 个 spammer 字段,
+                                # partial-update 语义由 storage 抽象保证
+                                is_verified=event.is_verified,
+                                is_scam=event.is_scam,
+                                is_fake=event.is_fake,
+                                has_protected_content=event.has_protected_content,
                             )
                             log.debug(
                                 "channel metadata updated via supergroup: "
@@ -761,13 +771,23 @@ class MonitorService:
                 title=event.title,
                 username=event.username,
                 member_count=event.member_count,
+                # 2026-09-04 v1.6.4:4 个 spammer 字段
+                is_verified=event.is_verified,
+                is_scam=event.is_scam,
+                is_fake=event.is_fake,
+                has_protected_content=event.has_protected_content,
             )
             log.debug(
-                "channel metadata updated: channel=%s title=%r username=%r member_count=%s",
+                "channel metadata updated: channel=%s title=%r username=%r "
+                "member_count=%s verified=%s scam=%s fake=%s has_protected=%s",
                 event.channel_id,
                 event.title,
                 event.username,
                 event.member_count,
+                event.is_verified,
+                event.is_scam,
+                event.is_fake,
+                event.has_protected_content,
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelMetadataChanged failed: %s", e)

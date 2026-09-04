@@ -89,6 +89,12 @@ def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
         last_synced_at=d.get("last_synced_at"),
         # 2026-09-03 v1.6.0 PR #Q2:Mongo schema-less,旧 doc 无此字段 → None
         photo_local_key=d.get("photo_local_key"),
+        # 2026-09-04 v1.6.4:spammer 过滤 UI 用;Mongo schema-less,
+        # 旧 doc 无此 4 字段 → 兜底 False,UI 不显示徽标
+        is_verified=bool(d.get("is_verified", False)),
+        is_scam=bool(d.get("is_scam", False)),
+        is_fake=bool(d.get("is_fake", False)),
+        has_protected_content=bool(d.get("has_protected_content", False)),
     )
 
 
@@ -247,6 +253,7 @@ class MongoRepository(StorageRepository):
         """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         doc = {
             "_id": channel.id,
@@ -259,6 +266,10 @@ class MongoRepository(StorageRepository):
             "subscribed": channel.is_subscribed,
             "last_synced_at": channel.last_synced_at,
             "photo_local_key": channel.photo_local_key,
+            "is_verified": channel.is_verified,
+            "is_scam": channel.is_scam,
+            "is_fake": channel.is_fake,
+            "has_protected_content": channel.has_protected_content,
         }
         await self.db.channels.update_one({"_id": channel.id}, {"$set": doc}, upsert=True)
 
@@ -266,6 +277,7 @@ class MongoRepository(StorageRepository):
         """只更元数据字段;subscribed 保持旧值。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         await self.db.channels.update_one(
             {"_id": channel.id},
@@ -278,6 +290,10 @@ class MongoRepository(StorageRepository):
                     "created_at": channel.created_at,
                     "last_synced_at": channel.last_synced_at,
                     "photo_local_key": channel.photo_local_key,
+                    "is_verified": channel.is_verified,
+                    "is_scam": channel.is_scam,
+                    "is_fake": channel.is_fake,
+                    "has_protected_content": channel.has_protected_content,
                 }
             },
             upsert=True,
@@ -291,12 +307,17 @@ class MongoRepository(StorageRepository):
         username: str | None = None,
         member_count: int | None = None,
         photo_local_key: str | None = None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Mongo `$set` 子集 — 只在传入字段上 $set,
         缺省 None 字段不进 dict(保留旧值)。0 rows matched 是合法的
         (TDLib 偶发对陈年 channel 推 metadata update)。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         update: dict[str, Any] = {}
         if title is not None:
@@ -307,6 +328,14 @@ class MongoRepository(StorageRepository):
             update["member_count"] = member_count
         if photo_local_key is not None:
             update["photo_local_key"] = photo_local_key
+        if is_verified is not None:
+            update["is_verified"] = is_verified
+        if is_scam is not None:
+            update["is_scam"] = is_scam
+        if is_fake is not None:
+            update["is_fake"] = is_fake
+        if has_protected_content is not None:
+            update["has_protected_content"] = has_protected_content
         if not update:
             return
         await self.db.channels.update_one(

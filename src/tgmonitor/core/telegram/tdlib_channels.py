@@ -102,6 +102,10 @@ class ChannelsApi:
             return None
         ct = getattr(chat, "type_", None) or getattr(chat, "type", None)
         title = chat.title
+        # 2026-09-04 v1.6.4:`has_protected_content` 是 `Chat` 顶层字段 —
+        # 对 channel / supergroup / private 都存在;basic_group 没,固定 False。
+        # spammer 过滤 UI 标徽用。
+        chat_has_protected = bool(getattr(chat, "has_protected_content", False))
         if ct is not None and ct.get("@type") == "chatTypeSupergroup":
             is_channel = bool(getattr(ct, "is_channel", False))
             kind = "channel" if is_channel else "supergroup"
@@ -110,6 +114,11 @@ class ChannelsApi:
             )
             username = None
             member_count = None
+            # 2026-09-04 v1.6.4:`is_verified` / `is_scam` / `is_fake` 是
+            # TDLib `Supergroup` 顶层字段 — `Chat` 没这三个,只能从 `sg` 拿。
+            sg_is_verified = False
+            sg_is_scam = False
+            sg_is_fake = False
             if sg is not None:
                 usernames = getattr(sg, "usernames", None)
                 if usernames is not None:
@@ -119,12 +128,19 @@ class ChannelsApi:
                 mc = getattr(sg, "member_count", None)
                 if isinstance(mc, int) and mc > 0:
                     member_count = mc
+                sg_is_verified = bool(getattr(sg, "is_verified", False))
+                sg_is_scam = bool(getattr(sg, "is_scam", False))
+                sg_is_fake = bool(getattr(sg, "is_fake", False))
             return ChannelDTO(
                 id=chat_id,
                 title=title,
                 username=username,
                 kind=kind,
                 member_count=member_count,
+                is_verified=sg_is_verified,
+                is_scam=sg_is_scam,
+                is_fake=sg_is_fake,
+                has_protected_content=chat_has_protected,
             )
         if ct is not None and ct.get("@type") == "chatTypeBasicGroup":
             bg = await self._c.request(
@@ -141,6 +157,9 @@ class ChannelsApi:
                 username=None,
                 kind="basic_group",
                 member_count=member_count,
+                # 2026-09-04 v1.6.4:basic_group 没 `is_verified`/`is_scam`/
+                # `is_fake`/`has_protected_content` 字段,固定 False,UI 不显示徽标
+                has_protected_content=chat_has_protected,  # Chat 顶层字段,有就有
             )
         return None  # private / secret — 同步功能不覆盖
 

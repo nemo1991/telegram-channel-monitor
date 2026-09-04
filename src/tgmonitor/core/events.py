@@ -355,6 +355,14 @@ class ChannelMetadataChanged(Event):
     # 2026-08-27 PR #14:`updateSupergroup` 推送时只有 supergroup_id,
     # channel_id 由 monitor 通过 username 关联得到。
     supergroup_id: int | None = None
+    # 2026-09-04 v1.6.4:spammer 过滤 UI 用 — TDLib `Supergroup` 顶层
+    # 字段(is_verified/is_scam/is_fake)随 `updateSupergroup` 推送;
+    # `chat.has_protected_content` 随 `updateChannel` 推送。MonitorService
+    # 据此落库到 channels 表,UI 端 ChannelListCard 显徽。
+    is_verified: bool | None = None
+    is_scam: bool | None = None
+    is_fake: bool | None = None
+    has_protected_content: bool | None = None
 
 
 # ---------- Bus ----------

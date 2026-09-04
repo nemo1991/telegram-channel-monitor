@@ -1041,3 +1041,163 @@ async def test_jsonl_update_channel_metadata_preserves_other_fields_on_photo_upd
     assert got.title == "Title"
     assert got.username == "@u"
     assert got.member_count == 99
+
+
+# ---- 2026-09-04 v1.6.4:4 个 spammer 字段(verified/scam/fake/has_protected_content)
+# 部分更新 parity(InMemory + Jsonl)。PG / Mongo 走 integration parity。
+# -----------------------------------------------------------------------------
+
+
+async def test_in_mem_update_channel_metadata_4_tdlib_fields(in_mem_repo):
+    """v1.6.4:InMemory 4 字段部分更新 + 其它字段保留。"""
+    await in_mem_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="Old",
+            username="@u",
+            member_count=10,
+            is_verified=True,
+        )
+    )
+    # 一次更新 4 个 spammer 字段
+    await in_mem_repo.update_channel_metadata(
+        100,
+        is_verified=False,
+        is_scam=True,
+        is_fake=True,
+        has_protected_content=True,
+    )
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is False  # 显式 False 覆盖
+    assert got.is_scam is True
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+    assert got.title == "Old"  # 保留
+    assert got.username == "@u"  # 保留
+    assert got.member_count == 10  # 保留
+
+
+async def test_jsonl_update_channel_metadata_4_tdlib_fields(jsonl_repo):
+    """v1.6.4:Jsonl 4 字段部分更新 + 落盘 roundtrip。"""
+    await jsonl_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="Old",
+            username="@u",
+            member_count=10,
+            is_verified=True,
+            has_protected_content=False,
+        )
+    )
+    await jsonl_repo.update_channel_metadata(
+        100,
+        is_scam=True,
+        is_fake=True,
+    )
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True  # 没传,保留
+    assert got.is_scam is True  # 改了
+    assert got.is_fake is True  # 改了
+    assert got.has_protected_content is False  # 没传,保留
+    # 重启 roundtrip 验证 JSON 序列化没漏字段
+    await jsonl_repo.close()
+    jsonl_repo2 = JsonlFileStore(root=jsonl_repo._root)  # type: ignore[attr-defined]
+    await jsonl_repo2.connect()
+    got2 = await jsonl_repo2.get_channel(100)
+    assert got2 is not None
+    assert got2.is_verified is True
+    assert got2.is_scam is True
+    assert got2.is_fake is True
+    assert got2.has_protected_content is False
+    await jsonl_repo2.close()
+
+
+async def test_in_mem_update_channel_metadata_4_fields_partial_keeps_others(in_mem_repo):
+    """v1.6.4:只传 is_verified,其它 3 字段保持 None 默认。"""
+    await in_mem_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="X",
+            is_verified=True,
+            is_scam=True,
+            is_fake=False,
+            has_protected_content=False,
+        )
+    )
+    # 只动 is_verified
+    await in_mem_repo.update_channel_metadata(100, is_verified=False)
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is False  # 改了
+    assert got.is_scam is True  # 保留
+    assert got.is_fake is False  # 保留
+    assert got.has_protected_content is False  # 保留
+
+
+async def test_jsonl_update_channel_metadata_4_fields_partial_keeps_others(jsonl_repo):
+    """v1.6.4:Jsonl 同上 — 只传 1 个,其它 3 字段保持。"""
+    await jsonl_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="X",
+            is_verified=True,
+            is_scam=True,
+            is_fake=True,
+            has_protected_content=True,
+        )
+    )
+    # 只动 has_protected_content
+    await jsonl_repo.update_channel_metadata(100, has_protected_content=False)
+    got = await jsonl_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True  # 保留
+    assert got.is_scam is True  # 保留
+    assert got.is_fake is True  # 保留
+    assert got.has_protected_content is False  # 改了
+
+
+async def test_in_mem_upsert_channel_roundtrip_4_fields(in_mem_repo):
+    """v1.6.4:`upsert_channel` 写 4 字段 → `get_channel` 读回一致。"""
+    await in_mem_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="T",
+            is_verified=True,
+            is_scam=True,
+            is_fake=True,
+            has_protected_content=True,
+        )
+    )
+    got = await in_mem_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True
+    assert got.is_scam is True
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+
+
+async def test_jsonl_upsert_channel_roundtrip_4_fields(jsonl_repo):
+    """v1.6.4:Jsonl `upsert_channel` 写 4 字段 → 重启后 `get_channel` 读回。"""
+    await jsonl_repo.upsert_channel(
+        ChannelDTO(
+            id=100,
+            title="T",
+            is_verified=True,
+            is_scam=False,
+            is_fake=True,
+            has_protected_content=False,
+        )
+    )
+    # roundtrip
+    await jsonl_repo.close()
+    jsonl_repo2 = JsonlFileStore(root=jsonl_repo._root)  # type: ignore[attr-defined]
+    await jsonl_repo2.connect()
+    got = await jsonl_repo2.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True
+    assert got.is_scam is False
+    assert got.is_fake is True
+    assert got.has_protected_content is False
+    await jsonl_repo2.close()

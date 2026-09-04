@@ -72,6 +72,11 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
         last_synced_at=row.get("last_synced_at"),
         # 2026-09-03 v1.6.0 PR #Q2:旧库可能没这列,get 兜底 None
         photo_local_key=row.get("photo_local_key"),
+        # 2026-09-04 v1.6.4:spammer 过滤 UI 用;旧库 roundtrip 默认 False
+        is_verified=bool(row.get("is_verified", False)),
+        is_scam=bool(row.get("is_scam", False)),
+        is_fake=bool(row.get("is_fake", False)),
+        has_protected_content=bool(row.get("has_protected_content", False)),
     )
 
 
@@ -208,6 +213,7 @@ class PostgresRepository(StorageRepository):
         """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
@@ -215,8 +221,9 @@ class PostgresRepository(StorageRepository):
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at, photo_local_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     subscribed, last_synced_at, photo_local_key,
+                     is_verified, is_scam, is_fake, has_protected_content)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     username = EXCLUDED.username,
@@ -225,7 +232,11 @@ class PostgresRepository(StorageRepository):
                     created_at = EXCLUDED.created_at,
                     subscribed = EXCLUDED.subscribed,
                     last_synced_at = EXCLUDED.last_synced_at,
-                    photo_local_key = EXCLUDED.photo_local_key
+                    photo_local_key = EXCLUDED.photo_local_key,
+                    is_verified = EXCLUDED.is_verified,
+                    is_scam = EXCLUDED.is_scam,
+                    is_fake = EXCLUDED.is_fake,
+                    has_protected_content = EXCLUDED.has_protected_content
                 """,
                 channel.id,
                 channel.title,
@@ -236,12 +247,17 @@ class PostgresRepository(StorageRepository):
                 channel.is_subscribed,
                 channel.last_synced_at,
                 channel.photo_local_key,
+                channel.is_verified,
+                channel.is_scam,
+                channel.is_fake,
+                channel.has_protected_content,
             )
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
         """只更元数据字段;subscribed 保持旧值(sync 用)。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
@@ -249,8 +265,9 @@ class PostgresRepository(StorageRepository):
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at, photo_local_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     subscribed, last_synced_at, photo_local_key,
+                     is_verified, is_scam, is_fake, has_protected_content)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     username = EXCLUDED.username,
@@ -258,7 +275,11 @@ class PostgresRepository(StorageRepository):
                     member_count = EXCLUDED.member_count,
                     created_at = EXCLUDED.created_at,
                     last_synced_at = EXCLUDED.last_synced_at,
-                    photo_local_key = EXCLUDED.photo_local_key
+                    photo_local_key = EXCLUDED.photo_local_key,
+                    is_verified = EXCLUDED.is_verified,
+                    is_scam = EXCLUDED.is_scam,
+                    is_fake = EXCLUDED.is_fake,
+                    has_protected_content = EXCLUDED.has_protected_content
                 """,
                 channel.id,
                 channel.title,
@@ -270,6 +291,10 @@ class PostgresRepository(StorageRepository):
                 channel.is_subscribed,
                 channel.last_synced_at,
                 channel.photo_local_key,
+                channel.is_verified,
+                channel.is_scam,
+                channel.is_fake,
+                channel.has_protected_content,
             )
 
     async def update_channel_metadata(
@@ -280,27 +305,40 @@ class PostgresRepository(StorageRepository):
         username: str | None = None,
         member_count: int | None = None,
         photo_local_key: str | None = None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Postgres 部分更新 — `COALESCE($N, 列名)`
         把 None 映射成「保留旧值」,只动传入字段。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 UPDATE channels SET
-                    title           = COALESCE($1, title),
-                    username        = COALESCE($2, username),
-                    member_count    = COALESCE($3, member_count),
-                    photo_local_key = COALESCE($4, photo_local_key)
-                WHERE id = $5
+                    title                = COALESCE($1, title),
+                    username             = COALESCE($2, username),
+                    member_count         = COALESCE($3, member_count),
+                    photo_local_key      = COALESCE($4, photo_local_key),
+                    is_verified          = COALESCE($5, is_verified),
+                    is_scam              = COALESCE($6, is_scam),
+                    is_fake              = COALESCE($7, is_fake),
+                    has_protected_content = COALESCE($8, has_protected_content)
+                WHERE id = $9
                 """,
                 title,
                 username,
                 member_count,
                 photo_local_key,
+                is_verified,
+                is_scam,
+                is_fake,
+                has_protected_content,
                 channel_id,
             )
 
@@ -326,7 +364,8 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at, photo_local_key "
+                "subscribed, last_synced_at, photo_local_key, "
+                "is_verified, is_scam, is_fake, has_protected_content "
                 "FROM channels ORDER BY id"
             )
         return [_row_to_channel(r) for r in rows]
@@ -337,7 +376,8 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at, photo_local_key "
+                "subscribed, last_synced_at, photo_local_key, "
+                "is_verified, is_scam, is_fake, has_protected_content "
                 "FROM channels WHERE subscribed = TRUE ORDER BY id"
             )
         return [_row_to_channel(r) for r in rows]
@@ -348,7 +388,8 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT id, title, username, kind, member_count, created_at, "
-                "subscribed, last_synced_at, photo_local_key "
+                "subscribed, last_synced_at, photo_local_key, "
+                "is_verified, is_scam, is_fake, has_protected_content "
                 "FROM channels WHERE id = $1",
                 channel_id,
             )

@@ -52,6 +52,19 @@ class InMemoryRepository(StorageRepository):
             created_at=channel.created_at,
             is_subscribed=(existing.is_subscribed if existing else False),
             last_synced_at=channel.last_synced_at,
+            photo_local_key=(
+                channel.photo_local_key
+                if channel.photo_local_key is not None
+                else (existing.photo_local_key if existing else None)
+            ),
+            # 2026-09-04 v1.6.4:spammer 过滤 4 字段 — caller 传了就用,否则
+            # 保留旧值。`True/False` 都走 caller(避免 True/False 无法区分)。
+            is_verified=channel.is_verified if existing is None else channel.is_verified,
+            is_scam=channel.is_scam if existing is None else channel.is_scam,
+            is_fake=channel.is_fake if existing is None else channel.is_fake,
+            has_protected_content=(
+                channel.has_protected_content if existing is None else channel.has_protected_content
+            ),
         )
 
     async def update_channel_metadata(
@@ -62,11 +75,16 @@ class InMemoryRepository(StorageRepository):
         username: str | None = None,
         member_count: int | None = None,
         photo_local_key: str | None = None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:InMemory 部分更新 — 只动非 None 字段。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段 — TDLib
         `updateChatPhoto` 推本地路径时落库;`None` 表示不动。
+        2026-09-04 v1.6.4:加 4 个 spammer 字段。
         """
         existing = self.channels.get(channel_id)
         if existing is None:
@@ -82,6 +100,15 @@ class InMemoryRepository(StorageRepository):
             last_synced_at=existing.last_synced_at,
             photo_local_key=(
                 photo_local_key if photo_local_key is not None else existing.photo_local_key
+            ),
+            # 2026-09-04 v1.6.4:None = 不动,True/False = 显式 set
+            is_verified=is_verified if is_verified is not None else existing.is_verified,
+            is_scam=is_scam if is_scam is not None else existing.is_scam,
+            is_fake=is_fake if is_fake is not None else existing.is_fake,
+            has_protected_content=(
+                has_protected_content
+                if has_protected_content is not None
+                else existing.has_protected_content
             ),
         )
 
@@ -101,6 +128,12 @@ class InMemoryRepository(StorageRepository):
                 created_at=existing.created_at,
                 is_subscribed=subscribed,
                 last_synced_at=existing.last_synced_at,
+                photo_local_key=existing.photo_local_key,
+                # 2026-09-04 v1.6.4:4 字段透传(原值不动,只切订阅)
+                is_verified=existing.is_verified,
+                is_scam=existing.is_scam,
+                is_fake=existing.is_fake,
+                has_protected_content=existing.has_protected_content,
             )
 
     async def list_channels(self) -> list[ChannelDTO]:

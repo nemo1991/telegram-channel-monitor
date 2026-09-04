@@ -296,6 +296,10 @@ class StorageRepository(ABC):
         username: str | None = None,
         member_count: int | None = None,
         photo_local_key: str | None = None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
     ) -> None:
         """部分更新频道元数据(2026-08-27 PR #14)。
 
@@ -309,6 +313,10 @@ class StorageRepository(ABC):
 
         不存在频道 idempotent 不抛(TDLib 偶发对陈年 channel 推 metadata
         update,落库时机晚于本 update 时跳过即可)。
+
+        2026-09-04 v1.6.4 加 4 个 spammer 过滤字段(`is_verified` /
+        `is_scam` / `is_fake` / `has_protected_content`),TDLib `Supergroup`
+        / `Chat` 顶层字段,partial update 语义同其他字段(`None` = 不动)。
         """
         ...
 

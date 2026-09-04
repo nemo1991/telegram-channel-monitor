@@ -76,6 +76,57 @@ async def test_update_channel_metadata_partial(mongo_repo: MongoRepository) -> N
     assert got.member_count == 99
 
 
+async def test_update_channel_metadata_4_tdlib_fields_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """2026-09-04 v1.6.4:Mongo `$set` 4 字段子集路径。"""
+    ch = ChannelDTO(
+        id=100,
+        title="Old",
+        username="@old",
+        member_count=10,
+        is_verified=True,
+        has_protected_content=False,
+    )
+    await mongo_repo.upsert_channel(ch)
+    await mongo_repo.update_channel_metadata(
+        100,
+        is_verified=False,
+        is_scam=True,
+        is_fake=True,
+        has_protected_content=True,
+    )
+    got = await mongo_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is False
+    assert got.is_scam is True
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+    # 未传字段保留
+    assert got.title == "Old"
+    assert got.username == "@old"
+    assert got.member_count == 10
+
+
+async def test_upsert_channel_4_tdlib_fields_mongo(mongo_repo: MongoRepository) -> None:
+    """2026-09-04 v1.6.4:`upsert_channel` 透传 4 字段。"""
+    ch = ChannelDTO(
+        id=100,
+        title="T",
+        is_verified=True,
+        is_scam=False,
+        is_fake=True,
+        has_protected_content=True,
+    )
+    await mongo_repo.upsert_channel(ch)
+    got = await mongo_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True
+    assert got.is_scam is False
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+
+
 async def test_set_channel_subscribed(mongo_repo: MongoRepository) -> None:
     await mongo_repo.set_channel_subscribed(100, True)
     assert (await mongo_repo.get_channel(100)).is_subscribed is True

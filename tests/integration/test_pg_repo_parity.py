@@ -106,6 +106,59 @@ async def test_update_channel_metadata_partial(pg_repo: PostgresRepository) -> N
     assert got.member_count == 99
 
 
+async def test_update_channel_metadata_4_tdlib_fields_pg(pg_repo: PostgresRepository) -> None:
+    """2026-09-04 v1.6.4:4 个 spammer 字段(verified/scam/fake/has_protected_content)
+    COALESCE partial update 路径。
+
+    真 PG 验证 ALTER TABLE IF NOT EXISTS 迁移 + $1-$8 COALESCE 占位。
+    """
+    ch = ChannelDTO(
+        id=100,
+        title="Old",
+        username="@old",
+        member_count=10,
+        is_verified=True,
+    )
+    await pg_repo.upsert_channel(ch)
+    # 部分更新 4 字段
+    await pg_repo.update_channel_metadata(
+        100,
+        is_verified=False,
+        is_scam=True,
+        is_fake=True,
+        has_protected_content=True,
+    )
+    got = await pg_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is False  # 显式 False 覆盖
+    assert got.is_scam is True
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+    # 未传字段保留
+    assert got.title == "Old"
+    assert got.username == "@old"
+    assert got.member_count == 10
+
+
+async def test_upsert_channel_4_tdlib_fields_pg(pg_repo: PostgresRepository) -> None:
+    """2026-09-04 v1.6.4:`upsert_channel` INSERT + ON CONFLICT 4 字段路径。"""
+    ch = ChannelDTO(
+        id=100,
+        title="T",
+        is_verified=True,
+        is_scam=False,
+        is_fake=True,
+        has_protected_content=True,
+    )
+    await pg_repo.upsert_channel(ch)
+    got = await pg_repo.get_channel(100)
+    assert got is not None
+    assert got.is_verified is True
+    assert got.is_scam is False
+    assert got.is_fake is True
+    assert got.has_protected_content is True
+
+
 async def test_list_subscribed_channels(pg_repo: PostgresRepository) -> None:
     await pg_repo.set_channel_subscribed(100, True)
     await pg_repo.set_channel_subscribed(200, False)

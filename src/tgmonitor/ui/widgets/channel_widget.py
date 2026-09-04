@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
@@ -41,6 +42,10 @@ from tgmonitor.ui._async import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
 from tgmonitor.ui.widgets.form_row import empty_hint
+from tgmonitor.ui.widgets.thumbnail_cache import (
+    ThumbnailCache,
+    render_pixmap,
+)
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -58,21 +63,91 @@ _KIND_ICON_NAMES: dict[str, str] = {
     "group": "kind_group",
 }
 
+# 2026-09-04 v1.6.4:进程内 LRU 缩略图缓存 — 频道头像 + media 共用。
+# `ThumbnailCache` 设计上接受 `(backend, object_key)`;频道头像来源是
+# TDLib 本地缓存绝对路径,固定用 backend="local",key=TDLib 推过来的 path。
+_CHANNEL_THUMB_BACKEND = "local"
 
-def _kind_icon(kind: str) -> QIcon:
-    """频道类型图标 —— Lucide 单色,见 `ATTRIBUTIONS.md` 与 `ui/icon.py`。
+
+def _thumbnail_cache() -> ThumbnailCache:
+    """懒加载模块级 cache 单例。
+
+    测试可通过 monkeypatch `tgmonitor.ui.widgets.channel_widget._channel_thumb_cache`
+    注入 fixture;生产启动时延后到首次访问创建(避免 import 时 Qt 未就绪)。
+    """
+    global _channel_thumb_cache
+    cache = globals().get("_channel_thumb_cache")
+    if cache is None:
+        cache = ThumbnailCache()
+        globals()["_channel_thumb_cache"] = cache
+    return cache
+
+
+def _read_photo_bytes(path: str) -> bytes | None:
+    """读 TDLib 本地缓存头像 bytes。失败(FileNotFoundError / PermissionError /
+    非文件)返 None — 由 caller 走 kind placeholder。
+
+    头像文件通常 ~5-50KB JPEG/PNG,同步读可接受(< 5ms SSD);fail-open 走
+    fallback 不影响主流程。
+    """
+    try:
+        return Path(path).read_bytes()
+    except (OSError, ValueError):
+        return None
+
+
+def _kind_icon(
+    kind: str,
+    photo_local_key: str | None = None,
+) -> QIcon:
+    """频道 list item 图标 — 优先频道头像,失败回 kind emoji 占位。
+
+    2026-09-04 v1.6.4:photo 路径走 `ThumbnailCache` LRU;cache miss 时
+    同步读 `photo_local_key`(TDLib 本地缓存绝对路径)。IO 失败或格式
+    不可解码 → fallback `_kind_emoji_icon(kind)`。
+
+    未知 kind 一律 fallback 到 group(user-round)。
+    """
+    if photo_local_key:
+        cache = _thumbnail_cache()
+        pix = cache.get(_CHANNEL_THUMB_BACKEND, photo_local_key)
+        if pix is None:
+            data = _read_photo_bytes(photo_local_key)
+            if data:
+                pix = render_pixmap(data, max_size=48)
+                if pix is not None and not pix.isNull():
+                    cache.put(_CHANNEL_THUMB_BACKEND, photo_local_key, pix)
+        if pix is not None and not pix.isNull():
+            return QIcon(pix)
+    return _kind_emoji_icon(kind)
+
+
+def _kind_emoji_icon(kind: str) -> QIcon:
+    """频道类型 fallback 图标 —— Lucide 单色(2026-08-27 PR #Q2)。
 
     fg 跟当前主题:QListWidget 在 light 主题用 #1a1a2e,dark 主题用 #f0f1fa。
     Qt 的 QSvgRenderer 不解析 currentColor,所以走 tinted_action_icon
     显式注入 hex,避免图标在 list row 上渲染成黑团。
-
-    未知 kind 一律 fallback 到 group(user-round)。
     """
     fg = "#f0f1fa" if ThemeManager.current() == Theme.DARK else "#1a1a2e"
     return tinted_action_icon(
         _KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]),
         QColor(fg),
     )
+
+
+def _channel_display_text(ch: ChannelDTO) -> str:
+    """`@username`(有) 或 `#id title`(无 username)的展示串。
+
+    2026-09-04 v1.6.4:spammer 徽标附加 — `is_verified` → ` ✓`,
+    `is_scam`/`is_fake` → ` ⚠️`(任一为真时显示一个 ⚠️,避免双标)。
+    """
+    base = ch.display  # 直接走 DTO.display,统一 `@username` / `#id title` 格式
+    if ch.is_verified:
+        base += " ✓"
+    if ch.is_scam or ch.is_fake:
+        base += " ⚠️"
+    return base
 
 
 class _ChannelListCard(QWidget):
@@ -170,12 +245,15 @@ class _ChannelListCard(QWidget):
 
         `count_template`:例如 `"已加入频道 · {n}"`、`"已监听 · {n}"`、
         `"已监听:{n}"`。模板只接受一个整数占位。
+
+        2026-09-04 v1.6.4:`_kind_icon(kind, photo_local_key)` 优先渲染频道
+        头像;`_channel_display_text(ch)` 附加 verified/scam 徽标。
         """
         self.lst.clear()
         for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
-            item = QListWidgetItem(ch.display)
+            item = QListWidgetItem(_channel_display_text(ch))
             item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_kind_icon(ch.kind))
+            item.setIcon(_kind_icon(ch.kind, ch.photo_local_key))
             self.lst.addItem(item)
         self.count_label.setText(count_template.format(n=len(channels)))
         self._refresh_empty_state()
@@ -188,10 +266,13 @@ class _ChannelListCard(QWidget):
 
     def add_item(self, ch: ChannelDTO) -> None:
         """订阅事件时增量追加一条。注意:不复检是否重复(ChannelWidget 已用
-        `_subscribed_ids` set 防重)。"""
-        item = QListWidgetItem(ch.display)
+        `_subscribed_ids` set 防重)。
+
+        2026-09-04 v1.6.4:头像 + 徽标走 _kind_icon / _channel_display_text。
+        """
+        item = QListWidgetItem(_channel_display_text(ch))
         item.setData(Qt.UserRole, ch.id)
-        item.setIcon(_kind_icon(ch.kind))
+        item.setIcon(_kind_icon(ch.kind, ch.photo_local_key))
         self.lst.addItem(item)
         self._refresh_empty_state()
 
@@ -407,7 +488,7 @@ class ChannelWidget(QWidget):
 
     def _apply_title_changed(self, channel_id: int, new_title: str) -> None:
         """2026-09-03 v1.6.0 PR #Q2:更新 _joined 缓存 + 重建两张卡上对应 item 的
-        display 文本(`ch.display` 用 title 拼)。
+        display 文本。2026-09-04 v1.6.4:用 `_channel_display_text` 保留徽标后缀。
         """
         ch = self._joined.get(channel_id)
         if ch is None:
@@ -418,20 +499,28 @@ class ChannelWidget(QWidget):
             for i in range(card.lst.count()):
                 it = card.lst.item(i)
                 if it and it.data(Qt.UserRole) == channel_id:
-                    it.setText(ch.display)
+                    it.setText(_channel_display_text(ch))
 
     def _apply_photo_changed(self, channel_id: int, local_path: str | None) -> None:
-        """2026-09-03 v1.6.0 PR #Q2:更新 _joined 缓存 + 重建两张卡上对应 item 的
-        图标。`_kind_icon` 当前用 kind 而非 photo,这里**保留占位** —
-        真头像路径需要 lightbox 路径适配(frozen / sandbox 不可访问),
-        留给后续 PR。MVP 仅更新内存缓存与 storage。
+        """2026-09-03 v1.6.0 PR #Q2 stub → 2026-09-04 v1.6.4 实装:
+        实时刷新两个卡上对应 item 的图标。
+
+        - `local_path` 非 None → `_kind_icon(kind, local_path)` 走
+          `ThumbnailCache` LRU;cache miss 时同步读 TDLib 本地缓存文件
+          并 `render_pixmap(bytes, max_size=48)`;失败(IO / 非图格式)→
+          fallback `_kind_emoji_icon(kind)`。
+        - `local_path` 为 None → 头像被删,退回 emoji 占位。
         """
         ch = self._joined.get(channel_id)
         if ch is None:
             return
         ch.photo_local_key = local_path
-        # 后续 PR:实际加载 `local_path` 头像并 `item.setIcon(QIcon(local_path))`,
-        # 失败则保持 _kind_icon placeholder。MVP 不实现 icon 实时刷新。
+        icon = _kind_icon(ch.kind, local_path)
+        for card in (self.joined_card, self.subs_card):
+            for i in range(card.lst.count()):
+                it = card.lst.item(i)
+                if it and it.data(Qt.UserRole) == channel_id:
+                    it.setIcon(icon)
 
     def _add_to_subscribed_list(self, ch: ChannelDTO) -> None:
         if ch.id in self._subscribed_ids:

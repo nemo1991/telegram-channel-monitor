@@ -164,6 +164,12 @@ def _channel_to_dict(c: ChannelDTO) -> dict[str, Any]:
         "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
         # 2026-09-03 v1.6.0 PR #Q2:头像本地路径,None 时省略(老库 roundtrip 干净)
         "photo_local_key": c.photo_local_key,
+        # 2026-09-04 v1.6.4:spammer 过滤字段 — 始终写(即使 False 也要显式存,
+        # 避免 channel widget 反复触发 partial update)
+        "is_verified": c.is_verified,
+        "is_scam": c.is_scam,
+        "is_fake": c.is_fake,
+        "has_protected_content": c.has_protected_content,
     }
 
 
@@ -173,6 +179,8 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
     #               last_synced_at 留空。
     # 2026-09-03 v1.6.0 PR #Q2:photo_local_key 同样模式 — 旧库无此字段
     # → 默认 None(从未设过头像或被删)。
+    # 2026-09-04 v1.6.4:4 个 spammer 过滤字段老库同样无此字段 → 默认 False,
+    # UI 端不显示徽标(graceful)。
     return ChannelDTO(
         id=int(d["id"]),
         title=d["title"],
@@ -185,6 +193,10 @@ def _dict_to_channel(d: dict[str, Any]) -> ChannelDTO:
             datetime.fromisoformat(d["last_synced_at"]) if d.get("last_synced_at") else None
         ),
         photo_local_key=d.get("photo_local_key"),
+        is_verified=bool(d.get("is_verified", False)),
+        is_scam=bool(d.get("is_scam", False)),
+        is_fake=bool(d.get("is_fake", False)),
+        has_protected_content=bool(d.get("has_protected_content", False)),
     )
 
 
@@ -352,6 +364,28 @@ class JsonlFileStore(StorageRepository):
                 if channel.photo_local_key is not None
                 else (existing.photo_local_key if existing else None)
             ),
+            # 2026-09-04 v1.6.4:4 个 spammer 过滤字段 — caller 传了就用,
+            # 否则保留旧值(老 sync 路径默认 False)。
+            is_verified=(
+                channel.is_verified
+                if channel.is_verified is not False or existing is None
+                else (existing.is_verified if existing else False)
+            ),
+            is_scam=(
+                channel.is_scam
+                if channel.is_scam is not False or existing is None
+                else (existing.is_scam if existing else False)
+            ),
+            is_fake=(
+                channel.is_fake
+                if channel.is_fake is not False or existing is None
+                else (existing.is_fake if existing else False)
+            ),
+            has_protected_content=(
+                channel.has_protected_content
+                if channel.has_protected_content is not False or existing is None
+                else (existing.has_protected_content if existing else False)
+            ),
         )
         self._channels[channel.id] = merged
         self._flush_registry()
@@ -364,12 +398,17 @@ class JsonlFileStore(StorageRepository):
         username: str | None = None,
         member_count: int | None = None,
         photo_local_key: str | None = None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
     ) -> None:
         """2026-08-27 v1.4.0 PR #14:Jsonl 部分更新 — 只动非 None 字段,
         其余保留旧值。is_subscribed 不动(本方法是「真元数据」更新)。
 
         2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段 — TDLib
         `updateChatPhoto` 推本地路径时落库。
+        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
         """
         existing = self._channels.get(channel_id)
         if existing is None:
@@ -385,6 +424,14 @@ class JsonlFileStore(StorageRepository):
             last_synced_at=existing.last_synced_at,
             photo_local_key=(
                 photo_local_key if photo_local_key is not None else existing.photo_local_key
+            ),
+            is_verified=is_verified if is_verified is not None else existing.is_verified,
+            is_scam=is_scam if is_scam is not None else existing.is_scam,
+            is_fake=is_fake if is_fake is not None else existing.is_fake,
+            has_protected_content=(
+                has_protected_content
+                if has_protected_content is not None
+                else existing.has_protected_content
             ),
         )
         self._channels[channel_id] = merged
@@ -409,6 +456,11 @@ class JsonlFileStore(StorageRepository):
                 is_subscribed=subscribed,
                 last_synced_at=existing.last_synced_at,
                 photo_local_key=existing.photo_local_key,  # 2026-09-03 PR #Q2
+                # 2026-09-04 v1.6.4:4 字段透传(原值不动,只切订阅)
+                is_verified=existing.is_verified,
+                is_scam=existing.is_scam,
+                is_fake=existing.is_fake,
+                has_protected_content=existing.has_protected_content,
             )
         self._flush_registry()
 

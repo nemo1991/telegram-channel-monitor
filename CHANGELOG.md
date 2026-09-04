@@ -5,6 +5,88 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.4] - 2026-09-04
+
+主题:**频道头像实时刷新 + TDLib spammer 过滤字段落库** — 把 v1.6.0
+PR #Q2 立的「频道头像 + 元数据同步」半成品闭环 + 补 4 类
+Telegram `Supergroup` / `Chat` 顶层字段(`is_verified` / `is_scam` /
+`is_fake` / `has_protected_content`),spammer 过滤 UI 上能看到 ✓ / ⚠️
+徽标;另一台客户端改头像,几秒内 `ChannelListCard` item 图标自动刷。
+
+### ✅ Added
+
+- **ChannelDTO 加 4 类 spammer 过滤字段**:`is_verified` / `is_scam` /
+  `is_fake` / `has_protected_content`,全部 `bool = False` 默认。
+  - 前 3 个是 TDLib `Supergroup` 顶层字段;`has_protected_content` 是
+    `Chat` 顶层字段(`Channel` / `Private` 都有,`basic_group` 没)。
+- **4 后端 schema 同步迁移**:
+  - **PG**:`ALTER TABLE channels ADD COLUMN IF NOT EXISTS` × 4
+    (全 `BOOLEAN DEFAULT FALSE`)+ `upsert_channel` /
+    `upsert_channel_metadata` INSERT+ON CONFLICT 扩 4 字段 +
+    `update_channel_metadata` 走 `$1-$8` COALESCE partial update +
+    `list_channels` / `list_subscribed_channels` / `get_channel`
+    SELECT 扩 4 列。
+  - **Mongo**:`$set` 子集 / `upsert_channel` 透传 4 字段;`_doc_to_channel`
+    旧 doc 缺字段 → 兜底 `False`,UI 不显示徽标。
+  - **Jsonl**:`_channel_dict_to_dto` / `_dto_to_channel_dict` 加 4 字段
+    (老库 roundtrip 默认 `False`);`upsert_channel_metadata` 保留 caller
+    显式值或旧值;`set_channel_subscribed` 透传 4 字段。
+- **TDLib 读 4 字段**(`tdlib_channels._resolve_channel_metadata`):
+  - `chatTypeSupergroup` 分支读 `sg.is_verified` / `sg.is_scam` /
+    `sg.is_fake`(Supergroup 顶层);`has_protected_content` 从
+    `chat.has_protected_content`(Chat 顶层)拿,channel / supergroup /
+    private 都可用。
+  - `chatTypeBasicGroup` 分支固定 `False`(无 4 字段);`Chat` 顶层
+    `has_protected_content` 仍可读。
+- **TDLib 4 update handler 透传 4 字段**:
+  - `_on_channel_updated` → 读 `chat.has_protected_content`,
+    `_safe_publish_channel_metadata(has_protected_content=...)`。
+  - `_on_supergroup_updated` → 读 `sg.is_verified` / `sg.is_scam` /
+    `sg.is_fake`,`_safe_publish_supergroup_metadata(...)`。
+  - `ChannelMetadataChanged` 事件加 4 个 `bool | None` 字段。
+  - `MonitorService._handle_channel_metadata` 透传 4 字段到
+    `storage.update_channel_metadata`。
+  - 4 个 log-only handler(`updateChatPermissions` /
+    `updateChatReadInbox` / `updateChatReadOutbox` /
+    `updateChatDefaultBannedRights`)加注释说明不携带 spammer 字段,
+    无 storage 落库路径。
+- **频道头像 UI 实时刷新**(`channel_widget.py`):
+  - `_kind_icon(kind, photo_local_key)` 改签名 — 优先走
+    `ThumbnailCache` LRU(`backend="local"`,`key=TDLib 本地缓存绝对路径`);
+    cache miss 同步读 PNG/JPEG bytes + `render_pixmap(max_size=48)`;
+    IO/格式失败 → fallback `_kind_emoji_icon(kind)`。
+  - `_apply_photo_changed` 实装 — `ChannelPhotoChanged` 事件 → 两张卡
+    上对应 item 的 `setIcon(QIcon(_kind_icon(...)))`,失败回 emoji 占位。
+  - `_channel_display_text(ch)` — `is_verified` → ` ✓` 后缀;
+    `is_scam` / `is_fake` 任一 → ` ⚠️` 后缀(不双标)。
+- **StorageRepository abstract `update_channel_metadata`** 加 4 个
+  `bool | None = None` 字段(None = 不动,True/False = 显式 set)。
+- **18 个新测试**:`test_channel_widget.py`(NEW,12 case,UI 头像 +
+  徽标 + ThumbnailCache);`test_storage_backends.py` 扩 6 个 InMemory +
+  Jsonl parity;`test_{pg,mongo}_repo_parity.py` 各 2 case。
+- **TDLib `_on_supergroup_updated`** 加 4 字段 detail 日志
+  (`verified=%s scam=%s fake=%s`)。
+
+### 📦 Migration
+
+- **PG**:启动时 `init_schema()` 跑 `ALTER TABLE ... IF NOT EXISTS`,
+  旧库自动加列,默认 `FALSE`,无需手动迁移。
+- **Mongo**:`schema-less`,旧 doc 缺字段 → `_doc_to_channel` 兜底
+  `False`,UI 不显示徽标。
+- **Jsonl**:旧 `channels.json` 缺字段 → `_dict_to_channel` 兜底
+  `False`;新建 doc 显式存 4 字段(避免反复 partial update)。
+
+### ⚠️ Notes
+
+- **frozen / sandbox 头像不可访问**:走 `try/except` → fallback
+  emoji placeholder,主流程不崩(已在 `_kind_icon` 实现,见
+  `_read_photo_bytes`)。
+- **`has_protected_content` 来源不统一**:Supergroup 类型没该字段,
+  只能从 `Chat` 顶层拿;`basic_group` 没,固定 `False`。已注释说明。
+- 候选 2(Lightbox GIF/MP4)/ 候选 3(暂停 PENDING durable)/
+  候选 4(HiDPI 黄金图)/ 候选 5-6(i18n 二期 / 快捷键持久化)— 留
+  v1.6.5+ / v1.7.0。
+
 ## [1.6.3] - 2026-09-04
 
 主题:**PG `list_messages(search=...)` SQL bug 修复** — v1.6.0 PR #Q1

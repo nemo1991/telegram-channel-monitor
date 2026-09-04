@@ -35,6 +35,14 @@ class ChannelDTO:
     # 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推 TDLib 本地头像文件路径;
     # None = 头像被删 / 从未设。UI `_ChannelListCard` 据此决定是否走 placeholder。
     photo_local_key: str | None = None
+    # 2026-09-04 v1.6.4:spammer 过滤 UI 用。`is_verified` / `is_scam` /
+    # `is_fake` 是 TDLib `Supergroup` 顶层字段(频道群组都有);`has_protected_content`
+    # 是 `Chat` 顶层字段(channel / private)。basic_group 没这两个字段,
+    # 固定 False。UI 端 channel list 卡片标徽显示(✓ / ⚠️)。
+    is_verified: bool = False
+    is_scam: bool = False
+    is_fake: bool = False
+    has_protected_content: bool = False
 
     @property
     def display(self) -> str:

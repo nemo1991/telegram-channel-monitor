@@ -714,6 +714,9 @@ class TdlibTelegramClient(_AiClient):
 
         直接通过 bus 发 `ChannelMetadataChanged`,MonitorService 订阅
         落库 + UI 实时刷新。
+
+        2026-09-04 v1.6.4:同时透传 `chat.has_protected_content`(Chat 顶层
+        字段,channel / private 都有;basic_group 没,固定 False)。
         """
         try:
             channel = getattr(update, "channel", None)
@@ -724,11 +727,16 @@ class TdlibTelegramClient(_AiClient):
                 return
             new_title = getattr(channel, "title", None)
             new_username = getattr(channel, "username", None)
+            # 2026-09-04 v1.6.4:`has_protected_content` 是 Chat 顶层字段 —
+            # 该字段在 `Channel` 类型(公开频道 / 私有 chat)上始终存在;
+            # basic_group 没该字段,但 `updateChannel` 不可能推送 basic_group。
+            new_has_protected = bool(getattr(channel, "has_protected_content", False))
             log.debug(
-                "updateChannel: id=%s title=%r username=%r",
+                "updateChannel: id=%s title=%r username=%r has_protected=%s",
                 cid,
                 new_title,
                 new_username,
+                new_has_protected,
             )
             if self._bus is not None:
                 asyncio.create_task(
@@ -737,6 +745,7 @@ class TdlibTelegramClient(_AiClient):
                         title=new_title,
                         username=new_username,
                         member_count=None,
+                        has_protected_content=new_has_protected,
                     )
                 )
         except Exception:  # noqa: BLE001
@@ -750,6 +759,9 @@ class TdlibTelegramClient(_AiClient):
         monitor 端要做 supergroup_id ↔ channel_id 映射落库。这一层只在
         bus 上 publish `(supergroup_id=, member_count=, username=)`;具体
         落到哪个 channel_id 由 MonitorService 决定。
+
+        2026-09-04 v1.6.4:同时透传 `is_verified` / `is_scam` / `is_fake`
+        (Supergroup 顶层字段,spammer 过滤 UI 用)。
         """
         try:
             supergroup = getattr(update, "supergroup", None)
@@ -760,11 +772,20 @@ class TdlibTelegramClient(_AiClient):
                 return
             member_count = getattr(supergroup, "member_count", None)
             username = getattr(supergroup, "username", None)
+            # 2026-09-04 v1.6.4:`is_verified`/`is_scam`/`is_fake` 是
+            # Supergroup 顶层字段(基本不会变,但 TDLib 会随 verified
+            # 勾选 toggle 推送)。
+            sg_is_verified = bool(getattr(supergroup, "is_verified", False))
+            sg_is_scam = bool(getattr(supergroup, "is_scam", False))
+            sg_is_fake = bool(getattr(supergroup, "is_fake", False))
             log.debug(
-                "updateSupergroup: id=%s member_count=%s username=%r",
+                "updateSupergroup: id=%s member_count=%s username=%r verified=%s scam=%s fake=%s",
                 sid,
                 member_count,
                 username,
+                sg_is_verified,
+                sg_is_scam,
+                sg_is_fake,
             )
             if self._bus is not None:
                 asyncio.create_task(
@@ -772,6 +793,9 @@ class TdlibTelegramClient(_AiClient):
                         supergroup_id=int(sid),
                         member_count=member_count,
                         username=username,
+                        is_verified=sg_is_verified,
+                        is_scam=sg_is_scam,
+                        is_fake=sg_is_fake,
                     )
                 )
         except Exception:  # noqa: BLE001
@@ -841,6 +865,10 @@ class TdlibTelegramClient(_AiClient):
 
         目前仅 log — 暂无 storage 字段映射(后续如需 ban / mute 元数据可加)。
         保留 handler 防未知 update 静默丢失。
+
+        2026-09-04 v1.6.4:不携带 4 类 spammer 字段(`is_verified` /
+        `is_scam` / `is_fake` / `has_protected_content`),无 storage 落库
+        路径。
         """
         try:
             chat_id = getattr(update, "chat_id", None)
@@ -853,6 +881,8 @@ class TdlibTelegramClient(_AiClient):
         """TDLib `updateChatReadInbox`(2026-09-03 v1.6.0 PR #Q2):已读位置变化。
 
         目前仅 log — 暂无 storage 字段映射。
+
+        2026-09-04 v1.6.4:不携带 spammer 字段。
         """
         try:
             chat_id = getattr(update, "chat_id", None)
@@ -869,6 +899,8 @@ class TdlibTelegramClient(_AiClient):
         """TDLib `updateChatReadOutbox`(2026-09-03 v1.6.0 PR #Q2):已发送消息被读位置。
 
         目前仅 log。
+
+        2026-09-04 v1.6.4:不携带 spammer 字段。
         """
         try:
             chat_id = getattr(update, "chat_id", None)
@@ -886,6 +918,9 @@ class TdlibTelegramClient(_AiClient):
         频道「默认封禁权」变化(新成员加入时的初始权限)。
 
         目前仅 log。
+
+        2026-09-04 v1.6.4:不携带 spammer 字段(`has_protected_content` 是
+        Chat 顶层字段,与 default_banned_rights 语义无关)。
         """
         try:
             chat_id = getattr(update, "chat_id", None)
@@ -900,6 +935,7 @@ class TdlibTelegramClient(_AiClient):
         title: str | None,
         username: str | None,
         member_count: int | None,
+        has_protected_content: bool | None = None,  # 2026-09-04 v1.6.4
     ) -> None:
         try:
             from tgmonitor.core.events import ChannelMetadataChanged
@@ -911,6 +947,7 @@ class TdlibTelegramClient(_AiClient):
                     title=title,
                     username=username,
                     member_count=member_count,
+                    has_protected_content=has_protected_content,
                 )
             )
         except Exception:  # noqa: BLE001
@@ -921,6 +958,9 @@ class TdlibTelegramClient(_AiClient):
         supergroup_id: int,
         member_count: int | None,
         username: str | None,
+        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
     ) -> None:
         try:
             from tgmonitor.core.events import ChannelMetadataChanged
@@ -933,6 +973,9 @@ class TdlibTelegramClient(_AiClient):
                     title=None,
                     username=username,
                     member_count=member_count,
+                    is_verified=is_verified,
+                    is_scam=is_scam,
+                    is_fake=is_fake,
                 )
             )
         except Exception:  # noqa: BLE001

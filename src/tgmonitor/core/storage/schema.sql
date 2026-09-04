@@ -27,6 +27,13 @@ ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
 -- 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推本地路径缓存 — UI 实时刷新头像
 -- 用。IF NOT EXISTS 幂等,旧库自动迁移加列。
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS photo_local_key TEXT;
+-- 2026-09-04 v1.6.4:spammer 过滤 UI 用。`is_verified` / `is_scam` / `is_fake`
+-- 是 TDLib Supergroup 顶层字段;`has_protected_content` 是 Chat 顶层字段。
+-- 旧库 roundtrip 默认 FALSE,UI 卡片不显示徽标。
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_scam BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_fake BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS has_protected_content BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS messages (
     id                  BIGSERIAL PRIMARY KEY,
