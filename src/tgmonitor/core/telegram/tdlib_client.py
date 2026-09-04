@@ -1405,6 +1405,33 @@ class TdlibTelegramClient(_AiClient):
         self._streams.clear()
         await self._kill_client()
 
+    async def stop(self) -> None:
+        """2026-09-03 v1.6.1:暂停监听用 — 断 TDLib 但保留 session db。
+
+        与 `close()` 区别:
+        - `close()` 设 `_closing=True` 不可逆(让 in-flight 协程下次 tick 报
+          ClientClosingError,防 10s 超时泄漏);app exit 用
+        - `stop()` **不**设 `_closing=True` — `_kill_client` 杀掉 TDLib 进程
+          但 client 实例本身可复用,后续 `start()` 重建进程 + 重走授权(已
+          login 的 session 在 `_do_start_inner` 内会自动 ready)
+
+        流程:
+        1. 关所有订阅流(下游 monitor 不会收新 update)
+        2. `_kill_client` — 杀 TDLib + drain code/pwd queue
+        3. 状态改 `uninit`(start() 入口会重新走授权)
+        """
+        # 关流
+        for s in list(self._streams):
+            try:
+                await s.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+        self._streams.clear()
+        await self._kill_client()
+        # reset 状态让 start() 入口能重走
+        self._state = "uninit"
+        self._state_event.clear()
+
     def _check_alive(self) -> None:
         """公共 async 方法的 entry guard。
 

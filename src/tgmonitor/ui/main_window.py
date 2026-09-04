@@ -161,6 +161,9 @@ class MainWindow(QMainWindow):
         # 2026-08-30 PR #A4:tray「退出」→ VM 收到 QuitRequested → emit
         # `quit_requested` signal → 此 handler → 真退出 qt_app.quit。
         self._vm.quit_requested.connect(self._on_vm_quit_requested)
+        # 2026-09-03 v1.6.1:暂停 / 恢复信号 — status bar label + window title 后缀
+        self._vm.monitoring_paused.connect(self._on_monitoring_paused)
+        self._vm.monitoring_resumed.connect(self._on_monitoring_resumed)
         self._build_ui()
         self._build_menu()
         self._build_tray()
@@ -395,6 +398,19 @@ class MainWindow(QMainWindow):
         # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
         self._conn_label = QLabel("TG 未连接")
         self.status_bar.addPermanentWidget(self._conn_label)
+        # 2026-09-03 v1.6.1:暂停监听状态栏常驻 label — 默认 hidden,接
+        # monitoring_paused signal 后 show / 接 monitoring_resumed 后 hide。
+        # 黄色背景 + ⏸ 前缀,与红字「对象存储不可用」视觉上区分。
+        self._paused_label = QLabel("⏸ 暂停监听")
+        self._paused_label.setStyleSheet(
+            "background-color: #f7c948; color: #333; padding: 2px 8px;"
+            " border-radius: 3px; font-weight: 600;"
+        )
+        self._paused_label.setToolTip(
+            "监听已暂停 — 实时更新与媒体下载已停。tray 菜单点「继续监听」恢复"
+        )
+        self._paused_label.setVisible(False)
+        self.status_bar.addPermanentWidget(self._paused_label)
         # v1.0.22:启动时对象存储 connect 失败 → 状态栏红字常驻提示(不只写日志)。
         # 用户从日志看不到问题,媒体下载又静默失败,必须让「对象存储不可用」在
         # UI 上直接可见;设置页热重载成功(`_on_settings_changed`)后自动移除。
@@ -549,6 +565,19 @@ class MainWindow(QMainWindow):
         VM `quit_requested` signal → 此 slot → `qt_app.quit`。
         """
         self._quit_app()
+
+    def _on_monitoring_paused(self, source: str) -> None:
+        """2026-09-03 v1.6.1:监听已暂停 — 状态栏常驻 label 显示 +
+        window title 加 `(⏸ 暂停)` 后缀。
+        """
+        self._paused_label.setVisible(True)
+        base_title = self.tr("tgmonitor · Telegram 频道监听")
+        self.setWindowTitle(f"{base_title}  (⏸ 暂停)")
+
+    def _on_monitoring_resumed(self, source: str) -> None:
+        """2026-09-03 v1.6.1:监听已恢复 — 状态栏 label 隐藏 + title 复位。"""
+        self._paused_label.setVisible(False)
+        self.setWindowTitle(self.tr("tgmonitor · Telegram 频道监听"))
 
     async def _on_notification_fallback(self, event: object) -> None:
         """无 tray 系统(Linux 无 indicator / offscreen)→ 状态栏 fallback。

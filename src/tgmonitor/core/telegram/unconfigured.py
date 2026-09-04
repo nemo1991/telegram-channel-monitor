@@ -115,6 +115,10 @@ class UnconfiguredTelegramClient(TelegramClient):
                 pass
         self._all_streams.clear()
 
+    async def stop(self) -> None:
+        """2026-09-03 v1.6.1:未登录状态 stop = no-op(没资源可释放)。"""
+        return None
+
     @property
     def state(self) -> str:
         """恒为 `phone_required` — UI 据此显示未登录引导。"""

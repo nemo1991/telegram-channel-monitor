@@ -121,6 +121,13 @@ class MonitorViewModel(QObject):
     # 接到 → qt_app.quit() 走 aboutToQuit → _shutdown_then_quit。
     # `pause=True` 路径不发此 signal(VM 内部 log 即可)。
     quit_requested = Signal()
+    # 2026-09-03 v1.6.1:暂停 / 恢复监听 — payload str source("tray" 等)。
+    # MainWindow 接到后:
+    # - status bar label「⏸ 暂停」显示 / 隐藏
+    # - window title 加 `(⏸ 暂停)` 后缀 / 取消
+    # - tray icon 视觉由 tray_icon 自己监听 bus(MonitoringPaused/Resumed)
+    monitoring_paused = Signal(str)
+    monitoring_resumed = Signal(str)
     # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 — payload list[MessageDTO]。
     # MainWindow 接到 → live_view.set_messages(messages) 批量替换。
     # 空 list = 清空视图(query 没命中或被 clear)。
@@ -227,14 +234,21 @@ class MonitorViewModel(QObject):
     async def _on_quit_requested(self, e: Event) -> None:
         """2026-08-30 v1.5.0 PR #A4:tray menu「退出」/「暂停监听」事件。
 
-        `pause=True` 留作 v1.5.1,本 PR 不实现暂停逻辑(仅消费事件)。
+        2026-09-03 v1.6.1:pause=True 现在真生效 — 调 AppService.pause_monitor /
+        resume_monitor(幂等),bus 后续发 MonitoringPaused/Resumed 事件,
+        VM 不重复 emit monitoring_paused/resumed signal(订阅方在 service 已发)。
         `pause=False` → emit Qt quit 信号,Qt 主循环走 aboutToQuit
         → _shutdown_then_quit → 真退出。
         """
         if not isinstance(e, QuitRequested):
             return
         if e.pause:
-            log.info("QuitRequested(pause=True) — v1.5.1 实现暂停,本 PR 忽略")
+            if self.app.is_paused:
+                log.info("QuitRequested(pause=True) — 当前已 paused,resume")
+                await self.app.resume_monitor(source="tray")
+            else:
+                log.info("QuitRequested(pause=True) — 当前未 paused,pause")
+                await self.app.pause_monitor(source="tray")
             return
         # 真退出 — emit 到 main_window 持有 qt_app 信号;此处不便 import qt_app,
         # 改发 signal 通知 main_window 真退出

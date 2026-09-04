@@ -109,3 +109,41 @@ def _svg_icon(
         p.end()
         icon.addPixmap(pm)
     return icon
+
+
+@lru_cache(maxsize=4)
+def load_paused_app_icon() -> QIcon:
+    """2026-09-03 v1.6.1:暂停监听状态的 app icon 变体。
+
+    在原 `load_app_icon()` 的每个 size pixmap 右上角叠一个 ⏸ 圆形徽章 —
+    用 Qt QPainter 直接画,无新 SVG 资源 + 无 lru_cache miss 风险。徽章
+    颜色 = 半透明黑底 + 橙色 ⏸,与原 icon 强对比,16px / 24px 小尺寸仍
+    肉眼可辨。
+    """
+    base = load_app_icon()
+    paused = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pm = base.pixmap(QSize(size, size))
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # 徽章尺寸:大约图标 1/3,右下角
+        badge_size = max(size // 3, 6)
+        badge_rect = pm.rect().adjusted(
+            pm.width() - badge_size - 1,
+            pm.height() - badge_size - 1,
+            -1,
+            -1,
+        )
+        p.setBrush(QColor(0, 0, 0, 180))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(badge_rect)
+        # ⏸ 字符
+        p.setPen(QColor("#ff9f43"))  # 暖橙
+        font = p.font()
+        font.setPixelSize(max(int(badge_size * 0.7), 6))
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(badge_rect, Qt.AlignCenter, "⏸")
+        p.end()
+        paused.addPixmap(pm)
+    return paused

@@ -26,10 +26,12 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from tgmonitor.core.events import (
+    MonitoringPaused,
+    MonitoringResumed,
     NotificationRequested,
     QuitRequested,
 )
-from tgmonitor.ui.icon import load_app_icon
+from tgmonitor.ui.icon import load_app_icon, load_paused_app_icon
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QMainWindow
@@ -51,11 +53,21 @@ class TrayIcon(QObject):
         super().__init__(parent)
         self._app = app
         self._parent = parent
+        # 2026-09-03 v1.6.1:paused 视觉状态缓存 — icon / tooltip / menu text
+        # 据此切换。init 时 paused=False(默认 running)。
+        self._is_paused = False
+        # 2026-09-03 v1.6.1:无论 tray 可用不可用都先订阅 — 走 no-tray 路径时
+        # `_is_paused` 仍能被 bus 事件驱动(供其他 UI 兜底判断,如 status bar
+        # 标签 / 主窗口 title 后缀;这些由 MainWindow 走 vm.monitoring_paused
+        # 信号接,与本字段互为冗余)。
+        app.bus.subscribe(MonitoringPaused, self._on_monitoring_paused)
+        app.bus.subscribe(MonitoringResumed, self._on_monitoring_resumed)
         # isSystemTrayAvailable 检测 — 不可用时 _tray 留 None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             log.info("system tray not available on this platform")
             self._tray: QSystemTrayIcon | None = None
             self._menu: QMenu | None = None
+            self._action_pause: QAction | None = None
             return
         self._tray = QSystemTrayIcon(load_app_icon(), parent)
         self._tray.setToolTip("tgmonitor · Telegram 频道监听")
@@ -65,8 +77,10 @@ class TrayIcon(QObject):
         self._action_show.triggered.connect(parent.show)
         self._menu.addAction(self._action_show)
         self._menu.addSeparator()
-        # 暂停监听 — 2026-08-30 v1.5.0 PR #A4:仅 emit 事件,MonitorService
-        # 暂停逻辑留 v1.5.1(目前只是事件出口,无订阅者)。
+        # 暂停监听 — 2026-09-03 v1.6.1:真生效了。文字按 _is_paused 切换
+        # 「暂停监听」↔「继续监听」,触发仍 emit QuitRequested(pause=True),
+        # 由 MonitorViewModel._on_quit_requested 查 app.is_paused 决定
+        # 走 pause 还是 resume。
         self._action_pause = QAction("暂停监听", self._menu)
         self._action_pause.triggered.connect(lambda: app.bus.publish(QuitRequested(pause=True)))
         self._menu.addAction(self._action_pause)
@@ -117,3 +131,29 @@ class TrayIcon(QObject):
             else QSystemTrayIcon.MessageIcon.Critical
         )
         self._tray.showMessage(event.title, event.body, icon, 5000)
+
+    # ---- 2026-09-03 v1.6.1:暂停 / 恢复视觉切换 ----
+
+    async def _on_monitoring_paused(self, event: object) -> None:
+        """切 icon + tooltip + menu text 到 paused 态。无托盘时 no-op。"""
+        if not isinstance(event, MonitoringPaused):
+            return
+        self._is_paused = True
+        if self._tray is None:
+            return
+        self._tray.setIcon(load_paused_app_icon())
+        self._tray.setToolTip("⏸ tgmonitor · 暂停监听中")
+        if self._action_pause is not None:
+            self._action_pause.setText("继续监听")
+
+    async def _on_monitoring_resumed(self, event: object) -> None:
+        """切 icon + tooltip + menu text 回到 running 态。无托盘时 no-op。"""
+        if not isinstance(event, MonitoringResumed):
+            return
+        self._is_paused = False
+        if self._tray is None:
+            return
+        self._tray.setIcon(load_app_icon())
+        self._tray.setToolTip("tgmonitor · Telegram 频道监听")
+        if self._action_pause is not None:
+            self._action_pause.setText("暂停监听")

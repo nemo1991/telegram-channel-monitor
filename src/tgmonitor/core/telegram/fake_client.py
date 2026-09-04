@@ -168,6 +168,11 @@ class FakeTelegramClient(TelegramClient):
                 pass
         self._all_streams.clear()
 
+    async def stop(self) -> None:
+        """2026-09-03 v1.6.1:fake 模拟断 TDLib — 状态回 uninit,留 session
+        给下次 start 复用。不真关流(stop 后 resume 走 start 会重建 stream)。"""
+        self._state = "uninit"
+
     @property
     def state(self) -> str:
         """当前顶层状态(继承自 TelegramClient Protocol)。"""

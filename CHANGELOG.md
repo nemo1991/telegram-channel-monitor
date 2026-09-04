@@ -5,6 +5,79 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.1] - 2026-09-04
+
+主题:**「暂停监听」托盘 action 真正生效** — v1.5.0 PR #A4 立的 v1.5.1
+todo 兑现。tray 菜单的「暂停监听」从「emit 事件无人接」变成「断开 TDLib
++ 取消 in-flight 下载 + 全 UI 同步视觉态」,再次点击恢复。
+
+### ✨ Added
+
+- **`AppService.pause_monitor()` / `resume_monitor()`** — pause 顺序
+  `monitor.stop()` → `client.stop()`(断开 TDLib,但保留 session db),
+  resume 顺序 `client.start()` → `monitor.start()`(重新 ready)。两端
+  均幂等:连续 pause / 连续 resume 不抛、不重复调 stop、不重复发事件。
+  失败时 `paused` 状态仍设,UI 视觉同步(让用户感知),但 `Resumed`
+  失败时**不**置 `False`(保持 paused 让用户重试)。
+- **`TelegramClient.stop()` Protocol 方法** — 与 `close()` 区分:
+  `stop()` 保留 session 下次 `start()` 自动 ready,`close()` 杀后台
+  loop 用于 app exit;`UnconfiguredTelegramClient` / `FakeTelegramClient`
+  / `TdlibTelegramClient` 全部实现。
+- **`MonitoringPaused` / `MonitoringResumed` 事件** — 由 `AppService`
+  在 pause / resume 完成时发,UI 据此切视觉态。
+- **`load_paused_app_icon()` 暂停变体图标** — 在 `app_icon` 右下角
+  overlay ⏸ emoji 圆角 badge(`QPainter` 绘制 16-256 px 多档),cached
+  by `@lru_cache(maxsize=4)`。
+- **Tray icon pause 视觉切换** — `TrayIcon._on_monitoring_paused` /
+  `_on_monitoring_resumed` 切 icon / tooltip / 菜单 action text
+  「暂停监听」 ↔ 「继续监听」。`__init__` 即订阅,无系统托盘时
+  `_is_paused` 内部状态仍能被 bus 事件驱动(冗余 fallback)。
+- **MainWindow status bar 「⏸ 暂停监听」标签** — 黄色圆角徽标
+  `QStatusBar.addPermanentWidget`,paused 时显示、resumed 时隐藏。
+- **MainWindow title 后缀** — paused 时 window title 加 `(⏸ 暂停)`
+  后缀,resumed 时还原。
+
+### 🔧 Changed
+
+- **`MonitorViewModel._on_quit_requested`** — `QuitRequested(pause=True)`
+  改为「查 `app.is_paused` → 调 `pause_monitor()` 或 `resume_monitor()`
+  同事件源 toggle」,替代 v1.5.0 PR #A4 的「仅 emit quit_requested
+  signal 走 app exit」路径。
+- **`TelegramClient` Protocol 文档** — `close()` 注释明确写「用于
+  app exit 杀后台 loop」,`stop()` 注释「保留 session,下次 start 自动
+  ready」,两个 API 用途零重叠。
+
+### ✅ Fixed
+
+- **「暂停监听」tray menu action 假死 bug** — v1.5.0 PR #A4 实现的
+  pause action 只 emit `QuitRequested(pause=True)` 事件,无人订阅,菜单
+  点了没反应;v1.6.1 真正串联到 `AppService.pause_monitor()`。
+- **`test_tray_icon_pause.py` 缺失 `qt_app` fixture 导致的 SIGABRT** —
+  `_svg_icon` 在没有 `QApplication` 时构造 `QPixmap` 直接 native abort;
+  新增 `qt_app` fixture(`QApplication.instance() or QApplication([])`)
+  + patch `QSystemTrayIcon` 构造返 `MagicMock` 让 setIcon / setToolTip
+  可断言。
+
+### 🧪 Tests
+
+- **`tests/test_app_service_pause.py` (NEW, 8 cases)** —
+  pause 顺序(monitor.stop → client.stop)、idempotent、monitor 失败
+  时 client 仍调、client 失败时仍标 paused、resume 顺序
+  (client.start → monitor.start)、未 paused 时 resume no-op、client
+  start 失败时**不**置 False、完整 pause→resume 4 周期。
+- **`tests/test_monitor_vm_pause.py` (NEW, 5 cases)** —
+  `QuitRequested(pause=True)` 未 paused 调 pause / 已 paused 调 resume /
+  `pause=False` 仍 emit Qt signal / 调用都带 `source="tray"` / 非
+  `QuitRequested` 事件忽略。
+- **`tests/test_tray_icon_pause.py` (NEW, 9 cases)** —
+  paused 事件 swap icon(to paused variant)/ 改 tooltip / 改菜单文字 /
+  设 `_is_paused` 内部态;resumed 事件反向;`pause → resume → pause →
+  resume` 周期 4 次状态翻转正确;`isSystemTrayAvailable=False`(offscreen
+  / 无 indicator)时 paused 事件不抛,`_is_paused` 内部态仍更新。
+- **既有测试零回归** — 801 通过,4 个 visual regression
+  `size mismatch`(HiDPI golden 黄金图问题,v1.6.0 baseline 同样 4 个,
+  v1.6.1 未引入新视觉变化)。
+
 ## [1.6.0] - 2026-09-03
 
 主题:**渠道深化 — 全文索引 + 实时元数据** — 2 PR 已完成。

@@ -268,11 +268,37 @@ class NotificationRequested(Event):
 class QuitRequested(Event):
     """2026-08-30 v1.5.0 PR #A4:用户从 tray menu 选「退出」/「暂停监听」。
 
-    pause=True → 仅暂停 monitor(留作 v1.5.1,目前仅 emit 事件,无订阅)
+    pause=True → 仅暂停 monitor(2026-09-03 v1.6.1 实装:断开 TDLib + 取消
+    in-flight 下载;resume 走 client.start() + 重建 monitor)
     pause=False → 真退出,UI 走 shutdown_then_quit 路径
     """
 
     pause: bool = False
+
+
+@dataclass
+class MonitoringPaused(Event):
+    """2026-09-03 v1.6.1:监听已暂停 — TDLib 断开 + 下载取消。
+
+    UI 据此:
+    - tray icon 换灰度变体 + tooltip 改「⏸ 暂停中」
+    - status bar label「⏸ 暂停」显示
+    - main window title 加 `(⏸ 暂停)` 后缀
+    - tray menu 文字「暂停监听」 → 「继续监听」
+    """
+
+    source: str = ""  # "tray" | "menu" | "systray" — 哪个 UI 触发(留扩展)
+
+
+@dataclass
+class MonitoringResumed(Event):
+    """2026-09-03 v1.6.1:监听已恢复 — TDLib 已重新 ready,新 update 正常接收。
+
+    UI 据此复位所有 paused 视觉指示(icon / tooltip / status bar / title /
+    menu text)。
+    """
+
+    source: str = ""
 
 
 @dataclass

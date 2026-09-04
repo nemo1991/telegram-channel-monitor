@@ -61,6 +61,16 @@ class TelegramClient(Protocol):
         """登出 — 清掉 session;caller 重建 client。"""
         ...
 
+    async def stop(self) -> None:
+        """2026-09-03 v1.6.1:暂停监听用 — 断开 TDLib 但不杀 session db,
+        后续 `start()` 可秒过(已 login)或走 phone/code/password(冷启动)。
+
+        与 `close()` 区别:
+        - `stop()` 保留 session(下次 start 自动 ready);`close()` 杀后台 loop
+        - `stop()` 后可 `start()` 回到 ready;`close()` 后再 start 等同冷启动
+        """
+        ...
+
     async def close(self) -> None:
         """关停 tdlib_json 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
         ...

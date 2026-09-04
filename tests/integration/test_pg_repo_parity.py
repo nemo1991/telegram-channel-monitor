@@ -450,9 +450,7 @@ async def test_update_channel_metadata_photo_local_key_preserves_other_pg(
     pg_repo: PostgresRepository,
 ) -> None:
     """PR #Q2:只动 photo_local_key,不动其他字段。"""
-    await pg_repo.upsert_channel(
-        ChannelDTO(id=100, title="Title", username="@u", member_count=99)
-    )
+    await pg_repo.upsert_channel(ChannelDTO(id=100, title="Title", username="@u", member_count=99))
     await pg_repo.update_channel_metadata(100, photo_local_key="/tmp/x.png")
     got = await pg_repo.get_channel(100)
     assert got is not None
@@ -466,9 +464,7 @@ async def test_upsert_channel_with_photo_local_key_pg(
     pg_repo: PostgresRepository,
 ) -> None:
     """PR #Q2:`upsert_channel` 全字段 upsert 含 photo_local_key。"""
-    ch = ChannelDTO(
-        id=100, title="X", photo_local_key="/tmp/avatar.jpg"
-    )
+    ch = ChannelDTO(id=100, title="X", photo_local_key="/tmp/avatar.jpg")
     await pg_repo.upsert_channel(ch)
     got = await pg_repo.get_channel(100)
     assert got is not None

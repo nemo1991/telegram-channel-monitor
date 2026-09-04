@@ -61,6 +61,8 @@ from tgmonitor.core.events import (
     EventBus,
     MediaDownloaded,
     MediaRetried,
+    MonitoringPaused,
+    MonitoringResumed,
     SettingsChanged,
 )
 from tgmonitor.core.media_service import MediaService
@@ -122,6 +124,10 @@ class AppService:
         # 内部状态
         self._update_streams: list[UpdateStream] = []
         self._running = False
+        # 2026-09-03 v1.6.1:暂停监听状态 — pause 期间 _running 仍 True
+        # (UI 仍能查已订频道历史 / 已下消息),但 _is_paused 标记 TDLib 已断开
+        # + download_queue 已 cancel。resume 走 client.start() + monitor.start()
+        self._is_paused = False
         # 重入锁:reconfigure 期间阻止 save_message
         self._reconfiguring = False
 
@@ -349,6 +355,71 @@ class AppService:
             except Exception:  # noqa: BLE001
                 pass
         self._update_streams.clear()
+
+    # ---------- 暂停 / 恢复(2026-09-03 v1.6.1)----------
+
+    @property
+    def is_paused(self) -> bool:
+        """当前是否处于暂停监听状态。"""
+        return self._is_paused
+
+    async def pause_monitor(self, source: str = "tray") -> None:
+        """2026-09-03 v1.6.1:暂停监听 — 断 TDLib + 取消 in-flight 下载。
+
+        流程:
+        1. `monitor.stop()` — 取消 download_task + 关 update stream
+           (download_task 取消会把队列里 PENDING + 进行中 IN_PROGRESS 都 cancel)
+        2. `client.stop()` — TDLib 完整断开,释放 fd + 内存
+        3. `_is_paused = True` + 发 `MonitoringPaused` 事件
+
+        幂等:已 paused 时再调 no-op。`_running` 仍保持 True(暂停 ≠ 退出),
+        resume 走 `resume_monitor()` 走同一份 _running 状态。
+        """
+        if self._is_paused:
+            log.debug("pause_monitor: already paused, no-op")
+            return
+        log.info("pause_monitor: source=%s", source)
+        if self.monitor is not None:
+            try:
+                await self.monitor.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("pause_monitor: monitor.stop failed")
+        try:
+            await self.client.stop()
+        except Exception:  # noqa: BLE001
+            log.exception("pause_monitor: client.stop failed")
+        self._is_paused = True
+        await self.bus.publish(MonitoringPaused(source=source))
+
+    async def resume_monitor(self, source: str = "tray") -> None:
+        """2026-09-03 v1.6.1:恢复监听 — 重启 TDLib + 重建 monitor。
+
+        流程:
+        1. `client.start()` — 重新走 authorization 状态机(已 login 的 session
+           会秒过,冷启动走 phone/code/password)
+        2. `monitor.start()` — 重订阅 TDLib update stream + 启动 download worker
+        3. `_is_paused = False` + 发 `MonitoringResumed` 事件
+
+        幂等:已 resumed 时再调 no-op。
+        """
+        if not self._is_paused:
+            log.debug("resume_monitor: not paused, no-op")
+            return
+        log.info("resume_monitor: source=%s", source)
+        try:
+            await self.client.start()
+        except Exception:  # noqa: BLE001
+            log.exception("resume_monitor: client.start failed")
+            # 启动失败仍尝试重建 monitor + 发 Resumed 事件让 UI 复位?
+            # — 失败时**不**发 Resumed,保持 paused 状态让用户重试
+            return
+        if self.monitor is not None:
+            try:
+                await self.monitor.start()
+            except Exception:  # noqa: BLE001
+                log.exception("resume_monitor: monitor.start failed")
+        self._is_paused = False
+        await self.bus.publish(MonitoringResumed(source=source))
 
     # ---------- 导出(由 ExportService 提供实现)— 每次新建轻量 svc ----------
 
