@@ -17,6 +17,15 @@
 
 from __future__ import annotations
 
+import os
+
+# 2026-09-04 v1.6.5:macOS offscreen QPA 在 HiDPI 主屏下继承 dpr=2.0,
+# 导致 widget.grab().toImage() 返 2× 像素,golden 比对炸。
+# 必须在 PySide6 首次 import 之前设 — 否则 QApplication 内部走 HiDPI
+# 初始化,后续 setAttribute(Qt.AA_DisableHighDpiScaling) 太晚。
+os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+os.environ.setdefault("QT_SCALE_FACTOR", "1")
+
 import pytest
 
 from tests.fixtures._factories import make_message, make_photo

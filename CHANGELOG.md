@@ -5,6 +5,44 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.5] - 2026-09-04
+
+主题:**HiDPI 黄金图重生成** — `tests/test_visual_regression.py` 8 个 case
+在 macOS 真机(尤其 Retina / Apple Silicon)全部 fail,根因两条并存:
+(1) HiDPI 2× grab — widget 渲染到 `QImage` 时 `devicePixelRatio()=2.0`,
+抓出 `widget.size() * dpr` = `480×640`,与 `240×320` golden 尺寸不一致直接
+size mismatch fail;(2) v1.6.4 ✓ / ⚠️ emoji 徽标走 Apple Color Emoji 字体
+(不是 pin 的 DejaVu Sans),行高 +21px / DashboardWidget +79px / MainWindow
++31px width,golden 像素 diff 溢出 0.5% 容差。本次把 dpr 锁到 1× + 8 golden
+按新基线重抓,本地 macOS 与 CI 同源字节级一致。
+
+### 🐛 Fixed
+
+- **`tests/conftest.py`**:在 PySide6 首次 import 之前
+  `os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")` +
+  `QT_SCALE_FACTOR=1"`,让 offscreen QPA 不要继承 HiDPI 主屏的 dpr。
+  必须在 import 之前设 — 否则 QApplication 构造时已走 HiDPI 初始化,后续
+  `setAttribute(Qt.AA_DisableHighDpiScaling)` 太晚。
+- **`tests/test_visual_regression.py:_grab`**:加 defence-in-depth,grab 后
+  按 `widget.devicePixelRatio()` 整数缩回 1×(`Qt.FastTransformation`,
+  整像素对齐,不引入 sub-pixel anti-alias 噪声)— 兜底 macOS-26 VM /
+  Apple Silicon 等极端情况下 `conftest` env 未生效的场景。
+- **8 个 golden 按新基线重生成**(`UPDATE_GOLDENS=1 pytest ...`):
+  `message_view_empty` / `message_view_with_messages` /
+  `settings_page_default` / `login_dialog_initial` 4 个 2×→1× 缩回;
+  `main_window_initial` / `dashboard_widget_empty` /
+  `channel_widget_with_channels` / `export_dialog_default` 4 个按 v1.6.4
+  emoji 撑大的新 layout 重抓。
+
+### ⚠️ Notes
+
+- 本次纯测试基础设施修复,不动 production 代码 / 不动 CI `--ignore` 策略。
+- 跨 macOS minor 版本 emoji glyph 漂移仍是已知风险(Apple Color Emoji
+  字体在 macOS 15 ↔ macOS 26 之间会变),0.5% 容差覆盖当前 8 case;后续
+  macOS 更新溢出容差时,重抓 golden(走 `UPDATE_GOLDENS=1`)即可。
+- `QT_SCALE_FACTOR=1` 不影响 widget grab 之外的行为(其它 UI test 不读
+  dpr);`819 passed` baseline 在加 env 后保持。
+
 ## [1.6.4] - 2026-09-04
 
 主题:**频道头像实时刷新 + TDLib spammer 过滤字段落库** — 把 v1.6.0

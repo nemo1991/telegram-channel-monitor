@@ -28,7 +28,9 @@
 - Golden 在**生成机器**上跑 100% 一致;换 macOS / Linux / 不同 Qt 版本
   会因字体 hinting / anti-aliasing 不同 → 失败。CI 需固定 OS + Qt 版本,
   或在 goldens 上加 platform 标记(本轮不展开)
-- offscreen 渲染丢 DPI 高分屏,真机 1.25x/1.5x 缩放下可能轻微偏移
+- HiDPI 真机下 dpr 由 `tests/conftest.py` 锁到 1×(2026-09-04 v1.6.5):
+  `QT_ENABLE_HIGHDPI_SCALING=0` + `QT_SCALE_FACTOR=1`,grab 字节级一致;
+  `_grab` 还有一层 defence-in-depth,按 `devicePixelRatio()` 整数缩回 1×。
 
 # 字体钉死(2026-08-05)
 
@@ -49,7 +51,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
@@ -117,11 +119,25 @@ def _grab(widget) -> QImage:
     的 widget)。单次 processEvents 与 closeEvent 之前 busy-poll 完全不同
     (后者是 `while not fut.done(): processEvents()` 高频循环,触发
     macOS-26 VM Cocoa native race)。
+
+    2026-09-04 v1.6.5:`conftest.py` 已锁 `QT_SCALE_FACTOR=1` 关 HiDPI 2×,
+    但 `devicePixelRatio()` 偶尔仍非 1.0(macOS-26 VM / Apple Silicon)— 按
+    dpr 整数缩回 1× 兜底。`FastTransformation` 走整像素对齐,不引入 sub-pixel
+    anti-alias 噪声,与 golden 字节级一致。
     """
     widget.resize(QSize(240, 320))
     # 让 layout / paint event 跑完
     QApplication.processEvents()
-    return widget.grab().toImage()
+    img = widget.grab().toImage()
+    dpr = max(1.0, float(widget.devicePixelRatio()))
+    if dpr != 1.0:
+        img = img.scaled(
+            int(round(img.width() / dpr)),
+            int(round(img.height() / dpr)),
+            Qt.IgnoreAspectRatio,
+            Qt.FastTransformation,
+        )
+    return img
 
 
 def _compare(name: str, current: QImage) -> None:
