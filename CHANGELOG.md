@@ -5,6 +5,60 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.6] - 2026-09-04
+
+主题:**「暂停监听」PENDING 持久化** — v1.6.1 加了 tray 「暂停监听」
+action 但仅 in-memory,quit + restart 默认又开,体验有缺。本次把 `_is_paused`
+落到 `.env` 的 `TG_PAUSED=true|false`,tray 切换持久化,重启自动恢复
+上次状态。
+
+### ✅ Added
+
+- **`Settings.paused: bool = False`**(`config.py`)— pydantic-settings
+  自动从 `.env` 的 `TG_PAUSED=true|false` 解析;`.env` 缺该 key → 默认
+  `False`(恢复监听),保持向后兼容。
+- **`settings_store.update_env_paused(env_path, paused)`**(NEW,
+  ~12 LOC)— 聚焦单 key 写 `.env`,与 `update_env_with_settings`(批量
+  重写全部 TG_*)解耦:`SettingsPage` 编辑其它字段时不会与本 helper 互相
+  覆盖丢失。`parse_env_file` 保形 — 注释 / 空行 / 其它 key 顺序全部保留。
+- **`AppService.__init__` 加 `env_path: Path | None = None` 参数**
+  + `_is_paused = settings.paused` 初始化 — 启动即从 `.env` 读持久化
+  暂停态。
+- **`AppService.bootstrap()` 加防御性 guard**:`_is_paused=True` 时
+  直接返 `("ready", None)` 不连 TDLib。正常路径由 `app.py:_setup_then_show`
+  gate skip,本 guard 是 belt-and-suspenders(测试 / 未来扩展)。
+- **`AppService.pause_monitor()` / `resume_monitor()` 写 `.env`** —
+  切换后调 `update_env_paused(env_path, paused)`;失败 log 不抛,内存态
+  已是最新。
+- **`app.py:_setup_then_show` paused-startup gate**:`app_svc.is_paused`
+  为 True 时跳过 `monitor.start()` + `app.bootstrap()` — 不连 TDLib +
+  不开 download worker。UI(tray icon / status bar / VM)读 `app.is_paused=True`
+  即显 ⏸。
+
+### 🐛 Fixed
+
+- v1.6.1 「暂停监听」action 状态不跨进程持久化的体验 bug — 用户暂停
+  后 quit,重启又自动恢复监听,违反用户意图。
+
+### ⚠️ Notes
+
+- `client.state="uninit"` when paused-startup 是 explicit 设计意图,不是
+  bug:TDLib 根本没连,`client.state` 没有真实意义;UI 渲染依赖
+  `app.is_paused` property(tray / status bar / VM 都读,Explore 已验证),
+  不是 `client.state`。LoginDialog 不会在 paused 启动时自动弹出。
+- **写顺序**:in-memory flip 先于 `.env` 写(失败仅 log,内存态正确;
+  下次重启回退 `.env` 旧值,可接受退化)。`resume_monitor()` 在
+  `client.start()` 失败时**不**改 `.env`,保留 paused 状态让用户重试
+  (`.env` 写 resumed 但 client 没连的不一致更糟)。
+- **`update_env_paused` 单 key 写 vs `update_env_with_settings` 批量写**:
+  两 helper 并发时 last-write-wins 退化为:谁后写谁赢;但本 helper 只
+  读 + 改 + 写 `TG_PAUSED` 一行,不重写其它 key,不存在 SettingsPage
+  的「主题」被本 helper 覆盖丢失的风险。
+- **回归**:`tests/test_app_service_pause.py` 8 case 全部需要把
+  `settings=MagicMock()` 换成 `Settings(paused=False)` — `__init__`
+  现在读 `settings.paused`,MagicMock 会让 `settings.paused` 是 truthy
+  Mock 导致 pause/resume 早返 no-op。
+
 ## [1.6.5] - 2026-09-04
 
 主题:**HiDPI 黄金图重生成** — `tests/test_visual_regression.py` 8 个 case

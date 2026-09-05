@@ -145,7 +145,21 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None
             max_bytes=settings.media_max_bytes,
         ),
     )
-    app = AppService(bus, client, storage, objects, settings, monitor=monitor)
+    # 2026-09-04 v1.6.6:pause 持久化要写 .env,env_path 与 _setup_then_show
+    # 末尾传给 MainWindow 的同一份文件(_user_data_dir() / ".env")。
+    from tgmonitor.core.config import _user_data_dir
+
+    env_path = _user_data_dir() / ".env"
+    app = AppService(
+        bus,
+        client,
+        storage,
+        objects,
+        settings,
+        monitor=monitor,
+        # 2026-09-04 v1.6.6:pause 持久化要写 .env,透传 env_path。
+        env_path=env_path,
+    )
     log.info(
         "[bootstrap] full bootstrap done in %.2fs",
         time.monotonic() - t0,
@@ -288,6 +302,12 @@ def run() -> None:
             app_svc, monitor, settings, objects_error = await _bootstrap()
 
             # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
+            # 2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start()(不连 TDLib
+            # + 不开 download worker)+ 跳过 app.bootstrap()(不调 client.start())。
+            # client.state 保持 "uninit" 是 explicit:用户已选暂停,TDLib 不该连。
+            # UI(tray icon / status bar / VM)读 app.is_paused=True → 显 ⏸。
+            # 用户点 tray 「恢复监听」走 resume_monitor() 走 client.start() +
+            # monitor.start() 正常流程,LoginStateChanged 此时正常 fire。
             t = time.monotonic()
             subscribed = await app_svc.storage.list_subscribed_channels()
             monitor.set_whitelist(c.id for c in subscribed)
@@ -296,18 +316,28 @@ def run() -> None:
                 len(subscribed),
                 time.monotonic() - t,
             )
-            t = time.monotonic()
-            await monitor.start()
-            log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
 
-            # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
-            # 这一步会发 LoginStateChanged → main_window 订阅在它之后,所以事件不丢
             state["app"] = app_svc
             state["monitor"] = monitor
             state["settings"] = settings
-            t = time.monotonic()
-            await app_svc.bootstrap()
-            log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
+
+            if app_svc.is_paused:
+                log.info(
+                    "[setup] settings.paused=true — skip monitor.start() + "
+                    "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
+                )
+                state["login_state"] = "ready"
+                state["login_detail"] = None
+            else:
+                t = time.monotonic()
+                await monitor.start()
+                log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
+
+                # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
+                # 这一步会发 LoginStateChanged → main_window 订阅在它之后,所以事件不丢
+                t = time.monotonic()
+                login_state, login_detail = await app_svc.bootstrap()
+                log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
 
             # 启动 orphan reconcile(2026-08-24):dry_run=True 默认只 log 不删,
             # 给 2 秒延迟让 storage / objectstore 完全 ready 再扫。后续 Prune

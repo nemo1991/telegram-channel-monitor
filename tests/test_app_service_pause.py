@@ -5,6 +5,11 @@
 - resume:client.start() → monitor.start() → MonitoringResumed event
 - 幂等(连续 pause / 连续 resume 不抛)
 - 失败时 event 不发(让 UI 仍按 paused 显示,提示用户重试)
+
+2026-09-04 v1.6.6:_make_app_service 改用真 `Settings(paused=False)` — v1.6.6
+引入 `settings.paused` 字段读取,MagicMock 会让 `settings.paused` 是个
+truthy Mock 对象,导致 `_is_paused` 也是 truthy Mock,pause/resume 早返
+no-op,8 case 全 fail。
 """
 
 from __future__ import annotations
@@ -14,21 +19,27 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tgmonitor.core.app_service import AppService
+from tgmonitor.core.config import Settings
 from tgmonitor.core.events import MonitoringPaused, MonitoringResumed
 from tgmonitor.core.telegram.client import TelegramClient
 
 
 def _make_app_service(bus, monitor: MagicMock, client: MagicMock) -> AppService:
-    """构造 AppService stub — 只接 bus + monitor + client,其他依赖可 None。"""
+    """构造 AppService stub — 只接 bus + monitor + client,其他依赖可 None。
+
+    2026-09-04 v1.6.6:用真 `Settings(paused=False)`(default)而非 MagicMock —
+    v1.6.6 起 `AppService.__init__` 读 `settings.paused` 初始化 `_is_paused`,
+    MagicMock 会让 `settings.paused` 是 truthy Mock,导致 pause/resume 早返。
+    """
     storage = MagicMock()
     objects = MagicMock()
-    settings = MagicMock()
+    settings = Settings(api_id=1, api_hash="x" * 32, paused=False)
     return AppService(
         bus=bus,
         client=client,  # type: ignore[arg-type]
         storage=storage,  # type: ignore[arg-type]
         objects=objects,  # type: ignore[arg-type]
-        settings=settings,  # type: ignore[arg-type]
+        settings=settings,
         monitor=monitor,  # type: ignore[arg-type]
     )
 

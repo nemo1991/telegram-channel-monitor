@@ -118,6 +118,15 @@ class Settings(BaseSettings):
     # `resume_from_saved` 续拉:True 时从 storage 已有 max_msg_id 之后拉
     sync_resume_from_saved: bool = Field(default=True)
 
+    # 2026-09-04 v1.6.6:暂停监听状态 — tray 点暂停后,quit + restart 应保持暂停。
+    # .env 字段:TG_PAUSED=true|false(默认 false = 恢复监听)。
+    # AppService 启动时从 settings 读此字段;若为 True,app.py:_setup_then_show
+    # 跳过 monitor.start() + bootstrap(),tray / window / VM 读 app.is_paused
+    # 自动显 ⏸。pause/resume_monitor() 切换时通过 settings_store.update_env_paused
+    # 写回单 key(不走 update_env_with_settings 批量写,避免覆盖 SettingsPage
+    # 正在编辑的其它字段)。
+    paused: bool = Field(default=False)
+
     # 2026-09-03 v1.5.4 PR #P4:主题持久化(空 = 不持久化,ThemeManager 走 session 内应用)。
     # 填 v1.5.0 PR #A5 的尾巴:settings_page 加 checkbox,勾选时启动从 .env 读
     # 主题并在 ThemeManager.apply 时回写;空字符串 = 与 v1.5.0 行为一致(不持久化)。

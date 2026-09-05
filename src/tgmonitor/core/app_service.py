@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.auth_service import AuthService
@@ -68,7 +69,7 @@ from tgmonitor.core.events import (
 from tgmonitor.core.media_service import MediaService
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.objectstore.factory import build_object_store
-from tgmonitor.core.settings_store import SettingsDiff, diff_settings
+from tgmonitor.core.settings_store import SettingsDiff, diff_settings, update_env_paused
 from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.subscription_service import SubscriptionService
@@ -96,6 +97,8 @@ class AppService:
         objects: ObjectStore,
         settings: Settings,
         monitor: MonitorService | None = None,
+        # 2026-09-04 v1.6.6:pause 持久化要写 .env — 需要 env_path。
+        env_path: Path | None = None,
     ) -> None:
         """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。
 
@@ -107,6 +110,11 @@ class AppService:
         `monitor` 由组合根(app.py)注入(2026-08-18 修热重载):reconfigure
         要把新 storage/objects/settings 同步给 monitor,否则热重载切 PG 后
         monitor 仍写旧库,重启才生效。
+
+        2026-09-04 v1.6.6 新增 `env_path`:pause/resume_monitor() 切换时通过
+        `settings_store.update_env_paused(env_path, ...)` 写 .env 单 key。
+        缺失时(env_path=None,如纯测试 AppService)仅 in-memory toggle,跳过 .env
+        写 — 不抛错,与历史行为兼容。
         """
         self.bus = bus
         self.client = client
@@ -127,7 +135,13 @@ class AppService:
         # 2026-09-03 v1.6.1:暂停监听状态 — pause 期间 _running 仍 True
         # (UI 仍能查已订频道历史 / 已下消息),但 _is_paused 标记 TDLib 已断开
         # + download_queue 已 cancel。resume 走 client.start() + monitor.start()
-        self._is_paused = False
+        # 2026-09-04 v1.6.6:从 settings.paused 初始化 — app.py 从 .env 读
+        # `TG_PAUSED=true|false`,构造时直接落入 _is_paused,避免重新跑
+        # bootstrap() 时 client.start 干扰(已 paused 不该再连 TDLib)。
+        self._is_paused = settings.paused
+        # 2026-09-04 v1.6.6:pause 持久化 .env 写路径 — 由 app.py:_bootstrap
+        # 透传(env_path 由 MainWindow 早已接住,共用同一文件)。
+        self.env_path: Path | None = env_path
         # 重入锁:reconfigure 期间阻止 save_message
         self._reconfiguring = False
 
@@ -217,7 +231,17 @@ class AppService:
         注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
         现在所有「订阅真理」都走 `storage.list_subscribed_channels()` —
         详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
+
+        2026-09-04 v1.6.6:paused-startup 时 (`_is_paused=True`) 直接返
+        `("ready", None)` 不连 TDLib — 正常路径由 `app.py:_setup_then_show`
+        gate 跳过 `monitor.start()` + `bootstrap()` 整个不进 paused-startup。
+        本 guard 是 belt-and-suspenders:兜底直接调 `bootstrap()` 的边缘场景(
+        测试 / 未来扩展),避免在 paused 状态走 TDLib 连接(client.state 仍
+        "uninit" 是 explicit,UI 渲染依赖 `is_paused` 不是 client.state)。
         """
+        if self._is_paused:
+            log.info("bootstrap: already paused, returning ready without client.start()")
+            return "ready", None
 
         try:
             state, detail = await self.client.start()
@@ -389,6 +413,13 @@ class AppService:
         except Exception:  # noqa: BLE001
             log.exception("pause_monitor: client.stop failed")
         self._is_paused = True
+        # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=true)—失败 log.warning 不抛,
+        # 内存态已正确,UI 正常;.env 写失败下次重启回退到旧值,可接受退化。
+        if self.env_path is not None:
+            try:
+                update_env_paused(self.env_path, True)
+            except Exception:  # noqa: BLE001
+                log.exception("pause_monitor: failed to persist paused state to .env")
         await self.bus.publish(MonitoringPaused(source=source))
 
     async def resume_monitor(self, source: str = "tray") -> None:
@@ -401,6 +432,11 @@ class AppService:
         3. `_is_paused = False` + 发 `MonitoringResumed` 事件
 
         幂等:已 resumed 时再调 no-op。
+
+        2026-09-04 v1.6.6:client.start 失败时**不**改 .env,保留 paused 状态
+        让用户重试(resume 失败而 .env 写 resumed 会导致下次启动误以为已恢复,
+        实际上 client 没连 — 不一致更糟)。写顺序:in-memory flip 先于 .env 写
+        (失败仅 log,内存态正确;下次重启回退 .env 旧值,可接受退化)。
         """
         if not self._is_paused:
             log.debug("resume_monitor: not paused, no-op")
@@ -419,6 +455,14 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception("resume_monitor: monitor.start failed")
         self._is_paused = False
+        # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=false)—失败保留 paused=True 内存态,
+        # 避免 .env 说 resumed 但实际 client.start 失败的不一致(只在内存 flip 成功
+        # 后写 — 上面 client.start 已成功才走到这里)。
+        if self.env_path is not None:
+            try:
+                update_env_paused(self.env_path, False)
+            except Exception:  # noqa: BLE001
+                log.exception("resume_monitor: failed to persist paused state to .env")
         await self.bus.publish(MonitoringResumed(source=source))
 
     # ---------- 导出(由 ExportService 提供实现)— 每次新建轻量 svc ----------

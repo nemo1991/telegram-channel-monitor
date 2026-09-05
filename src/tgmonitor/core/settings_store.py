@@ -123,6 +123,22 @@ def update_env_with_settings(env_path: Path, settings: Settings) -> None:
     write_env_file(env, env_path)
 
 
+def update_env_paused(env_path: Path, paused: bool) -> None:
+    """2026-09-04 v1.6.6:写 TG_PAUSED=true|false 到 .env(只动这一行)。
+
+    与 `update_env_with_settings` 区别:不重写全部 TG_* 字段,只更新单 key。
+    SettingsPage 编辑其它字段(`update_env_with_settings` 批量写)与本
+    helper 并发时,last-write-wins 退化为:谁后写谁赢;但本 helper 只读 +
+    改 + 写 `TG_PAUSED` 一行,不重写其它 key,不存在 SettingsPage 的
+    「主题」被本 helper 覆盖丢失的风险。
+
+    `parse_env_file` 保形 — 注释 / 空行 / 其它 key 顺序全部保留。
+    """
+    env = parse_env_file(env_path)
+    env.pairs["TG_PAUSED"] = "true" if paused else "false"
+    write_env_file(env, env_path)
+
+
 # ---- 可编辑模型(给 UI 用) ----
 
 
