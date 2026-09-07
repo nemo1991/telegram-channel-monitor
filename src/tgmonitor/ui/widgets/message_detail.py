@@ -29,13 +29,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaType, MessageDTO, ReactionDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ReactionDTO
 
-# 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 与 MediaManagerWidget 同源。
-# 媒体卡片可点 = 可点缩略图弹大图;非图 / 未下载 走系统查看器,保持原行为。
-_LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
-    {MediaType.PHOTO, MediaType.STICKER, MediaType.ANIMATION}
-)
+# 2026-09-04 v1.6.7:Lightbox 预览白名单统一从 MediaManagerWidget 导入,
+# 不再本地拷贝 — 加 VIDEO/VIDEO_NOTE 一处生效。
+from tgmonitor.ui.widgets.media_manager_widget import LIGHTBOX_PREVIEWABLE_TYPES
 
 
 def _to_local_str(dt: datetime | None) -> str:
@@ -208,7 +206,7 @@ class MessageDetail(QScrollArea):
                 # 且已下载完成 → 设 PointingHandCursor + monkeypatch mousePressEvent;
                 # 非图 / 未下载 保持默认箭头 + 不响应(走系统查看器 fallback)。
                 if (
-                    med.type in _LIGHTBOX_PREVIEWABLE_TYPES
+                    med.type in LIGHTBOX_PREVIEWABLE_TYPES
                     and med.download_status == MediaDownloadStatus.DONE
                 ):
                     med_label.setCursor(Qt.PointingHandCursor)

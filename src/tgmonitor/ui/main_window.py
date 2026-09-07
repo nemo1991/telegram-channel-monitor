@@ -74,7 +74,7 @@ from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
 from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
-from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog
+from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
@@ -1170,10 +1170,14 @@ class MainWindow(QMainWindow):
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """2026-08-31 v1.5.0 PR #A8:Media Manager 缩略图点击 → Lightbox。
+        """2026-09-04 v1.6.7:Media Manager 缩略图点击 → Lightbox(支持 GIF / MP4)。
 
         流程:`app.storage.get_message` 找消息 → VM.load_media_bytes 异步读
-        原图 bytes → 主线程 QPixmap.loadFromData 渲染 → 弹 LightboxDialog。
+        原图 bytes → 主线程按 mime 分三态:
+            - `image/gif` → MediaItem.animated(QMovie 内联动画)
+            - `image/*` / `application/octet-stream`(Sticker)— MediaItem.pixmap(QPixmap)
+            - `video/mp4` → MediaItem.video(QMediaPlayer + QVideoWidget)
+        其它类型(AUDIO/VOICE/DOCUMENT)→ 系统查看器 fallback。
         全程 async,UI handler 立即返回不阻塞 event loop。
         """
         from tgmonitor.core.dto import MediaType
@@ -1186,14 +1190,23 @@ class MainWindow(QMainWindow):
             if msg is None or media_idx >= len(msg.media):
                 return
             med = msg.media[media_idx]
-            if med.type not in (
-                MediaType.PHOTO,
-                MediaType.STICKER,
-                MediaType.ANIMATION,
-            ):
-                # 非图片 — 不弹 lightbox,fallback 到系统查看器
+            mime = (med.mime_type or "").lower()
+            fallback_fn = lambda: self._vm.open_media(  # noqa: E731 — bound lambda for QTimer
+                channel_id, telegram_msg_id, media_idx
+            )
+
+            # 2026-09-04 v1.6.7:三态分发
+            if med.type == MediaType.ANIMATION and mime.startswith("image/gif"):
+                kind = "gif"
+            elif med.type in (MediaType.VIDEO, MediaType.VIDEO_NOTE):
+                kind = "video"
+            elif med.type in (MediaType.PHOTO, MediaType.STICKER):
+                kind = "image"
+            else:
+                # DOCUMENT / AUDIO / VOICE / 未知 → 系统查看器
                 self._vm.open_media(channel_id, telegram_msg_id, media_idx)
                 return
+
             data = await self._vm.load_media_bytes(med)
             if not data:
                 QMessageBox.information(
@@ -1203,21 +1216,53 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            def _show() -> None:
-                pix = QPixmap()
-                if not pix.loadFromData(data):
-                    QMessageBox.warning(self, "Lightbox", "图片解码失败。")
-                    return
-                dlg = LightboxDialog(
-                    pixmaps=[pix],
-                    current=-1,
+            QTimer.singleShot(
+                0,
+                lambda: self._show_lightbox_items(
+                    data=data,
+                    kind=kind,
+                    mime=mime,
                     title=med.file_name or "",
-                )
-                dlg.showFullScreen()
-
-            QTimer.singleShot(0, _show)
+                    fallback_fn=fallback_fn,
+                ),
+            )
 
         run_coro(self.loop, _load_and_show(), error_label="media_preview")
+
+    def _show_lightbox_items(
+        self,
+        *,
+        data: bytes,
+        kind: str,
+        mime: str,
+        title: str,
+        fallback_fn: Callable[[], None],
+    ) -> None:
+        """2026-09-04 v1.6.7:bytes → MediaItem → LightboxDialog.showFullScreen。
+
+        三态分发:image 走 QPixmap,gif 走 QMovie,video 走 QMediaPlayer。
+        解码失败(QPixmap.loadFromData / QMovie.loadFromData)— 弹 warning。
+        video codec miss 走 `fallback_fn`(通常是 vm.open_media)。
+        """
+        if kind == "gif":
+            item = MediaItem(animated=data, mime_type=mime or "image/gif")
+        elif kind == "video":
+            item = MediaItem(video=data, mime_type=mime or "video/mp4")
+        else:
+            # image:bytes → QPixmap 走主线程 Qt 解码
+            pix = QPixmap()
+            if not pix.loadFromData(data):
+                QMessageBox.warning(self, "Lightbox", "图片解码失败。")
+                return
+            item = MediaItem(pixmap=pix, mime_type=mime or "image/jpeg")
+
+        dlg = LightboxDialog(
+            items=[item],
+            current=-1,
+            title=title,
+            fallback_fn=fallback_fn,
+        )
+        dlg.showFullScreen()
 
     def _on_media_reveal(
         self,

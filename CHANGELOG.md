@@ -5,6 +5,91 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.7] - 2026-09-04
+
+主题:**Lightbox GIF / MP4 内联预览** — v1.5.0 PR #A8 的 LightboxDialog
+只支持 `QPixmap` 静态图,GIF 当前只渲第一帧,VIDEO / VIDEO_NOTE 完全
+被 `_LIGHTBOX_PREVIEWABLE_TYPES` 白名单拦走,只能 `vm.open_media()`
+跳系统播放器。本次把 Lightbox 升级为多模态媒体预览,点击 GIF 缩略图
+直接全屏看动画、点 VIDEO 缩略图直接全屏播 MP4,不用再跳 QuickTime /
+VLC。
+
+### ✅ Added
+
+- **`MediaItem` dataclass + `LightboxDialog(items=...)` 新接口**
+  (`lightbox_dialog.py`)— 一条媒体三种形态,`kind` property 判别:
+    - `pixmap` → `QLabel.setPixmap`(image 静态图)
+    - `animated` bytes → `QMovie(QBuffer)`(GIF 动画,PySide6 6.11 没
+      暴露 `QMovie.loadFromData`,走 QBuffer 路径)
+    - `video` bytes → `QMediaPlayer` + `QVideoWidget`(MP4)
+  老 `pixmaps=` kwarg 保留 — 内部包成 `MediaItem(pixmap=p)` 序列,
+  21 个 v1.5.0 老测试零改动通过。
+- **MP4 graceful fallback**:`QMediaPlayer.errorOccurred` 信号 → 自动调
+  调用方注入的 `fallback_fn`(通常是 `vm.open_media` 系统查看器)。
+  没有 `fallback_fn` 时显示 `(video unavailable — codec missing)`。
+  解决 Linux 缺 GStreamer plugins / Windows 缺 codec 时直接崩溃的问题。
+- **`LightboxDialog.current_kind: str` property**(`image`/`gif`/`video`
+  /`empty`)— 测试 / 后续扩展用。
+- **`_LIGHTBOX_PREVIEWABLE_TYPES` 抽常量去重**:原 `media_manager_widget.py`
+  + `message_detail.py` 各一份独立拷贝 → 统一从 `media_manager_widget.py`
+  import,加 `VIDEO` / `VIDEO_NOTE` 一处生效。
+- **`main_window._on_media_preview` 三态分发**(PHOTO/STICKER / 真
+  `image/gif` 的 ANIMATION / VIDEO/VIDEO_NOTE)+ `_show_lightbox_items`
+  helper,decode 失败弹 `QMessageBox.warning` 不崩。
+- **`_stage_video_tmp` / `_unlink_staged_video` / `_stop_active_player`**:
+  MP4 bytes stage 到 tmpfile(`tempfile.mkstemp`),close 时严格 unlink
+  + stop QMediaPlayer + 解绑 video widget,防 dangling decoder / tmpfile
+  泄漏。
+- **GIF ↔ image ↔ video 多 item 切换 `_stop_active_player` 严格清理**:
+  切 item 前先停旧 QMovie / QMediaPlayer,防 animation timer 后台触发
+  已销毁 widget 抛 `RuntimeError`。
+
+### 🔧 Changed
+
+- **`LightboxDialog.wheelEvent`** — video 状态下滚轮不缩放,透传给
+  `QVideoWidget`(默认音量 / seek 行为)。
+- **`_update_zoom_label`** — 加 `[GIF]` / `[VIDEO]` kind tag,提示用户
+  当前媒体类型。
+
+### 📦 Files changed
+
+- `src/tgmonitor/ui/widgets/lightbox_dialog.py` — `MediaItem` dataclass +
+  三态渲染(`_render_image`/`_render_gif`/`_render_video`)+ 资源清理 +
+  closeEvent 加 tmpfile unlink(~210 LOC 增量)。
+- `src/tgmonitor/ui/widgets/media_manager_widget.py` — 抽 `LIGHTBOX_PREVIEWABLE_TYPES`
+  顶层常量,加 `VIDEO`/`VIDEO_NOTE`。
+- `src/tgmonitor/ui/widgets/message_detail.py` — 删本地常量,import
+  共享。
+- `src/tgmonitor/ui/main_window.py` — `_on_media_preview` 三态分支 +
+  `_show_lightbox_items` helper。
+- `tests/test_lightbox_dialog_gif_mp4.py` (NEW) — 16 case:GIF 真 bytes +
+  MP4 mock + 切换清理 + fallback + wheelEvent + show_lightbox 便利构造 +
+  常量断言。
+- `tests/fixtures/data/tiny.gif` (NEW, 42 bytes) — 最小有效 GIF89a
+  fixture(Wikipedia「smallest valid GIF89a」)。
+
+### Verification
+
+- **850 passed**(834 baseline + 16 new),0 regression
+- 21 个 v1.5.0 老 LightboxDialog 测试(`pixmaps=` 老接口)零改动通过
+- ruff check + format check + mypy 78 src files 全 0 错误
+
+### Notes
+
+- **`MediaType.ANIMATION` 双 mime**:`mimetype=image/gif` 走 QMovie,
+  `mimetype=video/mp4`(TG 存 GIF 当 MP4)走 QMediaPlayer;分支判
+  `mime_type.starts_with("image/gif")` 优先。
+- **CI GStreamer 风险**:本 PR 测试用 `_FakeMediaPlayer` mock 整个
+  QMediaPlayer class,不依赖真 codec;真机 macOS AVFoundation / Windows
+  WMF 内置 codec,Linux 用户需装 `gstreamer1.0-plugins-good/-bad/-ugly`
+  + `libavcodec`,装不上自动走 `fallback_fn` 系统 viewer,不崩。
+- **MP4 tmpfile 泄漏防护**:`closeEvent` 严格 unlink;进程崩溃 / 强杀
+  残留由 OS 清理,best-effort。
+
+### 后续 backlog
+
+候选 5(i18n 二期)/ 候选 6(快捷键持久化) — 留 v1.6.8+。
+
 ## [1.6.6] - 2026-09-04
 
 主题:**「暂停监听」PENDING 持久化** — v1.6.1 加了 tray 「暂停监听」

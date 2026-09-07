@@ -75,8 +75,17 @@ _MEDIA_ICONS: dict[MediaType, str] = {
 # 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 仅图片类(DONE 状态下)
 # 可点缩略图弹大图;视频/音频/文档走 Open/Reveal,不动 lightbox。
 # STICKER 算图片(WebP),ANIMATION 是 GIF。
-_LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
-    {MediaType.PHOTO, MediaType.STICKER, MediaType.ANIMATION}
+# 2026-09-04 v1.6.7:扩展到 VIDEO / VIDEO_NOTE — MP4 bytes 进 Lightbox
+# 内联播(QMediaPlayer);AUDIO / VOICE / DOCUMENT 仍走系统查看器。
+# 公共常量(无下划线前缀)— message_detail 也 import 同一份,避免双拷贝。
+LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
+    {
+        MediaType.PHOTO,
+        MediaType.STICKER,
+        MediaType.ANIMATION,
+        MediaType.VIDEO,
+        MediaType.VIDEO_NOTE,
+    }
 )
 
 _STATUS_TEXT: dict[MediaDownloadStatus, str] = {
@@ -713,7 +722,7 @@ class MediaManagerWidget(QWidget):
         thumb.setStyleSheet("font-size: 22px;")
         self._thumb_labels[key] = thumb
         if (
-            med.type in _LIGHTBOX_PREVIEWABLE_TYPES
+            med.type in LIGHTBOX_PREVIEWABLE_TYPES
             and med.download_status == MediaDownloadStatus.DONE
         ):
             thumb.setCursor(Qt.PointingHandCursor)
