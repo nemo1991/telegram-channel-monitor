@@ -70,10 +70,11 @@ class TrayIcon(QObject):
             self._action_pause: QAction | None = None
             return
         self._tray = QSystemTrayIcon(load_app_icon(), parent)
-        self._tray.setToolTip("tgmonitor · Telegram 频道监听")
+        # 2026-09-07 v1.6.8:全部走 tr()。
+        self._tray.setToolTip(self.tr("tgmonitor · Telegram 频道监听"))
         # 右键菜单
         self._menu = QMenu()
-        self._action_show = QAction("显示主窗口", self._menu)
+        self._action_show = QAction(self.tr("显示主窗口"), self._menu)
         self._action_show.triggered.connect(parent.show)
         self._menu.addAction(self._action_show)
         self._menu.addSeparator()
@@ -81,10 +82,10 @@ class TrayIcon(QObject):
         # 「暂停监听」↔「继续监听」,触发仍 emit QuitRequested(pause=True),
         # 由 MonitorViewModel._on_quit_requested 查 app.is_paused 决定
         # 走 pause 还是 resume。
-        self._action_pause = QAction("暂停监听", self._menu)
+        self._action_pause = QAction(self.tr("暂停监听"), self._menu)
         self._action_pause.triggered.connect(lambda: app.bus.publish(QuitRequested(pause=True)))
         self._menu.addAction(self._action_pause)
-        self._action_quit = QAction("退出", self._menu)
+        self._action_quit = QAction(self.tr("退出"), self._menu)
         self._action_quit.triggered.connect(lambda: app.bus.publish(QuitRequested(pause=False)))
         self._menu.addAction(self._action_quit)
         self._tray.setContextMenu(self._menu)
@@ -142,9 +143,10 @@ class TrayIcon(QObject):
         if self._tray is None:
             return
         self._tray.setIcon(load_paused_app_icon())
-        self._tray.setToolTip("⏸ tgmonitor · 暂停监听中")
+        # 2026-09-07 v1.6.8:tooltip + menu text 走 tr()。
+        self._tray.setToolTip(self.tr("⏸ tgmonitor · 暂停监听中"))
         if self._action_pause is not None:
-            self._action_pause.setText("继续监听")
+            self._action_pause.setText(self.tr("继续监听"))
 
     async def _on_monitoring_resumed(self, event: object) -> None:
         """切 icon + tooltip + menu text 回到 running 态。无托盘时 no-op。"""
@@ -154,6 +156,6 @@ class TrayIcon(QObject):
         if self._tray is None:
             return
         self._tray.setIcon(load_app_icon())
-        self._tray.setToolTip("tgmonitor · Telegram 频道监听")
+        self._tray.setToolTip(self.tr("tgmonitor · Telegram 频道监听"))
         if self._action_pause is not None:
-            self._action_pause.setText("暂停监听")
+            self._action_pause.setText(self.tr("暂停监听"))

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -110,6 +110,8 @@ class MessageDetail(QScrollArea):
 
     def _build_empty_state(self) -> None:
         """无选中时的占位 UI。"""
+        # 2026-09-07 v1.6.8:全部走 tr()。每次 rebuild 都重查 locale,语言切换后
+        # 由 retranslateUi 主动调一次 _build_empty_state() 刷新。
         wrap = QWidget()
         v = QVBoxLayout(wrap)
         v.setContentsMargins(24, 24, 24, 24)
@@ -124,12 +126,12 @@ class MessageDetail(QScrollArea):
         icon.setObjectName("emptyHintIcon")
         v.addWidget(icon)
 
-        title = QLabel("消息详情")
+        title = QLabel(self.tr("消息详情"))
         title.setAlignment(Qt.AlignCenter)
         title.setObjectName("pageTitle")
         v.addWidget(title)
 
-        hint = QLabel("点击左侧任意一条消息\n查看完整内容、媒体附件与原始数据")
+        hint = QLabel(self.tr("点击左侧任意一条消息\n查看完整内容、媒体附件与原始数据"))
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
         hint.setProperty("role", "hint")
@@ -138,7 +140,11 @@ class MessageDetail(QScrollArea):
         self.setWidget(wrap)
 
     def show_message(self, m: MessageDTO | None) -> None:
-        """显示一条消息的详情。None = 回到占位。"""
+        """显示一条消息的详情。None = 回到占位。
+
+        2026-09-07 v1.6.8:所有用户可见 label 走 tr();每次 rebuild 自然用当前
+        locale;LanguageChange 由 retranslateUi() 主动触发重建。
+        """
         self._current = m
         if m is None:
             self._build_empty_state()
@@ -163,28 +169,28 @@ class MessageDetail(QScrollArea):
         meta_layout.setSpacing(2)
 
         if m.date:
-            meta_layout.addWidget(_FieldRow("时间", _to_local_str(m.date)))
+            meta_layout.addWidget(_FieldRow(self.tr("时间"), _to_local_str(m.date)))
         if m.author:
-            meta_layout.addWidget(_FieldRow("作者", m.author))
-        meta_layout.addWidget(_FieldRow("频道", f"#{m.channel_id}"))
+            meta_layout.addWidget(_FieldRow(self.tr("作者"), m.author))
+        meta_layout.addWidget(_FieldRow(self.tr("频道"), f"#{m.channel_id}"))
         if m.views:
-            meta_layout.addWidget(_FieldRow("浏览", f"{m.views:,}"))
+            meta_layout.addWidget(_FieldRow(self.tr("浏览"), f"{m.views:,}"))
         if m.forwards:
-            meta_layout.addWidget(_FieldRow("转发", f"{m.forwards:,}"))
+            meta_layout.addWidget(_FieldRow(self.tr("转发"), f"{m.forwards:,}"))
         if m.reply_to_msg_id:
-            meta_layout.addWidget(_FieldRow("回复", f"#{m.reply_to_msg_id}"))
+            meta_layout.addWidget(_FieldRow(self.tr("回复"), f"#{m.reply_to_msg_id}"))
         if m.edited:
-            meta_layout.addWidget(_FieldRow("已编辑", "✓"))
+            meta_layout.addWidget(_FieldRow(self.tr("已编辑"), "✓"))
         # 2026-08-27 v1.4.0 PR #10:reactions 列表(emoji + count + 自己投了高亮)
         if m.reactions:
             rx_label = self._format_reactions(m.reactions)
             if rx_label:
-                meta_layout.addWidget(_FieldRow("反应", rx_label))
+                meta_layout.addWidget(_FieldRow(self.tr("反应"), rx_label))
         v.addWidget(meta_group)
 
         # ---- 正文 ----
         if m.text:
-            v.addWidget(self._section_label("📝 正文"))
+            v.addWidget(self._section_label(self.tr("📝 正文")))
             text_edit = QPlainTextEdit(m.text)
             text_edit.setReadOnly(True)
             text_edit.setFrameShape(QFrame.NoFrame)
@@ -195,7 +201,7 @@ class MessageDetail(QScrollArea):
 
         # ---- 媒体 ----
         if m.has_media:
-            v.addWidget(self._section_label(f"📎 媒体 ({len(m.media)})"))
+            v.addWidget(self._section_label(self.tr(f"📎 媒体 ({len(m.media)})")))
             for i, med in enumerate(m.media):
                 med_label = QLabel(self._format_media(med, i + 1))
                 med_label.setWordWrap(True)
@@ -210,7 +216,7 @@ class MessageDetail(QScrollArea):
                     and med.download_status == MediaDownloadStatus.DONE
                 ):
                     med_label.setCursor(Qt.PointingHandCursor)
-                    med_label.setToolTip("点击查看大图")
+                    med_label.setToolTip(self.tr("点击查看大图"))
                     med_label.mousePressEvent = self._make_media_click_handler(  # type: ignore[method-assign, assignment]
                         m.channel_id, m.telegram_msg_id, i
                     )
@@ -218,7 +224,7 @@ class MessageDetail(QScrollArea):
 
         # ---- 原始 JSON ----
         if m.raw:
-            v.addWidget(self._section_label("🔍 原始 JSON"))
+            v.addWidget(self._section_label(self.tr("🔍 原始 JSON")))
             raw_str = json.dumps(m.raw, indent=2, ensure_ascii=False, default=str)
             raw_edit = QPlainTextEdit(raw_str)
             raw_edit.setReadOnly(True)
@@ -233,7 +239,7 @@ class MessageDetail(QScrollArea):
         v.addStretch(1)
         close_row = QHBoxLayout()
         close_row.addStretch(1)
-        btn_close = QPushButton("关闭详情")
+        btn_close = QPushButton(self.tr("关闭详情"))
         btn_close.clicked.connect(lambda: self.show_message(None))
         close_row.addWidget(btn_close)
         v.addLayout(close_row)
@@ -259,31 +265,49 @@ class MessageDetail(QScrollArea):
         lbl.setObjectName("detailSectionLabel")
         return lbl
 
-    @staticmethod
-    def _format_media(med, idx: int) -> str:
+    # 2026-09-07 v1.6.8:从 @staticmethod 改 instance method,让 self.tr() 可用。
+    def _format_media(self, med, idx: int) -> str:
         """格式化单条媒体信息。"""
         lines = [f"{idx}. {med.type.value}"]
         if med.mime_type:
-            lines.append(f"   类型: {med.mime_type}")
+            lines.append(self.tr(f"   类型: {med.mime_type}"))
         if med.file_name:
-            lines.append(f"   文件: {med.file_name}")
+            lines.append(self.tr(f"   文件: {med.file_name}"))
         if med.file_size:
             size_mb = med.file_size / (1024 * 1024)
-            lines.append(f"   大小: {size_mb:.2f} MB ({med.file_size:,} 字节)")
+            lines.append(self.tr(f"   大小: {size_mb:.2f} MB ({med.file_size:,} 字节)"))
         if med.width and med.height:
-            lines.append(f"   尺寸: {med.width} × {med.height}")
+            lines.append(self.tr(f"   尺寸: {med.width} × {med.height}"))
         if med.duration:
-            lines.append(f"   时长: {med.duration} 秒")
+            lines.append(self.tr(f"   时长: {med.duration} 秒"))
         # 下载状态(异步下载队列回写;PENDING 不显示,避免旧数据噪音)
         if med.download_status == MediaDownloadStatus.DONE:
-            lines.append("   状态: 已下载 ✓")
+            lines.append(self.tr("   状态: 已下载 ✓"))
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
-            lines.append("   状态: 下载中… ⏳")
+            lines.append(self.tr("   状态: 下载中… ⏳"))
         elif med.download_status == MediaDownloadStatus.FAILED:
-            lines.append("   状态: 下载失败 ❌")
+            lines.append(self.tr("   状态: 下载失败 ❌"))
             if med.download_error:
-                lines.append(f"   原因: {med.download_error}")
+                lines.append(self.tr(f"   原因: {med.download_error}"))
         return "\n".join(lines)
+
+    # ---- 2026-09-07 v1.6.8:retranslateUi + changeEvent ----
+
+    def retranslateUi(self) -> None:  # noqa: N802 — Qt 命名
+        """2026-09-07 v1.6.8:语言切换 → 重建当前视图(空状态或详情)。
+
+        show_message 每次都是 setWidget(new_wrap),所以重新 build 即生效。
+        """
+        if self._current is None:
+            self._build_empty_state()
+        else:
+            self.show_message(self._current)
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt 命名
+        """2026-09-07 v1.6.8:LanguageChange → retranslateUi。"""
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslateUi()
+        super().changeEvent(event)
 
     def _make_media_click_handler(
         self,

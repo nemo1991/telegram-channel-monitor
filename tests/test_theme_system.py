@@ -32,12 +32,23 @@ def qt_app() -> QApplication:
 
 @pytest.fixture(autouse=True)
 def reset_theme() -> None:
-    """每个测试前后重置 ThemeManager._current,免得互相污染。"""
+    """每个测试前后重置 ThemeManager._current,免得互相污染。
+
+    2026-09-07 v1.6.8:teardown 显式调 `ThemeManager.apply(Theme.LIGHT)` —
+    不调的话 `_current = LIGHT` 只改 Python 端,`QApplication.setStyleSheet`
+    仍挂着 DARK QSS,污染后续 test_visual_regression 的 golden 比对(8 widget
+    全部 size mismatch / 颜色翻转)。
+    """
     ThemeManager._current = Theme.LIGHT
     ThemeManager._system_listener_connected = False
     yield  # noqa: F401 — fixture
     ThemeManager._current = Theme.LIGHT
     ThemeManager._system_listener_connected = False
+    try:
+        ThemeManager.apply(Theme.LIGHT)  # 2026-09-07 v1.6.8:同步重置 QSS
+    except RuntimeError:
+        # QApplication 已销毁(headless teardown)— 静默
+        pass
 
 
 def test_theme_enum_has_system() -> None:

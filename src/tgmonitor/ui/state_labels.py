@@ -14,9 +14,14 @@
   - `state_hint(state)` — 行动建议文字(给新用户引导)
 
 新增状态时,只需在 `STATE_DOT` / `STATE_LABEL` / `STATE_HINT` 各加一行,任意 caller 复用。
+
+2026-09-07 v1.6.8:STATE_LABEL / STATE_HINT 改走 `QCoreApplication.translate()`
+让 en_US 翻译生效 — 之前是裸中文 dict,en_US 加载也不切。dot emoji 不需翻译。
 """
 
 from __future__ import annotations
+
+from PySide6.QtCore import QCoreApplication
 
 # 13 个 TDLib 登录状态 — 上游 `TdlibTelegramClient.start()` 返回值 + 状态机过渡。
 # 完整流程:uninit → tdlib_parameters → phone_required → code_required
@@ -42,7 +47,10 @@ STATE_DOT: dict[str, str] = {
     "uninit": "⚪",
 }
 
-STATE_LABEL: dict[str, str] = {
+# 2026-09-07 v1.6.8:en_US 翻译 lookup 用。值仍是中文(source string),
+# 实际显示走 `state_label(state)` 的 `QCoreApplication.translate()` 路径。
+# 切到 en_US locale 时,en_US.qm 把 source = "已登录" 翻成 "Signed in" 等等。
+STATE_LABEL_SRC: dict[str, str] = {
     "ready": "已登录",
     "error": "错误",
     "phone_required": "未登录",
@@ -59,7 +67,7 @@ STATE_LABEL: dict[str, str] = {
 }
 
 # 行动建议 — 给 dashboard card 副标题 / 新用户空状态引导
-STATE_HINT: dict[str, str] = {
+STATE_HINT_SRC: dict[str, str] = {
     "ready": "实时接收订阅频道的新消息",
     "error": "点击设置 → 账户 检查凭据 / 重启",
     "phone_required": "点击设置 → 账户 填写 API ID / Hash / 手机号",
@@ -75,6 +83,8 @@ STATE_HINT: dict[str, str] = {
     "uninit": "未启动 — 正常情况会在 1-2 秒内到 ready",
 }
 
+_TRANSLATE_CTX = "state_labels"
+
 
 def state_dot(state: str) -> str:
     """圆点 emoji;未知状态返 ⚪。"""
@@ -82,8 +92,14 @@ def state_dot(state: str) -> str:
 
 
 def state_label(state: str) -> str:
-    """状态文本;未知状态原样返回(caller 看到 raw 状态名比空字符串更易排错)。"""
-    return STATE_LABEL.get(state, state)
+    """状态文本(en_US locale 走翻译表,否则返 source);未知状态原样返回。
+
+    用 `QCoreApplication.translate()` 而非 `self.tr()` —— state_labels 是
+    模块级函数,没有 QObject 实例;translate 走相同的 lookup 路径(先查
+    `QCoreApplication.installTranslator` 装上的 translator chain)。
+    """
+    src = STATE_LABEL_SRC.get(state, state)
+    return QCoreApplication.translate(_TRANSLATE_CTX, src)
 
 
 def state_badge(state: str) -> str:
@@ -92,10 +108,11 @@ def state_badge(state: str) -> str:
     未知状态返 `⚪ {state}`(跟 dashboard 旧行为一致)。
     """
     if state in STATE_DOT:
-        return f"{STATE_DOT[state]} {STATE_LABEL[state]}"
+        return f"{STATE_DOT[state]} {state_label(state)}"
     return f"⚪ {state}"
 
 
 def state_hint(state: str) -> str:
-    """行动建议;未知状态空字符串(避免误导)。"""
-    return STATE_HINT.get(state, "")
+    """行动建议(en_US 翻译);未知状态空字符串(避免误导)。"""
+    src = STATE_HINT_SRC.get(state, "")
+    return QCoreApplication.translate(_TRANSLATE_CTX, src)

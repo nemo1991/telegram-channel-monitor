@@ -31,13 +31,30 @@ from PySide6.QtWidgets import (
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
 
-_NAV_ITEMS = [
-    ("nav_live", "实时流"),
-    ("nav_dashboard", "大盘"),
-    ("nav_channels", "频道"),
-    ("nav_media", "媒体"),
-    ("nav_settings", "设置"),
-]
+# 2026-09-07 v1.6.8:标签改走 `QCoreApplication.translate` 让 en_US locale
+# 生效。NavBar 是 module-level 容器,无 QObject 实例,跟 state_labels 同样
+# 走 translate() 函数路径。
+_NAV_LABELS_SRC = ("实时流", "大盘", "频道", "媒体", "设置")
+
+
+def _nav_label(idx: int) -> str:
+    """Return the translated label for nav item idx (0..4).
+
+    用 module-level function 而不是直接调 translate,保持 `_NAV_ITEMS`
+    结构(icon_name + label)的兼容性。
+    """
+    from PySide6.QtCore import QCoreApplication
+
+    return QCoreApplication.translate("nav_bar", _NAV_LABELS_SRC[idx])
+
+
+_NAV_ICONS = ("nav_live", "nav_dashboard", "nav_channels", "nav_media", "nav_settings")
+
+
+def _nav_items() -> list[tuple[str, str]]:
+    """当前 locale 下的 (icon_name, label) 列表。"""
+    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(5)), strict=True))
+
 
 # ---- 配色 token(直接 hex,不走 ThemeManager accent(),让本文件自包含) ----
 # 主题切换时按 DARK/LIGHT 二选一,新主题再加分支即可。
@@ -195,7 +212,7 @@ class VerticalNavBar(QWidget):
         # # nav 不再重复。
         vbox.addSpacing(12)
 
-        for idx, (icon_name, label) in enumerate(_NAV_ITEMS):
+        for idx, (icon_name, label) in enumerate(_nav_items()):
             btn = _NavButton(idx, icon_name, label)
             btn.clicked.connect(self._on_btn_clicked)
             self._buttons.append(btn)

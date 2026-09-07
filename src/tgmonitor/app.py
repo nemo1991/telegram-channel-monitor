@@ -258,6 +258,17 @@ def run() -> None:
     loop = QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
 
+    # 2026-09-07 v1.6.8:接 install_translator —— 之前 v1.5.3 PR #D3 定义
+    # 了完整逻辑但全工程没人调,tr() 形同虚设。这里同步构造 Settings 读
+    # `lang` 字段(env TG_LANG,默认 zh_CN),然后装翻译;`_bootstrap` 后面会
+    # 再读一次 Settings(同一份 .env,幂等)。
+    from tgmonitor.core.config import Settings
+    from tgmonitor.i18n import install_translator
+
+    early_settings = Settings()
+    install_translator(qt_app, locale=early_settings.lang)
+    log.info("[i18n] locale=%s 已装翻译器", early_settings.lang)
+
     # 应用图标(macOS dock / 任务栏 / 任务管理器)
     # PySide6 没有 setApplicationIcon,用 QGuiApplication.setWindowIcon(静态)。
     # 它会影响所有未单独设置 icon 的窗口(包括 MainWindow)。

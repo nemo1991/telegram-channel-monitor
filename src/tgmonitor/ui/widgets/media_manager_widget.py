@@ -243,7 +243,7 @@ class MediaManagerWidget(QWidget):
         # sort / sort_dir / offset 透传
         self.cmb_sort = QComboBox()
         self.cmb_sort.setMinimumWidth(110)
-        self.cmb_sort.setToolTip("排序键")
+        self.cmb_sort.setToolTip(self.tr("排序键"))
         for sk in SortKey:
             label = {"date": "Date", "size": "Size", "status": "Status"}[sk.value]
             self.cmb_sort.addItem(label, sk)
@@ -251,7 +251,7 @@ class MediaManagerWidget(QWidget):
 
         self.cmb_dir = QComboBox()
         self.cmb_dir.setMinimumWidth(90)
-        self.cmb_dir.setToolTip("排序方向")
+        self.cmb_dir.setToolTip(self.tr("排序方向"))
         # 显式按 DESC, ASC 顺序加入,index 0 = DESC(DATE 的"最新优先"
         # 是 v1.2.0 既有行为;SortDir 枚举的 .value 字典序是 ASC 在前,但
         # UI 默认走 DESC)。
@@ -270,7 +270,7 @@ class MediaManagerWidget(QWidget):
         self.btn_prev = QPushButton("◀")
         self.btn_prev.setCursor(Qt.PointingHandCursor)
         self.btn_prev.setFixedWidth(32)
-        self.btn_prev.setToolTip("上一页")
+        self.btn_prev.setToolTip(self.tr("上一页"))
         self.btn_prev.clicked.connect(self._on_page_prev)
         hbox.addWidget(self.btn_prev)
 
@@ -282,7 +282,7 @@ class MediaManagerWidget(QWidget):
         self.btn_next = QPushButton("▶")
         self.btn_next.setCursor(Qt.PointingHandCursor)
         self.btn_next.setFixedWidth(32)
-        self.btn_next.setToolTip("下一页")
+        self.btn_next.setToolTip(self.tr("下一页"))
         self.btn_next.clicked.connect(self._on_page_next)
         hbox.addWidget(self.btn_next)
 
@@ -354,7 +354,7 @@ class MediaManagerWidget(QWidget):
         actions.addWidget(self.btn_export_zip)
         # 缩略图打包开关 — 默认 unchecked(纯媒体包);只在 ZIP 按钮旁,
         # 不影响 CSV 流程。
-        self.chk_zip_thumbs = QCheckBox("含缩略图")
+        self.chk_zip_thumbs = QCheckBox(self.tr("含缩略图"))
         self.chk_zip_thumbs.setCursor(Qt.PointingHandCursor)
         self.chk_zip_thumbs.setToolTip(
             "When packing ZIP, also fetch each media's thumb_key and write thumb_<arcname>",
@@ -726,7 +726,7 @@ class MediaManagerWidget(QWidget):
             and med.download_status == MediaDownloadStatus.DONE
         ):
             thumb.setCursor(Qt.PointingHandCursor)
-            thumb.setToolTip("点击查看大图")
+            thumb.setToolTip(self.tr("点击查看大图"))
             thumb.mousePressEvent = self._make_thumb_click_handler(  # type: ignore[method-assign]
                 key, thumb
             )
@@ -925,7 +925,7 @@ class MediaManagerWidget(QWidget):
         default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "导出 Media Manager 当前视图",
+            self.tr("导出 Media Manager 当前视图"),
             default_name,
             "CSV files (*.csv)",
         )

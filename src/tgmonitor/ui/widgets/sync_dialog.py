@@ -50,7 +50,8 @@ class SyncOptionsDialog(QDialog):
         `defaults` 来自 `app.settings.sync_*`(UI 可改后由 `_on_ok` 收集回
         `SyncOptions`)。"""
         super().__init__(parent)
-        self.setWindowTitle("全量同步选项")
+        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
+        self.setWindowTitle(self.tr("全量同步选项"))
         self.setModal(True)
         self._channel_ids = channel_ids
         self._channel_titles = channel_titles
@@ -61,7 +62,7 @@ class SyncOptionsDialog(QDialog):
         root.setSpacing(10)
 
         # 概要
-        head = QLabel(f"将对 <b>{len(channel_ids)}</b> 个频道执行全量同步。")
+        head = QLabel(self.tr("将对 <b>{n}</b> 个频道执行全量同步。").format(n=len(channel_ids)))
         root.addWidget(head)
 
         # 频道列表
@@ -74,21 +75,21 @@ class SyncOptionsDialog(QDialog):
         root.addWidget(self.list_widget)
 
         # 选项
-        self.chk_metadata = QCheckBox("拉取 / 刷新元数据(title / username / member_count)")
+        self.chk_metadata = QCheckBox(self.tr("拉取 / 刷新元数据(title / username / member_count)"))
         self.chk_metadata.setChecked(defaults.include_metadata)
         root.addWidget(self.chk_metadata)
 
-        self.chk_history = QCheckBox("拉取历史消息(getChatHistory)")
+        self.chk_history = QCheckBox(self.tr("拉取历史消息(getChatHistory)"))
         self.chk_history.setChecked(defaults.include_history)
         root.addWidget(self.chk_history)
 
-        self.chk_resume = QCheckBox("续拉(从 storage 已有最大 msg_id 开始)")
+        self.chk_resume = QCheckBox(self.tr("续拉(从 storage 已有最大 msg_id 开始)"))
         self.chk_resume.setChecked(defaults.resume_from_saved)
         root.addWidget(self.chk_resume)
 
         # 延迟
         h = QHBoxLayout()
-        h.addWidget(QLabel("单条 API 间隔:"))
+        h.addWidget(QLabel(self.tr("单条 API 间隔:")))
         self.spin_chat_delay = QSpinBox()
         self.spin_chat_delay.setRange(50, 60000)
         self.spin_chat_delay.setSuffix(" ms")
@@ -98,7 +99,7 @@ class SyncOptionsDialog(QDialog):
         root.addLayout(h)
 
         h = QHBoxLayout()
-        h.addWidget(QLabel("分页间隔(每 100 条):"))
+        h.addWidget(QLabel(self.tr("分页间隔(每 100 条):")))
         self.spin_page_delay = QSpinBox()
         self.spin_page_delay.setRange(100, 60000)
         self.spin_page_delay.setSuffix(" ms")
@@ -153,7 +154,8 @@ class SyncProgressDialog(QDialog):
         `app.channel_sync.cancel` — 立刻唤醒 ChannelSyncService 内部 sleep。
         """
         super().__init__(parent)
-        self.setWindowTitle("全量同步中…")
+        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
+        self.setWindowTitle(self.tr("全量同步中…"))
         self.setModal(True)
         self.setMinimumWidth(560)
         self.setMinimumHeight(380)
@@ -164,7 +166,7 @@ class SyncProgressDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
 
-        self.lbl_summary = QLabel("准备开始…")
+        self.lbl_summary = QLabel(self.tr("准备开始…"))
         root.addWidget(self.lbl_summary)
 
         self.list_widget = QListWidget()
@@ -173,10 +175,10 @@ class SyncProgressDialog(QDialog):
 
         h = QHBoxLayout()
         h.addStretch(1)
-        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel = QPushButton(self.tr("取消"))
         self.btn_cancel.clicked.connect(self._on_cancel)
         h.addWidget(self.btn_cancel)
-        self.btn_close = QPushButton("关闭")
+        self.btn_close = QPushButton(self.tr("关闭"))
         self.btn_close.setEnabled(False)
         self.btn_close.clicked.connect(self.accept)
         h.addWidget(self.btn_close)
@@ -184,7 +186,7 @@ class SyncProgressDialog(QDialog):
 
     def _add_row(self, channel_id: int) -> int:
         title = self._channel_titles.get(channel_id, f"#{channel_id}")
-        item = QListWidgetItem(f"⏳ {title}  — 待开始")
+        item = QListWidgetItem(self.tr("⏳ {title}  — 待开始").format(title=title))
         self.list_widget.addItem(item)
         row = self.list_widget.count() - 1
         self._rows[channel_id] = row
@@ -210,7 +212,7 @@ class SyncProgressDialog(QDialog):
         # 2026-08-24:init 事件不进 row — 只更新顶部 summary,避免 0 号伪频道
         # 出现在 list 上。
         if e.stage == "init":
-            self.lbl_summary.setText(f"准备同步 {e.total} 个频道…")
+            self.lbl_summary.setText(self.tr("准备同步 {n} 个频道…").format(n=e.total or 0))
             return
         if e.channel_id not in self._rows:
             self._add_row(e.channel_id)
@@ -225,7 +227,7 @@ class SyncProgressDialog(QDialog):
             "channel_start": "▶",
         }.get(e.stage, "•")
         if e.stage == "history" and e.total is None:
-            progress_str = f"{e.progress} 条"
+            progress_str = self.tr("{n} 条").format(n=e.progress)
         elif e.total:
             progress_str = f"{e.progress}/{e.total}"
         else:
@@ -239,7 +241,7 @@ class SyncProgressDialog(QDialog):
         # 这里用 isinstance 窄化到 SyncResult;非 SyncResult 当成「无结果」处理。
         result = e.result if isinstance(e.result, SyncResult) else None
         if result is None:
-            self.lbl_summary.setText("同步已完成")
+            self.lbl_summary.setText(self.tr("同步已完成"))
         else:
             n_ok = sum(
                 1 for r in result.per_channel.values() if r.error is None and not r.rate_limited
@@ -247,17 +249,19 @@ class SyncProgressDialog(QDialog):
             n_fail = sum(1 for r in result.per_channel.values() if r.error)
             n_added = result.total_messages_added
             rate = result.rate_limited_seconds or 0
-            extra = f"(被限流等待 {rate:.0f}s)" if rate else ""
+            extra = self.tr("(被限流等待 {n}s)").format(n=int(rate)) if rate else ""
             self.lbl_summary.setText(
-                f"完成:成功 {n_ok} 失败 {n_fail} 新增消息 {n_added} 条 {extra}"
-                + ("(已取消)" if result.cancelled else "")
+                self.tr("完成:成功 {ok} 失败 {fail} 新增消息 {n} 条 {extra}").format(
+                    ok=n_ok, fail=n_fail, n=n_added, extra=extra
+                )
+                + (self.tr("(已取消)") if result.cancelled else "")
             )
         self.btn_cancel.setEnabled(False)
         self.btn_close.setEnabled(True)
         # 关掉 window title 里的省略号
-        self.setWindowTitle("全量同步完成")
+        self.setWindowTitle(self.tr("全量同步完成"))
 
     def _on_cancel(self) -> None:
         self._cancel_cb()
-        self.lbl_summary.setText("已请求取消,等待当前频道完成…")
+        self.lbl_summary.setText(self.tr("已请求取消,等待当前频道完成…"))
         self.btn_cancel.setEnabled(False)

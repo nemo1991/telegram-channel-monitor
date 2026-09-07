@@ -221,7 +221,8 @@ class LightboxDialog(QDialog):
         else:
             # 空 item / 全部 None
             self._canvas.setPixmap(QPixmap())
-            self._canvas.setText("(image unavailable)")
+            # 2026-09-07 v1.6.8:英文 fallback 文本走 tr()。
+            self._canvas.setText(self.tr("(image unavailable)"))
             self._update_zoom_label()
 
     def _render_image(self, pix: QPixmap) -> None:
@@ -230,7 +231,8 @@ class LightboxDialog(QDialog):
             # 注意顺序:先 setPixmap(null) 清掉老 pixmap,再 setText;否则
             # QLabel.setPixmap 会把已设置的 text 清掉(实测 Qt 6.11 行为)。
             self._canvas.setPixmap(QPixmap())
-            self._canvas.setText("(image unavailable)")
+            # 2026-09-07 v1.6.8:fallback 文本走 tr()。
+            self._canvas.setText(self.tr("(image unavailable)"))
             self._update_zoom_label()
             return
         self._apply_scaled_pixmap(pix)
@@ -272,7 +274,8 @@ class LightboxDialog(QDialog):
     def _show_unavailable(self) -> None:
         """占位 — image / GIF decode 失败都走这里。"""
         self._canvas.setPixmap(QPixmap())
-        self._canvas.setText("(image unavailable)")
+        # 2026-09-07 v1.6.8:fallback 文本走 tr()。
+        self._canvas.setText(self.tr("(image unavailable)"))
 
     def _render_video(self, data: bytes) -> None:
         """2026-09-04 v1.6.7:MP4 bytes → QMediaPlayer + QVideoWidget。
@@ -334,7 +337,8 @@ class LightboxDialog(QDialog):
             # 关掉自己 — fallback 走系统 viewer 后 Lightbox 没意义继续存在
             self.accept()
             return
-        self._canvas.setText("(video unavailable — codec missing)")
+        # 2026-09-07 v1.6.8:fallback 文本走 tr()。
+        self._canvas.setText(self.tr("(video unavailable — codec missing)"))
 
     def _apply_scaled_pixmap(self, pix: QPixmap) -> None:
         """按 self._zoom 缩放 + 居中显示;屏幕尺寸 = 当前主屏 90%。"""

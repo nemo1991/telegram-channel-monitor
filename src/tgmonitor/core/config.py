@@ -9,6 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from platformdirs import user_data_dir
 from pydantic import Field
@@ -131,6 +132,15 @@ class Settings(BaseSettings):
     # 填 v1.5.0 PR #A5 的尾巴:settings_page 加 checkbox,勾选时启动从 .env 读
     # 主题并在 ThemeManager.apply 时回写;空字符串 = 与 v1.5.0 行为一致(不持久化)。
     key_theme: str = Field(default="", description="persisted Theme name; '' = session only")
+
+    # 2026-09-07 v1.6.8:UI 语言(.env 字段 TG_LANG),默认 zh_CN(项目母语,中文
+    # 用户零配置)。en_US 提供完整英文翻译。`install_translator(qt_app,
+    # settings.lang)` 在 app.py:run() 内调用装翻译 + QLocale.setDefault。
+    # 中文用户即使没有 TG_LANG env 行也走默认值,行为不变。
+    lang: Literal["zh_CN", "en_US"] = Field(
+        default="zh_CN",
+        description="UI language: zh_CN (default) or en_US",
+    )
 
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。"""

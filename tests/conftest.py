@@ -10,6 +10,9 @@
 3. `force_zh_cn_locale` autouse fixture — 2026-09-03 v1.5.3 PR #D3:强制
    zh_CN locale,保持现有 30+ 处 `widget.text() == "中文"` 断言兼容
    (zh_CN 默认翻译 = 原文,fixture 保护下不撞英文)。
+   v1.6.8 i18n 二期保留这个 fixture —— 新加的 i18n 测试自己用
+   `monkeypatch.setenv("TG_LANG", "en_US")` 切语言并 reload,
+   旧的中文断言零改动继续 pass。
 
 注意:**不要**在 conftest.py 里再定义 fixture — 全部放 `tests.fixtures.*`,
 否则 pytest 行为不一致(同一 fixture 两份定义会冲突)。
@@ -49,10 +52,14 @@ pytest_plugins = [
 
 @pytest.fixture(autouse=True)
 def force_zh_cn_locale() -> None:
-    """2026-09-03 v1.5.3 PR #D3:强制 zh_CN locale,防 CI 切 LANG 撞英文。
+    """2026-09-03 v1.5.3 PR #D3 + 2026-09-07 v1.6.8 二期:强制 zh_CN locale。
 
-    zh_CN 默认翻译 = 原文,现有 30+ 处 `widget.text() == "中文"` 断言
-    在本 fixture 保护下保持兼容。`autouse=True` 自动 apply 到所有 test。
+    v1.5.3:防 CI 切 LANG 撞英文,zh_CN 默认翻译 = 原文,现有 30+ 处
+    `widget.text() == "中文"` 断言在本 fixture 保护下保持兼容。
+
+    v1.6.8:保留这个 fixture —— 新加的 i18n 测试自己用 monkeypatch +
+    Settings reload 切语言,旧的中文断言零改动继续 pass。`autouse=True`
+    自动 apply 到所有 test。
     """
     try:
         from PySide6.QtCore import QLocale  # noqa: PLC0415

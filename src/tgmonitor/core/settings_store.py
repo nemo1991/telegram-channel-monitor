@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 
@@ -110,6 +111,7 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_SYNC_CHAT_DELAY_MS": str(s.sync_chat_delay_ms),
         "TG_SYNC_PAGE_DELAY_MS": str(s.sync_page_delay_ms),
         "TG_SYNC_RESUME_FROM_SAVED": "true" if s.sync_resume_from_saved else "false",
+        "TG_LANG": s.lang,
     }
 
 
@@ -182,6 +184,10 @@ class EditableSettings:
     # - 空 = checkbox 取消(与 v1.5.0 行为一致,主题不写 .env)
     key_theme: str = ""
 
+    # 2026-09-07 v1.6.8 i18n 二期:UI 语言(locale code,"zh_CN" / "en_US")。
+    # 默认 zh_CN 与 Settings.lang 对齐;SettingsPage 切换时实时写 .env。
+    lang: str = "zh_CN"
+
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
         """Settings → EditableSettings(给 UI 编辑用)。bytes/MB 单位转换在这里做。"""
@@ -210,6 +216,7 @@ class EditableSettings:
             sync_page_delay_ms=s.sync_page_delay_ms,
             sync_resume_from_saved=s.sync_resume_from_saved,
             key_theme=s.key_theme,
+            lang=s.lang,
         )
 
     def validate(self) -> list[str]:
@@ -265,6 +272,7 @@ class EditableSettings:
             sync_page_delay_ms=self.sync_page_delay_ms,
             sync_resume_from_saved=self.sync_resume_from_saved,
             key_theme=self.key_theme,
+            lang=cast(Literal["zh_CN", "en_US"], self.lang),
         )
 
 

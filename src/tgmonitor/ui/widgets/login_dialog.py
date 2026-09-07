@@ -145,7 +145,8 @@ class LoginDialog(QDialog):
         # 按钮
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
-        self.btn_submit = bb.addButton("提交", QDialogButtonBox.AcceptRole)
+        # 2026-09-07 v1.6.8:tr() 包裹让 button text 跟当前 locale。
+        self.btn_submit = bb.addButton(self.tr("提交"), QDialogButtonBox.AcceptRole)
         self.btn_submit.clicked.connect(self._on_submit)
         root.addWidget(bb)
 
@@ -166,34 +167,34 @@ class LoginDialog(QDialog):
     def _render(self, state: str, detail: str = "") -> None:
         self._expected_state = state
         if state == "code_required":
-            self.status_label.setText("Telegram 验证码")
+            self.status_label.setText(self.tr("Telegram 验证码"))
             self.stack.setCurrentIndex(1)
             self.in_code.setFocus()
         elif state == "password_required":
-            self.status_label.setText("二步验证 2FA 密码")
+            self.status_label.setText(self.tr("二步验证 2FA 密码"))
             self.stack.setCurrentIndex(2)
             self.in_pwd.setFocus()
         elif state == "email_required":
             # 2026-08-27 v1.4.0 PR #13:邮箱地址页
-            self.status_label.setText("输入邮箱地址")
+            self.status_label.setText(self.tr("输入邮箱地址"))
             self.stack.setCurrentIndex(3)
             self.in_email.setFocus()
         elif state == "email_code_required":
-            self.status_label.setText("邮箱验证码")
+            self.status_label.setText(self.tr("邮箱验证码"))
             self.stack.setCurrentIndex(4)
             self.in_email_code.setFocus()
         elif state == "registration_required":
-            self.status_label.setText("注册新账号(需 first_name)")
+            self.status_label.setText(self.tr("注册新账号(需 first_name)"))
             self.stack.setCurrentIndex(5)
             self.in_reg_first.setFocus()
         elif state in ("phone_required", "closed", "uninit", "tdlib_parameters"):
-            self.status_label.setText("输入手机号(含 + 国家区号)")
+            self.status_label.setText(self.tr("输入手机号(含 + 国家区号)"))
             self.stack.setCurrentIndex(0)
             self.in_phone.setFocus()
         elif state == "error":
             # 提交失败 — 展示原因并保持当前页,让用户能重试
             # (此前直接 hide(),用户只看到窗口消失,无失败反馈)
-            self.status_label.setText(f"登录失败:{detail or '未知错误'}")
+            self.status_label.setText(f"{self.tr('登录失败')}:{detail or self.tr('未知错误')}")
         else:
             self.hide()
 
@@ -285,12 +286,12 @@ class LoginDialog(QDialog):
         email = self.in_email.text().strip()
         if not email:
             return
-        self._set_busy(True, "正在提交邮箱…")
+        self._set_busy(True, self.tr("正在提交邮箱…"))
         fut = run_coro(
             self.loop,
             self.app.submit_email(email),
             on_success=lambda res: self._render(res[0], res[1] or ""),
-            on_error=lambda exc: self._show_submit_error("提交邮箱失败", exc),
+            on_error=lambda exc: self._show_submit_error(self.tr("提交邮箱失败"), exc),
             error_label="submit_email",
         )
         fut.add_done_callback(lambda _f: self._set_busy(False))
@@ -303,12 +304,12 @@ class LoginDialog(QDialog):
         if not code:
             return
         self.in_email_code.clear()
-        self._set_busy(True, "正在验证邮箱…")
+        self._set_busy(True, self.tr("正在验证邮箱…"))
         fut = run_coro(
             self.loop,
             self.app.submit_email_code(code),
             on_success=lambda res: self._render(res[0], res[1] or ""),
-            on_error=lambda exc: self._show_submit_error("提交邮箱验证码失败", exc),
+            on_error=lambda exc: self._show_submit_error(self.tr("提交邮箱验证码失败"), exc),
             error_label="submit_email_code",
         )
         fut.add_done_callback(lambda _f: self._set_busy(False))
@@ -319,15 +320,15 @@ class LoginDialog(QDialog):
             return
         first = self.in_reg_first.text().strip()
         if not first:
-            self.status_label.setText("first_name 必填")
+            self.status_label.setText(self.tr("first_name 必填"))
             return
         last = self.in_reg_last.text().strip()
-        self._set_busy(True, "正在注册…")
+        self._set_busy(True, self.tr("正在注册…"))
         fut = run_coro(
             self.loop,
             self.app.submit_registration(first, last),
             on_success=lambda res: self._render(res[0], res[1] or ""),
-            on_error=lambda exc: self._show_submit_error("注册失败", exc),
+            on_error=lambda exc: self._show_submit_error(self.tr("注册失败"), exc),
             error_label="submit_registration",
         )
         fut.add_done_callback(lambda _f: self._set_busy(False))

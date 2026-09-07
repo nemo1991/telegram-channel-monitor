@@ -144,7 +144,7 @@ def path_field(
     placeholder: str = "",
     *,
     on_default: Callable[[], None] | None = None,
-    default_tooltip: str = "恢复为 platform-native 默认目录",
+    default_tooltip: str | None = None,
     parent: QWidget | None = None,
     file_mode: bool = False,
 ) -> QLineEdit:
@@ -159,8 +159,14 @@ def path_field(
     默认按钮:`on_default` 是无参 callable(典型用法 `lambda: edit.setText(...)`),
     None = 不显示「默认」按钮。
 
+    2026-09-07 v1.6.8:`default_tooltip` 和按钮文本「浏览…」走
+    `QCoreApplication.translate()` 让 en_US locale 生效。`label` / `placeholder`
+    由 caller 提供,通常已是 tr() 过的字符串。
+
     Returns the QLineEdit so caller 可调 `.text()` / `.setText()` 等。
     """
+    from PySide6.QtCore import QCoreApplication
+
     edit = QLineEdit()
     edit.setPlaceholderText(placeholder)
 
@@ -169,7 +175,7 @@ def path_field(
     row.setContentsMargins(0, 0, 0, 0)
     row.addWidget(edit, 1)
 
-    btn_browse = QPushButton("浏览…")
+    btn_browse = QPushButton(QCoreApplication.translate("form_row", "浏览…"))
     if file_mode:
         btn_browse.clicked.connect(lambda: _on_browse_file(edit, parent))
     else:
@@ -177,8 +183,14 @@ def path_field(
     row.addWidget(btn_browse)
 
     if on_default is not None:
-        btn_default = QPushButton("默认")
-        btn_default.setToolTip(default_tooltip)
+        btn_default = QPushButton(QCoreApplication.translate("form_row", "默认"))
+        # 2026-09-07 v1.6.8:default_tooltip None 时取翻译,callable 也可传
+        # 已 tr() 过的字符串。QPushButton.setToolTip 本身已支持 tr() 字串。
+        btn_default.setToolTip(
+            default_tooltip
+            if default_tooltip is not None
+            else QCoreApplication.translate("form_row", "恢复为 platform-native 默认目录")
+        )
         btn_default.clicked.connect(on_default)
         row.addWidget(btn_default)
 
@@ -188,14 +200,26 @@ def path_field(
 
 def _on_browse_dir(edit: QLineEdit, parent: QWidget | None) -> None:
     """Internal: open directory picker;set QLineEdit text on user confirm."""
-    dir_path = QFileDialog.getExistingDirectory(parent, "选择目录", edit.text())
+    from PySide6.QtCore import QCoreApplication
+
+    dir_path = QFileDialog.getExistingDirectory(
+        parent,
+        QCoreApplication.translate("form_row", "选择目录"),
+        edit.text(),
+    )
     if dir_path:
         edit.setText(dir_path)
 
 
 def _on_browse_file(edit: QLineEdit, parent: QWidget | None) -> None:
     """Internal: open save-file picker;set QLineEdit text on user confirm."""
-    path, _ = QFileDialog.getSaveFileName(parent, "选择输出文件", edit.text())
+    from PySide6.QtCore import QCoreApplication
+
+    path, _ = QFileDialog.getSaveFileName(
+        parent,
+        QCoreApplication.translate("form_row", "选择输出文件"),
+        edit.text(),
+    )
     if path:
         edit.setText(path)
 

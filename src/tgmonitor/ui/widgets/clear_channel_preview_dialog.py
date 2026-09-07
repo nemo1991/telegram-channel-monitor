@@ -53,7 +53,8 @@ class ClearChannelPreviewDialog(QDialog):
         super().__init__(parent)
         self._preview = preview
         self._channel_title = channel_title
-        self.setWindowTitle("Clear Channel — 二次确认")
+        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
+        self.setWindowTitle(self.tr("Clear Channel — 二次确认"))
         self.setModal(True)
         self._build()
 
@@ -62,35 +63,43 @@ class ClearChannelPreviewDialog(QDialog):
         layout.setSpacing(10)
 
         # 标题
-        title_label = QLabel(f"🗑 清空频道 {self._channel_title or f'#{self._preview.channel_id}'}")
+        title_label = QLabel(
+            self.tr("🗑 清空频道 {title}").format(
+                title=self._channel_title or f"#{self._preview.channel_id}"
+            )
+        )
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(title_label)
 
         # 警告
-        warn = QLabel("⚠ 此操作不可撤销。确认前请仔细检查以下数据:")
+        warn = QLabel(self.tr("⚠ 此操作不可撤销。确认前请仔细检查以下数据:"))
         layout.addWidget(warn)
 
         # 数据项
-        layout.addWidget(QLabel(f"  • 消息数: {self._preview.message_count}"))
-        layout.addWidget(QLabel(f"  • 媒体数: {self._preview.media_count}"))
+        layout.addWidget(QLabel(self.tr("  • 消息数: {n}").format(n=self._preview.message_count)))
+        layout.addWidget(QLabel(self.tr("  • 媒体数: {n}").format(n=self._preview.media_count)))
         layout.addWidget(
-            QLabel(f"  • 预计释放对象存储: {_format_bytes(self._preview.potential_orphan_bytes)}"),
+            QLabel(
+                self.tr("  • 预计释放对象存储: {n}").format(
+                    n=_format_bytes(self._preview.potential_orphan_bytes)
+                )
+            ),
         )
         layout.addWidget(
             QLabel(
-                "    (跨频道共享的对象存储 bytes 不计入 — refcount > 1 的 key 不会被清理)",
+                self.tr("    (跨频道共享的对象存储 bytes 不计入 — refcount > 1 的 key 不会被清理)"),
             ),
         )
 
         # 必勾确认
-        self.chk_ack = QCheckBox("我已了解以上操作不可撤销")
+        self.chk_ack = QCheckBox(self.tr("我已了解以上操作不可撤销"))
         layout.addWidget(self.chk_ack)
 
         layout.addStretch(1)
 
         # 按钮
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.StandardButton.Ok).setText("确认清空")
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText(self.tr("确认清空"))
         bb.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         self.chk_ack.toggled.connect(
             lambda checked: bb.button(QDialogButtonBox.StandardButton.Ok).setEnabled(checked)

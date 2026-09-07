@@ -46,7 +46,8 @@ class ExportDialog(QDialog):
         self.app = app
         self._channel_ids = channel_ids
         self._req: ExportRequest | None = None
-        self.setWindowTitle("导出")
+        # 2026-09-07 v1.6.8:所有用户可见字符串走 tr()。
+        self.setWindowTitle(self.tr("导出"))
         self._build()
         self._set_default_filename()
 
@@ -62,27 +63,27 @@ class ExportDialog(QDialog):
             it.setData(Qt.UserRole, cid)
             it.setCheckState(Qt.Checked)
             self.lst_channels.addItem(it)
-        form.addRow("频道:", self.lst_channels)
+        form.addRow(self.tr("频道:"), self.lst_channels)
 
         # 时间范围(可选)
         self.in_from = QLineEdit()
-        self.in_from.setPlaceholderText("YYYY-MM-DD(可选)")
+        self.in_from.setPlaceholderText(self.tr("YYYY-MM-DD(可选)"))
         self.in_to = QLineEdit()
-        self.in_to.setPlaceholderText("YYYY-MM-DD(可选)")
+        self.in_to.setPlaceholderText(self.tr("YYYY-MM-DD(可选)"))
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(self.in_from)
         rl.addWidget(QLabel("~"))
         rl.addWidget(self.in_to)
-        form.addRow("时间范围:", row)
+        form.addRow(self.tr("时间范围:"), row)
 
         # 格式(combo_field 禁用滚轮切换 — 防滚动误改导出格式)
-        self.cmb_fmt = combo_field(form, "格式:", ExportFormat)
+        self.cmb_fmt = combo_field(form, self.tr("格式:"), ExportFormat)
 
         # 选项 — HTML(内嵌缩略图)+ ZIP(打包缩略图)都用到;其它格式
         # 忽略该字段。2026-09-01 v1.5.1 PR #B4 加 ZIP 共享同一 checkbox。
-        self.chk_thumbs = QCheckBox("导出时包含缩略图(HTML / ZIP)")
+        self.chk_thumbs = QCheckBox(self.tr("导出时包含缩略图(HTML / ZIP)"))
         self.chk_thumbs.setEnabled(False)  # 默认 JSON/CSV,选 HTML/ZIP 时启用
         form.addRow("", self.chk_thumbs)
         self.cmb_fmt.currentIndexChanged.connect(
@@ -94,7 +95,7 @@ class ExportDialog(QDialog):
         # 输出路径(选文件而不是目录)
         self.in_path = path_field(
             form,
-            "输出:",
+            self.tr("输出:"),
             "",
             file_mode=True,
             parent=self,

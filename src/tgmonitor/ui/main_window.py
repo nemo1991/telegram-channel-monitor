@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QCoreApplication, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -95,6 +95,25 @@ log = logging.getLogger(__name__)
 ShutdownCb = Callable[[], Awaitable[None]]
 
 # ---- 状态映射 ----
+
+# 2026-09-07 v1.6.8:conn state 翻译表 — module-level,跟 state_labels 同样
+# 走 QCoreApplication.translate 路径,无需 QObject。这样 test 用 _FakeWindow
+# (无 tr()) 也能正确取到 zh_CN / en_US 译文。
+_CONN_STATE_LABEL_SRC: dict[str, str] = {
+    "waiting_for_network": "TG 等待网络",
+    "connecting": "TG 连接中…",
+    "updating": "TG 同步中…",
+    "ready": "TG 已连接",
+    "unknown": "TG 状态未知",
+}
+
+
+def _conn_state_label(state: str) -> str:
+    """Return translated label for Telegram connection state."""
+    src = _CONN_STATE_LABEL_SRC.get(state)
+    if src is not None:
+        return QCoreApplication.translate("main_window", src)
+    return QCoreApplication.translate("main_window", "TG {state}").format(state=state)
 
 
 class MainWindow(QMainWindow):
@@ -221,13 +240,13 @@ class MainWindow(QMainWindow):
                     self.loop,
                     NotificationRequested(
                         level="info",
-                        title="tgmonitor 已在后台运行",
-                        body="右键托盘图标可恢复窗口或退出应用",
+                        title=self.tr("tgmonitor 已在后台运行"),
+                        body=self.tr("右键托盘图标可恢复窗口或退出应用"),
                         click_action="show_main",
                     ),
                 )
                 self.statusBar().showMessage(
-                    "已在后台运行 · 右键托盘图标或 File 菜单恢复",
+                    self.tr("已在后台运行 · 右键托盘图标或 File 菜单恢复"),
                     8000,
                 )
             event.ignore()
@@ -369,7 +388,7 @@ class MainWindow(QMainWindow):
         ch_layout = QVBoxLayout(channels_page)
         ch_layout.setContentsMargins(16, 16, 16, 16)
         ch_layout.setSpacing(12)
-        ch_title = QLabel("频道管理")
+        ch_title = QLabel(self.tr("频道管理"))
         ch_title.setObjectName("pageTitle")
         ch_layout.addWidget(ch_title)
         self.channel_panel = ChannelWidget(self.app, self.loop)
@@ -396,18 +415,20 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.status_bar = self.statusBar()
         # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
-        self._conn_label = QLabel("TG 未连接")
+        # 2026-09-07 v1.6.8:tr() 包裹。后续 _on_conn_state_changed 会重 setText,
+        # 也会走 tr()。
+        self._conn_label = QLabel(self.tr("TG 未连接"))
         self.status_bar.addPermanentWidget(self._conn_label)
         # 2026-09-03 v1.6.1:暂停监听状态栏常驻 label — 默认 hidden,接
         # monitoring_paused signal 后 show / 接 monitoring_resumed 后 hide。
         # 黄色背景 + ⏸ 前缀,与红字「对象存储不可用」视觉上区分。
-        self._paused_label = QLabel("⏸ 暂停监听")
+        self._paused_label = QLabel(self.tr("⏸ 暂停监听"))
         self._paused_label.setStyleSheet(
             "background-color: #f7c948; color: #333; padding: 2px 8px;"
             " border-radius: 3px; font-weight: 600;"
         )
         self._paused_label.setToolTip(
-            "监听已暂停 — 实时更新与媒体下载已停。tray 菜单点「继续监听」恢复"
+            self.tr("监听已暂停 — 实时更新与媒体下载已停。tray 菜单点「继续监听」恢复")
         )
         self._paused_label.setVisible(False)
         self.status_bar.addPermanentWidget(self._paused_label)
@@ -415,14 +436,18 @@ class MainWindow(QMainWindow):
         # 用户从日志看不到问题,媒体下载又静默失败,必须让「对象存储不可用」在
         # UI 上直接可见;设置页热重载成功(`_on_settings_changed`)后自动移除。
         if self._objects_error:
-            self._objects_warn_label = QLabel(f"⚠ 对象存储不可用: {self._objects_error}")
+            self._objects_warn_label = QLabel(
+                self.tr("⚠ 对象存储不可用: {err}").format(err=self._objects_error)
+            )
             self._objects_warn_label.setStyleSheet("color: #d03030; font-weight: 600;")
             self._objects_warn_label.setToolTip(
-                "媒体文件将无法下载 / 保存。请到 设置 → 对象存储 检查配置"
-                "(S3/MinIO 填 API 地址,勿填控制台地址)后重新保存。"
+                self.tr(
+                    "媒体文件将无法下载 / 保存。请到 设置 → 对象存储 检查配置"
+                    "(S3/MinIO 填 API 地址,勿填控制台地址)后重新保存。"
+                )
             )
             self.status_bar.addPermanentWidget(self._objects_warn_label)
-        self.status_bar.showMessage("就绪")
+        self.status_bar.showMessage(self.tr("就绪"))
 
         root.addWidget(right, 1)
         self.setCentralWidget(central)
@@ -513,12 +538,12 @@ class MainWindow(QMainWindow):
         act_show.triggered.connect(self._show_and_raise)
         file_menu.addAction(act_show)
         file_menu.addSeparator()
-        act_pause = QAction("暂停监听", self)
+        act_pause = QAction(self.tr("暂停监听"), self)
         act_pause.triggered.connect(
             lambda: self.app.bus.publish_threadsafe(self.loop, QuitRequested(pause=True))
         )
         file_menu.addAction(act_pause)
-        act_quit = QAction("退出", self)
+        act_quit = QAction(self.tr("退出"), self)
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self._quit_app)
         file_menu.addAction(act_quit)
@@ -572,7 +597,7 @@ class MainWindow(QMainWindow):
         """
         self._paused_label.setVisible(True)
         base_title = self.tr("tgmonitor · Telegram 频道监听")
-        self.setWindowTitle(f"{base_title}  (⏸ 暂停)")
+        self.setWindowTitle(f"{base_title}  ({self.tr('⏸ 暂停')})")
 
     def _on_monitoring_resumed(self, source: str) -> None:
         """2026-09-03 v1.6.1:监听已恢复 — 状态栏 label 隐藏 + title 复位。"""
@@ -667,8 +692,11 @@ class MainWindow(QMainWindow):
         # 频道类型图标(已 tinted)需要按新主题重画
         if hasattr(self.channel_panel, "refresh_theme"):
             self.channel_panel.refresh_theme()
+        # 2026-09-07 v1.6.8:status bar 文案走 tr()。
         self.status_bar.showMessage(
-            f"已切换到 {'暗色' if new.value == 'dark' else '浅色'}主题",
+            self.tr("已切换到 {kind} 主题").format(
+                kind=self.tr("暗色") if new.value == "dark" else self.tr("浅色")
+            ),
             2000,
         )
 
@@ -693,6 +721,13 @@ class MainWindow(QMainWindow):
         self.nav.refresh_theme()
         if hasattr(self.channel_panel, "refresh_theme"):
             self.channel_panel.refresh_theme()
+        # 2026-09-07 v1.6.8:status bar 文案走 tr()。
+        self.status_bar.showMessage(
+            self.tr("已切换到 {kind} 主题").format(
+                kind=self.tr("暗色") if actual.value == "dark" else self.tr("浅色")
+            ),
+            2000,
+        )
 
     def _on_global_escape(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Esc 全局快捷键。
@@ -735,12 +770,12 @@ class MainWindow(QMainWindow):
             return
         text = getattr(msg, "text", None) or ""
         if not text:
-            self.statusBar().showMessage("当前消息无文本", 1500)
+            self.statusBar().showMessage(self.tr("当前消息无文本"), 1500)
             return
         from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(text)
-        self.statusBar().showMessage(f"已复制 {len(text)} 字", 1500)
+        self.statusBar().showMessage(self.tr("已复制 {n} 字").format(n=len(text)), 1500)
 
     # ======================== ViewModel 事件绑定 ========================
 
@@ -779,12 +814,12 @@ class MainWindow(QMainWindow):
     # ======================== 槽 ========================
 
     def _on_refresh_channels(self) -> None:
-        self.status_bar.showMessage("拉取频道列表…", 2000)
+        self.status_bar.showMessage(self.tr("拉取频道列表…"), 2000)
         self._vm.refresh_joined_channels()
 
     def _on_export(self) -> None:
         if not self.monitor.subscribed_ids:
-            QMessageBox.information(self, "导出", "请先订阅至少一个频道")
+            QMessageBox.information(self, self.tr("导出"), self.tr("请先订阅至少一个频道"))
             return
         ids = sorted(int(cid) for cid in self.monitor.subscribed_ids)
         dlg = ExportDialog(self.app, ids, self)
@@ -801,7 +836,7 @@ class MainWindow(QMainWindow):
         """大盘快速操作:全量同步所有已订阅频道。"""
         ids = list(self.monitor.subscribed_ids)
         if not ids:
-            QMessageBox.information(self, "全量同步", "已监听列表为空,先订阅频道")
+            QMessageBox.information(self, self.tr("全量同步"), self.tr("已监听列表为空,先订阅频道"))
             return
         self._on_sync_requested(ids)
 
@@ -926,17 +961,13 @@ class MainWindow(QMainWindow):
         self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
 
     def _on_login_state(self, state: str) -> None:
-        self.status_bar.showMessage(f"登录状态: {state}", 4000)
+        self.status_bar.showMessage(self.tr("登录状态: {state}").format(state=state), 4000)
 
     def _on_conn_state(self, state: str) -> None:
-        text = {
-            "waiting_for_network": "TG 等待网络",
-            "connecting": "TG 连接中…",
-            "updating": "TG 同步中…",
-            "ready": "TG 已连接",
-            "unknown": "TG 状态未知",
-        }.get(state, f"TG {state}")
-        self._conn_label.setText(text)
+        # 2026-09-07 v1.6.8:conn state 翻译走 module-level _conn_state_label()
+        # 函数(用 QCoreApplication.translate,无需 self.tr())— 这样 test 用
+        # _FakeWindow(无 tr()) 也能正确触发翻译表。
+        self._conn_label.setText(_conn_state_label(state))
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         # 2026-08-30 v1.5.0 PR #A3:关闭进度对话框(如有)— dialog 自身
@@ -948,14 +979,16 @@ class MainWindow(QMainWindow):
             # 蔓延全文件;此字段本来就只在 export 期间有值
             del self._export_dialog
         if error:
-            QMessageBox.critical(self, "导出失败", error)
+            QMessageBox.critical(self, self.tr("导出失败"), error)
         elif result:
             QMessageBox.information(
                 self,
-                "导出完成",
-                f"已写入 {result['out_path']}\n"
-                f"{result['message_count']} 条消息,"
-                f"{result['bytes_written']} 字节",
+                self.tr("导出完成"),
+                self.tr("已写入 {path}\n{n_msg} 条消息,{n_bytes} 字节").format(
+                    path=result["out_path"],
+                    n_msg=result["message_count"],
+                    n_bytes=result["bytes_written"],
+                ),
             )
 
     def _on_error(self, msg: str) -> None:
@@ -975,13 +1008,13 @@ class MainWindow(QMainWindow):
             self.status_bar.removeWidget(self._objects_warn_label)
             self._objects_warn_label.deleteLater()
             self._objects_warn_label = None
-        msg = f"已热重载: {what} → {backend_label}"
+        msg = self.tr("已热重载: {what} → {backend}").format(what=what, backend=backend_label)
         self.status_bar.showMessage(msg, 5000)
         if needs_relogin:
             QMessageBox.information(
                 self,
-                "凭据已变更",
-                "Telegram 凭据已变更。\n请重新登录以继续监听。",
+                self.tr("凭据已变更"),
+                self.tr("Telegram 凭据已变更。\n请重新登录以继续监听。"),
             )
         elif needs_restart:
             # v1.0.23:proxy / session_dir 是 TdlibClient 构造参数,运行时
@@ -1252,7 +1285,7 @@ class MainWindow(QMainWindow):
             # image:bytes → QPixmap 走主线程 Qt 解码
             pix = QPixmap()
             if not pix.loadFromData(data):
-                QMessageBox.warning(self, "Lightbox", "图片解码失败。")
+                QMessageBox.warning(self, self.tr("Lightbox"), self.tr("图片解码失败。"))
                 return
             item = MediaItem(pixmap=pix, mime_type=mime or "image/jpeg")
 
@@ -1459,7 +1492,7 @@ class _HeaderBar(QWidget):
         hbox.setSpacing(12)
 
         # 左: 标题
-        title = QLabel("tgmonitor")
+        title = QLabel(self.tr("tgmonitor"))
         title.setObjectName("appTitle")
         hbox.addWidget(title)
 
@@ -1469,20 +1502,20 @@ class _HeaderBar(QWidget):
         hbox.addStretch(1)
 
         # 右: 状态 + 操作
-        self.state_dot = QLabel("⚪")
+        self.state_dot = QLabel(self.tr("⚪"))
         self.state_dot.setFixedWidth(20)
         hbox.addWidget(self.state_dot)
 
-        self.state_label = QLabel("就绪")
+        self.state_label = QLabel(self.tr("就绪"))
         self.state_label.setObjectName("headerState")
         hbox.addWidget(self.state_label)
 
-        self.btn_action = QPushButton("登录")
+        self.btn_action = QPushButton(self.tr("登录"))
         self.btn_action.setObjectName("headerActionBtn")
         self.btn_action.setVisible(False)
         hbox.addWidget(self.btn_action)
 
-        self.btn_logout = QPushButton("登出")
+        self.btn_logout = QPushButton(self.tr("登出"))
         self.btn_logout.setObjectName("headerActionBtn")
         self.btn_logout.setVisible(False)
         hbox.addWidget(self.btn_logout)
@@ -1494,7 +1527,8 @@ class _HeaderBar(QWidget):
         self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
         self.btn_theme.setObjectName("headerActionBtn")
         self.btn_theme.setFixedWidth(36)
-        self.btn_theme.setToolTip("切换主题(Ctrl+T)")
+        # 2026-09-07 v1.6.8:tooltip 走 tr()(「切换主题」随 locale 翻译)。
+        self.btn_theme.setToolTip(self.tr("切换主题(Ctrl+T)"))
         hbox.addWidget(self.btn_theme)
 
     def update_state(self, state: str, detail: str = "") -> None:
@@ -1511,15 +1545,15 @@ class _HeaderBar(QWidget):
             self.btn_action.setVisible(False)
             self.btn_logout.setVisible(True)
         elif state in ("phone_required", "closed", "uninit"):
-            self.btn_action.setText("登录")
+            self.btn_action.setText(self.tr("登录"))
             self.btn_action.setVisible(True)
             self.btn_logout.setVisible(False)
         elif state in ("code_required",):
-            self.btn_action.setText("验证码")
+            self.btn_action.setText(self.tr("验证码"))
             self.btn_action.setVisible(True)
             self.btn_logout.setVisible(False)
         elif state in ("password_required",):
-            self.btn_action.setText("2FA 密码")
+            self.btn_action.setText(self.tr("2FA 密码"))
             self.btn_action.setVisible(True)
             self.btn_logout.setVisible(False)
         else:

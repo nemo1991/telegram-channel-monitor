@@ -46,7 +46,8 @@ class ExportProgressDialog(QDialog):
         """
         super().__init__(parent)
         self._vm = vm
-        self.setWindowTitle("导出中")
+        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
+        self.setWindowTitle(self.tr("导出中"))
         # 非模态:用户导出时可继续操作其它面板(导出是 fire-and-forget)
         self.setModal(False)
         # 关窗口 = 取消(用户拖标题栏关闭按钮)
@@ -57,7 +58,7 @@ class ExportProgressDialog(QDialog):
     def _build(self) -> None:
         root = QVBoxLayout(self)
         # 状态行(初始「导出中…」,完成后「完成」/ 失败显示 error)
-        self.lbl_status = QLabel("导出中…")
+        self.lbl_status = QLabel(self.tr("导出中…"))
         root.addWidget(self.lbl_status)
         # 进度条
         self.bar = QProgressBar()
@@ -67,7 +68,7 @@ class ExportProgressDialog(QDialog):
         # 取消按钮
         row = QHBoxLayout()
         row.addStretch(1)
-        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel = QPushButton(self.tr("取消"))
         self.btn_cancel.clicked.connect(self._on_cancel)
         row.addWidget(self.btn_cancel)
         root.addLayout(row)
@@ -85,11 +86,13 @@ class ExportProgressDialog(QDialog):
         if total is None:
             # 流式分页中 — indeterminate spinner,文字显示已写条数
             self.bar.setMaximum(0)
-            self.lbl_status.setText(f"导出中…已写 {written} 条")
+            self.lbl_status.setText(self.tr("导出中…已写 {n} 条").format(n=written))
         else:
             self.bar.setMaximum(total)
             self.bar.setValue(written)
-            self.lbl_status.setText(f"已完成 {written} / {total}")
+            self.lbl_status.setText(
+                self.tr("已完成 {done} / {total}").format(done=written, total=total)
+            )
 
     def _on_cancel(self) -> None:
         """取消按钮 → VM 取消当前 export。
@@ -98,7 +101,7 @@ class ExportProgressDialog(QDialog):
         清空)后由 `_on_export_done` 触发关闭,避免半截写入假完成 UI。
         """
         self.btn_cancel.setEnabled(False)
-        self.lbl_status.setText("正在取消…")
+        self.lbl_status.setText(self.tr("正在取消…"))
         self._vm.cancel_current_export()
         self.cancelled.emit()
 
