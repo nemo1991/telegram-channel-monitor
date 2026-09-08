@@ -1,5 +1,5 @@
 # mypy: disable-error-code="attr-defined"
-"""Lightbox 图片 / GIF / 视频内嵌预览 — 2026-08-31 v1.5.0 PR #A8 + 2026-09-04 v1.6.7。
+"""Lightbox 图片 / GIF / 视频内嵌预览 — 2026-08-31 v1.5.0 PR #A8 + 2026-09-04 v1.6.7 + 2026-09-08 v1.6.10。
 
 设计要点:
 - `QDialog` Frameless + WindowStaysOnTopHint + 黑色半透背景;`showFullScreen()`
@@ -20,6 +20,18 @@
   + 走调用方注入的 `fallback_fn`(通常是 vm.open_media 系统查看器)
 - **资源清理**:`closeEvent` + `_stop_active_player` 严格 stop QMovie /
   QMediaPlayer / 解绑 video widget / unlink tmpfile,防 dangling decoder
+
+v1.6.10 控制条:
+- 底部贴边 QFrame 工具栏,7 个按钮(上一张 / 下一张 / 缩小 / 放大 / 旋转 /
+  另存为 / 关闭)
+- 默认隐藏,`mouseMoveEvent` 触发淡入 + 2s QTimer 静默淡出
+- 旋转(image / GIF)+ 90°累加,`QPixmap.transformed(QTransform().rotate(_rotation))`,
+  GIF 旋转变静态(QMovie 不支持 transform)— 已知妥协
+- 另存为:`QFileDialog.getSaveFileName` 弹保存对话框,caller 传 `data`
+  时按钮 enabled,默认文件名 `source_title` 或 `lightbox_<idx>.<ext>`
+- 启灰规则按 `_update_button_states`:kind==image 才允许 zoom,kind==
+  image/gif 才允许 rotate,`data` 非空才允许 save
+- 单图 / 单项 mode 也走同一套 UI(button 仅 prev/next 自动 disabled)
 """
 
 from __future__ import annotations
@@ -29,16 +41,30 @@ import os
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, Qt, QUrl
-from PySide6.QtGui import QCloseEvent, QKeyEvent, QMovie, QPixmap, QWheelEvent
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QCloseEvent,
+    QKeyEvent,
+    QMovie,
+    QPixmap,
+    QTransform,
+    QWheelEvent,
+)
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFileDialog,
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -46,6 +72,22 @@ if TYPE_CHECKING:
     pass
 
 log = logging.getLogger(__name__)
+
+
+# v1.6.10:mime → 文件扩展名映射,save-as QFileDialog 默认文件名 + filter 用
+_MIME_EXT: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+}
+
+
+def _ext_for_mime(mime: str) -> str:
+    """mime → 扩展名(含 `.`)。未知 mime  → `.bin`(避免无扩展)。"""
+    return _MIME_EXT.get(mime.lower(), ".bin")
 
 
 # ---------- MediaItem:Lightbox 单条媒体抽象(2026-09-04 v1.6.7) ----------
@@ -111,6 +153,8 @@ class LightboxDialog(QDialog):
         *,
         items: Sequence[MediaItem] | None = None,
         fallback_fn: Callable[[], None] | None = None,
+        data: bytes | list[bytes] | None = None,  # v1.6.10:save-as 用 bytes
+        source_title: str | None = None,  # v1.6.10:QFileDialog 默认文件名
     ) -> None:
         super().__init__(parent)
 
@@ -127,6 +171,7 @@ class LightboxDialog(QDialog):
             self._all_items = [MediaItem(pixmap=p) for p in self._all_pixmaps]
         self._idx = current if current >= 0 else 0 if self._all_items else -1
         self._zoom = 1.0
+        self._rotation = 0  # v1.6.10:旋转 90° 累加;切图 / 切 GIF 时归零
         self._min_zoom = 0.25
         self._max_zoom = 8.0
         self._step = 1.25  # 滚轮一档 1.25×
@@ -136,6 +181,12 @@ class LightboxDialog(QDialog):
         self._video_widget: QVideoWidget | None = None
         self._video_tmp_path: str | None = None  # stage 的 tmpfile 路径,closeEvent unlink
         self._fallback_fn = fallback_fn
+        # v1.6.10:save-as 用 — bytes(单图) / list[bytes](多图) / None(不可保存)
+        self._data: bytes | list[bytes] | None = data
+        self._current_data: bytes | None = (  # 当前 idx 的 bytes,_render_current 同步
+            data if isinstance(data, bytes) else None
+        )
+        self._source_title = source_title
 
         # ---- 窗口外观 ----
         # Frameless + 始终置顶 + 工具窗口(任务栏不出现条目);半透背景由 stylesheet 实现
@@ -175,6 +226,9 @@ class LightboxDialog(QDialog):
         self._zoom_label.setFixedHeight(24)
         outer.addWidget(self._zoom_label)
 
+        # 底部工具栏(v1.6.10)— 默认隐藏,鼠标移动触发 _show_bar
+        self._build_control_bar()
+
         # 初始渲染
         self._render_current()
 
@@ -211,6 +265,17 @@ class LightboxDialog(QDialog):
         # 切 item 前先清旧媒体(防 decoder / animation timer dangling)
         self._stop_active_player()
 
+        # v1.6.10:同步当前 idx 对应的 bytes(save-as 用)
+        if isinstance(self._data, list):
+            if 0 <= self._idx < len(self._data):
+                self._current_data = self._data[self._idx]
+            else:
+                self._current_data = None
+        elif isinstance(self._data, bytes):
+            self._current_data = self._data
+        else:
+            self._current_data = None
+
         item = self._all_items[self._idx]
         if item.kind == "image" and item.pixmap is not None:
             self._render_image(item.pixmap)
@@ -224,6 +289,9 @@ class LightboxDialog(QDialog):
             # 2026-09-07 v1.6.8:英文 fallback 文本走 tr()。
             self._canvas.setText(self.tr("(image unavailable)"))
             self._update_zoom_label()
+
+        # v1.6.10:按当前 kind / data 启灰工具栏按钮
+        self._update_button_states()
 
     def _render_image(self, pix: QPixmap) -> None:
         """静态图路径 — 与 v1.5.0 PR #A8 完全一致。"""
@@ -341,7 +409,14 @@ class LightboxDialog(QDialog):
         self._canvas.setText(self.tr("(video unavailable — codec missing)"))
 
     def _apply_scaled_pixmap(self, pix: QPixmap) -> None:
-        """按 self._zoom 缩放 + 居中显示;屏幕尺寸 = 当前主屏 90%。"""
+        """按 self._zoom 缩放 + 居中显示;屏幕尺寸 = 当前主屏 90%。
+
+v1.6.10:先按 `self._rotation` 旋转,再缩放。顺序很重要 — 旋转 90°
+后 width/height 互换,缩放按原 width 算导致新图比例失调;先旋转得到
+正确几何后再缩。
+"""
+        if self._rotation:
+            pix = pix.transformed(QTransform().rotate(self._rotation))
         screen = QApplication.primaryScreen()
         if screen is None:
             target_size = pix.size()
@@ -462,6 +537,7 @@ class LightboxDialog(QDialog):
         n = len(self._all_items)
         self._idx = (self._idx + delta) % n
         self._zoom = 1.0  # 切图时重置缩放,体感更清晰
+        self._rotation = 0  # v1.6.10:切图时旋转归零
         self._render_current()
 
     # ---- 滚轮缩放 ----
@@ -513,6 +589,201 @@ class LightboxDialog(QDialog):
                 self.accept()
                 return
         super().mousePressEvent(event)
+
+    # ---- v1.6.10 控制条 ----
+
+    def _build_control_bar(self) -> None:
+        """底部贴边工具栏 — 7 个按钮(上一张/下一张/缩小/放大/旋转/另存为/关闭)。
+
+默认隐藏,`mouseMoveEvent` 触发 `_show_bar` 淡入 + 重启 2s QTimer
+静默淡出。视觉风格延续 `_zoom_label` 的半透黑底白字(避免引入
+stylesheet 二套体系)。
+"""
+        self._control_bar = QFrame(self)
+        self._control_bar.setStyleSheet(
+            "QFrame { background-color: rgba(0, 0, 0, 180); border-radius: 6px; }"
+            "QPushButton { color: white; background: transparent; border: none;"
+            " padding: 6px 12px; font-size: 16px; }"
+            "QPushButton:hover { background-color: rgba(255, 255, 255, 30); }"
+            "QPushButton:disabled { color: rgba(255, 255, 255, 80); }"
+        )
+        bar = QHBoxLayout(self._control_bar)
+        bar.setContentsMargins(12, 6, 12, 6)
+        bar.setSpacing(4)
+
+        self._btn_prev = self._make_btn("‹", self.tr("上一张"))
+        self._btn_next = self._make_btn("›", self.tr("下一张"))
+        self._btn_zoom_out = self._make_btn("−", self.tr("缩小"))
+        self._btn_zoom_in = self._make_btn("＋", self.tr("放大"))
+        self._btn_rotate = self._make_btn("⟳", self.tr("旋转 90°"))
+        self._btn_save = self._make_btn("⤓", self.tr("另存为…"))
+        self._btn_close = self._make_btn("✕", self.tr("关闭"))
+
+        bar.addWidget(self._btn_prev)
+        bar.addWidget(self._btn_next)
+        bar.addSpacing(16)
+        bar.addWidget(self._btn_zoom_out)
+        bar.addWidget(self._btn_zoom_in)
+        bar.addSpacing(16)
+        bar.addWidget(self._btn_rotate)
+        bar.addWidget(self._btn_save)
+        bar.addWidget(self._btn_close)
+
+        self._btn_prev.clicked.connect(lambda: self._step_index(-1))
+        self._btn_next.clicked.connect(lambda: self._step_index(+1))
+        self._btn_zoom_out.clicked.connect(self._zoom_out)
+        self._btn_zoom_in.clicked.connect(self._zoom_in)
+        self._btn_rotate.clicked.connect(self._rotate_90)
+        self._btn_save.clicked.connect(self._save_current)
+        self._btn_close.clicked.connect(self.accept)
+
+        # 底部居中 — 用独立 QHBoxLayout 加一层 stretch wrapper 比较啰嗦,
+        # 直接 fixed bottom + adjustSize + 在 resizeEvent 里 move 居中
+        self._control_bar.hide()
+        # QFrame 在父 dialog 内不是独立 window → setWindowOpacity 无效。
+        # 用 QGraphicsOpacityEffect 走 widget 的 graphics effect 通道。
+        self._bar_opacity_effect = QGraphicsOpacityEffect(self._control_bar)
+        self._bar_opacity_effect.setOpacity(0.0)
+        self._control_bar.setGraphicsEffect(self._bar_opacity_effect)
+        self._control_bar.adjustSize()
+
+        # 把 control_bar 加进 outer layout,align bottom-center。stretch=0
+        # 不抢画布空间;_canvas(stretch=1)撑满中间区域
+        outer = self.layout()
+        assert outer is not None
+        outer.addWidget(self._control_bar)
+        outer.setAlignment(self._control_bar, Qt.AlignBottom | Qt.AlignHCenter)
+
+        # 2s 不动 → 淡出
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(2000)
+        self._hide_timer.timeout.connect(self._fade_out_bar)
+
+    def _make_btn(self, text: str, tooltip: str) -> QPushButton:
+        """单按钮工厂 — NoFocus 防按钮抢键盘焦点,左右方向键继续走 keyPressEvent 翻页。"""
+        btn = QPushButton(text, self._control_bar)
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setFixedHeight(32)
+        return btn
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt API
+        """v1.6.10:鼠标移动 → 控制条淡入 + 重启 2s 静默淡出 timer。
+
+不抢 `mousePressEvent` 的关闭语义 — 关闭仍由 mousePress 处理。
+"""
+        if event is not None and self._control_bar is not None:
+            self._show_bar()
+        super().mouseMoveEvent(event)
+
+    def _show_bar(self) -> None:
+        """鼠标动 → bar 渐显 + 重启 2s timer。"""
+        if self._control_bar is None:
+            return
+        self._control_bar.show()
+        self._bar_opacity_effect.setOpacity(1.0)
+        self._hide_timer.start()
+
+    def _fade_out_bar(self) -> None:
+        """2s 不动 → bar 渐隐。
+
+        用 QGraphicsOpacityEffect 而不是 setWindowOpacity,因为 QFrame
+        在父 dialog 内不是独立 window,setWindowOpacity 不生效。
+        QGraphicsOpacityEffect 走 widget 的 graphics effect 通道,所有
+        平台统一支持。
+        """
+        if self._control_bar is None:
+            return
+        self._bar_opacity_effect.setOpacity(0.0)
+
+    def _zoom_in(self) -> None:
+        """点 + 按钮放大 1.25×,clamp 到 _max_zoom。仅 image 生效。"""
+        if self.current_kind != "image":
+            return
+        item = self._all_items[self._idx]
+        if item.pixmap is None:
+            return
+        self._zoom = min(self._zoom * self._step, self._max_zoom)
+        self._apply_scaled_pixmap(item.pixmap)
+        self._update_zoom_label()
+
+    def _zoom_out(self) -> None:
+        """点 − 按钮缩小 1/1.25×,clamp 到 _min_zoom。仅 image 生效。"""
+        if self.current_kind != "image":
+            return
+        item = self._all_items[self._idx]
+        if item.pixmap is None:
+            return
+        self._zoom = max(self._zoom / self._step, self._min_zoom)
+        self._apply_scaled_pixmap(item.pixmap)
+        self._update_zoom_label()
+
+    def _rotate_90(self) -> None:
+        """点 ⟳ 顺时针 90°。多次累加 `_rotation %= 360`。
+
+仅 image / GIF 生效;GIF 旋转变静态(QMovie 不支持 transformed)
+— 已知妥协,与原 v1.6.7 行为一致(GIF 锁 100% 不强求 360° 动画旋转)。
+"""
+        self._rotation = (self._rotation + 90) % 360
+        item = self._all_items[self._idx]
+        if item.kind == "image" and item.pixmap is not None:
+            self._apply_scaled_pixmap(item.pixmap)
+        elif item.kind == "gif" and item.animated:
+            # GIF 走第一帧 + 旋转 — 静态显示
+            ba = QByteArray(item.animated)
+            pix = QPixmap()
+            if pix.loadFromData(ba, b"GIF"):
+                self._apply_scaled_pixmap(pix)
+
+    def _save_current(self) -> None:
+        """点 ⤓ 弹 QFileDialog.getSaveFileName,写 `self._current_data` 到选定路径。
+
+文件名默认:`source_title` 或 `lightbox_<idx>.<ext>`(ext 由
+`_ext_for_mime(item.mime_type)` 推断:image/jpeg → .jpg, image/png
+→ .png, image/gif → .gif, video/mp4 → .mp4, 其它 → .bin)。
+
+caller 没传 `data` → 按钮 disabled,本方法不应被调到(防御性 early-return)。
+"""
+        if not self._current_data:
+            return
+        item = self._all_items[self._idx]
+        ext = _ext_for_mime(item.mime_type)
+        default_name = self._source_title or f"lightbox_{self._idx + 1}{ext}"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("另存为…"),
+            default_name,
+            self.tr("媒体文件 (*.{ext});;所有文件 (*)").format(ext=ext.lstrip(".")),
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_bytes(self._current_data)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                self.tr("保存失败"),
+                self.tr("无法写入 {path}: {err}").format(path=path, err=exc),
+            )
+
+    def _update_button_states(self) -> None:
+        """按当前 kind / data 启灰工具栏按钮。"""
+        if not hasattr(self, "_btn_prev"):
+            # _build_control_bar 未调 — 老测试无控制条场景,跳过
+            return
+        kind = self.current_kind
+        n = len(self._all_items)
+        self._btn_prev.setEnabled(n > 1)
+        self._btn_next.setEnabled(n > 1)
+        self._btn_zoom_in.setEnabled(kind == "image")
+        self._btn_zoom_out.setEnabled(kind == "image")
+        self._btn_rotate.setEnabled(kind in ("image", "gif"))
+        self._btn_save.setEnabled(
+            self._current_data is not None and len(self._current_data) > 0
+        )
+        self._btn_close.setEnabled(True)
 
     # ---- 关闭时清理 ----
 

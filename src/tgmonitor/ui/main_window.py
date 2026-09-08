@@ -1359,6 +1359,8 @@ class MainWindow(QMainWindow):
             current=-1,
             title=title,
             fallback_fn=fallback_fn,
+            data=data,  # v1.6.10:save-as 用
+            source_title=title,  # v1.6.10:QFileDialog 默认文件名
         )
         dlg.showFullScreen()
 

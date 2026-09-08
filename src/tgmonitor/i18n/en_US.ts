@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
-<TS version="2.1">
+<TS version="2.1" language="en_US">
 <context>
     <name>MainWindow</name>
     <message>
@@ -407,6 +407,57 @@ Please log in again to continue monitoring.</translation>
         <location filename="../ui/widgets/lightbox_dialog.py" line="341" />
         <source>(video unavailable — codec missing)</source>
         <translation>(video unavailable — codec missing)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="613" />
+        <source>上一张</source>
+        <translation>Previous</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="614" />
+        <source>下一张</source>
+        <translation>Next</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="615" />
+        <source>缩小</source>
+        <translation>Zoom out</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="616" />
+        <source>放大</source>
+        <translation>Zoom in</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="617" />
+        <source>旋转 90°</source>
+        <translation>Rotate 90°</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="618" />
+        <location filename="../ui/widgets/lightbox_dialog.py" line="747" />
+        <source>另存为…</source>
+        <translation>Save as…</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="619" />
+        <source>关闭</source>
+        <translation>Close</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="749" />
+        <source>媒体文件 (*.{ext});;所有文件 (*)</source>
+        <translation>Media files (*.{ext});;All files (*)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="758" />
+        <source>保存失败</source>
+        <translation>Save failed</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="759" />
+        <source>无法写入 {path}: {err}</source>
+        <translation>Cannot write {path}: {err}</translation>
     </message>
 </context>
 <context>
