@@ -687,7 +687,92 @@
 </context>
 <context>
     <name>SettingsPage</name>
+        <message>
+        <location filename="../ui/widgets/settings_page.py" line="340"/>
+        <source>⌨ 快捷键</source>
+        <translation>⌨ 快捷键</translation>
+    </message>
     <message>
+        <location filename="../ui/widgets/settings_page.py" line="353"/>
+        <source>清空 = 恢复默认</source>
+        <translation>清空 = 恢复默认</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="358"/>
+        <source>点击输入框后按新快捷键即可重绑。清空 = 恢复默认。两动作绑同一键时,保存会失败。</source>
+        <translation>点击输入框后按新快捷键即可重绑。清空 = 恢复默认。两动作绑同一键时,保存会失败。</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="383"/>
+        <source>切到「实时」页</source>
+        <translation>切到「实时」页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="385"/>
+        <source>切到「大盘」页</source>
+        <translation>切到「大盘」页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="387"/>
+        <source>切到「频道」页</source>
+        <translation>切到「频道」页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="389"/>
+        <source>切到「媒体管理」页</source>
+        <translation>切到「媒体管理」页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="391"/>
+        <source>切到「设置」页</source>
+        <translation>切到「设置」页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="393"/>
+        <source>刷新频道列表</source>
+        <translation>刷新频道列表</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="395"/>
+        <source>聚焦搜索框</source>
+        <translation>聚焦搜索框</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="397"/>
+        <source>导出</source>
+        <translation>导出</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="399"/>
+        <source>切换主题</source>
+        <translation>切换主题</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="401"/>
+        <source>退出</source>
+        <translation>退出</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="403"/>
+        <source>打开设置页</source>
+        <translation>打开设置页</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="405"/>
+        <source>全局取消(Esc)</source>
+        <translation>全局取消(Esc)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="407"/>
+        <source>复制当前消息</source>
+        <translation>复制当前消息</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/settings_page.py" line="409"/>
+        <source>显示主窗口(tray)</source>
+        <translation>显示主窗口(tray)</translation>
+    </message>
+<message>
         <location filename="../ui/widgets/settings_page.py" line="89" />
         <location filename="../ui/widgets/settings_page.py" line="805" />
         <source>设置</source>

@@ -112,6 +112,23 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_SYNC_PAGE_DELAY_MS": str(s.sync_page_delay_ms),
         "TG_SYNC_RESUME_FROM_SAVED": "true" if s.sync_resume_from_saved else "false",
         "TG_LANG": s.lang,
+        # 2026-09-07 v1.6.9:快捷键持久化(14 个 action × QKeySequence.toString())。
+        # 空串时仍写 .env(`=`)— 与 Settings.key_<action>="" 对齐;`from_settings`
+        # 读回后走 keybinding.default_for 兜底,行为不变。
+        "TG_KEY_TAB_LIVE": s.key_tab_live,
+        "TG_KEY_TAB_DASHBOARD": s.key_tab_dashboard,
+        "TG_KEY_TAB_CHANNELS": s.key_tab_channels,
+        "TG_KEY_TAB_MEDIA": s.key_tab_media,
+        "TG_KEY_TAB_SETTINGS": s.key_tab_settings,
+        "TG_KEY_REFRESH": s.key_refresh,
+        "TG_KEY_SEARCH": s.key_search,
+        "TG_KEY_EXPORT": s.key_export,
+        "TG_KEY_TOGGLE_THEME": s.key_toggle_theme,
+        "TG_KEY_QUIT": s.key_quit,
+        "TG_KEY_SETTINGS": s.key_settings,
+        "TG_KEY_ESCAPE": s.key_escape,
+        "TG_KEY_COPY": s.key_copy,
+        "TG_KEY_SHOW_WINDOW": s.key_show_window,
     }
 
 
@@ -188,6 +205,23 @@ class EditableSettings:
     # 默认 zh_CN 与 Settings.lang 对齐;SettingsPage 切换时实时写 .env。
     lang: str = "zh_CN"
 
+    # 2026-09-07 v1.6.9:快捷键持久化 — QKeySequence.toString() 形式
+    # (e.g. "Ctrl+R")。空串 = 走 tgmonitor.core.keybinding 的硬编码默认。
+    key_tab_live: str = ""
+    key_tab_dashboard: str = ""
+    key_tab_channels: str = ""
+    key_tab_media: str = ""
+    key_tab_settings: str = ""
+    key_refresh: str = ""
+    key_search: str = ""
+    key_export: str = ""
+    key_toggle_theme: str = ""
+    key_quit: str = ""
+    key_settings: str = ""
+    key_escape: str = ""
+    key_copy: str = ""
+    key_show_window: str = ""
+
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
         """Settings → EditableSettings(给 UI 编辑用)。bytes/MB 单位转换在这里做。"""
@@ -217,6 +251,20 @@ class EditableSettings:
             sync_resume_from_saved=s.sync_resume_from_saved,
             key_theme=s.key_theme,
             lang=s.lang,
+            key_tab_live=s.key_tab_live,
+            key_tab_dashboard=s.key_tab_dashboard,
+            key_tab_channels=s.key_tab_channels,
+            key_tab_media=s.key_tab_media,
+            key_tab_settings=s.key_tab_settings,
+            key_refresh=s.key_refresh,
+            key_search=s.key_search,
+            key_export=s.key_export,
+            key_toggle_theme=s.key_toggle_theme,
+            key_quit=s.key_quit,
+            key_settings=s.key_settings,
+            key_escape=s.key_escape,
+            key_copy=s.key_copy,
+            key_show_window=s.key_show_window,
         )
 
     def validate(self) -> list[str]:
@@ -273,6 +321,20 @@ class EditableSettings:
             sync_resume_from_saved=self.sync_resume_from_saved,
             key_theme=self.key_theme,
             lang=cast(Literal["zh_CN", "en_US"], self.lang),
+            key_tab_live=self.key_tab_live,
+            key_tab_dashboard=self.key_tab_dashboard,
+            key_tab_channels=self.key_tab_channels,
+            key_tab_media=self.key_tab_media,
+            key_tab_settings=self.key_tab_settings,
+            key_refresh=self.key_refresh,
+            key_search=self.key_search,
+            key_export=self.key_export,
+            key_toggle_theme=self.key_toggle_theme,
+            key_quit=self.key_quit,
+            key_settings=self.key_settings,
+            key_escape=self.key_escape,
+            key_copy=self.key_copy,
+            key_show_window=self.key_show_window,
         )
 
 

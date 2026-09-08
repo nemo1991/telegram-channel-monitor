@@ -142,6 +142,26 @@ class Settings(BaseSettings):
         description="UI language: zh_CN (default) or en_US",
     )
 
+    # 2026-09-07 v1.6.9:快捷键持久化(.env 字段 TG_KEY_*)。空串 = 用
+    # `tgmonitor.core.keybinding.DEFAULT_BINDINGS` 的硬编码默认(与
+    # `key_theme=""` 同语义)。SettingsPage「快捷键」分组编辑,保存到
+    # .env 后下次启动生效;运行时 SettingsPage「保存并应用」成功后
+    # `MainWindow.reload_shortcuts()` 热重绑。
+    key_tab_live: str = Field(default="", description="LIVE tab shortcut")
+    key_tab_dashboard: str = Field(default="", description="DASHBOARD tab shortcut")
+    key_tab_channels: str = Field(default="", description="CHANNELS tab shortcut")
+    key_tab_media: str = Field(default="", description="MEDIA tab shortcut")
+    key_tab_settings: str = Field(default="", description="SETTINGS tab shortcut")
+    key_refresh: str = Field(default="", description="refresh channels shortcut")
+    key_search: str = Field(default="", description="focus search bar shortcut")
+    key_export: str = Field(default="", description="export current view shortcut")
+    key_toggle_theme: str = Field(default="", description="toggle theme shortcut")
+    key_quit: str = Field(default="", description="quit app shortcut")
+    key_settings: str = Field(default="", description="open settings tab shortcut")
+    key_escape: str = Field(default="", description="global escape shortcut")
+    key_copy: str = Field(default="", description="copy current message shortcut")
+    key_show_window: str = Field(default="", description="show main window shortcut")
+
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。"""
         self.session_dir.mkdir(parents=True, exist_ok=True)

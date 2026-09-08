@@ -10,8 +10,11 @@
   3. 💾 消息存储   — DB 后端 + DSN / 目录
   4. 📁 对象存储   — 后端 + 本地目录 / S3 凭据
   5. ⚙️ 策略       — 媒体下载策略
-  6. 🔄 同步参数   — chat_delay / page_delay / resume_from_saved
-  7. 储存按钮栏
+  6. 🌐 语言       — 2026-09-07 v1.6.8 新增(zh_CN / en_US)
+  7. ⌨ 快捷键      — 2026-09-07 v1.6.9 新增(14 个 action × QKeySequenceEdit)
+  8. 🎨 外观       — 主题 3 选(浅色 / 暗色 / 跟随系统)
+  9. 🔄 同步参数   — chat_delay / page_delay / resume_from_saved
+ 10. 储存按钮栏
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -29,6 +33,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -110,6 +115,9 @@ class SettingsPage(QWidget):
         # 2026-09-07 v1.6.8:新增「语言」分组,置于「外观(主题)」之上,
         # 由 user 决定的语言在主题之前更显眼。
         self._build_language(form_root)
+        # 2026-09-07 v1.6.9:新增「快捷键」分组,置于「语言」与「外观」之间 —
+        # 全局 UI 设置在视觉主题之上更显眼。
+        self._build_keybindings(form_root)
         # 2026-08-30 v1.5.0 PR #A5:外观组(主题 3 选)— 与策略平级,
         # 不走「保存并应用」(主题是 session 内即时生效,不写 .env)。
         self._build_appearance(form_root)
@@ -309,6 +317,96 @@ class SettingsPage(QWidget):
         f.addRow(help_lang)
 
         root.addWidget(g)
+
+    def _build_keybindings(self, root: QVBoxLayout) -> None:
+        """2026-09-07 v1.6.9:新增「快捷键」分组,提供 14 个 action × QKeySequenceEdit。
+
+        位置:`_build_language` 之后、`_build_appearance` 之前(语言 = 主
+        题之上的全局 UI 设置,快捷键同性质)。设置保存后:
+        1. `_on_apply` 校验冲突(`find_duplicates`);冲突 → 弹 warning
+           保留旧值,不落盘。
+        2. `_app.reconfigure(new_settings)` 走默认路径(diff_settings 全
+           False → 不重 backend,cheap)。
+        3. `MainWindow.reload_shortcuts(new_settings)` 热重绑 QShortcut
+           + tray `act_show`/`act_quit` 的 `setShortcut`。
+        4. `update_env_with_settings` 批量写 .env,下次启动保留。
+
+        注:`retranslateUi` 重建 label 文案(label 是 `self.tr(...)` 静
+        态创建,LanguageChange 时 `changeEvent → retranslateUi` 重新调
+        `self.tr(label_text)`);edit widget 自身无 tr() 文本,保留。
+        """
+        from tgmonitor.core.keybinding import DEFAULT_BINDINGS, default_for
+
+        g = QGroupBox(self.tr("⌨ 快捷键"))
+        f = QFormLayout(g)
+        f.setSpacing(6)
+
+        self._keybinding_edits: dict[str, QKeySequenceEdit] = {}
+        self._keybinding_labels: dict[str, QLabel] = {}
+        for action in DEFAULT_BINDINGS:
+            edit = QKeySequenceEdit()
+            # 初值:Settings 字段非空用 settings,否则 default_for(action)
+            settings_val = getattr(self._app.settings, f"key_{action}", "")
+            edit.setKeySequence(QKeySequence(settings_val) if settings_val else default_for(action))
+            edit.setToolTip(self.tr("清空 = 恢复默认"))
+            self._keybinding_edits[action] = edit
+
+            lbl = QLabel(self._keybinding_label(action) + ":")
+            self._keybinding_labels[action] = lbl
+            f.addRow(lbl, edit)
+
+        help_keys = QLabel(
+            self.tr(
+                "点击输入框后按新快捷键即可重绑。清空 = 恢复默认。两动作绑同一键时,保存会失败。"
+            )
+        )
+        help_keys.setProperty("role", "hint")
+        help_keys.setWordWrap(True)
+        f.addRow(help_keys)
+
+        root.addWidget(g)
+
+    def _keybinding_label(self, action: str) -> str:
+        """action → self.tr(中文 label)。
+
+        这里每个分支都 `self.tr(<literal>)` — pyside6-lupdate 静态扫描能
+        抽到所有 14 行 label 字面量到 zh_CN.ts / en_US.ts(若用模块级
+        dict literal,lupdate 看不到,strings 漏到翻译里)。
+
+        `tr()` 在 zh_CN 模式下 = 原文;en_US 模式下 = .qm 里收录的英文。
+        返回值供 QLabel.setText(...) + retranslateUi 用。
+        """
+        # 注意:每个分支必须是 `self.tr("literal")`,literal 必须是字面量;
+        # dict literal / list comprehension / format() 都会被 lupdate 跳过。
+        if action == "tab_live":
+            return self.tr("切到「实时」页")
+        if action == "tab_dashboard":
+            return self.tr("切到「大盘」页")
+        if action == "tab_channels":
+            return self.tr("切到「频道」页")
+        if action == "tab_media":
+            return self.tr("切到「媒体管理」页")
+        if action == "tab_settings":
+            return self.tr("切到「设置」页")
+        if action == "refresh":
+            return self.tr("刷新频道列表")
+        if action == "search":
+            return self.tr("聚焦搜索框")
+        if action == "export":
+            return self.tr("导出")
+        if action == "toggle_theme":
+            return self.tr("切换主题")
+        if action == "quit":
+            return self.tr("退出")
+        if action == "settings":
+            return self.tr("打开设置页")
+        if action == "escape":
+            return self.tr("全局取消(Esc)")
+        if action == "copy":
+            return self.tr("复制当前消息")
+        if action == "show_window":
+            return self.tr("显示主窗口(tray)")
+        return action
 
     def _build_appearance(self, root: QVBoxLayout) -> None:
         """2026-09-03 v1.5.4 PR #P4:外观设置 — 主题 3 选(LIGHT / DARK / SYSTEM)
@@ -531,6 +629,14 @@ class SettingsPage(QWidget):
         # 字段是 Literal["zh_CN", "en_US"] — 用 data() 而非 currentText
         # 保证翻译后 user 选「English」不会写出 "English" 字面)。
         lang_value = self.cmb_lang.currentData() if hasattr(self, "cmb_lang") else "zh_CN"
+        # 2026-09-07 v1.6.9:快捷键 — keySequence().toString() 直传
+        # QKeySequence 串格式("Ctrl+R" 等);空 = 用户清空,落 .env = ""
+        # (走 keybinding.default_for 兜底,与 `key_theme=""` 同语义)。
+        kb = (
+            {a: e.keySequence().toString() for a, e in self._keybinding_edits.items()}
+            if hasattr(self, "_keybinding_edits")
+            else {}
+        )
         return EditableSettings(
             api_id=self.in_api_id.value(),
             api_hash=self.in_api_hash.text().strip(),
@@ -557,6 +663,21 @@ class SettingsPage(QWidget):
             # lang: Literal["zh_CN", "en_US"];若 EditableSettings 未跟上,
             # pydantic extra="ignore" 会安全丢弃 — 但 Step 0 已加)。
             lang=lang_value,
+            # 2026-09-07 v1.6.9:14 个 key_<action> 字段
+            key_tab_live=kb.get("tab_live", ""),
+            key_tab_dashboard=kb.get("tab_dashboard", ""),
+            key_tab_channels=kb.get("tab_channels", ""),
+            key_tab_media=kb.get("tab_media", ""),
+            key_tab_settings=kb.get("tab_settings", ""),
+            key_refresh=kb.get("refresh", ""),
+            key_search=kb.get("search", ""),
+            key_export=kb.get("export", ""),
+            key_toggle_theme=kb.get("toggle_theme", ""),
+            key_quit=kb.get("quit", ""),
+            key_settings=kb.get("settings", ""),
+            key_escape=kb.get("escape", ""),
+            key_copy=kb.get("copy", ""),
+            key_show_window=kb.get("show_window", ""),
         )
 
     def _load_from_settings(self) -> None:
@@ -606,6 +727,16 @@ class SettingsPage(QWidget):
             idx_lang = self.cmb_lang.findData(s.lang)
             if idx_lang >= 0:
                 self.cmb_lang.setCurrentIndex(idx_lang)
+
+        # 2026-09-07 v1.6.9:回填快捷键 — keybinding.binding_for 拿实际
+        # QKeySequence(空 settings.value → 走 default_for(action) 兜底,
+        # UI 上仍显示硬编码默认,避免空白看起来「没绑」)。
+        if hasattr(self, "_keybinding_edits"):
+            from tgmonitor.core.keybinding import binding_for
+
+            for action, edit in self._keybinding_edits.items():
+                settings_val = getattr(s, f"key_{action}", "")
+                edit.setKeySequence(binding_for(action, settings_val))
 
     # ------ 槽 ------
 
@@ -685,6 +816,24 @@ class SettingsPage(QWidget):
             log.exception("collect settings failed")
             QMessageBox.critical(self, self.tr("保存失败"), self.tr(f"读取表单失败: {exc}"))
             return
+        # 2026-09-07 v1.6.9:快捷键冲突校验 — 两 action 绑同一键 → 弹
+        # warning,保留旧值,不落盘。`find_duplicates` 走 keybinding 模
+        # 块的「toString().lower()」比较,与 Qt 自身解析路径一致。
+        if hasattr(self, "_keybinding_edits"):
+            from tgmonitor.core.keybinding import find_duplicates
+
+            proposed = {
+                a: edit.keySequence().toString() for a, edit in self._keybinding_edits.items()
+            }
+            dupes = find_duplicates(proposed)
+            if dupes:
+                pretty = ", ".join(f"{a1} ↔ {a2}" for a1, a2 in dupes)
+                QMessageBox.warning(
+                    self,
+                    self.tr("快捷键冲突"),
+                    self.tr(f"以下快捷键重复绑定:\n{pretty}\n\n请修改后重试。"),
+                )
+                return
         errs = e.validate()
         if errs:
             QMessageBox.warning(self, self.tr("校验失败"), "\n".join(errs))
@@ -706,6 +855,15 @@ class SettingsPage(QWidget):
                 qt_app = QApplication.instance()
                 if qt_app is not None:
                     install_translator(qt_app, locale=new_lang)
+            # 2026-09-07 v1.6.9:快捷键改 → MainWindow 热重绑。`diff_settings`
+            # 不看 key_* 字段(纯 UI),reconfigure 走 cheap path 不重 backend,
+            # 但 `self.app.settings` 实例已替换,这里直接传新对象。
+            main_win = self.window()
+            if main_win is not None and hasattr(main_win, "reload_shortcuts"):
+                try:
+                    main_win.reload_shortcuts(new_settings)
+                except Exception:  # noqa: BLE001
+                    log.exception("reload_shortcuts failed")
             QMessageBox.information(self, self.tr("已应用"), self.tr("设置已保存并热重载"))
 
         def _apply_failed(exc: BaseException) -> None:
@@ -833,7 +991,8 @@ class SettingsPage(QWidget):
                 self.tr("持久化主题(写 .env `TG_KEY_THEME`,重启应用仍生效)")
             )
 
-        # 快捷键帮助
+        # 快捷键帮助 — 2026-09-07 v1.6.9:现已通过下方「快捷键」分组持久化,
+        # help_shortcuts 文案简化为「编辑见下方」,不再列硬编码。
         if hasattr(self, "help_shortcuts"):
             self.help_shortcuts.setText(
                 self.tr(
@@ -841,9 +1000,15 @@ class SettingsPage(QWidget):
                     "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
                     "        Ctrl+C 复制当前消息文本\n"
                     "\n"
-                    "快捷键目前 session 内生效,不持久化(后续 v1.5.5 支持)."
+                    "完整可编辑列表见下方「⌨ 快捷键」分组。"
                 )
             )
+
+        # 2026-09-07 v1.6.9:快捷键分组的 14 行 label + 提示文本走 tr()
+        # 重译。edit widget 本身无 tr() 文本,保留不变。
+        if hasattr(self, "_keybinding_labels"):
+            for action, lbl in self._keybinding_labels.items():
+                lbl.setText(self._keybinding_label(action) + ":")
 
         # 测试代理按钮文字(可能在 "测试中…" 状态)
         if hasattr(self, "btn_test_proxy"):
