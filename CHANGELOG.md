@@ -5,6 +5,35 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.1] - 2026-09-09
+
+主题:**CI 修 3 类失败** — v1.6.10 起的红(v1.7.0 CI 也复现)一次性收掉。
+
+### ✅ Fixed
+
+- **CI ubuntu 缺 libpulse.so.0**:tests/test_lightbox_dialog_gif_mp4 导入
+  QMediaPlayer → QtMultimedia 链 libpulse → ubuntu-latest runner 默认未装。
+  `.github/workflows/ci.yml` 两个 `apt-get install` 列表加 `libpulse0`。
+- **CI 缺 zh_CN.qm / en_US.qm**:`.qm` 被 `.gitignore` 排除(`.ts` 提交、
+  `.qm` 本地 lrelease 重生)。CI 拉源码后无 `.qm`,`test_i18n_runtime.py`
+  断言 `.qm` 存在失败。新增 step「Compile Qt translation files」在
+  pytest 前 `pyside6-lrelease src/tgmonitor/i18n/*.ts`。
+- **SettingsPage en_US 仍有中文字面**(`test_no_hardcoded_zhcn_in_built_widgets`):
+  根因是本地 `.ts` 90% 翻译被 `lupdate` 标 `type="vanished"` — 默认
+  extensions 只认 `java/c++/qml` 不认 `.py`,开发者重跑 `lupdate` 时漏传
+  `-extensions py`,scanning 出 0 source,旧翻译全部 vanished,lrelease
+  编不进 `.qm`,运行时 `tr()` fallback 源串(中文)。
+  重抽:`lupdate -extensions py src/ -ts ...ts` → 90 → 255 finished
+  translations(6 条真 obsolete 保留 vanished,如旧 status 文案)。
+- **Windows UnicodeDecodeError**(`test_export_selected.py`):
+  `Path.read_text()` 不指定 encoding,Windows 默认 cp1252,UTF-8 HTML
+  含 emoji 触发 decode 失败 → 改 `read_text(encoding="utf-8")`。
+
+### 🧪 Test
+
+- 本地 932 passed(exit 0)
+- 14/14 `test_i18n_runtime` + 7/7 `test_export_selected` 全绿
+
 ## [1.7.0] - 2026-09-09
 
 主题:**LIVE 多选 + 右键菜单 + 批量动作** — 补 desktop-标准「Ctrl/Shift
