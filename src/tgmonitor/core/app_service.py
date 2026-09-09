@@ -544,6 +544,57 @@ class AppService:
         """转发 MediaService.delete_by_channel。"""
         return await self._media.delete_by_channel(channel_id)
 
+    async def delete_message(
+        self, channel_id: int, telegram_msg_id: int
+    ) -> None:
+        """2026-09-08 v1.7.0:单条消息删除 — 转发 MonitorService.delete_message。
+
+        MessageDetail 顶部「删除」按钮 + 右键单条菜单调用入口。
+        """
+        # `monitor` 在 AppService 启动后才赋值,单 delete 入口属 UI 触发
+        # (已登录),此契约下必非 None;仍走 assert 锁死。
+        assert self.monitor is not None
+        await self.monitor.delete_message(channel_id, telegram_msg_id)
+
+    async def delete_messages_batch(
+        self, items: list[tuple[int, int]]
+    ) -> int:
+        """2026-09-08 v1.7.0:批量删 N 条消息 — 转发 MonitorService.delete_messages。
+
+        返成功条数(失败的保持原样 + log,UI 可重试)。每条成功都 publish
+        MessageDeleted 事件 → LIVE view remove_row 自动刷新。
+        """
+        if not items:
+            return 0
+        assert self.monitor is not None
+        return await self.monitor.delete_messages(items)
+
+    async def mark_messages_read(
+        self, items: list[tuple[int, int]]
+    ) -> int:
+        """2026-09-08 v1.7.0:批量标已读 — 走 TG client.viewMessages。
+
+        按 channel_id 分组,各调一次 `client.mark_messages_read(cid, msg_ids)`。
+        paused 状态(client 已 stop)返 0 + log warning,不抛 UI 错误。
+        """
+        if not items:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.mark_messages_read: client paused, skip %d items", len(items))
+            return 0
+        # 按 cid 分组
+        by_cid: dict[int, list[int]] = {}
+        for cid, mid in items:
+            by_cid.setdefault(cid, []).append(mid)
+        success = 0
+        for cid, msg_ids in by_cid.items():
+            try:
+                await self.client.mark_messages_read(cid, msg_ids)
+                success += len(msg_ids)
+            except Exception:  # noqa: BLE001
+                log.exception("mark_messages_read(cid=%s) failed", cid)
+        return success
+
     async def retry_media(
         self,
         channel_id: int,

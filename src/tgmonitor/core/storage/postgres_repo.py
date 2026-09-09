@@ -607,6 +607,24 @@ class PostgresRepository(StorageRepository):
                 telegram_msg_id,
             )
 
+    async def delete_messages(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 行 FK CASCADE 自动删。
+
+        单发 SQL:`DELETE WHERE channel_id=$1 AND telegram_msg_id = ANY($2)`
+        — 比 N 次 delete_message 节省 N-1 个 round-trip。
+        """
+        if not msg_ids:
+            return
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM messages WHERE channel_id = $1 AND telegram_msg_id = ANY($2::bigint[])",
+                channel_id,
+                msg_ids,
+            )
+
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息 + 关联 media;不存在返 None。"""
         assert self._pool is not None

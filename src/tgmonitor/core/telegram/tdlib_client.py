@@ -1566,6 +1566,12 @@ class TdlibTelegramClient(_AiClient):
         """Delegate → ChannelsApi.download_file(Protocol 形状保留)。"""
         return await self.channels.download_file(file_id)
 
+    async def mark_messages_read(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:Delegate → ChannelsApi.mark_messages_read。"""
+        await self.channels.mark_messages_read(channel_id, msg_ids)
+
     def subscribe_updates(self) -> UpdateStream:
         """订阅实时更新流(由 tdlib_json push);`aclose` 必调一次,否则 list 只增不减。"""
         s = _TdlibJsonUpdateStream(on_close=self._remove_stream)

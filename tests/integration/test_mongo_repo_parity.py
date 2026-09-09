@@ -567,3 +567,55 @@ async def test_upsert_channel_with_photo_local_key_mongo(
     got = await mongo_repo.get_channel(100)
     assert got is not None
     assert got.photo_local_key == "/tmp/avatar.jpg"
+
+
+# ---- 2026-09-08 v1.7.0:批量 delete_messages parity ----
+
+
+async def test_delete_messages_batch_mongo(mongo_repo: MongoRepository) -> None:
+    """批量删 — channel_id=100 的 3 条消息全部消失。"""
+    for mid in (10, 11, 12):
+        await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    for mid in (10, 11, 12):
+        assert await mongo_repo.get_message(100, mid) is not None
+    await mongo_repo.delete_messages(100, [10, 11, 12])
+    for mid in (10, 11, 12):
+        assert await mongo_repo.get_message(100, mid) is None
+
+
+async def test_delete_messages_partial_mongo(mongo_repo: MongoRepository) -> None:
+    """批量删 — 只删列表里的,不影响其他。"""
+    for mid in (20, 21, 22, 23, 24):
+        await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    await mongo_repo.delete_messages(100, [20, 22, 24])
+    for mid in (20, 22, 24):
+        assert await mongo_repo.get_message(100, mid) is None
+    for mid in (21, 23):
+        assert await mongo_repo.get_message(100, mid) is not None
+
+
+async def test_delete_messages_empty_list_mongo(mongo_repo: MongoRepository) -> None:
+    """空 msg_ids → no-op。"""
+    for mid in (30, 31):
+        await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    await mongo_repo.delete_messages(100, [])
+    for mid in (30, 31):
+        assert await mongo_repo.get_message(100, mid) is not None
+
+
+async def test_delete_messages_nonexistent_idempotent_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """批量删不存在的 msg_ids → 不抛。"""
+    await mongo_repo.delete_messages(100, [999, 1000])
+
+
+async def test_delete_messages_isolates_channels_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """批量删 — 只影响指定 channel_id。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=50))
+    await mongo_repo.save_message(_mk_msg(channel_id=200, msg_id=50))
+    await mongo_repo.delete_messages(100, [50])
+    assert await mongo_repo.get_message(100, 50) is None
+    assert await mongo_repo.get_message(200, 50) is not None

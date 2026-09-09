@@ -629,6 +629,32 @@ class MonitorService:
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
 
+    async def delete_messages(self, items: list[tuple[int, int]]) -> int:
+        """2026-09-08 v1.7.0:批量删 N 条消息 + 清孤儿 + 发 N 次 MessageDeleted。
+
+        按 (channel_id,) 分组后各调 `storage.delete_messages` 一次性 SQL,
+        复用 `_delete_with_orphan_check` 的 refcount 语义(串行,保证共享
+        object_key 的两条消息被删时 refcount 正确递减)。单条失败不阻断,
+        返成功条数。
+
+        Out of scope(v1.8+):整体 refcount 收集优化(N×media → 1 round-trip)。
+        """
+        if not items:
+            return 0
+        succeeded: list[tuple[int, int]] = []
+        for cid, mid in items:
+            try:
+                await self._delete_with_orphan_check(cid, mid)
+                succeeded.append((cid, mid))
+            except Exception:  # noqa: BLE001
+                log.exception("delete_messages(%s, %s) failed", cid, mid)
+        # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
+        for cid, mid in succeeded:
+            await self.bus.publish(
+                MessageDeleted(channel_id=cid, telegram_msg_id=mid)
+            )
+        return len(succeeded)
+
     async def _handle_message_deleted(self, event: MessageDeleted) -> None:
         """2026-08-27 v1.4.0 PR #11:TDLib `updateDeleteMessages` → 落库删 row +
         清孤儿 bytes。**不**再 publish(避免与发布者形成无限循环)。

@@ -129,6 +129,17 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
+    async def delete_messages(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息。
+
+        不存在不抛(idempotent)。子 media 通过各后端固有机制清理
+        (Postgres FK CASCADE / Mongo sub-doc / JSONL 行内联)。
+        """
+        ...
+
+    @abstractmethod
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息;不存在返 None。"""
         ...

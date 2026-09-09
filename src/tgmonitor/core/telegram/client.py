@@ -155,6 +155,19 @@ class TelegramClient(Protocol):
         """
         ...
 
+    async def mark_messages_read(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量标已读 — TDLib viewMessages RPC。
+
+        `msg_ids` 长度无硬限制;TDLib 内部 batch。fire-and-forget,
+        抛错由调用方捕获(典型:client paused / 网络断)。
+
+        Out of scope:本地 inbox counter UI(由 `updateChatReadInbox` 推
+        回,本 PR 不读 inbound ack)。
+        """
+        ...
+
 
 class UpdateStream:
     """实时更新流的简单封装(协议方法),由实现返回。

@@ -5,6 +5,91 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.0] - 2026-09-09
+
+主题:**LIVE 多选 + 右键菜单 + 批量动作** — 补 desktop-标准「Ctrl/Shift
+多选 + 右键菜单 + 顶部选择工具栏」三件套,落地 3 个常用批量动作(导出 /
+删除 / 标记已读),服务层补 `AppService` batch facade,未来加新批量动作
+(forward / pin / react)走同一骨架。
+
+### ✅ Added
+
+- **`MessageView` 多选 + 右键菜单**(`message_view.py`):
+  - 切 `SingleSelection` → `ExtendedSelection`(标准 Ctrl/Shift 多选)
+  - 5 个新 signal:`selection_count_changed(int)` /
+    `selection_messages_changed(list[(cid, mid)])` /
+    `export_requested(list)` / `delete_requested(list)` /
+    `mark_read_requested(list)`
+  - `selected_messages()` / `selection_count()` / `clear_selection()`
+    helper,直接从 `selectionModel().selectedRows()` + `MessageListModel.DtoRole`
+    拿 DTO
+  - 重写 `contextMenuEvent` — `QMenu` + 3 `QAction`(导出… / 删除 / 标记已读),
+    参考 `tray_icon.py:76-91` 模式
+- **`MessageDetail` 顶部 3 按钮**(`message_detail.py`):
+  - 📤 导出 / 🗑 删除 / 📋 复制文本
+  - 3 个 signal:`export_current_requested` / `delete_current_requested` /
+    `copy_text_requested`(用 `QGuiApplication.clipboard().setText`)
+  - show_message 时启用,空状态时禁用(防无意义点击)
+- **`MainWindow._SelectionToolbar` LIVE 浮层**(`main_window.py`):
+  - 自定义 `QWidget`(沿 `_HeaderBar` 模式,不引 QToolBar)— 默认 hidden,
+    `selection_count > 0` 时 show
+  - 6 颗按钮:全选 / 反选 / 清除选择 / ✓ 标记已读 / 📤 导出选中 / 🗑 删除选中
+  - LIVE 布局改造:QHBoxLayout → QVBoxLayout(toolbar + body)
+- **服务层 batch facade**(`app_service.py`):
+  - `delete_message(cid, mid)` — 单条删
+  - `delete_messages_batch(items)` — 批量删,返成功条数
+  - `mark_messages_read(items)` — 批量标已读,paused 时返 0 + log
+  - `AppService.delete_messages_batch` 调 `MonitorService.delete_messages`,
+    每条成功 publish `MessageDeleted` 事件 → LIVE view `remove_row` 自动刷
+- **`StorageRepository.delete_messages(cid, msg_ids)` abstractmethod** +
+  4 后端实现:
+  - `postgres_repo.py` — `DELETE FROM messages WHERE channel_id=$1
+    AND telegram_msg_id = ANY($2::bigint[])`
+  - `mongo_repo.py` — `delete_many({"channel_id": cid,
+    "telegram_msg_id": {"$in": msg_ids}})`
+  - `jsonl_store.py` — 内存 batch + 单 `flush()` + `_media_by_fid` 收敛
+  - `tests/fixtures/_in_memory_repository.py` — 内存 batch(测试 parity)
+- **`MonitorService.delete_messages`** 复用 `_delete_with_orphan_check` 串行
+  refcount 清理,每条 publish `MessageDeleted`。v1.8+ 再统一优化为
+  一次性 batch SQL + refcount 收集。
+- **`TelegramClient.mark_messages_read(cid, msg_ids)` Protocol** +
+  3 实现:
+  - `tdlib_channels.py` — TDLib `viewMessages` RPC(`force_read=False`,
+    与人类行为对齐)
+  - `tdlib_client.py` — thin delegate
+  - `fake_client.py` — 替身,记录到 `_read_log` 给测试断言
+- **`ExportRequest.selected_messages: list[tuple[int, int]] | None`**
+  + `ExportService._run_selected` 分支(`export/service.py`):
+  - N round-trip(每条 `get_message`)暂接受,1000 条 × 3ms ≈ 3s
+  - v1.8+ 推 `storage.get_messages_batch`
+  - channel 子集只含选中消息所在的频道
+- **`ExportDialog` 扩展** `selected_messages` / `single_message_id` 入参,
+  多选导出时隐藏频道列表,显示「已选 N 条消息」hint 行
+- **i18n 17-19 个新 key**:右键菜单 3 项、toolbar 6 项、详情 4 项、确认
+  2 项、复制反馈 1 项。zh_CN.ts + en_US.ts 同步 + `.qm` 重编译
+- **5 个新 QSS rule**(浅 + 暗):
+  `#selectionToolbar` / `#selectionCountLabel` /
+  `#selectionActionBtn` / `#selectionDeleteBtn` /
+  `#detailActionBtn` / `#detailDeleteBtn`
+
+### 🧪 Tests
+
+- 4 个新 test 文件:`test_message_view_batch.py`(8 tests)/
+  `test_export_selected.py`(7 tests)/
+  `test_telegram_mark_read.py`(5 tests)
+- 6 PG parity + 5 Mongo parity:`test_delete_messages_*`(覆盖 batch /
+  partial / empty list / nonexistent idempotent / cascades media /
+  isolates channels)
+- `test_i18n_runtime.py` 容差上限 260 → 275,容纳新增 key
+- 总测试:**918 passed**(913 旧 + 25 新,2 pre-existing visual 失败无关)
+
+### 🚫 Out of scope(留 v1.8+)
+
+- 一次性 batch SQL + refcount 收集(替代串行复用单条)
+- `storage.get_messages_batch`(替代 N round-trip)
+- checkbox 复选模式(标准 desktop ExtendedSelection 已够)
+- 其它批量动作(forward / pin / react)— 走同一骨架,留后续 PR
+
 ## [1.6.7] - 2026-09-04
 
 主题:**Lightbox GIF / MP4 内联预览** — v1.5.0 PR #A8 的 LightboxDialog

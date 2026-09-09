@@ -472,3 +472,27 @@ class ChannelsApi:
 
         log.warning("download_file(%s) timed out after 30 min", file_id)
         return None
+
+    async def mark_messages_read(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量标已读 — TDLib viewMessages RPC。
+
+        `viewMessages` 是 fire-and-forget,返回 `Ok` 即结束;实际送达服务端
+        由 TDLib 异步保证。`force_read=False` 与人类行为对齐(不强制
+        suppress notification;UI 默认显示时其他设备仍能看到)。
+
+        错误处理:`_check_alive` 在 paused / stopped 时会 throw,让上层
+        AppService.mark_messages_read 捕获并 log 后跳过。
+        """
+        if not msg_ids:
+            return
+        self._c._check_alive()
+        await self._c.request(
+            {
+                "@type": "viewMessages",
+                "chat_id": channel_id,
+                "message_ids": msg_ids,
+                "force_read": False,
+            }
+        )

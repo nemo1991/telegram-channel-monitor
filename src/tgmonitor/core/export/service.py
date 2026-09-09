@@ -74,14 +74,78 @@ class ExportService:
 
         2026-08-25 v1.3.0 PR #7:`isinstance` 调度 — `MediaExportRequest`
         走 `_run_media` 分支(per-media 行);`ExportRequest` 走原
-        `_run_messages`(per-message)。
+        `_run_messages`(per-message)或 2026-09-08 v1.7.0 新增的
+        `_run_selected`(右键多选条目导出)。
         """
         if isinstance(request, MediaExportRequest):
             async for _ in self._run_media(request):
                 yield
             return
+        if request.selected_messages is not None:
+            async for _ in self._run_selected(request):
+                yield
+            return
         async for _ in self._run_messages(request):
             yield
+
+    async def _run_selected(self, request: ExportRequest) -> AsyncIterator[None]:
+        """2026-09-08 v1.7.0:批量导出 — 对每个 `(cid, mid)` 调
+        `storage.get_message(...)`,N round-trip 暂接受(1000 条 × 3ms ≈ 3s);
+        v1.8+ 推 `storage.get_messages_batch` 一次性 fetch。
+
+        单条消息不存在(None)→ 跳过(可能在删除后立即调用,UI 重试)。
+        """
+        req_id = uuid.uuid4().hex[:8]
+        out_path = Path(request.out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        sel = request.selected_messages or []
+        all_channels = {c.id: c for c in await self._storage.list_channels()}
+
+        all_messages: list[MessageDTO] = []
+        for i, (cid, mid) in enumerate(sel):
+            msg = await self._storage.get_message(cid, mid)
+            if msg is not None:
+                all_messages.append(msg)
+            # 每 5 条 yield 一次让出 loop(UI 可取消)
+            if (i + 1) % 5 == 0:
+                await self._bus.publish(
+                    ExportProgress(request_id=req_id, written=i + 1, total=len(sel))
+                )
+                yield
+        # 末尾 progress
+        await self._bus.publish(
+            ExportProgress(request_id=req_id, written=len(sel), total=len(sel))
+        )
+
+        # 收 channel 子集 — 只显示选中消息所在的频道
+        used_cids = {m.channel_id for m in all_messages}
+        channels = {cid: all_channels[cid] for cid in used_cids if cid in all_channels}
+
+        try:
+            exporter = EXPORTERS.get(request.format)
+            object_store_arg: ObjectStore | None = (
+                self._objects
+                if request.format == ExportFormat.ZIP or request.include_thumbnails
+                else None
+            )
+            bytes_written = await exporter.render(
+                out_path,
+                channels,
+                all_messages,
+                object_store=object_store_arg,
+                include_thumbnails=request.include_thumbnails,
+            )
+            result = ExportResult(
+                out_path=str(out_path),
+                message_count=len(all_messages),
+                bytes_written=bytes_written,
+            )
+            await self._bus.publish(ExportDone(request_id=req_id, result=result))
+            yield
+        except Exception as e:  # noqa: BLE001
+            log.exception("export selected failed")
+            await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
+            raise
 
     async def _run_messages(self, request: ExportRequest) -> AsyncIterator[None]:
         """既有 per-message 导出 — 历史行为,6 个老测试不变。

@@ -517,6 +517,23 @@ class MongoRepository(StorageRepository):
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
 
+    async def delete_messages(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 子文档随父 doc 一同删。
+
+        单次 `delete_many` 走 `telegram_msg_id: {$in: [...]}` 索引扫描,
+        比 N 次 delete_one 节省 N-1 个 round-trip。
+        """
+        if not msg_ids:
+            return
+        await self.db.messages.delete_many(
+            {
+                "channel_id": channel_id,
+                "telegram_msg_id": {"$in": msg_ids},
+            }
+        )
+
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息(media 子文档自动展开);不存在返 None。"""
         d = await self.db.messages.find_one(

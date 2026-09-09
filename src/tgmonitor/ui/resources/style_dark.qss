@@ -64,6 +64,79 @@ QMainWindow {
     background: #2c2c40;
 }
 
+/* ===== 2026-09-08 v1.7.0:LIVE 多选浮层 + 详情顶部 3 按钮(暗色) ===== */
+#selectionToolbar {
+    background: #232333;
+    border-bottom: 1px solid #353550;
+    min-height: 44px;
+}
+#selectionCountLabel {
+    font-size: 13px;
+    font-weight: 700;
+    color: #6b9aff;
+    padding: 0 12px 0 0;
+}
+#selectionActionBtn {
+    padding: 4px 12px;
+    border: 1px solid #353550;
+    border-radius: 4px;
+    background: #2c2c40;
+    color: #c0c4d0;
+    font-size: 12px;
+    font-weight: 500;
+}
+#selectionActionBtn:hover {
+    background: #353550;
+    border-color: #45455f;
+}
+#selectionDeleteBtn {
+    padding: 4px 12px;
+    border: 1px solid #5a3a3a;
+    border-radius: 4px;
+    background: #3a2828;
+    color: #e08080;
+    font-size: 12px;
+    font-weight: 600;
+}
+#selectionDeleteBtn:hover {
+    background: #4a3030;
+    border-color: #7a4a4a;
+}
+#selectionDeleteBtn:pressed {
+    background: #3a2828;
+}
+#detailActionBtn {
+    padding: 4px 12px;
+    border: 1px solid #353550;
+    border-radius: 4px;
+    background: #2c2c40;
+    color: #c0c4d0;
+    font-size: 12px;
+    font-weight: 500;
+}
+#detailActionBtn:hover {
+    background: #353550;
+    border-color: #45455f;
+}
+#detailDeleteBtn {
+    padding: 4px 12px;
+    border: 1px solid #5a3a3a;
+    border-radius: 4px;
+    background: #3a2828;
+    color: #e08080;
+    font-size: 12px;
+    font-weight: 600;
+}
+#detailDeleteBtn:hover {
+    background: #4a3030;
+    border-color: #7a4a4a;
+}
+#detailDeleteBtn:disabled {
+    background: #232333;
+    color: #5a5d70;
+    border-color: #353550;
+}
+
 /* ===== 页面标题 ===== */
 #pageTitle {
     font-size: 18px;

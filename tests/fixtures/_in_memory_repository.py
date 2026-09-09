@@ -215,6 +215,32 @@ class InMemoryRepository(StorageRepository):
                     else:
                         self._media_by_fid[fid] = best
 
+    async def delete_messages(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息 + 收敛 _media_by_fid。"""
+        if not msg_ids:
+            return
+        old_messages = []
+        for mid in msg_ids:
+            old = self.messages.pop((channel_id, mid), None)
+            if old is not None:
+                old_messages.append(old)
+        # 收集去重的 fid(避免重复 _find_done_by_fid 扫描)
+        fids: set[str] = set()
+        for old in old_messages:
+            for med in old.media:
+                if med.telegram_file_id:
+                    fids.add(med.telegram_file_id)
+        for fid in fids:
+            if fid not in self._media_by_fid:
+                continue
+            best = self._find_done_by_fid(fid)
+            if best is None:
+                self._media_by_fid.pop(fid, None)
+            else:
+                self._media_by_fid[fid] = best
+
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         return self.messages.get((channel_id, telegram_msg_id))
 

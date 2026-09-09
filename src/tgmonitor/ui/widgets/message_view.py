@@ -36,8 +36,14 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QTextDocument
-from PySide6.QtWidgets import QListView, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtGui import QAction, QColor, QTextDocument
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QListView,
+    QMenu,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+)
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.ui.widgets.form_row import empty_hint
@@ -399,13 +405,22 @@ class MessageView(QListView):
     # 用户点击一条消息 → emit MessageDTO 给详情面板
     message_selected = Signal(object)
 
+    # 2026-09-08 v1.7.0:多选 + 右键菜单 + 顶部 toolbar 联动信号
+    selection_count_changed = Signal(int)
+    selection_messages_changed = Signal(list)  # list[(cid, mid)]
+    export_requested = Signal(list)  # 右键「导出」触发
+    delete_requested = Signal(list)  # 右键 / toolbar「删除」触发
+    mark_read_requested = Signal(list)  # 右键 / toolbar「标记已读」触发
+
     def __init__(self) -> None:
         """初始化 model + delegate + channel_titles + filter + empty overlay。"""
         super().__init__()
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(False)  # delegate 动态 size
         self.setWordWrap(True)
-        self.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        # 2026-09-08 v1.7.0:切 ExtendedSelection — Ctrl/Shift 多选开箱。
+        # 单一 current 选中(MessageDetail 仍走 message_selected signal 不受影响)。
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         self._model = MessageListModel(self)
         self.setModel(self._model)
@@ -415,6 +430,11 @@ class MessageView(QListView):
 
         # 点击 → 取 DTO → emit
         self.clicked.connect(self._on_clicked)
+
+        # 2026-09-08 v1.7.0:selection 变化 → emit 信号给 toolbar
+        sel_model = self.selectionModel()
+        if sel_model is not None:
+            sel_model.selectionChanged.connect(self._on_selection_changed)
 
         # 空状态占位(默认显示,首条消息到达自动隐藏)
         self._empty_overlay = empty_hint(
@@ -510,6 +530,64 @@ class MessageView(QListView):
         dto = self._model.data(index, MessageListModel.DtoRole)
         if isinstance(dto, MessageDTO):
             self.message_selected.emit(dto)
+
+    # ---- v1.7.0 多选 + 右键菜单 ----
+
+    def selected_messages(self) -> list[tuple[int, int]]:
+        """返 `[(channel_id, telegram_msg_id), ...]` — 按 row 顺序。"""
+        out: list[tuple[int, int]] = []
+        sel_model = self.selectionModel()
+        if sel_model is None:
+            return out
+        for idx in sel_model.selectedRows():
+            dto = self._model.data(idx, MessageListModel.DtoRole)
+            if isinstance(dto, MessageDTO):
+                out.append((dto.channel_id, dto.telegram_msg_id))
+        return out
+
+    def selection_count(self) -> int:
+        sel_model = self.selectionModel()
+        return len(sel_model.selectedRows()) if sel_model is not None else 0
+
+    def clear_selection(self) -> None:
+        sel_model = self.selectionModel()
+        if sel_model is not None:
+            sel_model.clear()
+
+    def _on_selection_changed(self, *_args: object) -> None:
+        """selectionChanged → emit 计数 + 选中消息列表给上层。"""
+        cnt = self.selection_count()
+        self.selection_count_changed.emit(cnt)
+        self.selection_messages_changed.emit(self.selected_messages())
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """2026-09-08 v1.7.0:右键菜单 — 3 动作(导出 / 删除 / 标记已读)。
+
+        空选区时仍可弹(用于「全选 / 清除」子集场景);0 选菜单项
+        `setEnabled(False)`。
+        """
+        menu = QMenu(self)
+        count = self.selection_count()
+        sel = self.selected_messages()
+
+        act_export = QAction(self.tr("导出…"), menu)
+        act_export.setEnabled(count >= 1)
+        act_export.triggered.connect(lambda: self.export_requested.emit(sel))
+        menu.addAction(act_export)
+        menu.addSeparator()
+
+        act_delete = QAction(self.tr("删除"), menu)
+        act_delete.setEnabled(count >= 1)
+        act_delete.triggered.connect(lambda: self.delete_requested.emit(sel))
+        menu.addAction(act_delete)
+        menu.addSeparator()
+
+        act_read = QAction(self.tr("标记已读"), menu)
+        act_read.setEnabled(count >= 1)
+        act_read.triggered.connect(lambda: self.mark_read_requested.emit(sel))
+        menu.addAction(act_read)
+
+        menu.exec_(event.globalPos())
 
     def _refresh_empty_state(self, *_args) -> None:
         """count() == 0 → 显示 overlay,else 隐藏。

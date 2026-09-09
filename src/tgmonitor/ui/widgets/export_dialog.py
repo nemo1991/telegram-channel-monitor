@@ -38,13 +38,28 @@ class ExportDialog(QDialog):
 
     用户按 OK 后调 `request()` 取 ExportRequest(若校验失败用户从未按 OK
     则 assert 触发,正常 UI 路径下不会到)。
+
+    2026-09-08 v1.7.0:扩展 `selected_messages` / `single_message_id` 入参 —
+    LIVE 多选导出 / 单条导出场景下,频道已由 selection 决定,频道列表
+    隐藏(只显示固定信息条「导出 N 条已选消息」)。`request()` 返回的
+    ExportRequest 字段 `selected_messages` / `single_message_id` 同步设置。
     """
 
-    def __init__(self, app, channel_ids: list[int], parent=None) -> None:
+    def __init__(
+        self,
+        app,
+        channel_ids: list[int],
+        parent=None,
+        *,
+        selected_messages: list[tuple[int, int]] | None = None,
+        single_message_id: int | None = None,
+    ) -> None:
         """建 form + 默认文件名(`export-YYYYMMDD-HHMMSS.json`)。"""
         super().__init__(parent)
         self.app = app
         self._channel_ids = channel_ids
+        self._selected_messages = selected_messages
+        self._single_message_id = single_message_id
         self._req: ExportRequest | None = None
         # 2026-09-07 v1.6.8:所有用户可见字符串走 tr()。
         self.setWindowTitle(self.tr("导出"))
@@ -63,7 +78,27 @@ class ExportDialog(QDialog):
             it.setData(Qt.UserRole, cid)
             it.setCheckState(Qt.Checked)
             self.lst_channels.addItem(it)
-        form.addRow(self.tr("频道:"), self.lst_channels)
+        # 2026-09-08 v1.7.0:多选导出 / 单条导出 — 频道已由 selection 决定,
+        # 频道列表隐藏,显示固定信息条代替(不让用户改)。
+        if self._selected_messages is not None:
+            self.lst_channels.setVisible(False)
+            # 替换 label — 频道 row 仍占位避免布局抖动,只在上面覆一行 hint
+            hint = QLabel(
+                self.tr("已选 %d 条消息(来自 %d 个频道)")
+                % (
+                    len(self._selected_messages),
+                    len({cid for cid, _ in self._selected_messages}),
+                )
+            )
+            hint.setProperty("role", "hint")
+            form.insertRow(0, self.tr("导出范围:"), hint)
+        elif self._single_message_id is not None:
+            self.lst_channels.setVisible(False)
+            hint = QLabel(self.tr("单条消息(#%d)") % (self._single_message_id,))
+            hint.setProperty("role", "hint")
+            form.insertRow(0, self.tr("导出范围:"), hint)
+        else:
+            form.addRow(self.tr("频道:"), self.lst_channels)
 
         # 时间范围(可选)
         self.in_from = QLineEdit()
@@ -112,14 +147,17 @@ class ExportDialog(QDialog):
         )
 
     def _on_ok(self) -> None:
-        # 频道
+        # 频道(多选导出 / 单条导出时 lst_channels 隐藏,直接走 self._*)
         ids: list[int] = []
-        for i in range(self.lst_channels.count()):
-            it = self.lst_channels.item(i)
-            if it.checkState() == Qt.Checked:
-                ids.append(it.data(Qt.UserRole))
-        if not ids:
-            return
+        if self.lst_channels.isVisible():
+            for i in range(self.lst_channels.count()):
+                it = self.lst_channels.item(i)
+                if it.checkState() == Qt.Checked:
+                    ids.append(it.data(Qt.UserRole))
+            if not ids:
+                return
+        else:
+            ids = self._channel_ids
         # 格式
         fmt: ExportFormat = self.cmb_fmt.currentData()
         out = self.in_path.text().strip()
@@ -129,9 +167,13 @@ class ExportDialog(QDialog):
         p = Path(out)
         if p.suffix == "":
             out = str(p.with_suffix(_FORMAT_EXT[fmt]))
-        # 时间
-        df = self._parse_date(self.in_from.text().strip())
-        dt = self._parse_date(self.in_to.text().strip())
+        # 时间(多选 / 单条导出时,date 范围无意义 — 强制 None)
+        if self._selected_messages is not None or self._single_message_id is not None:
+            df: datetime | None = None
+            dt: datetime | None = None
+        else:
+            df = self._parse_date(self.in_from.text().strip())
+            dt = self._parse_date(self.in_to.text().strip())
         self._req = ExportRequest(
             channel_ids=ids,
             date_from=df,
@@ -143,6 +185,9 @@ class ExportDialog(QDialog):
             include_thumbnails=(
                 fmt in (ExportFormat.HTML, ExportFormat.ZIP) and self.chk_thumbs.isChecked()
             ),
+            # 2026-09-08 v1.7.0:多选 / 单条导出 — 透传字段给 ExportService。
+            selected_messages=self._selected_messages,
+            single_message_id=self._single_message_id,
         )
         self.accept()
 

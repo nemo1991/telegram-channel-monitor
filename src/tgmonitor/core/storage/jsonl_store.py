@@ -615,6 +615,42 @@ class JsonlFileStore(StorageRepository):
                     else:
                         self._media_by_fid[fid] = best
 
+    async def delete_messages(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息。
+
+        一次拿旧 messages(并发 `get_message`),flush 一次,`_media_by_fid`
+        在循环外统一收敛 — 比 N 次 delete_message 节省 N-1 次 flush + lock。
+        """
+        if not msg_ids:
+            return
+        async with self._write_lock:
+            cf = await self._file_for(channel_id)
+            # 先取要删的 messages 用来后续清理 _media_by_fid
+            old_messages = []
+            for mid in msg_ids:
+                m = await self.get_message(channel_id, mid)
+                if m is not None:
+                    old_messages.append(m)
+                    await cf.delete(mid)
+            await cf.flush()
+            # 收集所有要清理的 fid(去重,保留 first occurrences)
+            fids: set[str] = set()
+            for old_msg in old_messages:
+                for med in old_msg.media:
+                    if med.telegram_file_id:
+                        fids.add(med.telegram_file_id)
+            # 一次性收敛 _media_by_fid
+            for fid in fids:
+                if fid not in self._media_by_fid:
+                    continue
+                best = self._find_done_by_fid(fid)
+                if best is None:
+                    self._media_by_fid.pop(fid, None)
+                else:
+                    self._media_by_fid[fid] = best
+
     async def update_message_interactions(
         self,
         channel_id: int,

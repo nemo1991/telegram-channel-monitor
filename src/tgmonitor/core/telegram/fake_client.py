@@ -80,6 +80,8 @@ class FakeTelegramClient(TelegramClient):
         self._raise_after_n: int | None = None
         # 媒体下载测试 hooks(REVIEW M2.1 接入)
         self._downloads: dict[str, bytes | None] = {}
+        # 2026-09-08 v1.7.0:mark_messages_read 注入记录(按 cid 分组)
+        self._read_log: dict[int, list[int]] = {}
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
@@ -292,6 +294,22 @@ class FakeTelegramClient(TelegramClient):
             self._all_streams.remove(s)
         except ValueError:
             pass  # close() 路径已清空
+
+    async def mark_messages_read(
+        self, channel_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-08 v1.7.0:Fake 替身 — 记录 mark_read 调用到 `self._read_log`。
+
+        测试通过 `client.read_log[cid]` 断言被标已读的 msg_ids 列表。
+        """
+        if not msg_ids:
+            return
+        self._read_log.setdefault(channel_id, []).extend(msg_ids)
+
+    @property
+    def read_log(self) -> dict[int, list[int]]:
+        """按 channel_id 分组的 mark_messages_read 调用历史(测试断言用)。"""
+        return self._read_log
 
     # ---- 测试辅助 ----
     async def simulate_incoming(self, msg: MessageDTO) -> None:

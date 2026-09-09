@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
-from PySide6.QtCore import QCoreApplication, QTimer
+from PySide6.QtCore import QCoreApplication, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -137,6 +137,29 @@ _ACTION_SLOTS: dict[str, Callable[[Any], Callable[[], None]]] = {
 }
 
 
+# 2026-09-08 v1.7.0:右键菜单 / 详情按钮传上来的 items 形状是
+# list[tuple[cid, mid]] 或 list[(cid, mid, idx)](media manager 风格)。
+# LIVE 多选统一成 list[tuple[int, int]] 传给 AppService。
+def _normalize_selection_items(items: list | None) -> list[tuple[int, int]]:
+    """过滤 None / 长度不足 / 非数字项,返 `(cid, mid)` 列表。
+
+    `items` 来源两种:
+    - `MessageView.selection_messages_changed` 信号:`list[tuple[cid, mid]]`
+    - 兼容性容错(未来 media manager 风格复用):`list[(cid, mid, idx)]`
+    """
+    if not items:
+        return []
+    out: list[tuple[int, int]] = []
+    for it in items:
+        if not isinstance(it, tuple) or len(it) < 2:
+            continue
+        try:
+            out.append((int(it[0]), int(it[1])))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 class MainWindow(QMainWindow):
     """应用主窗口:左导航 + 5 页内容 + 紧凑头栏 + 状态栏。
 
@@ -204,6 +227,11 @@ class MainWindow(QMainWindow):
         # 2026-09-03 v1.6.1:暂停 / 恢复信号 — status bar label + window title 后缀
         self._vm.monitoring_paused.connect(self._on_monitoring_paused)
         self._vm.monitoring_resumed.connect(self._on_monitoring_resumed)
+        # 2026-09-08 v1.7.0:LIVE 多选 toolbar 缓存最近一次 selection —
+        # toolbar 按钮按下时不必重新问 live_view(selection 可能已被 toolbar
+        # clear 触发清空 — 但 toolbar.clear 是后置动作,handler 触发顺序:按钮
+        # click → handler → clear,所以读到的是上一帧选择)。
+        self._last_live_selection: list[tuple[int, int]] = []
         self._build_ui()
         self._build_menu()
         self._build_tray()
@@ -390,14 +418,24 @@ class MainWindow(QMainWindow):
         self.stack.setFrameShape(QFrame.NoFrame)
 
         # 0: 实时流(MessageView + MessageDetail 横向并排)
+        # 2026-09-08 v1.7.0:LIVE 顶部增加 _SelectionToolbar(默认 hidden,
+        # 多选 >0 才 show)。从单层 QHBoxLayout → QVBoxLayout 嵌套:
+        # 上 toolbar / 下 body(QHBoxLayout[live_view, message_detail])。
         live_page = QWidget()
-        live_layout = QHBoxLayout(live_page)
+        live_layout = QVBoxLayout(live_page)
         live_layout.setContentsMargins(0, 0, 0, 0)
         live_layout.setSpacing(0)
+        self._selection_toolbar = _SelectionToolbar()
+        self._selection_toolbar.setVisible(False)
+        live_layout.addWidget(self._selection_toolbar)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
         self.live_view = MessageView()
         self.message_detail = MessageDetail()
-        live_layout.addWidget(self.live_view, 1)
-        live_layout.addWidget(self.message_detail, 0)
+        body.addWidget(self.live_view, 1)
+        body.addWidget(self.message_detail, 0)
+        live_layout.addLayout(body, 1)
         self.stack.addWidget(live_page)
 
         # 1: 大盘
@@ -542,6 +580,29 @@ class MainWindow(QMainWindow):
         # 2026-08-31 v1.5.0 PR #A8:MessageDetail 媒体卡 click → Lightbox(与
         # media_manager.preview_requested 走同一个加载器)
         self.message_detail.preview_requested.connect(self._on_media_preview)
+
+        # 2026-09-08 v1.7.0:多选浮层 + 详情顶部 3 按钮 — 走同一 selection
+        # 入口。toolbar 默认 hidden,count>0 时 show 并更新计数 label;
+        # count=0 时 hide(selectionCleared 也走同一槽,toolbar.clear 复用)。
+        self.live_view.selection_count_changed.connect(self._on_live_selection_count)
+        self.live_view.selection_messages_changed.connect(self._on_live_selection_messages)
+        self.live_view.export_requested.connect(self._on_live_export)
+        self.live_view.delete_requested.connect(self._on_live_delete)
+        self.live_view.mark_read_requested.connect(self._on_live_mark_read)
+        self._selection_toolbar.export_clicked.connect(
+            lambda: self._on_live_export(self._last_live_selection)
+        )
+        self._selection_toolbar.delete_clicked.connect(
+            lambda: self._on_live_delete(self._last_live_selection)
+        )
+        self._selection_toolbar.mark_read_clicked.connect(
+            lambda: self._on_live_mark_read(self._last_live_selection)
+        )
+        self._selection_toolbar.clear_clicked.connect(self.live_view.clear_selection)
+        # 详情顶部 3 按钮 — 单条操作入口
+        self.message_detail.export_current_requested.connect(self._on_live_export_current)
+        self.message_detail.delete_current_requested.connect(self._on_live_delete_current)
+        self.message_detail.copy_text_requested.connect(self._on_live_copy_text)
 
     def _build_menu(self) -> None:
         """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
@@ -812,6 +873,166 @@ class MainWindow(QMainWindow):
         # 若当前不在 LIVE,回 LIVE(简化 — 用户感知的「取消」)
         if self.stack.currentIndex() != 0:
             self._switch_tab(0)
+
+    # ---- 2026-09-08 v1.7.0:LIVE 多选 + 详情顶部 3 按钮 handler ----
+
+    def _on_live_selection_count(self, count: int) -> None:
+        """LIVE 多选数量变化 → toolbar 显示 / 隐藏。
+
+        count=0 → 隐藏(selectionCleared 也会走这里);count>0 → 显示并
+        触发 `selection_messages_changed` 缓存最后选择(供 toolbar 按钮
+        后续 lambda 读取 — toolbar 按钮按下时 selectionModel 可能已被
+        clear 触发清空)。
+        """
+        self._selection_toolbar.setVisible(count > 0)
+
+    def _on_live_selection_messages(self, items: list) -> None:
+        """缓存最近一次完整 selection — toolbar 按钮按下时不再依赖
+        `live_view.selectionModel` 当前状态(用户点 toolbar → 可能已经在
+        clear 阶段)。
+        """
+        # items 是 list[tuple[cid, mid]] 或 list[(cid, mid, idx)] — 我们只关心 (cid, mid)
+        normalized: list[tuple[int, int]] = []
+        for it in items:
+            if isinstance(it, tuple) and len(it) >= 2:
+                normalized.append((int(it[0]), int(it[1])))
+        self._last_live_selection = normalized
+        # 同步更新 toolbar 计数 label
+        self._selection_toolbar.set_count(len(normalized))
+
+    def _on_live_export(self, items: list) -> None:
+        """右键菜单 / toolbar 触发 → 弹 ExportDialog(selected_messages=items)。
+
+        items 是 list[(cid, mid)],与 Media Manager 「导出 CSV」流程分开,
+        走 ExportDialog(让用户选 JSON/HTML/ZIP + 输出路径)。
+        """
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        # 复用现有 ExportDialog,在外部再注入 selected_messages
+        # (ExportDialog 当前只支持 channel_ids / single_message_id,本 PR
+        # 扩展它接受 selected_messages — 详见 export_dialog.py 改动)。
+        from tgmonitor.ui.widgets.export_dialog import ExportDialog  # 局部 import 避开循环
+
+        dlg = ExportDialog(
+            self.app,
+            channel_ids=[],
+            selected_messages=normalized,
+        )
+        if not dlg.exec():
+            return
+        req = dlg.request()
+        self._run_live_export(req)
+
+    def _on_live_delete(self, items: list) -> None:
+        """右键菜单 / toolbar 触发 → 二次确认 → 批量删(LIVE 软删 + media cleanup)。
+
+        走 `AppService.delete_messages_batch`(返成功数);不调 TDLib
+        `deleteMessages`(live 删除本地副本,TG 端不动 — 与 Clear Channel
+        行为对齐,v1.7.0 不引入服务端删除)。
+        """
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        n = len(normalized)
+        ans = QMessageBox.warning(
+            self,
+            self.tr("删除确认"),
+            # 2026-09-08 v1.7.0:%d 占位 — `self.tr()` 返回翻译后再 `% n` 插值。
+            # 不能用 f-string(lupdate 抽的是模板,翻译后 `{n}` 不再被替换)。
+            self.tr("确定删除选中的 %d 条消息?\n删除后无法撤销。") % n,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self._run_live_delete(normalized)
+        # 删完顺手 clear selection(避免用户在空 row 上右键菜单)
+        self.live_view.clear_selection()
+
+    def _on_live_mark_read(self, items: list) -> None:
+        """右键菜单 / toolbar 触发 → 批量标已读(走 TDLib viewMessages)。
+
+        走 `AppService.mark_messages_read`(返成功条数);paused 时返 0
+        + log warning,不抛 UI 错误。
+        """
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        self._run_live_mark_read(normalized)
+        # 标已读不改本地视图,不清 selection(用户可能想接着操作)
+
+    def _on_live_export_current(self, channel_id: int, telegram_msg_id: int) -> None:
+        """详情顶部「导出」→ 单条消息导出(走 ExportDialog)。"""
+        from tgmonitor.ui.widgets.export_dialog import ExportDialog
+
+        dlg = ExportDialog(
+            self.app,
+            channel_ids=[channel_id],
+            single_message_id=telegram_msg_id,
+        )
+        if not dlg.exec():
+            return
+        req = dlg.request()
+        self._run_live_export(req)
+
+    def _on_live_delete_current(self, channel_id: int, telegram_msg_id: int) -> None:
+        """详情顶部「删除」→ 二次确认 → 单条删 + 关详情面板。"""
+        ans = QMessageBox.warning(
+            self,
+            self.tr("删除确认"),
+            self.tr("确定删除这条消息?\n删除后无法撤销。"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self._run_live_delete([(channel_id, telegram_msg_id)])
+        # 关详情 — 当前消息已删,留着也没意义
+        self.message_detail.show_message(None)
+
+    def _on_live_copy_text(self, text: str) -> None:
+        """详情顶部「复制文本」→ 仅做 toast 提示(实际 copy 在 MessageDetail
+        handler 里走 QGuiApplication.clipboard().setText)。
+
+        上层这里只 log + status bar 显示「已复制」;未来可接 toast 系统。
+        """
+        log.info("copied %d chars to clipboard", len(text))
+        self.status_bar.showMessage(self.tr("已复制 %d 字符") % len(text), 3000)
+
+    def _run_live_export(self, req) -> None:
+        """透传 ExportDialog 拼好的 ExportRequest → 走 ExportProgressDialog。
+
+        req 来自 `ExportDialog.request()`,字段(selected_messages /
+        single_message_id / channel_ids / format / ...)已组装好。复用现有
+        `_on_export_done` / `_on_export_done_with_error` 反馈路径。
+        """
+        # 2026-09-08 v1.7.0:`app.export` 是 AsyncIterator,不能直接传 run_coro
+        # (需 Coroutine)。包成 fire-and-forget 协程消耗迭代器,跟 VM.start_export
+        # 一致。
+        async def _go() -> None:
+            async for _ in self.app.export(req):
+                pass
+
+        run_coro(self.loop, _go(), error_label="live_export")
+
+    def _run_live_delete(self, items: list[tuple[int, int]]) -> None:
+        """批量删 — `AppService.delete_messages_batch` 返成功数。
+
+        通过 VM.publish_threadsafe 走 async loop,UI 不阻塞。
+        """
+        if not items:
+            return
+        run_coro(self.loop, self.app.delete_messages_batch(items), error_label="live_delete")
+
+    def _run_live_mark_read(self, items: list[tuple[int, int]]) -> None:
+        """批量标已读 — `AppService.mark_messages_read` 返成功条数。
+
+        paused 时返 0 + log warning,不抛 UI 错误。
+        """
+        if not items:
+            return
+        run_coro(self.loop, self.app.mark_messages_read(items), error_label="live_mark_read")
 
     def _copy_current_message_text(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
@@ -1626,3 +1847,94 @@ class _HeaderBar(QWidget):
         else:
             self.btn_action.setVisible(False)
             self.btn_logout.setVisible(False)
+
+
+class _SelectionToolbar(QWidget):
+    """2026-09-08 v1.7.0:LIVE 多选浮层。
+
+    默认 hidden,`selection_count_changed > 0` 时被 MainWindow show 出来。
+    视觉与 `_HeaderBar` 一致 — 浅色卡片背景,暗色模式对应反转。
+    不复用 QToolBar(自定义 QWidget 视觉更紧凑,与现有风格统一)。
+
+    按钮 6 颗:全选 / 反选 / 清除 / (分隔) / 标记已读 / 导出 / 删除。
+    计数 label 单独 objectName="selectionCountLabel",后续可加高亮样式。
+    """
+
+    export_clicked = Signal()
+    delete_clicked = Signal()
+    mark_read_clicked = Signal()
+    clear_clicked = Signal()
+    select_all_clicked = Signal()
+    invert_clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("selectionToolbar")
+        self.setFixedHeight(44)
+
+        hbox = QHBoxLayout(self)
+        hbox.setContentsMargins(16, 0, 16, 0)
+        hbox.setSpacing(8)
+
+        # 计数 label
+        self._count_label = QLabel(self.tr("已选 0 条"))
+        self._count_label.setObjectName("selectionCountLabel")
+        hbox.addWidget(self._count_label)
+
+        # 全选 / 反选 / 清除 — 操作类
+        self._btn_select_all = QPushButton(self.tr("全选"))
+        self._btn_select_all.setObjectName("selectionActionBtn")
+        self._btn_select_all.clicked.connect(self.select_all_clicked.emit)
+        hbox.addWidget(self._btn_select_all)
+
+        self._btn_invert = QPushButton(self.tr("反选"))
+        self._btn_invert.setObjectName("selectionActionBtn")
+        self._btn_invert.clicked.connect(self.invert_clicked.emit)
+        hbox.addWidget(self._btn_invert)
+
+        self._btn_clear = QPushButton(self.tr("清除选择"))
+        self._btn_clear.setObjectName("selectionActionBtn")
+        self._btn_clear.clicked.connect(self.clear_clicked.emit)
+        hbox.addWidget(self._btn_clear)
+
+        hbox.addStretch(1)
+
+        # 动作类 — 主按钮
+        self._btn_mark_read = QPushButton(self.tr("✓ 标记已读"))
+        self._btn_mark_read.setObjectName("selectionActionBtn")
+        self._btn_mark_read.clicked.connect(self.mark_read_clicked.emit)
+        hbox.addWidget(self._btn_mark_read)
+
+        self._btn_export = QPushButton(self.tr("📤 导出选中"))
+        self._btn_export.setObjectName("selectionActionBtn")
+        self._btn_export.clicked.connect(self.export_clicked.emit)
+        hbox.addWidget(self._btn_export)
+
+        self._btn_delete = QPushButton(self.tr("🗑 删除选中"))
+        self._btn_delete.setObjectName("selectionDeleteBtn")
+        self._btn_delete.clicked.connect(self.delete_clicked.emit)
+        hbox.addWidget(self._btn_delete)
+
+    def set_count(self, n: int) -> None:
+        """更新计数 label — 由 `_on_live_selection_messages` 调。
+
+        `tr("已选 {0} 条").format(n)` 不行(中英文数字混排),用 `%d` 兼容。
+        """
+        self._count_label.setText(self.tr("已选 %d 条") % n)
+
+    def retranslateUi(self) -> None:  # noqa: N802 — Qt 命名
+        """2026-09-08 v1.7.0:语言切换 — 重建 label 文案。
+
+        与 `_HeaderBar` / `MessageDetail` 一致;setText 调 set_count 触发
+        label refresh。
+        """
+        # 计数 label:由 MainWindow 持有 selection,这里无法 — 让外部重调
+        # set_count 即可,无需 rebuild。
+        # 按钮 label 全是 setText 在 __init__ 时设过;这里走 setText 重新
+        # tr() 即可,保持与 `_HeaderBar` 一致的 idiom。
+        self._btn_select_all.setText(self.tr("全选"))
+        self._btn_invert.setText(self.tr("反选"))
+        self._btn_clear.setText(self.tr("清除选择"))
+        self._btn_mark_read.setText(self.tr("✓ 标记已读"))
+        self._btn_export.setText(self.tr("📤 导出选中"))
+        self._btn_delete.setText(self.tr("🗑 删除选中"))

@@ -17,7 +17,7 @@ import json
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -95,6 +95,11 @@ class MessageDetail(QScrollArea):
     # 且 DONE 状态)→ 异步加载原图 bytes → 弹 LightboxDialog。MainWindow 接到信号
     # 后处理流程同 `_on_media_preview`(复用 main_window.py 内的加载器)。
     preview_requested = Signal(int, int, int)
+
+    # 2026-09-08 v1.7.0:详情顶部 3 按钮 — 单条操作也走这里
+    export_current_requested = Signal(int, int)  # (cid, mid)
+    delete_current_requested = Signal(int, int)  # (cid, mid)
+    copy_text_requested = Signal(str)  # 文本内容
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """建空状态占位面板(无选中消息时显示)。"""
@@ -238,6 +243,26 @@ class MessageDetail(QScrollArea):
         # 关闭按钮(顶部右上角 — 不在主视图,做成行内)
         v.addStretch(1)
         close_row = QHBoxLayout()
+        # 2026-09-08 v1.7.0:顶部 3 按钮(导出 / 删除 / 复制文本)— 左对齐
+        # 2026-09-08 v1.7.0:顶部 3 按钮(导出 / 删除 / 复制文本)— 左对齐
+        self._btn_export = QPushButton(self.tr("📤 导出"))
+        self._btn_export.setObjectName("detailActionBtn")
+        self._btn_export.setEnabled(True)  # m is not None at this point
+        self._btn_export.clicked.connect(self._on_export_current)
+        close_row.addWidget(self._btn_export)
+
+        self._btn_delete = QPushButton(self.tr("🗑 删除"))
+        self._btn_delete.setObjectName("detailDeleteBtn")
+        self._btn_delete.setEnabled(True)
+        self._btn_delete.clicked.connect(self._on_delete_current)
+        close_row.addWidget(self._btn_delete)
+
+        self._btn_copy_text = QPushButton(self.tr("📋 复制文本"))
+        self._btn_copy_text.setObjectName("detailActionBtn")
+        self._btn_copy_text.setEnabled(bool(m.text))  # 空文本无意义,灰掉
+        self._btn_copy_text.clicked.connect(self._on_copy_text)
+        close_row.addWidget(self._btn_copy_text)
+
         close_row.addStretch(1)
         btn_close = QPushButton(self.tr("关闭详情"))
         btn_close.clicked.connect(lambda: self.show_message(None))
@@ -308,6 +333,36 @@ class MessageDetail(QScrollArea):
         if event.type() == QEvent.Type.LanguageChange:
             self.retranslateUi()
         super().changeEvent(event)
+
+    # ---- 2026-09-08 v1.7.0:顶部 3 按钮 handler ----
+
+    def _on_export_current(self) -> None:
+        """当前消息详情 → 导出。emit `(cid, mid)` 给上层(MainWindow 拼
+        ExportRequest.selected_messages=[(cid, mid)])。
+
+        若 `_current` 已被 reset(切到空状态) → no-op,不抛。
+        """
+        if self._current is None:
+            return
+        self.export_current_requested.emit(self._current.channel_id, self._current.telegram_msg_id)
+
+    def _on_delete_current(self) -> None:
+        """当前消息详情 → 删除。emit `(cid, mid)`,MainWindow 弹 QMessageBox
+        二次确认后调 `app.delete_message` 并关详情面板。
+        """
+        if self._current is None:
+            return
+        self.delete_current_requested.emit(self._current.channel_id, self._current.telegram_msg_id)
+
+    def _on_copy_text(self) -> None:
+        """当前消息详情 → 复制文本到系统剪贴板。emit 文本给上层做 toast / 日志。
+
+        空文本早 return(虽然按钮已 disabled,但双保险)。
+        """
+        if self._current is None or not self._current.text:
+            return
+        QGuiApplication.clipboard().setText(self._current.text)
+        self.copy_text_requested.emit(self._current.text)
 
     def _make_media_click_handler(
         self,

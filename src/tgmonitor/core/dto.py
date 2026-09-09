@@ -252,6 +252,13 @@ class ExportRequest:
     # 取单条,跳过 `_run_messages` 的分页流(只对 ZIP 生效,其它 exporter
     # 忽略该字段)。默认 None = 既有范围导出路径不变。
     single_message_id: int | None = None
+    # 2026-09-08 v1.7.0:批量导出 — N 条已选消息导出(右键菜单 / 顶部 toolbar
+    # 触发)。`None` 时按 `channel_ids + date_from/to` 拉范围;非 None 时
+    # 走 `ExportService._run_selected` 分支对每个 `(cid, mid)` 调
+    # `storage.get_message`,跳过 `_run_messages` 的分页流(所有 exporter
+    # 都生效)。与 `single_message_id` 互斥(single_message_id 优先级更高,
+    # 为旧接口兼容保留)。
+    selected_messages: list[tuple[int, int]] | None = None
 
 
 @dataclass

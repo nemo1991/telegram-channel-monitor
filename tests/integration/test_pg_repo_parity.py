@@ -548,3 +548,71 @@ async def test_delete_message_cascades_media(pg_repo: PostgresRepository) -> Non
         after = await conn.fetchval("SELECT count(*) FROM media")
     assert before == 1
     assert after == 0
+
+
+# ---- 2026-09-08 v1.7.0:批量 delete_messages parity ----
+
+
+async def test_delete_messages_batch_pg(pg_repo: PostgresRepository) -> None:
+    """批量删 — channel_id=100 的 3 条消息全部消失。"""
+    for mid in (10, 11, 12):
+        await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    # 验证已存
+    for mid in (10, 11, 12):
+        m = await pg_repo.get_message(100, mid)
+        assert m is not None
+    # 批量删
+    await pg_repo.delete_messages(100, [10, 11, 12])
+    # 全没了
+    for mid in (10, 11, 12):
+        m = await pg_repo.get_message(100, mid)
+        assert m is None
+
+
+async def test_delete_messages_partial(pg_repo: PostgresRepository) -> None:
+    """批量删 — 只删列表里的消息,不影响其他。"""
+    for mid in (20, 21, 22, 23, 24):
+        await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    await pg_repo.delete_messages(100, [20, 22, 24])
+    for mid in (20, 22, 24):
+        assert await pg_repo.get_message(100, mid) is None
+    # 21, 23 保留
+    for mid in (21, 23):
+        assert await pg_repo.get_message(100, mid) is not None
+
+
+async def test_delete_messages_empty_list_noop(pg_repo: PostgresRepository) -> None:
+    """空 msg_ids 列表 → no-op,所有现存消息保留。"""
+    for mid in (30, 31):
+        await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=mid))
+    await pg_repo.delete_messages(100, [])
+    for mid in (30, 31):
+        assert await pg_repo.get_message(100, mid) is not None
+
+
+async def test_delete_messages_nonexistent_idempotent(pg_repo: PostgresRepository) -> None:
+    """批量删不存在的 msg_ids → 不抛(idempotent)。"""
+    await pg_repo.delete_messages(100, [999, 1000])
+    # 不抛即通过
+
+
+async def test_delete_messages_cascades_media(pg_repo: PostgresRepository) -> None:
+    """批量删 — 关联 media 自动 CASCADE 删除。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=40, media=[_photo(fid="f40_a")]))
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=41, media=[_photo(fid="f41_a")]))
+    async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
+        before = await conn.fetchval("SELECT count(*) FROM media")
+    assert before == 2
+    await pg_repo.delete_messages(100, [40, 41])
+    async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
+        after = await conn.fetchval("SELECT count(*) FROM media")
+    assert after == 0
+
+
+async def test_delete_messages_isolates_channels(pg_repo: PostgresRepository) -> None:
+    """批量删 — 只影响指定 channel_id,不影响其它频道的消息。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=50))
+    await pg_repo.save_message(_mk_msg(channel_id=200, msg_id=50))  # 不同频道同 msg_id
+    await pg_repo.delete_messages(100, [50])
+    assert await pg_repo.get_message(100, 50) is None
+    assert await pg_repo.get_message(200, 50) is not None
