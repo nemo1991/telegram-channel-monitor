@@ -39,6 +39,8 @@ jobs:
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
       # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好。
       # libc++-dev 给 libtdjson(TDLib 原生库)提供 libc++.so.1
+      # libpulse0 给 QtMultimedia(QMediaPlayer)用,缺则 test_lightbox_dialog_gif_mp4 报
+      # ImportError: libpulse.so.0;libpulse0 在 ubuntu-latest 默认未装。
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -49,7 +51,7 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libxcb-icccm4 libxcb-image0 libxcb-util1 \
-            libsm6 libice6 \
+            libsm6 libice6 libpulse0 \
             libc++-dev
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
@@ -61,6 +63,18 @@ jobs:
       # `-q` 关 progress bar,CI 日志干净
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
+
+      # 2026-09-09 v1.7.x:.qm 是 pyside6-lrelease 从 .ts 编译的产物,被 .gitignore
+      # 排除(本地重生成;CI 拉源码后没有)。test_i18n_runtime.py 会断言 .qm 存在 +
+      # 非空 + 能 QTranslator.load() + 翻译结果正确,缺则 windows/macos 全红。
+      # 在 pytest 之前同步编译到 src/tgmonitor/i18n/,test 期间 QApplication
+      # install_translator() 即读到本地 zh_CN.qm / en_US.qm。
+      # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
+      - name: Compile Qt translation files (.ts → .qm)
+        run: |
+          uv run pyside6-lrelease \
+            src/tgmonitor/i18n/zh_CN.ts \
+            src/tgmonitor/i18n/en_US.ts
 
       # 只加载已安装的 console_scripts entry point,不调用 `main()`。
       # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,
@@ -243,13 +257,15 @@ jobs:
         run: |
           # Docker 已在 ubuntu-latest runner 默认装好,无需 apt-get install docker.io。
           # libEGL / libGL 等 Qt offscreen 依赖同 pytest job。
+          # libpulse0 给 QtMultimedia(QMediaPlayer)用,缺则 lightbox integration 报
+          # ImportError: libpulse.so.0。
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
             libfontconfig1 libxcb-cursor0 libxcb-keysyms1 \
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
-            libglib2.0-0t64 libsm6 libice6
+            libglib2.0-0t64 libsm6 libice6 libpulse0
 
       - name: Install dependencies
         # --all-extras 装 asyncpg + motor(extras[postgres,mongo]),--group dev

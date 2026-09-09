@@ -127,7 +127,9 @@ async def test_run_selected_filters_channels_subset(tmp_path: Path) -> None:
     async for _ in svc.run(req):
         pass
     # 验证文件存在 + 内容仅含 ch1,不含 ch2
-    out = (tmp_path / "selected.html").read_text()
+    # 2026-09-09 v1.7.x:Windows 默认 cp1252 编码读 UTF-8 HTML(含 emoji) 报
+    # UnicodeDecodeError。显式 encoding="utf-8" 兜底,跨平台稳。
+    out = (tmp_path / "selected.html").read_text(encoding="utf-8")
     assert "ch1" in out
     assert "ch2" not in out
 
