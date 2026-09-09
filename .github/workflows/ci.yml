@@ -70,11 +70,11 @@ jobs:
       # 在 pytest 之前同步编译到 src/tgmonitor/i18n/,test 期间 QApplication
       # install_translator() 即读到本地 zh_CN.qm / en_US.qm。
       # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
+      # 2026-09-09 v1.7.x:windows-latest 默认 pwsh 把 YAML 行续 \ 当字面参数
+      # (Cannot open \);显式切 bash(windows-latest 自带 Git Bash)+ 单行命令。
       - name: Compile Qt translation files (.ts → .qm)
-        run: |
-          uv run pyside6-lrelease \
-            src/tgmonitor/i18n/zh_CN.ts \
-            src/tgmonitor/i18n/en_US.ts
+        shell: bash
+        run: uv run pyside6-lrelease src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts
 
       # 只加载已安装的 console_scripts entry point,不调用 `main()`。
       # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,

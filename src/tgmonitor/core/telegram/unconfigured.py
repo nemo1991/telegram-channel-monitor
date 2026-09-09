@@ -151,6 +151,20 @@ class UnconfiguredTelegramClient(TelegramClient):
         """
         return None
 
+    async def mark_messages_read(
+        self,
+        channel_id: int,
+        msg_ids: list[int],
+    ) -> None:
+        """2026-09-09 v1.7.x:无凭据不可发 TDLib RPC,no-op。
+
+        兜底实现:满足 `TelegramClient` Protocol 完整性(否则 mypy 把本类
+        视作 abstract,`factory.build_telegram_client` 实例化失败)。调用
+        `AppService.mark_messages_read` 前已检查 `_is_paused`,正常路径不会
+        走到本方法。
+        """
+        return None
+
     async def iter_chat_history(
         self,
         channel_id: int,

@@ -113,9 +113,7 @@ class ExportService:
                 )
                 yield
         # 末尾 progress
-        await self._bus.publish(
-            ExportProgress(request_id=req_id, written=len(sel), total=len(sel))
-        )
+        await self._bus.publish(ExportProgress(request_id=req_id, written=len(sel), total=len(sel)))
 
         # 收 channel 子集 — 只显示选中消息所在的频道
         used_cids = {m.channel_id for m in all_messages}

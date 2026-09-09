@@ -266,9 +266,7 @@ def test_close_event_stops_movie_safely(qt_app: QApplication, sample_pixmap: QPi
 # ---- v1.6.10 控制条 ----
 
 
-def test_control_bar_default_hidden(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_control_bar_default_hidden(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """v1.6.10:控制条默认 opacity effect=0 + hide timer 配置为单次 2000ms。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     assert dlg._control_bar is not None
@@ -278,9 +276,7 @@ def test_control_bar_default_hidden(
     dlg.close()
 
 
-def test_control_bar_seven_buttons_present(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_control_bar_seven_buttons_present(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """v1.6.10:7 个按钮(上一张 / 下一张 / 缩小 / 放大 / 旋转 / 另存为 / 关闭)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     btns = [
@@ -298,9 +294,7 @@ def test_control_bar_seven_buttons_present(
     dlg.close()
 
 
-def test_button_states_single_image_with_data(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_button_states_single_image_with_data(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """单图 + 有 data:prev/next disabled,zoom/rotate/save enabled。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap], data=b"\x89PNG\r\n\x1a\nfake")
     assert dlg._btn_prev.isEnabled() is False
@@ -324,9 +318,7 @@ def test_button_states_multi_image_prev_next_enabled(
     dlg.close()
 
 
-def test_zoom_in_button_increments_zoom(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_zoom_in_button_increments_zoom(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """点 + 按钮 → zoom 1.0 → 1.25。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     assert dlg.current_zoom == 1.0
@@ -335,9 +327,7 @@ def test_zoom_in_button_increments_zoom(
     dlg.close()
 
 
-def test_zoom_out_button_decrements_zoom(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_zoom_out_button_decrements_zoom(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """点 − 按钮 → zoom 1.0 → 0.8 (=1/1.25)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     dlg._btn_zoom_out.click()
@@ -345,9 +335,7 @@ def test_zoom_out_button_decrements_zoom(
     dlg.close()
 
 
-def test_zoom_in_clamps_to_max(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_zoom_in_clamps_to_max(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """连续点 + 直到 clamp 到 _max_zoom=8.0。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     for _ in range(20):
@@ -356,9 +344,7 @@ def test_zoom_in_clamps_to_max(
     dlg.close()
 
 
-def test_zoom_out_clamps_to_min(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_zoom_out_clamps_to_min(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """连续点 − 直到 clamp 到 _min_zoom=0.25。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     for _ in range(20):
@@ -367,9 +353,7 @@ def test_zoom_out_clamps_to_min(
     dlg.close()
 
 
-def test_rotate_90_accumulates(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_rotate_90_accumulates(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """旋转 90° 累加;_rotation %= 360。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     assert dlg._rotation == 0
@@ -384,9 +368,7 @@ def test_rotate_90_accumulates(
     dlg.close()
 
 
-def test_step_index_resets_rotation(
-    qt_app: QApplication, multi_pixmaps: list[QPixmap]
-) -> None:
+def test_step_index_resets_rotation(qt_app: QApplication, multi_pixmaps: list[QPixmap]) -> None:
     """切图时旋转归零(v1.6.10)— 体感更清晰。"""
     dlg = LightboxDialog(pixmaps=multi_pixmaps, current=0)
     dlg._rotation = 180  # 手动设
@@ -403,9 +385,7 @@ def test_save_button_writes_file(
     from tgmonitor.ui.widgets import lightbox_dialog as lb_mod
 
     payload = b"\x89PNG\r\n\x1a\nhello-world"
-    dlg = LightboxDialog(
-        pixmaps=[sample_pixmap], data=payload, source_title="test.png"
-    )
+    dlg = LightboxDialog(pixmaps=[sample_pixmap], data=payload, source_title="test.png")
     target = tmp_path / "saved.png"
 
     def fake_get_save_file_name(parent, caption, default, filt):
@@ -423,9 +403,7 @@ def test_save_button_default_filename_uses_source_title(
     """QFileDialog 默认文件名 = source_title("photo.jpg")。"""
     from tgmonitor.ui.widgets import lightbox_dialog as lb_mod
 
-    dlg = LightboxDialog(
-        pixmaps=[sample_pixmap], data=b"x", source_title="photo.jpg"
-    )
+    dlg = LightboxDialog(pixmaps=[sample_pixmap], data=b"x", source_title="photo.jpg")
 
     captured: dict[str, str] = {}
 
@@ -439,9 +417,7 @@ def test_save_button_default_filename_uses_source_title(
     dlg.close()
 
 
-def test_save_button_no_data_disabled(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_save_button_no_data_disabled(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """没传 data → save 按钮 disabled,即便 click 也不写文件。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])  # data=None
     assert dlg._btn_save.isEnabled() is False
@@ -451,9 +427,7 @@ def test_save_button_no_data_disabled(
     dlg.close()
 
 
-def test_close_button_accepts_dialog(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_close_button_accepts_dialog(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """点 ✕ → dialog accept()(关闭)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     dlg._btn_close.click()
@@ -496,9 +470,7 @@ def test_ext_for_mime_unknown_falls_back_to_bin() -> None:
     assert _ext_for_mime("text/plain") == ".bin"
 
 
-def test_rotation_applied_in_scaled_pixmap(
-    qt_app: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_rotation_applied_in_scaled_pixmap(qt_app: QApplication, sample_pixmap: QPixmap) -> None:
     """_apply_scaled_pixmap 旋转后 canvas 上的 pixmap 旋转了 90°(宽高互换)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     dlg._rotation = 90
@@ -512,9 +484,7 @@ def test_rotation_applied_in_scaled_pixmap(
     dlg.close()
 
 
-def test_zoom_button_disabled_for_gif(
-    qt_app: QApplication, multi_pixmaps: list[QPixmap]
-) -> None:
+def test_zoom_button_disabled_for_gif(qt_app: QApplication, multi_pixmaps: list[QPixmap]) -> None:
     """GIF item → zoom 按钮 disabled(只 image 生效);rotate enabled。"""
     from tgmonitor.ui.widgets.lightbox_dialog import MediaItem
 

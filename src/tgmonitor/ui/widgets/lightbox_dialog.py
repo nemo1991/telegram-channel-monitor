@@ -411,10 +411,10 @@ class LightboxDialog(QDialog):
     def _apply_scaled_pixmap(self, pix: QPixmap) -> None:
         """按 self._zoom 缩放 + 居中显示;屏幕尺寸 = 当前主屏 90%。
 
-v1.6.10:先按 `self._rotation` 旋转,再缩放。顺序很重要 — 旋转 90°
-后 width/height 互换,缩放按原 width 算导致新图比例失调;先旋转得到
-正确几何后再缩。
-"""
+        v1.6.10:先按 `self._rotation` 旋转,再缩放。顺序很重要 — 旋转 90°
+        后 width/height 互换,缩放按原 width 算导致新图比例失调;先旋转得到
+        正确几何后再缩。
+        """
         if self._rotation:
             pix = pix.transformed(QTransform().rotate(self._rotation))
         screen = QApplication.primaryScreen()
@@ -595,10 +595,10 @@ v1.6.10:先按 `self._rotation` 旋转,再缩放。顺序很重要 — 旋转 90
     def _build_control_bar(self) -> None:
         """底部贴边工具栏 — 7 个按钮(上一张/下一张/缩小/放大/旋转/另存为/关闭)。
 
-默认隐藏,`mouseMoveEvent` 触发 `_show_bar` 淡入 + 重启 2s QTimer
-静默淡出。视觉风格延续 `_zoom_label` 的半透黑底白字(避免引入
-stylesheet 二套体系)。
-"""
+        默认隐藏,`mouseMoveEvent` 触发 `_show_bar` 淡入 + 重启 2s QTimer
+        静默淡出。视觉风格延续 `_zoom_label` 的半透黑底白字(避免引入
+        stylesheet 二套体系)。
+        """
         self._control_bar = QFrame(self)
         self._control_bar.setStyleSheet(
             "QFrame { background-color: rgba(0, 0, 0, 180); border-radius: 6px; }"
@@ -672,8 +672,8 @@ stylesheet 二套体系)。
     def mouseMoveEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt API
         """v1.6.10:鼠标移动 → 控制条淡入 + 重启 2s 静默淡出 timer。
 
-不抢 `mousePressEvent` 的关闭语义 — 关闭仍由 mousePress 处理。
-"""
+        不抢 `mousePressEvent` 的关闭语义 — 关闭仍由 mousePress 处理。
+        """
         if event is not None and self._control_bar is not None:
             self._show_bar()
         super().mouseMoveEvent(event)
@@ -723,9 +723,9 @@ stylesheet 二套体系)。
     def _rotate_90(self) -> None:
         """点 ⟳ 顺时针 90°。多次累加 `_rotation %= 360`。
 
-仅 image / GIF 生效;GIF 旋转变静态(QMovie 不支持 transformed)
-— 已知妥协,与原 v1.6.7 行为一致(GIF 锁 100% 不强求 360° 动画旋转)。
-"""
+        仅 image / GIF 生效;GIF 旋转变静态(QMovie 不支持 transformed)
+        — 已知妥协,与原 v1.6.7 行为一致(GIF 锁 100% 不强求 360° 动画旋转)。
+        """
         self._rotation = (self._rotation + 90) % 360
         item = self._all_items[self._idx]
         if item.kind == "image" and item.pixmap is not None:
@@ -740,12 +740,12 @@ stylesheet 二套体系)。
     def _save_current(self) -> None:
         """点 ⤓ 弹 QFileDialog.getSaveFileName,写 `self._current_data` 到选定路径。
 
-文件名默认:`source_title` 或 `lightbox_<idx>.<ext>`(ext 由
-`_ext_for_mime(item.mime_type)` 推断:image/jpeg → .jpg, image/png
-→ .png, image/gif → .gif, video/mp4 → .mp4, 其它 → .bin)。
+        文件名默认:`source_title` 或 `lightbox_<idx>.<ext>`(ext 由
+        `_ext_for_mime(item.mime_type)` 推断:image/jpeg → .jpg, image/png
+        → .png, image/gif → .gif, video/mp4 → .mp4, 其它 → .bin)。
 
-caller 没传 `data` → 按钮 disabled,本方法不应被调到(防御性 early-return)。
-"""
+        caller 没传 `data` → 按钮 disabled,本方法不应被调到(防御性 early-return)。
+        """
         if not self._current_data:
             return
         item = self._all_items[self._idx]
@@ -780,9 +780,7 @@ caller 没传 `data` → 按钮 disabled,本方法不应被调到(防御性 earl
         self._btn_zoom_in.setEnabled(kind == "image")
         self._btn_zoom_out.setEnabled(kind == "image")
         self._btn_rotate.setEnabled(kind in ("image", "gif"))
-        self._btn_save.setEnabled(
-            self._current_data is not None and len(self._current_data) > 0
-        )
+        self._btn_save.setEnabled(self._current_data is not None and len(self._current_data) > 0)
         self._btn_close.setEnabled(True)
 
     # ---- 关闭时清理 ----

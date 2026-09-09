@@ -215,9 +215,7 @@ class InMemoryRepository(StorageRepository):
                     else:
                         self._media_by_fid[fid] = best
 
-    async def delete_messages(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息 + 收敛 _media_by_fid。"""
         if not msg_ids:
             return

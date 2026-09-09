@@ -615,9 +615,7 @@ class JsonlFileStore(StorageRepository):
                     else:
                         self._media_by_fid[fid] = best
 
-    async def delete_messages(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息。
 
         一次拿旧 messages(并发 `get_message`),flush 一次,`_media_by_fid`

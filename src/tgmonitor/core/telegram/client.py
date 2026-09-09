@@ -155,9 +155,7 @@ class TelegramClient(Protocol):
         """
         ...
 
-    async def mark_messages_read(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量标已读 — TDLib viewMessages RPC。
 
         `msg_ids` 长度无硬限制;TDLib 内部 batch。fire-and-forget,

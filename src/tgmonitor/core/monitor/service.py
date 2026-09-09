@@ -650,9 +650,7 @@ class MonitorService:
                 log.exception("delete_messages(%s, %s) failed", cid, mid)
         # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
         for cid, mid in succeeded:
-            await self.bus.publish(
-                MessageDeleted(channel_id=cid, telegram_msg_id=mid)
-            )
+            await self.bus.publish(MessageDeleted(channel_id=cid, telegram_msg_id=mid))
         return len(succeeded)
 
     async def _handle_message_deleted(self, event: MessageDeleted) -> None:

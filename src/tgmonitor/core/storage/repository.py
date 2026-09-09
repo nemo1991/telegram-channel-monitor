@@ -129,9 +129,7 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
-    async def delete_messages(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息。
 
         不存在不抛(idempotent)。子 media 通过各后端固有机制清理

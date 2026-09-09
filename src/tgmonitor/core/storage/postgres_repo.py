@@ -607,9 +607,7 @@ class PostgresRepository(StorageRepository):
                 telegram_msg_id,
             )
 
-    async def delete_messages(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 行 FK CASCADE 自动删。
 
         单发 SQL:`DELETE WHERE channel_id=$1 AND telegram_msg_id = ANY($2)`

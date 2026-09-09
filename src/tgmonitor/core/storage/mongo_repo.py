@@ -517,9 +517,7 @@ class MongoRepository(StorageRepository):
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
 
-    async def delete_messages(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 子文档随父 doc 一同删。
 
         单次 `delete_many` 走 `telegram_msg_id: {$in: [...]}` 索引扫描,

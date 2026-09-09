@@ -1007,6 +1007,7 @@ class MainWindow(QMainWindow):
         single_message_id / channel_ids / format / ...)已组装好。复用现有
         `_on_export_done` / `_on_export_done_with_error` 反馈路径。
         """
+
         # 2026-09-08 v1.7.0:`app.export` 是 AsyncIterator,不能直接传 run_coro
         # (需 Coroutine)。包成 fire-and-forget 协程消耗迭代器,跟 VM.start_export
         # 一致。

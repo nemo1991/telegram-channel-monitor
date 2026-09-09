@@ -544,9 +544,7 @@ class AppService:
         """转发 MediaService.delete_by_channel。"""
         return await self._media.delete_by_channel(channel_id)
 
-    async def delete_message(
-        self, channel_id: int, telegram_msg_id: int
-    ) -> None:
+    async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """2026-09-08 v1.7.0:单条消息删除 — 转发 MonitorService.delete_message。
 
         MessageDetail 顶部「删除」按钮 + 右键单条菜单调用入口。
@@ -556,9 +554,7 @@ class AppService:
         assert self.monitor is not None
         await self.monitor.delete_message(channel_id, telegram_msg_id)
 
-    async def delete_messages_batch(
-        self, items: list[tuple[int, int]]
-    ) -> int:
+    async def delete_messages_batch(self, items: list[tuple[int, int]]) -> int:
         """2026-09-08 v1.7.0:批量删 N 条消息 — 转发 MonitorService.delete_messages。
 
         返成功条数(失败的保持原样 + log,UI 可重试)。每条成功都 publish
@@ -569,9 +565,7 @@ class AppService:
         assert self.monitor is not None
         return await self.monitor.delete_messages(items)
 
-    async def mark_messages_read(
-        self, items: list[tuple[int, int]]
-    ) -> int:
+    async def mark_messages_read(self, items: list[tuple[int, int]]) -> int:
         """2026-09-08 v1.7.0:批量标已读 — 走 TG client.viewMessages。
 
         按 channel_id 分组,各调一次 `client.mark_messages_read(cid, msg_ids)`。

@@ -295,9 +295,7 @@ class FakeTelegramClient(TelegramClient):
         except ValueError:
             pass  # close() 路径已清空
 
-    async def mark_messages_read(
-        self, channel_id: int, msg_ids: list[int]
-    ) -> None:
+    async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:Fake 替身 — 记录 mark_read 调用到 `self._read_log`。
 
         测试通过 `client.read_log[cid]` 断言被标已读的 msg_ids 列表。
