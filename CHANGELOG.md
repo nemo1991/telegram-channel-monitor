@@ -7,9 +7,9 @@
 
 ## [1.7.1] - 2026-09-09
 
-主题:**CI 修 3 类失败** — v1.6.10 起的红(v1.7.0 CI 也复现)一次性收掉。
+主题:**CI 修 3+3 类失败** — v1.6.10 起的红(v1.7.0 CI 也复现)一次性收掉。
 
-### ✅ Fixed
+### ✅ Fixed(第一轮)
 
 - **CI ubuntu 缺 libpulse.so.0**:tests/test_lightbox_dialog_gif_mp4 导入
   QMediaPlayer → QtMultimedia 链 libpulse → ubuntu-latest runner 默认未装。
@@ -29,10 +29,23 @@
   `Path.read_text()` 不指定 encoding,Windows 默认 cp1252,UTF-8 HTML
   含 emoji 触发 decode 失败 → 改 `read_text(encoding="utf-8")`。
 
+### ✅ Fixed(第二轮)
+
+- **mypy abstract class**:v1.7.0 给 `TelegramClient` Protocol 加了
+  `mark_messages_read`,`UnconfiguredTelegramClient`(凭据缺失占位)没实现
+  → mypy 视作 abstract,`factory.build_telegram_client` 实例化失败。
+  补 no-op 实现(调用前已检查 `_is_paused`,正常路径不会走到)。
+- **ruff format check**:v1.7.0 改过的 15 个文件格式漂移(pre-existing),
+  `ruff format` 自动 reformat 落地(纯空格 / 行折叠)。
+- **Windows pytest "Compile .qm" step 失败**:windows-latest 默认 pwsh
+  把 YAML 多行命令的行续 `\` 当字面参数(`lrelease error: Cannot open \`)。
+  改 `shell: bash` + 单行命令(沿 workflow 既有 pytest step 模式)。
+
 ### 🧪 Test
 
 - 本地 932 passed(exit 0)
 - 14/14 `test_i18n_runtime` + 7/7 `test_export_selected` 全绿
+- ruff check / format / mypy 全绿
 
 ## [1.7.0] - 2026-09-09
 
