@@ -127,6 +127,10 @@ def _doc_to_message(d: dict[str, Any]) -> MessageDTO:
         media_album_id=d.get("media_album_id"),
         is_pinned=bool(d.get("is_pinned", False)),
         reactions=reactions,
+        # 2026-09-09 v1.7.2:用户元数据 — Mongo schema-less,旧 doc `.get` 兜底。
+        is_favorite=bool(d.get("is_favorite", False)),
+        tags=list(d.get("tags") or []),
+        notes=d.get("notes") or "",
     )
 
 
@@ -246,6 +250,39 @@ class MongoRepository(StorageRepository):
             return True
         except Exception:
             return False
+
+    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:单条设 `is_favorite`。不存在消息 idempotent 不抛。"""
+        await self.db.messages.update_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
+            {"$set": {"is_favorite": value}},
+        )
+
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `tags`。idempotent 同上。"""
+        await self.db.messages.update_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
+            {"$set": {"tags": tags}},
+        )
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `notes`。idempotent 同上。"""
+        await self.db.messages.update_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
+            {"$set": {"notes": notes}},
+        )
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:列所有 `is_favorite=True` 消息,按 date DESC。"""
+        cursor = self.db.messages.find({"is_favorite": True}).sort("date", -1)
+        return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询(`$in` 走数组包含),按 date DESC。"""
+        cursor = self.db.messages.find({"tags": tag}).sort("date", -1)
+        return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
 
     # ---- 频道 ----
 
@@ -456,6 +493,11 @@ class MongoRepository(StorageRepository):
             "reactions": (
                 [r.to_dict() for r in message.reactions] if message.reactions is not None else None
             ),
+            # 2026-09-09 v1.7.2:用户元数据 — Mongo schema-less 直接写,
+            # 旧 doc 缺这些 key 时 `_doc_to_message` 走 `.get` 兜底。
+            "is_favorite": message.is_favorite,
+            "tags": message.tags,
+            "notes": message.notes,
         }
         # 2026-08-31 v1.5.0 PR #A7:`_id` 用 `$setOnInsert` 而非 `$set` —
         # update 路径下 `_id` 是 immutable,改 `_id` 直接 WriteError 报错

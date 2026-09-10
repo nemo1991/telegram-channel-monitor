@@ -411,6 +411,11 @@ class MessageView(QListView):
     export_requested = Signal(list)  # 右键「导出」触发
     delete_requested = Signal(list)  # 右键 / toolbar「删除」触发
     mark_read_requested = Signal(list)  # 右键 / toolbar「标记已读」触发
+    # 2026-09-09 v1.7.2:用户元数据 — favorite / tags / notes 单条入口。
+    # payload (channel_id, telegram_msg_id);右键菜单触发。
+    favorite_requested = Signal(int, int, bool)  # cid, mid, new_value
+    tags_requested = Signal(int, int)
+    notes_requested = Signal(int, int)
 
     def __init__(self) -> None:
         """初始化 model + delegate + channel_titles + filter + empty overlay。"""
@@ -586,6 +591,36 @@ class MessageView(QListView):
         act_read.setEnabled(count >= 1)
         act_read.triggered.connect(lambda: self.mark_read_requested.emit(sel))
         menu.addAction(act_read)
+
+        # 2026-09-09 v1.7.2:用户元数据菜单 — 单条才允许。
+        menu.addSeparator()
+        act_fav = QAction(self.tr("★ 收藏 / 取消收藏"), menu)
+        # 元数据操作要求恰好 1 条;多选时禁用,避免歧义。
+        act_fav.setEnabled(count == 1)
+        if count == 1:
+            current = sel[0] if sel else None
+            if current is not None:
+                cid, mid = current[0], current[1]
+                act_fav.triggered.connect(
+                    lambda: self.favorite_requested.emit(
+                        cid, mid, not getattr(current, "is_favorite", False)
+                    )
+                )
+        menu.addAction(act_fav)
+
+        act_tags = QAction(self.tr("🏷 设置标签…"), menu)
+        act_tags.setEnabled(count == 1)
+        if count == 1 and sel:
+            cid, mid = sel[0][0], sel[0][1]
+            act_tags.triggered.connect(lambda: self.tags_requested.emit(cid, mid))
+        menu.addAction(act_tags)
+
+        act_notes = QAction(self.tr("📝 设置备注…"), menu)
+        act_notes.setEnabled(count == 1)
+        if count == 1 and sel:
+            cid, mid = sel[0][0], sel[0][1]
+            act_notes.triggered.connect(lambda: self.notes_requested.emit(cid, mid))
+        menu.addAction(act_notes)
 
         menu.exec_(event.globalPos())
 

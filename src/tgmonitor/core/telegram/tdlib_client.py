@@ -1570,6 +1570,37 @@ class TdlibTelegramClient(_AiClient):
         """2026-09-08 v1.7.0:Delegate → ChannelsApi.mark_messages_read。"""
         await self.channels.mark_messages_read(channel_id, msg_ids)
 
+    async def forward_messages(
+        self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-09 v1.7.2:Delegate → ChannelsApi.forward_messages。"""
+        await self.channels.forward_messages(from_chat_id, to_chat_id, msg_ids)
+
+    async def pin_messages(
+        self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
+    ) -> None:
+        """2026-09-09 v1.7.2:Delegate → ChannelsApi.pin_messages。"""
+        await self.channels.pin_messages(channel_id, msg_ids, only_for_self=only_for_self)
+
+    async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
+        """2026-09-09 v1.7.2:Delegate → ChannelsApi.unpin_messages。"""
+        await self.channels.unpin_messages(channel_id, msg_ids)
+
+    async def add_reaction(
+        self,
+        channel_id: int,
+        msg_id: int,
+        reaction: str,
+        *,
+        is_big: bool = False,
+    ) -> None:
+        """2026-09-09 v1.7.2:Delegate → ChannelsApi.add_reaction。"""
+        await self.channels.add_reaction(channel_id, msg_id, reaction, is_big=is_big)
+
+    async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
+        """2026-09-09 v1.7.2:Delegate → ChannelsApi.remove_reaction。"""
+        await self.channels.remove_reaction(channel_id, msg_id, reaction)
+
     def subscribe_updates(self) -> UpdateStream:
         """订阅实时更新流(由 tdlib_json push);`aclose` 必调一次,否则 list 只增不减。"""
         s = _TdlibJsonUpdateStream(on_close=self._remove_stream)

@@ -619,3 +619,90 @@ async def test_delete_messages_isolates_channels_mongo(
     await mongo_repo.delete_messages(100, [50])
     assert await mongo_repo.get_message(100, 50) is None
     assert await mongo_repo.get_message(200, 50) is not None
+
+
+# ============== 2026-09-09 v1.7.2:用户元数据 parity ==============
+
+
+async def test_set_favorite_mongo(mongo_repo: MongoRepository) -> None:
+    """set_favorite(True) → get_message 读回的 is_favorite=True。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await mongo_repo.set_favorite(100, 10, True)
+    m = await mongo_repo.get_message(100, 10)
+    assert m is not None
+    assert m.is_favorite is True
+
+
+async def test_set_favorite_toggle_back_mongo(mongo_repo: MongoRepository) -> None:
+    """set_favorite(True → False) → 状态可逆。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10, is_favorite=True))
+    assert (await mongo_repo.get_message(100, 10)).is_favorite is True  # type: ignore[union-attr]
+    await mongo_repo.set_favorite(100, 10, False)
+    assert (await mongo_repo.get_message(100, 10)).is_favorite is False  # type: ignore[union-attr]
+
+
+async def test_set_tags_mongo(mongo_repo: MongoRepository) -> None:
+    """set_tags([tech, news]) → tags 列表原样读回。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await mongo_repo.set_tags(100, 10, ["tech", "news"])
+    m = await mongo_repo.get_message(100, 10)
+    assert m is not None
+    assert m.tags == ["tech", "news"]
+
+
+async def test_set_notes_mongo(mongo_repo: MongoRepository) -> None:
+    """set_notes('后续 review') → notes 文本读回。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await mongo_repo.set_notes(100, 10, "后续 review")
+    m = await mongo_repo.get_message(100, 10)
+    assert m is not None
+    assert m.notes == "后续 review"
+
+
+async def test_list_favorites_mongo(mongo_repo: MongoRepository) -> None:
+    """list_favorites → 只含 is_favorite=True 的消息。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10, is_favorite=True))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=11, is_favorite=False))
+    await mongo_repo.save_message(_mk_msg(channel_id=200, msg_id=10, is_favorite=True))
+    favs = await mongo_repo.list_favorites()
+    fav_ids = {(m.channel_id, m.telegram_msg_id) for m in favs}
+    assert (100, 10) in fav_ids
+    assert (200, 10) in fav_ids
+    assert (100, 11) not in fav_ids
+
+
+async def test_list_by_tag_mongo(mongo_repo: MongoRepository) -> None:
+    """list_by_tag('tech') → 含 'tech' 标签的全部消息。"""
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=10, tags=["tech", "news"]))
+    await mongo_repo.save_message(_mk_msg(channel_id=100, msg_id=11, tags=["music"]))
+    await mongo_repo.save_message(_mk_msg(channel_id=200, msg_id=10, tags=["tech"]))
+    hits = await mongo_repo.list_by_tag("tech")
+    hit_ids = {(m.channel_id, m.telegram_msg_id) for m in hits}
+    assert (100, 10) in hit_ids
+    assert (200, 10) in hit_ids
+    assert (100, 11) not in hit_ids
+
+
+async def test_metadata_schema_migration_preserves_old_docs_mongo(
+    mongo_repo: MongoRepository,
+) -> None:
+    """2026-09-09 v1.7.2:Mongo schema-less — 旧 doc(没 is_favorite/tags/notes)读回默认值。
+
+    直接 insert 一条没新字段的 doc,验证 .get(key, default) 兜底。
+    生产 save_message 用 int _id(自增计数),模拟此格式。
+    """
+    db = mongo_repo._db  # type: ignore[attr-defined]
+    await db.messages.insert_one(
+        {
+            "_id": 999_001,  # int,与 _doc_to_message int(d["_id"]) 对齐
+            "channel_id": 999,
+            "telegram_msg_id": 1,
+            "text": "old doc",
+            "date": datetime(2026, 9, 1, tzinfo=UTC),
+        }
+    )
+    m = await mongo_repo.get_message(999, 1)
+    assert m is not None
+    assert m.is_favorite is False
+    assert m.tags == []
+    assert m.notes == ""

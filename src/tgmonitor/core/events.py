@@ -225,6 +225,34 @@ class ExportDone(Event):
 
 
 @dataclass
+class BatchProgress(Event):
+    """2026-09-09 v1.7.2:批量操作进度 — delete / mark_read / forward / pin /
+    unpin / add_reaction / remove_reaction 共用。
+
+    `op` 用于 UI 在同一 dialog 上区分当前批量动作标题(批量删除 / 批量转发)。
+    `processed` 累加,`total` 在批量开始时一次 publish 已知值,UI 拿来算百分比。
+    """
+
+    op: str = ""
+    processed: int = 0
+    total: int = 0
+
+
+@dataclass
+class BatchDone(Event):
+    """2026-09-09 v1.7.2:批量操作完成 — 聚合结果。
+
+    `failed` 是异常隔离后失败的条数;`error` 是顶层错误(例如 AppService
+    paused 直接短路),与 `failed > 0` 不互斥(部分失败时 `error is None`)。
+    """
+
+    op: str = ""
+    succeeded: int = 0
+    failed: int = 0
+    error: str | None = None
+
+
+@dataclass
 class ErrorOccurred(Event):
     """通用错误事件 — UI 显示错误提示用。
 

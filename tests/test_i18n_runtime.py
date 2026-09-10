@@ -282,7 +282,10 @@ def test_all_tr_calls_extracted_to_ts() -> None:
     # 215 应在 200~235 之间(允许 10% 余量)
     # 2026-09-08 v1.7.0:新增 _SelectionToolbar / MessageDetail 顶部 3 按钮 /
     # ExportDialog 多选导出 hint 等 17 个新 tr(),源数 ~265;放宽上限到 275。
-    assert 180 <= ts_sources <= 275, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
+    # 2026-09-09 v1.7.2:新增 Lightbox ▶/⏸/⏯ + 快捷键帮助 + BatchProgressDialog +
+    # 转发/钉选/表情 3 工具栏按钮 + 收藏/标签/备注 3 元数据菜单项 等 ~26 个
+    # 新 tr(),源数 ~294;放宽上限到 305。
+    assert 180 <= ts_sources <= 305, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
     # 大致覆盖率
     coverage = ts_sources / max(py_tr_calls, 1)
     # 2026-09-07 v1.6.8:lupdate 对 Python 的 `self.tr(f"...{x}...")` 动态

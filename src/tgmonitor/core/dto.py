@@ -173,6 +173,11 @@ class MessageDTO:
     # updateMessageInteractionInfo.interactions.reactions[] 扁平为 `ReactionDTO` 列表。
     # None = 没推送过(老消息);空 list = 推过但已被撤回干净。
     reactions: list[ReactionDTO] | None = None
+    # 2026-09-09 v1.7.2:用户元数据 — 本地存储,不与 TG 同步。
+    # 用于 LIVE row 标识 ★ / 标签 / 备注;schema 迁移见 storage/schema.sql + 4 后端。
+    is_favorite: bool = False
+    tags: list[str] = field(default_factory=list)
+    notes: str = ""
 
     @property
     def has_media(self) -> bool:

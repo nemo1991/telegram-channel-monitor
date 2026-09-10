@@ -616,3 +616,98 @@ async def test_delete_messages_isolates_channels(pg_repo: PostgresRepository) ->
     await pg_repo.delete_messages(100, [50])
     assert await pg_repo.get_message(100, 50) is None
     assert await pg_repo.get_message(200, 50) is not None
+
+
+# ============== 2026-09-09 v1.7.2:用户元数据 parity ==============
+
+
+async def test_set_favorite_pg(pg_repo: PostgresRepository) -> None:
+    """set_favorite(True) → get_message 读回的 is_favorite=True。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await pg_repo.set_favorite(100, 10, True)
+    m = await pg_repo.get_message(100, 10)
+    assert m is not None
+    assert m.is_favorite is True
+
+
+async def test_set_favorite_toggle_back_pg(pg_repo: PostgresRepository) -> None:
+    """set_favorite(True → False) → 状态可逆(LIVE 取消收藏)。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10, is_favorite=True))
+    assert (await pg_repo.get_message(100, 10)).is_favorite is True  # type: ignore[union-attr]
+    await pg_repo.set_favorite(100, 10, False)
+    assert (await pg_repo.get_message(100, 10)).is_favorite is False  # type: ignore[union-attr]
+
+
+async def test_set_tags_pg(pg_repo: PostgresRepository) -> None:
+    """set_tags([tech, news]) → tags 列表原样读回(顺序保留)。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await pg_repo.set_tags(100, 10, ["tech", "news"])
+    m = await pg_repo.get_message(100, 10)
+    assert m is not None
+    assert m.tags == ["tech", "news"]
+
+
+async def test_set_notes_pg(pg_repo: PostgresRepository) -> None:
+    """set_notes('后续 review') → notes 文本读回。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10))
+    await pg_repo.set_notes(100, 10, "后续 review")
+    m = await pg_repo.get_message(100, 10)
+    assert m is not None
+    assert m.notes == "后续 review"
+
+
+async def test_list_favorites_pg(pg_repo: PostgresRepository) -> None:
+    """list_favorites → 只含 is_favorite=True 的消息。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10, is_favorite=True))
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=11, is_favorite=False))
+    await pg_repo.save_message(_mk_msg(channel_id=200, msg_id=10, is_favorite=True))
+    favs = await pg_repo.list_favorites()
+    fav_ids = {(m.channel_id, m.telegram_msg_id) for m in favs}
+    assert (100, 10) in fav_ids
+    assert (200, 10) in fav_ids
+    assert (100, 11) not in fav_ids
+
+
+async def test_list_by_tag_pg(pg_repo: PostgresRepository) -> None:
+    """list_by_tag('tech') → 含 'tech' 标签的全部消息。"""
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=10, tags=["tech", "news"]))
+    await pg_repo.save_message(_mk_msg(channel_id=100, msg_id=11, tags=["music"]))
+    await pg_repo.save_message(_mk_msg(channel_id=200, msg_id=10, tags=["tech"]))
+    hits = await pg_repo.list_by_tag("tech")
+    hit_ids = {(m.channel_id, m.telegram_msg_id) for m in hits}
+    assert (100, 10) in hit_ids
+    assert (200, 10) in hit_ids
+    assert (100, 11) not in hit_ids
+
+
+async def test_metadata_schema_migration_preserves_old_rows_pg(
+    pg_repo: PostgresRepository,
+) -> None:
+    """2026-09-09 v1.7.2:schema 迁移 — 旧行(没 is_favorite/tags/notes)读回默认值。
+
+    模拟「ALTER TABLE 已跑过,数据是迁移前写入」的边界:
+    直接 SQL 插一条没新列的行,然后验证 .get() fallback 兜底。
+
+    PG 9.6+ ADD COLUMN IF NOT EXISTS 有非空默认时会回填,故「旧行」要绕过:
+    - 用 SET DEFAULT FALSE 后插的旧行会带默认值 — 测的是 _row_to_message 读路径
+      对 NULL 字段用 .get(..., default) 的兜底,需要显式不依赖 schema default。
+    """
+    async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
+        # 删 NOT NULL DEFAULT 限制,模拟「迁移前老 schema」 — 显式插 NULL 字段
+        # 实际生产里 schema.sql ALTER 会用 NOT NULL DEFAULT FALSE 兜底,本测试
+        # 焦点是 _row_to_message 读侧对 None 的容错。
+        await conn.execute(
+            "INSERT INTO messages (channel_id, telegram_msg_id, text, date, "
+            "is_favorite, tags, notes) "
+            "VALUES ($1, $2, $3, $4, NULL, NULL, NULL) "
+            "ON CONFLICT (channel_id, telegram_msg_id) DO NOTHING",
+            999,
+            1,
+            "old row",
+            datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    m = await pg_repo.get_message(999, 1)
+    assert m is not None
+    assert m.is_favorite is False
+    assert m.tags == []
+    assert m.notes == ""

@@ -171,8 +171,8 @@ def test_old_pixmaps_kwarg_still_works(qt_app: QApplication) -> None:
 class _FakeMediaPlayer:
     """QMediaPlayer 接口替身 — 验证 Lightbox 调用了哪些方法。
 
-    实际播不播无关紧要,只验 .setSource / .setVideoOutput / .play / errorOccurred
-    信号挂载。
+    实际播不播无关紧要,只验 .setSource / .setVideoOutput / .play / .pause /
+    .stop / playbackState() / errorOccurred 信号挂载。
     """
 
     instances: list[_FakeMediaPlayer] = []
@@ -183,8 +183,12 @@ class _FakeMediaPlayer:
         self.source_url = None
         self.error_signal_connect_count = 0
         self.play_called = False
+        self.pause_called = False
         self.stop_called = False
         self.set_source_empty_called = False
+        # 2026-09-09 v1.7.2:Lightbox `_is_playing_now` 走 playbackState()
+        # — fake 默认 Stopped,首次 play() 后切 PlayingState。
+        self._is_playing = False
         _FakeMediaPlayer.instances.append(self)
 
     def setVideoOutput(self, widget):  # noqa: N802 — Qt API 命名
@@ -198,9 +202,19 @@ class _FakeMediaPlayer:
 
     def play(self) -> None:
         self.play_called = True
+        self._is_playing = True
+
+    def pause(self) -> None:
+        self.pause_called = True
+        self._is_playing = False
 
     def stop(self) -> None:
         self.stop_called = True
+        self._is_playing = False
+
+    def playbackState(self) -> int:  # noqa: N802 — Qt API 命名
+        # v1.7.2:Lightbox 读 .playbackState() 与 PlayingState 比较。
+        return 1 if self._is_playing else 0
 
     @property
     def errorOccurred(self):  # noqa: N802 — Qt signal property

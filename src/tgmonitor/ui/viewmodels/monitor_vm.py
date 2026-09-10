@@ -22,6 +22,8 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.events import (
+    BatchDone,
+    BatchProgress,
     ChannelSubscribed,
     ChannelSyncDone,
     ChannelSyncProgress,
@@ -104,6 +106,10 @@ class MonitorViewModel(QObject):
     media_retried = Signal(object)  # MediaRetried 转发
     media_deleted = Signal(object)  # MediaDeleted 转发
     media_reconcile_done = Signal(object)  # MediaReconcileFinished 转发
+    # 2026-09-09 v1.7.2:批量操作进度/完成 — payload BatchProgress / BatchDone。
+    # MainWindow 接到 → BatchProgressDialog 进度更新 / accept。
+    batch_progress = Signal(object)
+    batch_done = Signal(object)
     # 按频道批量删除完成(2026-08-25 PR #4)— payload (channel_id, deleted_count)
     channel_cleared = Signal(int, int)
     # 缩略图加载完成(2026-08-25 PR #1)— payload (channel_id, telegram_msg_id,
@@ -172,6 +178,10 @@ class MonitorViewModel(QObject):
         # 2026-08-30 v1.5.0 PR #A3:导出进度订阅 — ExportService 每页写完
         # 发一次,UI 侧 ExportProgressDialog 接到 signal 刷新 QProgressBar。
         b.subscribe(ExportProgress, self._on_export_progress)
+        # 2026-09-09 v1.7.2:批量操作进度 / 完成 — AppService emit,
+        # MainWindow 接到 signal 后 BatchProgressDialog 刷新进度。
+        b.subscribe(BatchProgress, self._on_batch_progress)
+        b.subscribe(BatchDone, self._on_batch_done)
         b.subscribe(ErrorOccurred, self._on_error)
         b.subscribe(SettingsChanged, self._on_settings_changed)
         b.subscribe(ChannelSyncProgress, self._on_sync_progress)
@@ -298,6 +308,24 @@ class MonitorViewModel(QObject):
         if not isinstance(e, ExportProgress):
             return
         self.export_progress.emit(e)
+
+    async def _on_batch_progress(self, e: Event) -> None:
+        """2026-09-09 v1.7.2:转发 AppService batch 进度 → Qt signal。
+
+        MainWindow 接到 → BatchProgressDialog 进度条 + 状态标签更新。
+        """
+        if not isinstance(e, BatchProgress):
+            return
+        self.batch_progress.emit(e)
+
+    async def _on_batch_done(self, e: Event) -> None:
+        """2026-09-09 v1.7.2:转发 AppService batch 完成 → Qt signal。
+
+        MainWindow 接到 → BatchProgressDialog 收尾(accept / 标完成)。
+        """
+        if not isinstance(e, BatchDone):
+            return
+        self.batch_done.emit(e)
 
     async def _on_error(self, e: Event) -> None:
         if not isinstance(e, ErrorOccurred):

@@ -105,6 +105,26 @@ QMainWindow {
 #selectionDeleteBtn:pressed {
     background: #3a2828;
 }
+/* 2026-09-09 v1.7.2:批量操作进度对话框(暗色主题)。 */
+QDialog#batchProgressDialog {
+    background: #1e1e2e;
+}
+QProgressBar#batchProgressBar {
+    border: 1px solid #3a3a4e;
+    border-radius: 4px;
+    background: #2a2a3e;
+    text-align: center;
+    color: #e0e0e0;
+    height: 16px;
+}
+QProgressBar#batchProgressBar::chunk {
+    background: #5a9fea;
+    border-radius: 3px;
+}
+QLabel#favoriteStarLabel {
+    color: #f0c040;
+    font-weight: bold;
+}
 #detailActionBtn {
     padding: 4px 12px;
     border: 1px solid #353550;

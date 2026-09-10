@@ -179,6 +179,11 @@ class LightboxDialog(QDialog):
         # 2026-09-04 v1.6.7:MP4 媒体播放状态
         self._player: QMediaPlayer | None = None
         self._video_widget: QVideoWidget | None = None
+        # 2026-09-09 v1.7.2:幻灯片自动播放 — QTimer 5s 触发 _step_index(+1)。
+        self._slideshow_timer = QTimer(self)
+        self._slideshow_timer.setInterval(5000)
+        self._slideshow_timer.timeout.connect(lambda: self._step_index(+1))
+        self._slideshow_active = False
         self._video_tmp_path: str | None = None  # stage 的 tmpfile 路径,closeEvent unlink
         self._fallback_fn = fallback_fn
         # v1.6.10:save-as 用 — bytes(单图) / list[bytes](多图) / None(不可保存)
@@ -277,6 +282,8 @@ class LightboxDialog(QDialog):
             self._current_data = None
 
         item = self._all_items[self._idx]
+        # 2026-09-09 v1.7.2:记录当前 kind — play/pause 按钮按 kind 路由到 QMovie / QMediaPlayer。
+        self._current_kind = item.kind
         if item.kind == "image" and item.pixmap is not None:
             self._render_image(item.pixmap)
         elif item.kind == "gif" and item.animated:
@@ -285,6 +292,7 @@ class LightboxDialog(QDialog):
             self._render_video(item.video)
         else:
             # 空 item / 全部 None
+            self._current_kind = ""
             self._canvas.setPixmap(QPixmap())
             # 2026-09-07 v1.6.8:英文 fallback 文本走 tr()。
             self._canvas.setText(self.tr("(image unavailable)"))
@@ -292,6 +300,9 @@ class LightboxDialog(QDialog):
 
         # v1.6.10:按当前 kind / data 启灰工具栏按钮
         self._update_button_states()
+        # 2026-09-09 v1.7.2:刷新 ▶/⏸ 按钮图标(切图后状态可能变)。
+        if hasattr(self, "_btn_play_pause"):
+            self._update_play_pause_button()
 
     def _render_image(self, pix: QPixmap) -> None:
         """静态图路径 — 与 v1.5.0 PR #A8 完全一致。"""
@@ -481,6 +492,9 @@ class LightboxDialog(QDialog):
             self._video_widget.setParent(None)
             self._video_widget.deleteLater()
             self._video_widget = None
+        # 2026-09-09 v1.7.2:切图 / 关闭前停幻灯片 timer,防 close 后 timer 仍 firing。
+        if self._slideshow_active:
+            self._slideshow_timer.stop()
 
     def _stage_video_tmp(self, data: bytes) -> str | None:
         """MP4 bytes → 临时文件路径。closeEvent 调 `_unlink_staged_video` 清理。
@@ -515,7 +529,7 @@ class LightboxDialog(QDialog):
     # ---- 键盘事件 ----
 
     def keyPressEvent(self, event: QKeyEvent | None) -> None:  # noqa: N802 — Qt API
-        """Esc 关闭 / 左右切上一张下一张。"""
+        """Esc 关闭 / 左右切上一张下一张 / Space 播放暂停 / S 幻灯片 / ? 帮助。"""
         if event is None:
             # Qt 总传非 None event,此分支为 type-narrowing 防御
             return
@@ -530,15 +544,90 @@ class LightboxDialog(QDialog):
             if key == Qt.Key_Left or key == Qt.Key_Up:
                 self._step_index(-1)
                 return
+        # 2026-09-09 v1.7.2:Space 播放 / 暂停(GIF + MP4),S 切幻灯片,? / F1 帮助。
+        if key == Qt.Key_Space:
+            self._toggle_play_pause()
+            return
+        if key == Qt.Key_S:
+            self._btn_slideshow.toggle()
+            return
+        if key in (Qt.Key_Question, Qt.Key_F1):
+            self._show_shortcut_help()
+            return
         super().keyPressEvent(event)
 
     def _step_index(self, delta: int) -> None:
-        """wrap-around 切换索引:首尾连成环。"""
+        """wrap-around 切换索引:首尾连成环。手动切换时若幻灯片激活,reset timer。"""
         n = len(self._all_items)
         self._idx = (self._idx + delta) % n
         self._zoom = 1.0  # 切图时重置缩放,体感更清晰
         self._rotation = 0  # v1.6.10:切图时旋转归零
         self._render_current()
+        # 2026-09-09 v1.7.2:手动切图 reset 幻灯片 timer(避免刚切完立刻又被 timer 切)。
+        if self._slideshow_active:
+            self._slideshow_timer.start()
+
+    # ---- v1.7.2 播放 / 幻灯片 / 帮助 ----
+
+    def _toggle_play_pause(self) -> None:
+        """▶/⏸ 切换 — GIF 走 QMovie.setPaused,MP4 走 QMediaPlayer.play/pause。"""
+        kind = getattr(self, "_current_kind", "")
+        if kind == "gif" and self._movie is not None:
+            if self._movie.state() == QMovie.MovieState.Running:
+                self._movie.setPaused(True)
+            else:
+                self._movie.setPaused(False)
+        elif kind == "video" and self._player is not None:
+            state = self._player.playbackState()
+            # 1 = QMediaPlayer.PlaybackState.PlayingState — 用整数避免引用
+            # 测试 fake 不一定实现的 QMediaPlayer.PlaybackState 类属性。
+            if state == 1:
+                self._player.pause()
+            else:
+                self._player.play()
+        self._update_play_pause_button()
+
+    def _update_play_pause_button(self) -> None:
+        """同步 ▶ / ⏸ 图标到当前播放状态。"""
+        label = "⏸" if self._is_playing_now() else "▶"
+        self._btn_play_pause.setText(label)
+
+    def _is_playing_now(self) -> bool:
+        """当前媒体是否在播放(GIF / video 都算)。"""
+        kind = getattr(self, "_current_kind", "")
+        if kind == "gif" and self._movie is not None:
+            return self._movie.state() == QMovie.MovieState.Running
+        if kind == "video" and self._player is not None:
+            # 1 = QMediaPlayer.PlaybackState.PlayingState(整数比较避免 fake 不实现常量类)
+            return self._player.playbackState() == 1
+        return False
+
+    def _toggle_slideshow(self, checked: bool) -> None:
+        """⏯ 切幻灯片 — check=True 启动 timer,False 停止。"""
+        self._slideshow_active = checked
+        if checked:
+            self._slideshow_timer.start()
+        else:
+            self._slideshow_timer.stop()
+
+    def _show_shortcut_help(self) -> None:
+        """2026-09-09 v1.7.2:快捷键帮助弹层 — modal QDialog + QLabel 列所有快捷键。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.tr("快捷键帮助"))
+        layout = QVBoxLayout(dlg)
+        text = self.tr(
+            "Esc          关闭\n"
+            "← / →        上一张 / 下一张\n"
+            "Space        播放 / 暂停(GIF / 视频)\n"
+            "S            切换幻灯片自动播放\n"
+            "? / F1       显示此帮助\n"
+            "双击         全屏切换\n"
+            "滚轮         缩放"
+        )
+        label = QLabel(text)
+        label.setStyleSheet("font-family: monospace; font-size: 13px;")
+        layout.addWidget(label)
+        dlg.exec()
 
     # ---- 滚轮缩放 ----
 
@@ -616,6 +705,11 @@ class LightboxDialog(QDialog):
         self._btn_zoom_out = self._make_btn("−", self.tr("缩小"))
         self._btn_zoom_in = self._make_btn("＋", self.tr("放大"))
         self._btn_rotate = self._make_btn("⟳", self.tr("旋转 90°"))
+        # 2026-09-09 v1.7.2:▶/⏸ 按钮 — gif / video 播放切换。
+        self._btn_play_pause = self._make_btn("▶", self.tr("播放/暂停"))
+        # 2026-09-09 v1.7.2:⏯ 幻灯片切换(checkable)。
+        self._btn_slideshow = self._make_btn("⏯", self.tr("幻灯片"))
+        self._btn_slideshow.setCheckable(True)
         self._btn_save = self._make_btn("⤓", self.tr("另存为…"))
         self._btn_close = self._make_btn("✕", self.tr("关闭"))
 
@@ -626,6 +720,9 @@ class LightboxDialog(QDialog):
         bar.addWidget(self._btn_zoom_in)
         bar.addSpacing(16)
         bar.addWidget(self._btn_rotate)
+        bar.addWidget(self._btn_play_pause)
+        bar.addWidget(self._btn_slideshow)
+        bar.addSpacing(16)
         bar.addWidget(self._btn_save)
         bar.addWidget(self._btn_close)
 
@@ -634,6 +731,8 @@ class LightboxDialog(QDialog):
         self._btn_zoom_out.clicked.connect(self._zoom_out)
         self._btn_zoom_in.clicked.connect(self._zoom_in)
         self._btn_rotate.clicked.connect(self._rotate_90)
+        self._btn_play_pause.clicked.connect(self._toggle_play_pause)
+        self._btn_slideshow.toggled.connect(self._toggle_slideshow)
         self._btn_save.clicked.connect(self._save_current)
         self._btn_close.clicked.connect(self.accept)
 

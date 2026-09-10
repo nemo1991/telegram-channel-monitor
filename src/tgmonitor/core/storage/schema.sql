@@ -61,6 +61,13 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned        BOOLEAN NOT NULL 
 -- 清空(与 None 区分 → None 表示从未推送过)。
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB;
 
+-- 2026-09-09 v1.7.2:用户元数据 — 本地存储,不与 TG 同步。
+-- is_favorite 单 bool;tags 用 TEXT[] 支持 contains 查询;notes 单行文本。
+-- IF NOT EXISTS 幂等,旧库自动迁移。
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS tags        TEXT[]    NOT NULL DEFAULT '{}';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS notes       TEXT      NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date
     ON messages (channel_id, date);
 

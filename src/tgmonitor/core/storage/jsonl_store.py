@@ -65,6 +65,10 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
         # 2026-08-27 v1.4.0 PR #10:reactions 列表 → dict 列表;
         # None 不写 key(老 jsonl 兼容),[] 写空 list(语义:已推送过但当前空)。
         "reactions": ([r.to_dict() for r in m.reactions] if m.reactions is not None else None),
+        # 2026-09-09 v1.7.2:用户元数据(老 jsonl 文件无这些 key,读时兜底)。
+        "is_favorite": m.is_favorite,
+        "tags": m.tags,
+        "notes": m.notes,
         "media": [
             {
                 "type": med.type.value,
@@ -149,6 +153,10 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         ),
         media=media,
         raw=d.get("raw"),
+        # 2026-09-09 v1.7.2:用户元数据 — 旧 jsonl 文件 `.get` 兜底。
+        is_favorite=bool(d.get("is_favorite", False)),
+        tags=list(d.get("tags") or []),
+        notes=d.get("notes") or "",
     )
 
 
@@ -329,6 +337,78 @@ class JsonlFileStore(StorageRepository):
     async def ping(self) -> bool:
         """轻量探活:仅查 root 目录是否存在。"""
         return self._root.exists()
+
+    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:单条设 `is_favorite`。走 read-modify-write。"""
+        async with self._write_lock:
+            msg = await self.get_message(channel_id, telegram_msg_id)
+            if msg is None:
+                return
+            msg.is_favorite = value
+            cf = await self._file_for(channel_id)
+            idx = cf.index.get(telegram_msg_id)
+            if idx is None:
+                return
+            cf.rows[idx] = _message_to_dict(msg)
+            await cf.flush()
+
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `tags`。"""
+        async with self._write_lock:
+            msg = await self.get_message(channel_id, telegram_msg_id)
+            if msg is None:
+                return
+            msg.tags = list(tags)
+            cf = await self._file_for(channel_id)
+            idx = cf.index.get(telegram_msg_id)
+            if idx is None:
+                return
+            cf.rows[idx] = _message_to_dict(msg)
+            await cf.flush()
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `notes`。"""
+        async with self._write_lock:
+            msg = await self.get_message(channel_id, telegram_msg_id)
+            if msg is None:
+                return
+            msg.notes = notes
+            cf = await self._file_for(channel_id)
+            idx = cf.index.get(telegram_msg_id)
+            if idx is None:
+                return
+            cf.rows[idx] = _message_to_dict(msg)
+            await cf.flush()
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:列所有 `is_favorite=True` 消息,按 date DESC。"""
+        result: list[MessageDTO] = []
+        for _cid, cf in self._files.items():
+            for r in cf.rows:
+                try:
+                    d = _dict_to_message(r)
+                except Exception:  # noqa: BLE001
+                    continue
+                if d.is_favorite:
+                    result.append(d)
+        result.sort(key=lambda m: m.date, reverse=True)
+        return result
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询,按 date DESC。"""
+        result: list[MessageDTO] = []
+        for _cid, cf in self._files.items():
+            for r in cf.rows:
+                try:
+                    d = _dict_to_message(r)
+                except Exception:  # noqa: BLE001
+                    continue
+                if tag in d.tags:
+                    result.append(d)
+        result.sort(key=lambda m: m.date, reverse=True)
+        return result
 
     # ---- 频道 ----
 

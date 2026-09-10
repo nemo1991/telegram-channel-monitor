@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -589,6 +590,10 @@ class MainWindow(QMainWindow):
         self.live_view.export_requested.connect(self._on_live_export)
         self.live_view.delete_requested.connect(self._on_live_delete)
         self.live_view.mark_read_requested.connect(self._on_live_mark_read)
+        # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
+        self.live_view.favorite_requested.connect(self._on_live_favorite)
+        self.live_view.tags_requested.connect(self._on_live_tags)
+        self.live_view.notes_requested.connect(self._on_live_notes)
         self._selection_toolbar.export_clicked.connect(
             lambda: self._on_live_export(self._last_live_selection)
         )
@@ -597,6 +602,16 @@ class MainWindow(QMainWindow):
         )
         self._selection_toolbar.mark_read_clicked.connect(
             lambda: self._on_live_mark_read(self._last_live_selection)
+        )
+        # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
+        self._selection_toolbar.forward_clicked.connect(
+            lambda: self._on_live_forward(self._last_live_selection)
+        )
+        self._selection_toolbar.pin_clicked.connect(
+            lambda: self._on_live_pin(self._last_live_selection)
+        )
+        self._selection_toolbar.react_clicked.connect(
+            lambda: self._on_live_react(self._last_live_selection)
         )
         self._selection_toolbar.clear_clicked.connect(self.live_view.clear_selection)
         # 详情顶部 3 按钮 — 单条操作入口
@@ -1021,10 +1036,19 @@ class MainWindow(QMainWindow):
         """批量删 — `AppService.delete_messages_batch` 返成功数。
 
         通过 VM.publish_threadsafe 走 async loop,UI 不阻塞。
+        2026-09-09 v1.7.2:加 BatchProgressDialog 显示进度。
         """
         if not items:
             return
+        self._show_batch_progress_dialog("delete")
         run_coro(self.loop, self.app.delete_messages_batch(items), error_label="live_delete")
+
+    def _run_live_mark_read_guarded(self, items: list[tuple[int, int]]) -> None:
+        """2026-09-09 v1.7.2:批量标已读带 BatchProgressDialog 包装。"""
+        if not items:
+            return
+        self._show_batch_progress_dialog("mark_read")
+        run_coro(self.loop, self.app.mark_messages_read(items), error_label="live_mark_read")
 
     def _run_live_mark_read(self, items: list[tuple[int, int]]) -> None:
         """批量标已读 — `AppService.mark_messages_read` 返成功条数。
@@ -1034,6 +1058,138 @@ class MainWindow(QMainWindow):
         if not items:
             return
         run_coro(self.loop, self.app.mark_messages_read(items), error_label="live_mark_read")
+
+    def _run_live_forward(self, items: list[tuple[int, int]], to_chat_id: int) -> None:
+        """2026-09-09 v1.7.2:批量转发 — `AppService.forward_messages`。
+        配合 `_show_batch_progress_dialog` 在 LIVE 选多条 → 转发到… →
+        弹目标频道选择 → 触发本方法。
+        """
+        if not items:
+            return
+        self._show_batch_progress_dialog("forward")
+        run_coro(
+            self.loop, self.app.forward_messages(items, to_chat_id), error_label="live_forward"
+        )
+
+    def _run_live_pin(self, items: list[tuple[int, int]]) -> None:
+        """2026-09-09 v1.7.2:批量钉选。"""
+        if not items:
+            return
+        self._show_batch_progress_dialog("pin")
+        run_coro(self.loop, self.app.pin_messages(items), error_label="live_pin")
+
+    def _run_live_react(self, items: list[tuple[int, int]], emoji: str) -> None:
+        """2026-09-09 v1.7.2:批量 emoji 回应。"""
+        if not items or not emoji:
+            return
+        self._show_batch_progress_dialog("react")
+        run_coro(self.loop, self.app.add_reaction(items, emoji), error_label="live_react")
+
+    def _show_batch_progress_dialog(self, op: str) -> None:
+        """2026-09-09 v1.7.2:构造 + show 非模态 BatchProgressDialog,
+        VM signal 驱动进度。`op` 用于标题(`forward` / `pin` / `react` 等)。
+
+        无返回 — 调用方 fire-and-forget,VM `batch_done` signal 触发
+        `dialog.accept()` 收尾。
+        """
+        from tgmonitor.ui.widgets.batch_progress_dialog import BatchProgressDialog
+
+        dlg = BatchProgressDialog(self._vm, op=op, parent=self)
+        dlg.show()
+
+    def _on_live_forward(self, items: list) -> None:
+        """2026-09-09 v1.7.2:批量转发入口 — 弹目标频道选择 dialog,接收 ID 后转发。"""
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        # 用 QInputDialog 让用户输入目标 chat_id(简单方案;
+        # v1.7.3 升级为 channel list picker)。
+        cid_text, ok = QInputDialog.getText(
+            self,
+            self.tr("转发到…"),
+            self.tr("目标频道 chat_id(整数):"),
+        )
+        if not ok or not cid_text.strip():
+            return
+        try:
+            to_cid = int(cid_text.strip())
+        except ValueError:
+            QMessageBox.warning(self, self.tr("无效输入"), self.tr("chat_id 必须是整数。"))
+            return
+        self._run_live_forward(normalized, to_cid)
+        self.live_view.clear_selection()
+
+    def _on_live_pin(self, items: list) -> None:
+        """2026-09-09 v1.7.2:批量钉选入口 — 直接转发(无需弹额外对话框)。"""
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        self._run_live_pin(normalized)
+        self.live_view.clear_selection()
+
+    def _on_live_react(self, items: list) -> None:
+        """2026-09-09 v1.7.2:批量 emoji 回应入口 — 弹 QInputDialog 输入 emoji 字符。
+
+        v1.7.2 走方案 A(QInputDialog.getText);v1.7.3 升级 grid picker。
+        """
+        normalized = _normalize_selection_items(items)
+        if not normalized:
+            return
+        emoji, ok = QInputDialog.getText(
+            self,
+            self.tr("表情回应…"),
+            self.tr("输入 emoji 字符(如 🔥、👍、❤️):"),
+        )
+        if not ok or not emoji.strip():
+            return
+        self._run_live_react(normalized, emoji.strip())
+        self.live_view.clear_selection()
+
+    def _on_live_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:右键菜单 ★ 触发 → 调 AppService.set_favorite。
+
+        `value` 由右键菜单根据当前 is_favorite 翻转传进来(选中=False → 传 True)。
+        """
+        run_coro(
+            self.loop,
+            self.app.set_favorite(channel_id, telegram_msg_id, value),
+            error_label="live_favorite",
+        )
+
+    def _on_live_tags(self, channel_id: int, telegram_msg_id: int) -> None:
+        """2026-09-09 v1.7.2:右键菜单 🏷 触发 → 弹 tag 输入 → 调 AppService.set_tags。
+
+        逗号 / 空格分隔多个 tag;空白过滤。
+        """
+        text, ok = QInputDialog.getText(
+            self,
+            self.tr("设置标签"),
+            self.tr("输入标签(逗号或空格分隔,如 tech, news):"),
+        )
+        if not ok:
+            return
+        tags = [t.strip() for t in text.replace(",", " ").split() if t.strip()]
+        run_coro(
+            self.loop,
+            self.app.set_tags(channel_id, telegram_msg_id, tags),
+            error_label="live_tags",
+        )
+
+    def _on_live_notes(self, channel_id: int, telegram_msg_id: int) -> None:
+        """2026-09-09 v1.7.2:右键菜单 📝 触发 → 多行输入框 → 调 AppService.set_notes。"""
+        # 用 QInputDialog.getMultiLineText 替代单行输入 — 备注通常多行。
+        text, ok = QInputDialog.getMultiLineText(
+            self,
+            self.tr("设置备注"),
+            self.tr("为本条消息添加备注(支持多行):"),
+        )
+        if not ok:
+            return
+        run_coro(
+            self.loop,
+            self.app.set_notes(channel_id, telegram_msg_id, text),
+            error_label="live_notes",
+        )
 
     def _copy_current_message_text(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
@@ -1867,6 +2023,10 @@ class _SelectionToolbar(QWidget):
     clear_clicked = Signal()
     select_all_clicked = Signal()
     invert_clicked = Signal()
+    # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
+    forward_clicked = Signal()
+    pin_clicked = Signal()
+    react_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1915,6 +2075,22 @@ class _SelectionToolbar(QWidget):
         self._btn_delete.setObjectName("selectionDeleteBtn")
         self._btn_delete.clicked.connect(self.delete_clicked.emit)
         hbox.addWidget(self._btn_delete)
+
+        # 2026-09-09 v1.7.2:新增批量动作 — 转发 / 钉选 / 表情回应。
+        self._btn_forward = QPushButton(self.tr("📤 转发到…"))
+        self._btn_forward.setObjectName("selectionActionBtn")
+        self._btn_forward.clicked.connect(self.forward_clicked.emit)
+        hbox.addWidget(self._btn_forward)
+
+        self._btn_pin = QPushButton(self.tr("📌 钉选"))
+        self._btn_pin.setObjectName("selectionActionBtn")
+        self._btn_pin.clicked.connect(self.pin_clicked.emit)
+        hbox.addWidget(self._btn_pin)
+
+        self._btn_react = QPushButton(self.tr("😀 表情回应…"))
+        self._btn_react.setObjectName("selectionActionBtn")
+        self._btn_react.clicked.connect(self.react_clicked.emit)
+        hbox.addWidget(self._btn_react)
 
     def set_count(self, n: int) -> None:
         """更新计数 label — 由 `_on_live_selection_messages` 调。

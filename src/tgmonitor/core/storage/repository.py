@@ -268,6 +268,33 @@ class StorageRepository(ABC):
         """
         ...
 
+    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+    @abstractmethod
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """单条消息设收藏 — 不存在消息 idempotent no-op(消息撤回后被 set 不报错)。"""
+        ...
+
+    @abstractmethod
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """单条消息覆盖式设标签列表(空 list 即清空)。idempotent 同上。"""
+        ...
+
+    @abstractmethod
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """单条消息覆盖式设备注(空串即清空)。idempotent 同上。"""
+        ...
+
+    @abstractmethod
+    async def list_favorites(self) -> list[MessageDTO]:
+        """列所有 `is_favorite=True` 的消息 — 跨频道,按 date DESC。"""
+        ...
+
+    @abstractmethod
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """按 `tag` 查消息(标签精确匹配) — 跨频道,按 date DESC。"""
+        ...
+
     # ---- 互动增量(2026-08-27 v1.4.0 PR #10) ----
 
     @abstractmethod

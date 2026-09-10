@@ -165,6 +165,37 @@ class UnconfiguredTelegramClient(TelegramClient):
         """
         return None
 
+    async def forward_messages(
+        self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-09 v1.7.2:无凭据 no-op(Protocol 完整性 + paused 兜底)。"""
+        return None
+
+    async def pin_messages(
+        self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
+    ) -> None:
+        """2026-09-09 v1.7.2:无凭据 no-op。"""
+        return None
+
+    async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
+        """2026-09-09 v1.7.2:无凭据 no-op。"""
+        return None
+
+    async def add_reaction(
+        self,
+        channel_id: int,
+        msg_id: int,
+        reaction: str,
+        *,
+        is_big: bool = False,
+    ) -> None:
+        """2026-09-09 v1.7.2:无凭据 no-op。"""
+        return None
+
+    async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
+        """2026-09-09 v1.7.2:无凭据 no-op。"""
+        return None
+
     async def iter_chat_history(
         self,
         channel_id: int,

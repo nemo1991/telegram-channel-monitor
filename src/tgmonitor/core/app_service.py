@@ -58,10 +58,13 @@ from tgmonitor.core.dto import (
     SyncResult,
 )
 from tgmonitor.core.events import (
+    BatchDone,
+    BatchProgress,
     ErrorOccurred,
     EventBus,
     MediaDownloaded,
     MediaRetried,
+    MessageEdited,
     MonitoringPaused,
     MonitoringResumed,
     SettingsChanged,
@@ -559,11 +562,19 @@ class AppService:
 
         返成功条数(失败的保持原样 + log,UI 可重试)。每条成功都 publish
         MessageDeleted 事件 → LIVE view remove_row 自动刷新。
+
+        2026-09-09 v1.7.2:加 BatchProgress / BatchDone 进度事件 —
+        MainWindow 据此驱动 BatchProgressDialog 进度条 + 收尾。
         """
         if not items:
             return 0
         assert self.monitor is not None
-        return await self.monitor.delete_messages(items)
+        await self.bus.publish(BatchProgress(op="delete", processed=0, total=len(items)))
+        deleted = await self.monitor.delete_messages(items)
+        await self.bus.publish(
+            BatchDone(op="delete", succeeded=deleted, failed=len(items) - deleted)
+        )
+        return deleted
 
     async def mark_messages_read(self, items: list[tuple[int, int]]) -> int:
         """2026-09-08 v1.7.0:批量标已读 — 走 TG client.viewMessages。
@@ -585,9 +596,187 @@ class AppService:
             try:
                 await self.client.mark_messages_read(cid, msg_ids)
                 success += len(msg_ids)
+                await self.bus.publish(
+                    BatchProgress(op="mark_read", processed=success, total=len(items))
+                )
             except Exception:  # noqa: BLE001
                 log.exception("mark_messages_read(cid=%s) failed", cid)
+        await self.bus.publish(
+            BatchDone(op="mark_read", succeeded=success, failed=len(items) - success)
+        )
         return success
+
+    async def forward_messages(self, items: list[tuple[int, int]], to_chat_id: int) -> int:
+        """2026-09-09 v1.7.2:批量转发 — 走 TG client.forwardMessages。
+
+        `items` 是 `(from_cid, mid)` 对;按 from_cid group,各走
+        `_chunks(mids, 100)`(TDLib `forwardMessages` 上限)。paused 返 0。
+        """
+        if not items:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.forward_messages: client paused, skip %d items", len(items))
+            return 0
+        by_cid: dict[int, list[int]] = {}
+        for cid, mid in items:
+            by_cid.setdefault(cid, []).append(mid)
+        success = 0
+        for from_cid, mids in by_cid.items():
+            for chunk in _chunks(mids, 100):
+                try:
+                    await self.client.forward_messages(from_cid, to_chat_id, chunk)
+                    success += len(chunk)
+                    await self.bus.publish(
+                        BatchProgress(op="forward", processed=success, total=len(items))
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
+                    )
+        await self.bus.publish(
+            BatchDone(op="forward", succeeded=success, failed=len(items) - success)
+        )
+        return success
+
+    async def pin_messages(self, items: list[tuple[int, int]]) -> int:
+        """2026-09-09 v1.7.2:批量钉选 — 走 TG client.pinMessages(per-cid,per-msg)。
+
+        TDLib `pinChatMessage` 一次一条;按 cid group 减少 RPC 调用次数。
+        """
+        if not items:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.pin_messages: client paused, skip %d items", len(items))
+            return 0
+        by_cid: dict[int, list[int]] = {}
+        for cid, mid in items:
+            by_cid.setdefault(cid, []).append(mid)
+        success = 0
+        for cid, msg_ids in by_cid.items():
+            try:
+                await self.client.pin_messages(cid, msg_ids)
+                success += len(msg_ids)
+                await self.bus.publish(BatchProgress(op="pin", processed=success, total=len(items)))
+            except Exception:  # noqa: BLE001
+                log.exception("pin_messages(cid=%s) failed", cid)
+        await self.bus.publish(BatchDone(op="pin", succeeded=success, failed=len(items) - success))
+        return success
+
+    async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
+        """2026-09-09 v1.7.2:批量取消钉选 — 走 TG client.unpinMessages。"""
+        if not items:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.unpin_messages: client paused, skip %d items", len(items))
+            return 0
+        by_cid: dict[int, list[int]] = {}
+        for cid, mid in items:
+            by_cid.setdefault(cid, []).append(mid)
+        success = 0
+        for cid, msg_ids in by_cid.items():
+            try:
+                await self.client.unpin_messages(cid, msg_ids)
+                success += len(msg_ids)
+                await self.bus.publish(
+                    BatchProgress(op="unpin", processed=success, total=len(items))
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("unpin_messages(cid=%s) failed", cid)
+        await self.bus.publish(
+            BatchDone(op="unpin", succeeded=success, failed=len(items) - success)
+        )
+        return success
+
+    async def add_reaction(
+        self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
+    ) -> int:
+        """2026-09-09 v1.7.2:批量 emoji 回应 — 走 TG client.add_reaction(per-msg)。
+
+        TDLib `addMessageReaction` 一次一条;按 cid group 仅做日志可读性,
+        实际调用仍是 per-msg(异常隔离粒度到单条)。
+        """
+        if not items or not emoji:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.add_reaction: client paused, skip %d items", len(items))
+            return 0
+        success = 0
+        for cid, mid in items:
+            try:
+                await self.client.add_reaction(cid, mid, emoji, is_big=is_big)
+                success += 1
+                await self.bus.publish(
+                    BatchProgress(op="react", processed=success, total=len(items))
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
+        await self.bus.publish(
+            BatchDone(op="react", succeeded=success, failed=len(items) - success)
+        )
+        return success
+
+    async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
+        """2026-09-09 v1.7.2:批量取消 emoji 回应 — 走 TG client.remove_reaction。"""
+        if not items or not emoji:
+            return 0
+        if self._is_paused:
+            log.warning("AppService.remove_reaction: client paused, skip %d items", len(items))
+            return 0
+        success = 0
+        for cid, mid in items:
+            try:
+                await self.client.remove_reaction(cid, mid, emoji)
+                success += 1
+                await self.bus.publish(
+                    BatchProgress(op="unreact", processed=success, total=len(items))
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
+        await self.bus.publish(
+            BatchDone(op="unreact", succeeded=success, failed=len(items) - success)
+        )
+        return success
+
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:单条消息设收藏 — 写本地 storage + publish MessageEdited。
+
+        `MessageEdited` 触发 VM 走 row refresh,UI LIVE 行首添加/移除 ★ icon。
+        """
+        await self._storage.set_favorite(channel_id, telegram_msg_id, value)
+        try:
+            msg = await self._storage.get_message(channel_id, telegram_msg_id)
+        except Exception:  # noqa: BLE001
+            msg = None
+        if msg is not None:
+            await self.bus.publish(MessageEdited(message=msg))
+
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """2026-09-09 v1.7.2:单条消息设标签 — 写本地 storage + publish MessageEdited。"""
+        await self._storage.set_tags(channel_id, telegram_msg_id, tags)
+        try:
+            msg = await self._storage.get_message(channel_id, telegram_msg_id)
+        except Exception:  # noqa: BLE001
+            msg = None
+        if msg is not None:
+            await self.bus.publish(MessageEdited(message=msg))
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """2026-09-09 v1.7.2:单条消息设备注 — 写本地 storage + publish MessageEdited。"""
+        await self._storage.set_notes(channel_id, telegram_msg_id, notes)
+        try:
+            msg = await self._storage.get_message(channel_id, telegram_msg_id)
+        except Exception:  # noqa: BLE001
+            msg = None
+        if msg is not None:
+            await self.bus.publish(MessageEdited(message=msg))
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:列出所有收藏消息 — 走 storage.list_favorites。"""
+        return await self._storage.list_favorites()
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:按标签查消息 — 走 storage.list_by_tag。"""
+        return await self._storage.list_by_tag(tag)
 
     async def retry_media(
         self,
@@ -1004,3 +1193,14 @@ def _what_label(diff: SettingsDiff) -> str:
     if diff.client_changed:
         return "client"
     return "credentials"
+
+
+def _chunks(items: list[int], size: int) -> list[list[int]]:
+    """2026-09-09 v1.7.2:把 list 切成 ≤size 的连续子列表(forwardMessages 上限 100)。
+
+    保序、均匀(`size` 不变,最后一片可能 < size)。
+    空 list 返 `[]`(不返 `[[]]`)。
+    """
+    if not items:
+        return []
+    return [items[i : i + size] for i in range(0, len(items), size)]

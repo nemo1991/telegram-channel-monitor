@@ -144,6 +144,10 @@ def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
         media_album_id=row.get("media_album_id"),
         is_pinned=bool(row.get("is_pinned", False)),
         reactions=reactions,
+        # 2026-09-09 v1.7.2:用户元数据 — 旧库 `.get` 兜底默认值
+        is_favorite=bool(row.get("is_favorite", False)),
+        tags=list(row.get("tags") or []),
+        notes=row.get("notes") or "",
     )
 
 
@@ -206,6 +210,81 @@ class PostgresRepository(StorageRepository):
             return True
         except Exception:
             return False
+
+    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:单条设 `is_favorite`。不存在消息 idempotent 不抛。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE messages
+                SET is_favorite = $3
+                WHERE channel_id = $1 AND telegram_msg_id = $2
+                """,
+                channel_id,
+                telegram_msg_id,
+                value,
+            )
+
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `tags`(TEXT[])。idempotent 同上。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE messages
+                SET tags = $3::text[]
+                WHERE channel_id = $1 AND telegram_msg_id = $2
+                """,
+                channel_id,
+                telegram_msg_id,
+                tags,
+            )
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """2026-09-09 v1.7.2:单条覆盖式设 `notes`(TEXT)。idempotent 同上。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE messages
+                SET notes = $3
+                WHERE channel_id = $1 AND telegram_msg_id = $2
+                """,
+                channel_id,
+                telegram_msg_id,
+                notes,
+            )
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:列所有 `is_favorite=TRUE` 消息,按 date DESC。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM messages
+                WHERE is_favorite = TRUE
+                ORDER BY date DESC
+                """
+            )
+        # 跨频道;media 不带(轻量路径)
+        return [_row_to_message(row, []) for row in rows]
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询,按 date DESC。"""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM messages
+                WHERE $1 = ANY(tags)
+                ORDER BY date DESC
+                """,
+                tag,
+            )
+        return [_row_to_message(row, []) for row in rows]
 
     # ---- 频道 ----
 
@@ -479,10 +558,12 @@ class PostgresRepository(StorageRepository):
                         (channel_id, telegram_msg_id, author, date, text,
                          views, forwards, reply_to_msg_id, edited, raw,
                          forward_origin, via_bot_user_id, media_album_id, is_pinned,
-                         reactions)
+                         reactions,
+                         is_favorite, tags, notes)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
                             $11::jsonb, $12, $13, $14,
-                            $15::jsonb)
+                            $15::jsonb,
+                            $16, $17::text[], $18)
                     ON CONFLICT (channel_id, telegram_msg_id) DO UPDATE SET
                         author = EXCLUDED.author,
                         date = EXCLUDED.date,
@@ -496,7 +577,10 @@ class PostgresRepository(StorageRepository):
                         via_bot_user_id = EXCLUDED.via_bot_user_id,
                         media_album_id = EXCLUDED.media_album_id,
                         is_pinned = EXCLUDED.is_pinned,
-                        reactions = EXCLUDED.reactions
+                        reactions = EXCLUDED.reactions,
+                        is_favorite = EXCLUDED.is_favorite,
+                        tags = EXCLUDED.tags,
+                        notes = EXCLUDED.notes
                     RETURNING id
                     """,
                 message.channel_id,
@@ -514,6 +598,9 @@ class PostgresRepository(StorageRepository):
                 message.media_album_id,
                 message.is_pinned,
                 reactions_json,
+                message.is_favorite,
+                message.tags,
+                message.notes,
             )
             msg_pk = row["id"]
             # 媒体:先清后插(简化语义;真实场景可改为按 stable id 合并)

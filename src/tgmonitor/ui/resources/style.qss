@@ -105,6 +105,42 @@ QMainWindow {
 #selectionDeleteBtn:pressed {
     background: #f5c8c8;
 }
+/* 2026-09-09 v1.7.2:批量操作进度对话框(浅色主题)。与 ExportProgressDialog 同款视觉。 */
+QDialog#batchProgressDialog {
+    background: #ffffff;
+}
+QProgressBar#batchProgressBar {
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    background: #f0f0f0;
+    text-align: center;
+    height: 16px;
+}
+QProgressBar#batchProgressBar::chunk {
+    background: #4a90e2;
+    border-radius: 3px;
+}
+/* 2026-09-09 v1.7.2:Lightbox ▶/⏸ 与 ⏯ 按钮 — 透明背景沿用 _control_bar 风格 */
+QPushButton#lightboxPlayPauseBtn,
+QPushButton#lightboxSlideshowBtn {
+    color: white;
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    font-size: 16px;
+}
+QPushButton#lightboxPlayPauseBtn:hover,
+QPushButton#lightboxSlideshowBtn:hover {
+    background-color: rgba(255, 255, 255, 30);
+}
+QPushButton#lightboxPlayPauseBtn:disabled,
+QPushButton#lightboxSlideshowBtn:disabled {
+    color: rgba(255, 255, 255, 80);
+}
+QLabel#favoriteStarLabel {
+    color: #e6b800;
+    font-weight: bold;
+}
 #detailActionBtn {
     padding: 4px 12px;
     border: 1px solid #d0d3da;

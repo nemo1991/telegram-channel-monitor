@@ -494,3 +494,111 @@ class ChannelsApi:
                 "force_read": False,
             }
         )
+
+    async def forward_messages(
+        self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-09 v1.7.2:批量转发 — TDLib `forwardMessages` RPC。
+
+        约束(2026-09-09 TDLib JSON 1.8+):
+          - `message_ids` 必须**严格递增**且每批 ≤100
+          - `send_copy=False` 转发会保留原消息的发送者(visibility 同原消息)
+        实现:
+          - `sorted()` 兜底排序,UI 可传任意顺序
+          - AppService 层走 `_chunks(mids, 100)` 分批
+        """
+        if not msg_ids:
+            return
+        self._c._check_alive()
+        await self._c.request(
+            {
+                "@type": "forwardMessages",
+                "chat_id": to_chat_id,
+                "from_chat_id": from_chat_id,
+                "message_ids": sorted(msg_ids),
+                "send_copy": False,
+            }
+        )
+
+    async def pin_messages(
+        self,
+        channel_id: int,
+        msg_ids: list[int],
+        *,
+        only_for_self: bool = True,
+    ) -> None:
+        """2026-09-09 v1.7.2:批量钉选 — TDLib `pinChatMessage` 一次一条。
+
+        约束:TDLib 没有批量 pin 端点;循环走 `pinChatMessage`。
+        `only_for_self=True` 默认只影响本端 — 与原 v1.7.0 mark_messages_read
+        风格一致(只改自己视角,不污染其它客户端)。
+        """
+        if not msg_ids:
+            return
+        self._c._check_alive()
+        for mid in msg_ids:
+            await self._c.request(
+                {
+                    "@type": "pinChatMessage",
+                    "chat_id": channel_id,
+                    "message_id": mid,
+                    "only_for_self": only_for_self,
+                }
+            )
+
+    async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
+        """2026-09-09 v1.7.2:批量取消钉选 — TDLib `unpinChatMessage` 一次一条。"""
+        if not msg_ids:
+            return
+        self._c._check_alive()
+        for mid in msg_ids:
+            await self._c.request(
+                {
+                    "@type": "unpinChatMessage",
+                    "chat_id": channel_id,
+                    "message_id": mid,
+                    "only_for_self": True,
+                }
+            )
+
+    async def add_reaction(
+        self,
+        channel_id: int,
+        msg_id: int,
+        reaction: str,
+        *,
+        is_big: bool = False,
+    ) -> None:
+        """2026-09-09 v1.7.2:emoji 回应 — TDLib `addMessageReaction` 单条。
+
+        `reaction` 必须是非空 Unicode emoji 字符;TDLib 校验
+        `reactionTypeEmoji.emoji` 字段,空字符串抛 `[400] REACTION_INVALID`。
+        自定义 emoji(`reactionTypeCustomEmoji`)需 `custom_emoji_id`,
+        本方法不支持 — v1.7.3 升级路径。
+        """
+        if not reaction:
+            return
+        self._c._check_alive()
+        await self._c.request(
+            {
+                "@type": "addMessageReaction",
+                "chat_id": channel_id,
+                "message_id": msg_id,
+                "reaction_type": {"@type": "reactionTypeEmoji", "emoji": reaction},
+                "is_big": is_big,
+            }
+        )
+
+    async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
+        """2026-09-09 v1.7.2:取消 emoji 回应 — TDLib `removeMessageReaction` 单条。"""
+        if not reaction:
+            return
+        self._c._check_alive()
+        await self._c.request(
+            {
+                "@type": "removeMessageReaction",
+                "chat_id": channel_id,
+                "message_id": msg_id,
+                "reaction_type": {"@type": "reactionTypeEmoji", "emoji": reaction},
+            }
+        )

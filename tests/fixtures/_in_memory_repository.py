@@ -460,3 +460,38 @@ class InMemoryRepository(StorageRepository):
 
     async def ping(self) -> bool:
         return True
+
+    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """2026-09-09 v1.7.2:内存 mutate。"""
+        for m in self._messages.values():
+            if m.channel_id == channel_id and m.telegram_msg_id == telegram_msg_id:
+                m.is_favorite = value
+                break
+
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """2026-09-09 v1.7.2:内存 mutate。"""
+        for m in self._messages.values():
+            if m.channel_id == channel_id and m.telegram_msg_id == telegram_msg_id:
+                m.tags = list(tags)
+                break
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """2026-09-09 v1.7.2:内存 mutate。"""
+        for m in self._messages.values():
+            if m.channel_id == channel_id and m.telegram_msg_id == telegram_msg_id:
+                m.notes = notes
+                break
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:list is_favorite=True,date DESC。"""
+        result = [m for m in self._messages.values() if m.is_favorite]
+        result.sort(key=lambda m: m.date, reverse=True)
+        return result
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """2026-09-09 v1.7.2:list tag 匹配,date DESC。"""
+        result = [m for m in self._messages.values() if tag in m.tags]
+        result.sort(key=lambda m: m.date, reverse=True)
+        return result

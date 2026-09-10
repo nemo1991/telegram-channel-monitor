@@ -82,6 +82,13 @@ class FakeTelegramClient(TelegramClient):
         self._downloads: dict[str, bytes | None] = {}
         # 2026-09-08 v1.7.0:mark_messages_read 注入记录(按 cid 分组)
         self._read_log: dict[int, list[int]] = {}
+        # 2026-09-09 v1.7.2:批量 forward / pin / react 注入记录
+        # forward:list of (from_cid, to_cid, sorted_msg_ids) — 顺序无关
+        # pin:按 from_cid 分组的 msg_ids(已合 unpin) — 测试用 union 即可
+        # reaction:list of (cid, mid, emoji, is_added) — 区分 add/remove
+        self._forwarded_log: list[tuple[int, int, list[int]]] = []
+        self._pinned_log: dict[int, list[int]] = {}
+        self._reactions_log: list[tuple[int, int, str, bool]] = []
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
@@ -308,6 +315,68 @@ class FakeTelegramClient(TelegramClient):
     def read_log(self) -> dict[int, list[int]]:
         """按 channel_id 分组的 mark_messages_read 调用历史(测试断言用)。"""
         return self._read_log
+
+    async def forward_messages(
+        self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-09 v1.7.2:Fake 替身 — 记录 forward 到 `forwarded_log`。
+
+        `msg_ids` 空 = no-op;否则记录 sorted 后的列表(体现 TDLib 顺序约束)。
+        测试通过 `client.forwarded_log` 断言所有 forward 调用。
+        """
+        if not msg_ids:
+            return
+        self._forwarded_log.append((from_chat_id, to_chat_id, sorted(msg_ids)))
+
+    @property
+    def forwarded_log(self) -> list[tuple[int, int, list[int]]]:
+        """`forward_messages` 调用历史 — 每条 `(from_cid, to_cid, sorted_mids)`。"""
+        return self._forwarded_log
+
+    async def pin_messages(
+        self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
+    ) -> None:
+        """2026-09-09 v1.7.2:Fake 替身 — 记录 pin 到 `pinned_log`(按 cid)。"""
+        if not msg_ids:
+            return
+        self._pinned_log.setdefault(channel_id, []).extend(msg_ids)
+
+    async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
+        """2026-09-09 v1.7.2:Fake 替身 — unpin 也记录到 `pinned_log`,测试按
+        `pin` 调用次数 + `unpin` 调用次数分开断言时,直接看 log 长度。
+        """
+        if not msg_ids:
+            return
+        self._pinned_log.setdefault(channel_id, []).extend(msg_ids)
+
+    @property
+    def pinned_log(self) -> dict[int, list[int]]:
+        """`pin_messages` / `unpin_messages` 调用历史(按 cid 聚合)。"""
+        return self._pinned_log
+
+    async def add_reaction(
+        self,
+        channel_id: int,
+        msg_id: int,
+        reaction: str,
+        *,
+        is_big: bool = False,
+    ) -> None:
+        """2026-09-09 v1.7.2:Fake 替身 — add 记录,元组末尾 True。"""
+        if not reaction:
+            return
+        self._reactions_log.append((channel_id, msg_id, reaction, True))
+
+    async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
+        """2026-09-09 v1.7.2:Fake 替身 — remove 记录,元组末尾 False。"""
+        if not reaction:
+            return
+        self._reactions_log.append((channel_id, msg_id, reaction, False))
+
+    @property
+    def reactions_log(self) -> list[tuple[int, int, str, bool]]:
+        """`add_reaction` / `remove_reaction` 调用历史 — 每条 `(cid, mid, emoji, added)`。"""
+        return self._reactions_log
 
     # ---- 测试辅助 ----
     async def simulate_incoming(self, msg: MessageDTO) -> None:

@@ -166,6 +166,52 @@ class TelegramClient(Protocol):
         """
         ...
 
+    async def forward_messages(
+        self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
+    ) -> None:
+        """2026-09-09 v1.7.2:批量转发消息 — TDLib `forwardMessages` RPC。
+
+        `from_chat_id` / `to_chat_id` 是 Telegram chat id(频道 id 或私聊 id);
+        `msg_ids` 长度上限 100,且必须 sorted 递增(TDLib 强约束)。
+        实现内部 `sorted()` 兜底,UI 可任意顺序传入。失败抛
+        `TelegramAPIError`,调用方走 per-item 异常隔离。
+        """
+        ...
+
+    async def pin_messages(
+        self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
+    ) -> None:
+        """2026-09-09 v1.7.2:批量钉选 — TDLib `pinChatMessage` 一次一条。
+
+        `only_for_self=True` 默认只影响本端(不影响其它客户端显示);
+        `msg_ids` 空 list = no-op。
+        """
+        ...
+
+    async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
+        """2026-09-09 v1.7.2:批量取消钉选 — TDLib `unpinChatMessage` 一次一条。"""
+        ...
+
+    async def add_reaction(
+        self,
+        channel_id: int,
+        msg_id: int,
+        reaction: str,
+        *,
+        is_big: bool = False,
+    ) -> None:
+        """2026-09-09 v1.7.2:emoji 回应 — TDLib `addMessageReaction` RPC。
+
+        TDLib 不支持批量;per-message 调用走循环 + 异常隔离。
+        `reaction` 是 Unicode emoji 字符(走 `reactionTypeEmoji`);自定义
+        emoji(TDLib `reactionTypeCustomEmoji` 需要 custom_emoji_id)v1.7.3 升级。
+        """
+        ...
+
+    async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
+        """2026-09-09 v1.7.2:取消 emoji 回应 — TDLib `removeMessageReaction`。"""
+        ...
+
 
 class UpdateStream:
     """实时更新流的简单封装(协议方法),由实现返回。

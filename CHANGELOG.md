@@ -5,6 +5,59 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.2] - 2026-09-10
+
+主题:**UX 增强 — Lightbox ▶/⏸ + 批量 forward/pin/react + 收藏/标签/备注 + 进度事件**。
+
+### ✨ Added
+
+- **Lightbox 播放控制**:GIF / MP4 加 ▶/⏸ 切换按钮(默认自动播放 / 暂停);
+  ⏯ 幻灯片自动播放(5s 间隔);`Space` 暂停 / `S` 幻灯片 / `?` 或 `F1`
+  弹快捷键帮助。手动切图也 reset timer,避免立即被覆盖。
+- **批量 forward / pin / unpin / react**:5 个新 batch facade 进 AppService
+  (走 TDLib `forwardMessages` / `pinChatMessage` / `addMessageReaction` /
+  `removeMessageReaction`),LIVE 多选工具栏加 📤 转发到… / 📌 钉选 /
+  😀 表情回应… 按钮。forward 用 `_chunks(mids, 100)`(TDLib 上限);
+  pin / react per-item 循环 + 异常隔离。
+- **收藏 / 标签 / 备注 — 用户元数据**:MessageDTO 加 3 字段
+  (`is_favorite: bool` / `tags: list[str]` / `notes: str`)。schema 迁移
+  `ALTER TABLE ADD COLUMN IF NOT EXISTS`(PG) + Mongo schema-less
+  + JSONL `.get(default)` 兜底。UI 入口:MessageView 右键 ★ / 🏷 / 📝
+  + MessageDetail 顶部 3 按钮(单条操作)。`AppService.set_favorite` /
+  `set_tags` / `set_notes` 调 storage 后 publish `MessageEdited` 触发
+  LIVE row 实时刷新。
+- **批量操作进度事件 + `BatchProgressDialog`**:新 event 类型
+  `BatchProgress(op, processed, total)` + `BatchDone(op, succeeded, failed, error)`。
+  AppService 8 个 batch facade(delete / mark_read / forward / pin / unpin /
+  react / unreact)统一 emit,VM 转发 Qt signal,MainWindow 弹非模态
+  `BatchProgressDialog` 显示 op-aware 标题(「批量删除中…」等)+ QProgressBar +
+  完成文案。`accept` 后自动收尾 + 解 signal 连接。
+
+### 📦 Files
+
+- 改:5 协议 + 4 替身 + 1 unconfigured(client.py / tdlib_channels.py /
+  tdlib_client.py / fake_client.py / unconfigured.py)
+- 改:AppService 9 facade + emit / DTO 3 字段 / EventBus 2 dataclass
+- 改:Repository 6 abstractmethod + 4 后端 6 实现 + schema.sql 3 ALTER
+- 改:VM 2 Signal / Lightbox 4 新方法 / 1 新 widget
+- 改:MainWindow 5 handler + toolbar 3 按钮 + 6 QSS rule
+- 加:6 测试文件(test_telegram_batch_actions / test_app_service_batch /
+  test_batch_progress_events / test_batch_progress_dialog / test_dto_favorites)
+  + 集成 parity 7 pg + 7 mongo
+
+### ✅ Verified
+
+- 1004 unit tests pass(Stage 12 全量回归,含 6 个 v1.7.2 新文件)
+- 47 integration tests pass(Mongo parity 走 mongomock_motor);
+  48 PG integration 跳过(本地 Docker 未起,CI 跑)
+- 14 i18n runtime tests pass(`ts sources=288` 在 180-305 区间)
+- `ruff check src tests` + `ruff format --check` clean
+- `mypy src/tgmonitor` clean(80 source files)
+- ⚠️ Visual regression 7 fail:本地 macOS HiDPI 黄金图 vs 现渲染 7.7% 差异
+  > 0.5% 容差。**这是 v1.6.5 已修但仍未根除的 pre-existing flake** —
+  `git stash` 验证:clean main 也 fail。v1.7.2 不引入新视觉漂移,
+  黄金图重生留给 v1.7.3 单独 PR。
+
 ## [1.7.1] - 2026-09-09
 
 主题:**CI 修 3+3 类失败** — v1.6.10 起的红(v1.7.0 CI 也复现)一次性收掉。
