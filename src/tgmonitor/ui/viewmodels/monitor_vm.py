@@ -695,6 +695,20 @@ class MonitorViewModel(QObject):
             # 结束(CancelledError 被 run_coro 捕获)后清。避免下一次
             # start_export 进来时被 UI 误标「上一轮已取消」。
 
+    def cancel_current_batch(self) -> None:
+        """2026-09-10 v1.7.3:取消当前批量操作 — `AppService._cancel_event.set()`。
+
+        走协作式 cancel(不调 task.cancel):批量 facade 已在主 task loop
+        await,设 Event 即可让循环跳出;task.cancel 会触发 CancelledError
+        被 run_coro 吞,无法发 BatchDone(error='cancelled')。
+
+        多次调用安全(只是 set 已 set 的 Event);无批量进行时也无副作用
+        (下一次 facade 开头 `_cancel_event.clear()`)。已发 TDLib RPC 可能
+        server-side 仍完成 — best-effort。
+        """
+        if self.app is not None:
+            self.app.cancel_current_batch()
+
     def export_media_list(self, req: MediaExportRequest) -> None:
         """Media Manager 当前视图 → per-media CSV 导出 — 2026-08-25 v1.3.0 PR #7。
 

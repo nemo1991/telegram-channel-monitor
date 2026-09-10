@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import make_message, make_photo
-from tgmonitor.core.dto import ChannelDTO, ExportFormat, ExportRequest
+from tgmonitor.core.dto import ChannelDTO, ExportFormat, ExportRequest, MessageDTO
 from tgmonitor.core.events import EventBus
 
 # noqa: F401 — 这些 import 触发 `@exporter(...)` 类装饰器,把各 Exporter
@@ -161,7 +161,7 @@ async def test_media_csv_exporter_snapshot(tmp_path):
     # 注:原始 _setup 只有 make_photo 1 条带 media
     assert len(rows) == 1
     row = rows[0]
-    # 13 列固定顺序
+    # 2026-09-10 v1.7.3:13 + 3 = 16 列(原 13 + is_favorite / tags / notes)
     expected_cols = [
         "channel_id",
         "channel_title",
@@ -176,6 +176,9 @@ async def test_media_csv_exporter_snapshot(tmp_path):
         "download_error",
         "object_key",
         "object_backend",
+        "is_favorite",
+        "tags",
+        "notes",
     ]
     assert list(row.keys()) == expected_cols
     assert row["channel_id"] == "200"
@@ -858,3 +861,312 @@ async def test_zip_stream_read_keyerror_skips_media(tmp_path, caplog):
     assert any("media object_key 不存在" in record.message for record in caplog.records), (
         f"未找到 skip 警告: {[r.message for r in caplog.records]}"
     )
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:导出含用户元数据(★ / 🏷 / 📝)— per-format + exclude 验证
+# ============================================================
+
+
+def _make_favorite_message(channel_id: int = 100, msg_id: int = 1) -> MessageDTO:
+    """2026-09-10 v1.7.3:构造一条带 ★ + tags + notes 的 message DTO。
+
+    用 `dataclasses.replace` 在 `make_message` 基础上覆盖 metadata 字段;
+    默认 fixture 字段都是 v1.7.2 引入的(is_favorite=False, tags=[], notes="")。
+    """
+    from dataclasses import replace
+
+    base = make_message(channel_id=channel_id, msg_id=msg_id)
+    return replace(
+        base,
+        is_favorite=True,
+        tags=["tech", "ai"],
+        notes="需要 review",
+    )
+
+
+async def _seed_favorite(storage) -> None:
+    """塞一条带 ★ / 🏷 / 📝 的 message 到 storage。"""
+    await storage.save_message(_make_favorite_message(100, 1))
+
+
+async def test_csv_exporter_includes_metadata_columns(tmp_path):
+    """v1.7.3:CSV 默认包含 `is_favorite` / `tags` / `notes` 3 列,值正确填充。"""
+    import csv as csv_mod
+
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "with_meta.csv"
+    req = ExportRequest(channel_ids=[100, 200], format=ExportFormat.CSV, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    # 找到带 metadata 的那条(ch100 msg1 = favorite)
+    fav_row = next(r for r in rows if int(r["telegram_msg_id"]) == 1 and int(r["channel_id"]) == 100)
+    # 默认 include_metadata=True → 字段填充
+    assert fav_row["is_favorite"] in ("True", "true", "1"), fav_row
+    assert fav_row["tags"] == "tech|ai"
+    assert fav_row["notes"] == "需要 review"
+    # 列名一定在 header(就算所有 message 都没 metadata 也保留,避免 schema 变化)
+    fieldnames = csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()).fieldnames or []
+    for col in ("is_favorite", "tags", "notes"):
+        assert col in fieldnames
+
+
+async def test_csv_exporter_excludes_metadata_when_disabled(tmp_path):
+    """v1.7.3:`include_metadata=False` → CSV 3 列写空串,列仍保留。"""
+    import csv as csv_mod
+
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "no_meta.csv"
+    req = ExportRequest(
+        channel_ids=[100, 200],
+        format=ExportFormat.CSV,
+        out_path=str(out),
+        include_metadata=False,
+    )
+    async for _ in svc.run(req):
+        pass
+
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    fav_row = next(r for r in rows if int(r["telegram_msg_id"]) == 1)
+    # include_metadata=False → 3 个 metadata 列都是空串(列保留)
+    assert fav_row["is_favorite"] == ""
+    assert fav_row["tags"] == ""
+    assert fav_row["notes"] == ""
+    # 但列名仍存在(header 一致)
+    fieldnames = csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()).fieldnames or []
+    assert "is_favorite" in fieldnames
+
+
+async def test_markdown_exporter_includes_metadata_block(tmp_path):
+    """v1.7.3:Markdown 默认包含 ★ / 🏷 / 📝 blockquote block,`include_metadata=False` 跳过。"""
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "with_meta.md"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.MARKDOWN, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    content = out.read_text(encoding="utf-8")
+    # ★ / 🏷 / 📝 都在输出里
+    assert "> ★ 收藏" in content
+    assert "> 🏷 tech, ai" in content
+    assert "> 📝 需要 review" in content
+
+    # 反过来:include_metadata=False → 跳过 blockquote
+    storage2, objects2, bus2, _ = await _setup(tmp_path)
+    await storage2.save_message(_make_favorite_message(100, 1))
+    svc2 = ExportService(storage2, objects2, bus2)
+    out2 = tmp_path / "no_meta.md"
+    req2 = ExportRequest(
+        channel_ids=[100],
+        format=ExportFormat.MARKDOWN,
+        out_path=str(out2),
+        include_metadata=False,
+    )
+    async for _ in svc2.run(req2):
+        pass
+    content2 = out2.read_text(encoding="utf-8")
+    assert "> ★" not in content2
+    assert "> 🏷" not in content2
+    assert "> 📝" not in content2
+
+
+async def test_html_exporter_includes_metadata_block(tmp_path):
+    """v1.7.3:HTML 模板含 `user-meta` block,`include_metadata=False` 跳过。"""
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "with_meta.html"
+    req = ExportRequest(channel_ids=[100], format=ExportFormat.HTML, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    content = out.read_text(encoding="utf-8")
+    # HTML 模板的 user-meta 元素出现(`<div class="user-meta">`)
+    assert '<div class="user-meta">' in content
+    assert "★ 收藏" in content
+    # 🏷 tag 渲染为 <span class="tag">🏷 tech</span> / 🏷 ai
+    assert 'class="tag">🏷 tech</span>' in content
+    assert 'class="tag">🏷 ai</span>' in content
+    assert "📝 需要 review" in content
+
+    # 反过来:include_metadata=False → 跳过 user-meta div
+    storage2, objects2, bus2, _ = await _setup(tmp_path)
+    await storage2.save_message(_make_favorite_message(100, 1))
+    svc2 = ExportService(storage2, objects2, bus2)
+    out2 = tmp_path / "no_meta.html"
+    req2 = ExportRequest(
+        channel_ids=[100],
+        format=ExportFormat.HTML,
+        out_path=str(out2),
+        include_metadata=False,
+    )
+    async for _ in svc2.run(req2):
+        pass
+    content2 = out2.read_text(encoding="utf-8")
+    # CSS 仍含 .user-meta(模板 CSS 永远渲),但 markup 里没有 div
+    assert '<div class="user-meta">' not in content2
+    assert "★ 收藏" not in content2
+
+
+async def test_json_exporter_always_includes_metadata(tmp_path):
+    """v1.7.3:JSON 走 asdict 总是含 ★ / 🏷 / 📝(`include_metadata` 是 no-op)。"""
+    import json as json_mod
+
+    from tgmonitor.core.dto import ExportFormat
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "meta.json"
+    # 即使显式 include_metadata=False,JSON 仍含(asdict 不可关)
+    req = ExportRequest(
+        channel_ids=[100],
+        format=ExportFormat.JSON,
+        out_path=str(out),
+        include_metadata=False,
+    )
+    async for _ in svc.run(req):
+        pass
+
+    data = json_mod.loads(out.read_text(encoding="utf-8"))
+    fav_msg = next(m for m in data["messages"] if m["telegram_msg_id"] == 1)
+    assert fav_msg["is_favorite"] is True
+    assert fav_msg["tags"] == ["tech", "ai"]
+    assert fav_msg["notes"] == "需要 review"
+
+
+async def test_zip_exporter_always_includes_metadata_in_manifest(tmp_path):
+    """v1.7.3:ZIP 的 _manifest.json 走 asdict 总是含 ★ / 🏷 / 📝。"""
+    import json as json_mod
+    import zipfile
+
+    from tgmonitor.core.dto import ExportFormat, MediaDownloadStatus
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    await _seed_favorite(storage)
+    await objects.put("media/abc.jpg", b"\xff\xd8FAKE", None)
+
+    # 把 ch200 msg1 photo 标 DONE 以便 zip 真打文件
+    from dataclasses import replace
+
+    msg = await storage.get_message(200, 1)
+    assert msg is not None and msg.media
+    msg.media[0].download_status = MediaDownloadStatus.DONE
+    msg.media[0].object_key = "media/abc.jpg"
+    msg.media[0].object_backend = "local"
+    await storage.save_message(replace(msg, media=msg.media))
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "meta.zip"
+    req = ExportRequest(
+        channel_ids=[100, 200],
+        format=ExportFormat.ZIP,
+        out_path=str(out),
+        include_metadata=False,  # 即使关掉,manifest 仍含
+    )
+    async for _ in svc.run(req):
+        pass
+
+    with zipfile.ZipFile(out) as zf:
+        manifest = json_mod.loads(zf.read("_manifest.json"))
+        fav = next(m for m in manifest if m["telegram_msg_id"] == 1 and m["channel_id"] == 100)
+        assert fav["is_favorite"] is True
+        assert fav["tags"] == ["tech", "ai"]
+        assert fav["notes"] == "需要 review"
+
+
+async def test_media_csv_exporter_includes_metadata_columns(tmp_path):
+    """v1.7.3:MEDIA_CSV(per-media)含 is_favorite / tags / notes 列(per-media wrapper 含 metadata)。"""
+    import csv as csv_mod
+
+    from tgmonitor.core.dto import MediaExportRequest, MediaType
+
+    storage, objects, bus, _ = await _setup(tmp_path)
+    # ch100 msg1(plain)→ 改成带 photo + metadata
+    from dataclasses import replace
+
+    base = make_message(channel_id=100, msg_id=1)
+    from tgmonitor.core.dto import MediaDTO
+
+    fav_photo_msg = replace(
+        base,
+        media=[
+            MediaDTO(
+                type=MediaType.PHOTO,
+                mime_type="image/jpeg",
+                file_name="pic.jpg",
+                file_size=1234,
+                object_key="media/abc.jpg",
+                object_backend="local",
+            )
+        ],
+        is_favorite=True,
+        tags=["photo"],
+        notes="好图",
+    )
+    await storage.save_message(fav_photo_msg)
+
+    svc = ExportService(storage, objects, bus)
+    out = tmp_path / "media_meta.csv"
+    req = MediaExportRequest(channel_id=100, out_path=str(out))
+    async for _ in svc.run(req):
+        pass
+
+    rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["is_favorite"] in ("True", "true", "1")
+    assert row["tags"] == "photo"
+    assert row["notes"] == "好图"
+
+
+def test_export_request_include_metadata_default_true() -> None:
+    """v1.7.3:`ExportRequest.include_metadata` 默认 True — 不破坏老 ExportRequest 调用。"""
+    req = ExportRequest(channel_ids=[100], out_path="x.json")
+    assert req.include_metadata is True
+
+
+def test_export_dialog_metadata_checkbox_default() -> None:
+    """v1.7.3:ExportDialog 默认勾选"包含收藏 / 标签 / 备注"checkbox。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from tgmonitor.ui.widgets.export_dialog import ExportDialog
+
+    # 确保 QApplication 存在(模块级单例,跟其它 UI 测试一致)
+    _ = QApplication.instance() or QApplication([])
+    dlg = ExportDialog(app=None, channel_ids=[100, 200])
+    assert dlg.chk_metadata.isChecked() is True
+    dlg.close()
+
+
+def test_export_request_default_field_in_json_schema(tmp_path) -> None:
+    """v1.7.3:`ExportRequest` 字段含 `include_metadata`,asdict 序列化确认。"""
+    import dataclasses
+
+    req = ExportRequest(channel_ids=[100], include_metadata=False, out_path="x")
+    d = dataclasses.asdict(req)
+    assert "include_metadata" in d
+    assert d["include_metadata"] is False

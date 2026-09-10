@@ -264,6 +264,11 @@ class ExportRequest:
     # 都生效)。与 `single_message_id` 互斥(single_message_id 优先级更高,
     # 为旧接口兼容保留)。
     selected_messages: list[tuple[int, int]] | None = None
+    # 2026-09-10 v1.7.3:导出包含用户元数据(`is_favorite` / `tags` /
+    # `notes`)。JSON / ZIP 走 `dataclasses.asdict` 总是含,本字段只控
+    # CSV / Markdown / HTML / MEDIA_CSV 是否加列 / 加 block;默认 True
+    # 保持对 ★ / 🏷 / 📝 敏感的用户不踩坑。
+    include_metadata: bool = True
 
 
 @dataclass
@@ -288,6 +293,9 @@ class MediaExportRequest:
     offset: int = 0
     out_path: str = ""
     format: ExportFormat = ExportFormat.MEDIA_CSV
+    # 2026-09-10 v1.7.3:导出含用户元数据(per-media wrapper 含 message metadata)。
+    # 含义与 `ExportRequest.include_metadata` 一致。
+    include_metadata: bool = True
 
 
 @dataclass

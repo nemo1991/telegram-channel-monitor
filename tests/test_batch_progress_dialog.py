@@ -160,3 +160,102 @@ def test_close_event_disconnects_signals(vm: _MockVM, qapp: QApplication) -> Non
     _drain(qapp)
     # 没崩就行(信号 disconnect 内部 try/except 容错,关窗后 emit 是 no-op)
     assert dlg.lbl_status.text() == initial_text
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:取消按钮 + react emoji 标题
+# ============================================================
+
+
+class _MockVMWithCancel(_MockVM):
+    """2026-09-10 v1.7.3:带 cancel_current_batch() 的 VM mock,记录是否被调。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_called: int = 0
+
+    def cancel_current_batch(self) -> None:
+        self.cancel_called += 1
+
+
+def test_dialog_has_cancel_button(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:dialog 必须有取消按钮。"""
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    assert dlg._btn_cancel is not None  # type: ignore[attr-defined]
+    assert dlg._btn_cancel.isEnabled()  # type: ignore[attr-defined]
+
+
+def test_cancel_button_click_calls_vm_cancel(qapp: QApplication) -> None:
+    """v1.7.3:点取消按钮 → 调 `vm.cancel_current_batch()` + 状态置「正在取消…」。"""
+    vm = _MockVMWithCancel()
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    dlg._btn_cancel.click()  # type: ignore[attr-defined]
+    _drain(qapp)
+    assert vm.cancel_called == 1
+    assert "取消" in dlg.lbl_status.text()
+
+
+def test_cancel_button_disables_after_click(qapp: QApplication) -> None:
+    """v1.7.3:点取消后按钮 disable — 防双击。"""
+    vm = _MockVMWithCancel()
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    dlg._btn_cancel.click()  # type: ignore[attr-defined]
+    _drain(qapp)
+    assert not dlg._btn_cancel.isEnabled()  # type: ignore[attr-defined]
+    # 第 2 次 click 应被 ignore(disabled),cancel_called 仍 1
+    dlg._btn_cancel.click()  # type: ignore[attr-defined]
+    _drain(qapp)
+    assert vm.cancel_called == 1
+
+
+def test_cancel_button_skipped_if_vm_no_method(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:VM 无 `cancel_current_batch()` → 点击不抛(`hasattr` 防御)。"""
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    # 默认 _MockVM 没有 cancel_current_batch — 点应 no-op
+    dlg._btn_cancel.click()  # type: ignore[attr-defined]
+    _drain(qapp)
+    assert "取消" in dlg.lbl_status.text()
+
+
+def test_react_dialog_title_includes_emoji(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:op=react + extra="🔥" → 标题「批量回应 🔥 中…」。"""
+    dlg = BatchProgressDialog(vm, op="react", extra="🔥", parent=None)
+    title = dlg.windowTitle()
+    assert "回应" in title
+    assert "🔥" in title
+    assert "中" in title
+
+
+def test_unreact_dialog_title_includes_emoji(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:op=unreact + extra="🔥" → 标题「批量取消回应 🔥 中…」。"""
+    dlg = BatchProgressDialog(vm, op="unreact", extra="🔥", parent=None)
+    title = dlg.windowTitle()
+    assert "取消回应" in title
+    assert "🔥" in title
+
+
+def test_non_react_dialog_ignores_extra(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:op=delete + extra="🔥" → 标题不含 🔥(非 react op 忽略 extra)。"""
+    dlg = BatchProgressDialog(vm, op="delete", extra="🔥", parent=None)
+    assert "🔥" not in dlg.windowTitle()
+    assert "删除" in dlg.windowTitle()
+
+
+def test_set_op_name_with_extra_updates_title(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:set_op_name 切 react 时保留 extra — 标题插入 emoji。"""
+    dlg = BatchProgressDialog(vm, op="delete", extra="😀", parent=None)
+    dlg.set_op_name("react")
+    assert "😀" in dlg.windowTitle()
+    assert "回应" in dlg.windowTitle()
+
+
+def test_dialog_closes_on_batch_done_with_error(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.3:BatchDone(error='cancelled') → 自动 accept + finished signal + 中断文案。"""
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    captured: list = []
+    dlg.finished.connect(lambda e: captured.append(e))  # type: ignore[arg-type]
+    vm.batch_done.emit(type("E", (), {"succeeded": 2, "failed": 3, "error": "cancelled"})())
+    _drain(qapp)
+    assert dlg.result() == QDialog.Accepted
+    assert len(captured) == 1
+    assert "cancelled" in dlg.lbl_status.text()

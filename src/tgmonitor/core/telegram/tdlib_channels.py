@@ -569,36 +569,62 @@ class ChannelsApi:
         *,
         is_big: bool = False,
     ) -> None:
-        """2026-09-09 v1.7.2:emoji 回应 — TDLib `addMessageReaction` 单条。
+        """emoji 回应 — TDLib `addMessageReaction` 单条。
 
-        `reaction` 必须是非空 Unicode emoji 字符;TDLib 校验
-        `reactionTypeEmoji.emoji` 字段,空字符串抛 `[400] REACTION_INVALID`。
-        自定义 emoji(`reactionTypeCustomEmoji`)需 `custom_emoji_id`,
-        本方法不支持 — v1.7.3 升级路径。
+        `reaction` 支持两种格式:
+        - 普通 emoji char:`"😀"` `"🔥"` 等 → dispatch `reactionTypeEmoji`
+        - custom emoji:`"custom_emoji_id:<id>"`(e.g. `"custom_emoji_id:5368324170671202286"`)
+          → dispatch `reactionTypeCustomEmoji`(Telegram Premium 自定义 emoji)
+        v1.7.2 仅支持普通 emoji;channels 用 premium-only reactions 时
+        调 add_reaction 抛 `[400] REACTION_INVALID`。v1.7.3 加 custom_emoji
+        dispatch — UI 无 picker,用户手动输 `custom_emoji_id:<id>` 前缀。
+
+        空字符串直接 return(避免 `[400] REACTION_INVALID`)。
         """
         if not reaction:
             return
         self._c._check_alive()
+        reaction_type = _reaction_type_from_str(reaction)
         await self._c.request(
             {
                 "@type": "addMessageReaction",
                 "chat_id": channel_id,
                 "message_id": msg_id,
-                "reaction_type": {"@type": "reactionTypeEmoji", "emoji": reaction},
+                "reaction_type": reaction_type,
                 "is_big": is_big,
             }
         )
 
     async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
-        """2026-09-09 v1.7.2:取消 emoji 回应 — TDLib `removeMessageReaction` 单条。"""
+        """取消 emoji 回应 — TDLib `removeMessageReaction` 单条。
+
+        2026-09-10 v1.7.3:`reaction` 格式与 `add_reaction` 对齐 —
+        支持 `"custom_emoji_id:<id>"` 前缀 dispatch。
+        """
         if not reaction:
             return
         self._c._check_alive()
+        reaction_type = _reaction_type_from_str(reaction)
         await self._c.request(
             {
                 "@type": "removeMessageReaction",
                 "chat_id": channel_id,
                 "message_id": msg_id,
-                "reaction_type": {"@type": "reactionTypeEmoji", "emoji": reaction},
+                "reaction_type": reaction_type,
             }
         )
+
+
+def _reaction_type_from_str(reaction: str) -> dict:
+    """2026-09-10 v1.7.3:`reaction` 字符串 → TDLib reaction_type dict。
+
+    - `"custom_emoji_id:<id>"` → `{"@type": "reactionTypeCustomEmoji", ...}`
+    - 其他 → `{"@type": "reactionTypeEmoji", "emoji": reaction}`
+    """
+    prefix = "custom_emoji_id:"
+    if reaction.startswith(prefix):
+        return {
+            "@type": "reactionTypeCustomEmoji",
+            "custom_emoji_id": reaction[len(prefix):],
+        }
+    return {"@type": "reactionTypeEmoji", "emoji": reaction}

@@ -91,12 +91,16 @@ class ZipExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
         """写 zip → 返回字节数。
 
         `object_store` 为 None 时直接 raise — ZIP 没有二进制就等于空
         包,这种调用是用户配错,不要静默吞。
+        `include_metadata`(v1.7.3)对 ZIP 是 no-op — `_manifest.json` 走 asdict
+        总是含全部字段(包括 is_favorite / tags / notes),同 JSON 模式。
         """
+        del include_metadata  # ZIP manifest 永远含 — 与 JSON 一致
         if object_store is None:
             raise ValueError("ZipExporter 需要 object_store(没数据可打)")
         out_path.parent.mkdir(parents=True, exist_ok=True)

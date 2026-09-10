@@ -53,6 +53,26 @@ from tgmonitor.ui.widgets.form_row import empty_hint
 # ============================================================
 
 
+def _format_meta_icons(m: MessageDTO) -> str:
+    """2026-09-10 v1.7.3:把 ★ / 🏷 / 📝 / 📌 拼成一行字符串;无 metadata 返空串。
+
+    顺序固定:★ → 🏷 → 📝 → 📌(★ 最重要,放最前;📌 server-side state 放最后)。
+    tags 用 `,` 分隔(与 LIVE 行 hover / MessageDetail 一致);notes 超过
+    30 字符截断加 `…`(行高可控,避免 100 字备注撑爆单行)。
+    """
+    parts: list[str] = []
+    if m.is_favorite:
+        parts.append("★")
+    if m.tags:
+        parts.append(f"🏷{','.join(m.tags)}")
+    if m.notes:
+        snippet = m.notes if len(m.notes) <= 30 else m.notes[:30] + "…"
+        parts.append(f"📝{snippet}")
+    if m.is_pinned:
+        parts.append("📌")
+    return " ".join(parts)
+
+
 class MessageListModel(QAbstractListModel):
     """消息列表 model — DTO list + _seen dict + filter state + channel_titles。
 
@@ -300,6 +320,12 @@ class MessageListModel(QAbstractListModel):
         head = f"⏱ {dt}  {ch_label}  #{msg_id}"
         if m.author:
             head += f"  👤 {m.author}"
+        # 2026-09-10 v1.7.3:用户元数据 / pin 图标行 — ★ 收藏 / 🏷tags / 📝notes 截断
+        # / 📌 pin。与 v1.7.2 metadata 字段配套:v1.7.2 加了字段但没渲染,本版本补
+        # 上。用户右键 ★ 后行立即显示 ★(无需 reload)。
+        meta_icons = _format_meta_icons(m)
+        if meta_icons:
+            head += "  " + meta_icons
         body = m.text or ""
         if m.has_media:
             parts = []

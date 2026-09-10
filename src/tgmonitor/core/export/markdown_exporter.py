@@ -24,6 +24,9 @@ class MarkdownExporter(Exporter):
     """Markdown Exporter — 人类可读,按频道分组(`## title` → `### msg`)。
 
     媒体列在每条消息下:`- 📎 **type** mime file_name (size)`,可读源 ID。
+
+    2026-09-10 v1.7.3:`include_metadata=True`(默认)时每条消息下追加
+    metadata block(★ / 🏷 / 📝),`include_metadata=False` 时跳过。
     """
 
     format = ExportFormat.MARKDOWN
@@ -36,6 +39,7 @@ class MarkdownExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
         """渲染 Markdown → 写文件 → 返回字节数。"""
         grouped: dict[int, list[MessageDTO]] = defaultdict(list)
@@ -81,8 +85,35 @@ class MarkdownExporter(Exporter):
                                 f"  - object_key: `{med.object_key}` (backend={med.object_backend})"
                             )
                     lines.append("")
+                # 2026-09-10 v1.7.3:用户元数据 block — `include_metadata=True` 才输出。
+                # 用 `> ` blockquote 缩进,可读但不喧宾夺主。文本走 scrub 防注入。
+                if include_metadata:
+                    meta_lines = _render_markdown_meta(m)
+                    if meta_lines:
+                        lines.extend(meta_lines)
+                        lines.append("")
         out_path.write_text("\n".join(lines), encoding="utf-8")  # noqa: ASYNC240 — 文件 IO 同步
         return out_path.stat().st_size  # noqa: ASYNC240 — 同上
+
+
+def _render_markdown_meta(m: MessageDTO) -> list[str]:
+    """2026-09-10 v1.7.3:返回 markdown 元数据行列表;无 metadata 时返 []。
+
+    格式:
+        > ★ 收藏
+        > 🏷 tag1, tag2
+        > 📝 备注文本
+
+    文本走 `_scrub_markdown` 防注入(用户控制 notes 字段)。
+    """
+    out: list[str] = []
+    if m.is_favorite:
+        out.append("> ★ 收藏")
+    if m.tags:
+        out.append(f"> 🏷 {_scrub_markdown(', '.join(m.tags))}")
+    if m.notes:
+        out.append(f"> 📝 {_scrub_markdown(m.notes)}")
+    return out
 
 
 def _human_size(n: int | None) -> str:

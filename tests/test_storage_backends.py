@@ -1201,3 +1201,52 @@ async def test_jsonl_upsert_channel_roundtrip_4_fields(jsonl_repo):
     assert got.is_fake is True
     assert got.has_protected_content is False
     await jsonl_repo2.close()
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:`update_message_pin` 4 后端 parity 测试
+# ============================================================
+
+
+async def test_in_mem_update_pin_sets_true(in_mem_repo):
+    """v1.7.3:InMemory `update_message_pin(True)` → DTO.is_pinned 立刻变 True。"""
+    await in_mem_repo.save_message(make_message(channel_id=100, msg_id=1))
+    # 初始 is_pinned=False(make_message 默认)
+    msg = await in_mem_repo.get_message(100, 1)
+    assert msg is not None and msg.is_pinned is False
+    # 设为 True
+    await in_mem_repo.update_message_pin(100, 1, True)
+    msg = await in_mem_repo.get_message(100, 1)
+    assert msg is not None and msg.is_pinned is True
+    # 改回 False
+    await in_mem_repo.update_message_pin(100, 1, False)
+    msg = await in_mem_repo.get_message(100, 1)
+    assert msg is not None and msg.is_pinned is False
+
+
+async def test_jsonl_update_pin_persists(jsonl_repo):
+    """v1.7.3:Jsonl `update_message_pin` 写盘 → 重启后读回仍是 True。"""
+    await jsonl_repo.save_message(make_message(channel_id=100, msg_id=1))
+    await jsonl_repo.update_message_pin(100, 1, True)
+
+    # roundtrip
+    await jsonl_repo.close()
+    store2 = JsonlFileStore(root=jsonl_repo._root)  # type: ignore[attr-defined]
+    await store2.connect()
+    msg = await store2.get_message(100, 1)
+    assert msg is not None and msg.is_pinned is True
+    await store2.close()
+
+
+async def test_in_mem_update_pin_nonexistent_silent(in_mem_repo):
+    """v1.7.3:update_message_pin 对不存在消息 idempotent 不抛(与 reactions 一致)。"""
+    # 不存任何 message,直接 update → no-op
+    await in_mem_repo.update_message_pin(999, 1, True)
+    # 仍 None
+    assert await in_mem_repo.get_message(999, 1) is None
+
+
+async def test_jsonl_update_pin_nonexistent_silent(jsonl_repo):
+    """v1.7.3:Jsonl 同样 idempotent 不抛(0 matched)。"""
+    await jsonl_repo.update_message_pin(999, 1, True)
+    assert await jsonl_repo.get_message(999, 1) is None

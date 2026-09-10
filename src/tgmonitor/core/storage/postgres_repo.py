@@ -684,6 +684,27 @@ class PostgresRepository(StorageRepository):
         async with self._pool.acquire() as conn:
             await conn.execute(sql, *args)
 
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """2026-09-10 v1.7.3:PG 单条 UPDATE 设 is_pinned。
+
+        `is_pinned` 列(v1.5.0 起)在 `schema.sql` 已 `NOT NULL DEFAULT FALSE`,
+        走标准 UPDATE 即可;不存在消息 0 matched 不抛(idempotent)。
+        """
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE messages SET is_pinned = $3 "
+                "WHERE channel_id = $1 AND telegram_msg_id = $2",
+                channel_id,
+                telegram_msg_id,
+                is_pinned,
+            )
+
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;media 行通过 FK CASCADE 自动删。"""
         assert self._pool is not None

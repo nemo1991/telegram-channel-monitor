@@ -200,16 +200,22 @@ class TelegramClient(Protocol):
         *,
         is_big: bool = False,
     ) -> None:
-        """2026-09-09 v1.7.2:emoji 回应 — TDLib `addMessageReaction` RPC。
+        """emoji 回应 — TDLib `addMessageReaction` RPC。
 
         TDLib 不支持批量;per-message 调用走循环 + 异常隔离。
-        `reaction` 是 Unicode emoji 字符(走 `reactionTypeEmoji`);自定义
-        emoji(TDLib `reactionTypeCustomEmoji` 需要 custom_emoji_id)v1.7.3 升级。
+        `reaction` 两种格式(2026-09-10 v1.7.3):
+        - 普通 emoji char:`"😀"` `"🔥"` 等 → dispatch `reactionTypeEmoji`
+        - custom emoji:`"custom_emoji_id:<id>"` →
+          `reactionTypeCustomEmoji`(Telegram Premium 自定义 emoji)
         """
         ...
 
     async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
-        """2026-09-09 v1.7.2:取消 emoji 回应 — TDLib `removeMessageReaction`。"""
+        """取消 emoji 回应 — TDLib `removeMessageReaction`。
+
+        2026-09-10 v1.7.3:`reaction` 格式与 `add_reaction` 对齐 — 支持
+        `"custom_emoji_id:<id>"` 前缀 dispatch `reactionTypeCustomEmoji`。
+        """
         ...
 
 

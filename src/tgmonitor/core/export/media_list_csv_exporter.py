@@ -45,6 +45,11 @@ MEDIA_CSV_COLUMNS: list[str] = [
     "download_error",
     "object_key",
     "object_backend",
+    # 2026-09-10 v1.7.3:用户元数据列(per-media wrapper MessageDTO 含 metadata)。
+    # 与 csv_exporter 同模式:`include_metadata=False` 时写空串,列保留。
+    "is_favorite",
+    "tags",
+    "notes",
 ]
 
 
@@ -56,6 +61,9 @@ class MediaListCsvExporter(Exporter):
     把每条目标 media 包成 `MessageDTO`(`media` 字段含 1 个元素,
     `_media_idx` 临时属性),exporter 直接 `m.media[0]` 写一行。`_media_idx`
     是 dispatcher ↔ exporter 的私有通道,导出协议外不可见。
+
+    2026-09-10 v1.7.3:`include_metadata=True`(默认)时输出 `is_favorite` /
+    `tags` / `notes` 3 列,False 时写空串。
     """
 
     format = ExportFormat.MEDIA_CSV
@@ -68,6 +76,7 @@ class MediaListCsvExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
         """写 per-media CSV → 返回字节数。"""
         with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染写盘同步
@@ -97,6 +106,10 @@ class MediaListCsvExporter(Exporter):
                         "download_error": _guard_csv_cell(med.download_error or ""),
                         "object_key": med.object_key or "",
                         "object_backend": med.object_backend or "",
+                        # 2026-09-10 v1.7.3:用户元数据 — `include_metadata=False` 时写空串。
+                        "is_favorite": (m.is_favorite if include_metadata else ""),
+                        "tags": ("|".join(m.tags) if include_metadata else ""),
+                        "notes": (_guard_csv_cell(m.notes) if include_metadata else ""),
                     }
                 )
         return out_path.stat().st_size  # noqa: ASYNC240

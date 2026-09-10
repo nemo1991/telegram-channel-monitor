@@ -132,6 +132,7 @@ class ExportService:
                 all_messages,
                 object_store=object_store_arg,
                 include_thumbnails=request.include_thumbnails,
+                include_metadata=request.include_metadata,  # 2026-09-10 v1.7.3
             )
             result = ExportResult(
                 out_path=str(out_path),
@@ -239,6 +240,7 @@ class ExportService:
                 all_messages,
                 object_store=object_store_arg,
                 include_thumbnails=request.include_thumbnails,
+                include_metadata=request.include_metadata,  # 2026-09-10 v1.7.3
             )
             result = ExportResult(
                 out_path=str(out_path),
@@ -303,6 +305,7 @@ class ExportService:
                 wrapped,
                 object_store=self._objects,
                 include_thumbnails=False,
+                include_metadata=request.include_metadata,  # 2026-09-10 v1.7.3
             )
             result = ExportResult(
                 out_path=str(out_path),

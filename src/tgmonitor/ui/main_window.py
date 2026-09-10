@@ -1079,22 +1079,29 @@ class MainWindow(QMainWindow):
         run_coro(self.loop, self.app.pin_messages(items), error_label="live_pin")
 
     def _run_live_react(self, items: list[tuple[int, int]], emoji: str) -> None:
-        """2026-09-09 v1.7.2:批量 emoji 回应。"""
+        """2026-09-09 v1.7.2:批量 emoji 回应。
+
+        2026-09-10 v1.7.3:`extra=emoji` 传给 BatchProgressDialog,标题显示
+        「批量回应 😀 中…」(unreact 类似)。
+        """
         if not items or not emoji:
             return
-        self._show_batch_progress_dialog("react")
+        self._show_batch_progress_dialog("react", extra=emoji)
         run_coro(self.loop, self.app.add_reaction(items, emoji), error_label="live_react")
 
-    def _show_batch_progress_dialog(self, op: str) -> None:
+    def _show_batch_progress_dialog(self, op: str, extra: str = "") -> None:
         """2026-09-09 v1.7.2:构造 + show 非模态 BatchProgressDialog,
         VM signal 驱动进度。`op` 用于标题(`forward` / `pin` / `react` 等)。
 
         无返回 — 调用方 fire-and-forget,VM `batch_done` signal 触发
         `dialog.accept()` 收尾。
+
+        2026-09-10 v1.7.3:`extra` 在 react/unreact 时传入 emoji,标题插入;
+        其他 op 忽略。
         """
         from tgmonitor.ui.widgets.batch_progress_dialog import BatchProgressDialog
 
-        dlg = BatchProgressDialog(self._vm, op=op, parent=self)
+        dlg = BatchProgressDialog(self._vm, op=op, extra=extra, parent=self)
         dlg.show()
 
     def _on_live_forward(self, items: list) -> None:

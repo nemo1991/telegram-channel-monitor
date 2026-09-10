@@ -50,6 +50,18 @@ def fake_client(bus: EventBus) -> MagicMock:
     """mock 一个 TdlibTelegramClient 实例,只暴露 handler 依赖的最小字段。"""
     client = MagicMock()
     client._bus = bus
+
+    async def _real_safe_publish_pin(chat_id: int, msg_id: int, is_pinned: bool) -> None:
+        """2026-09-10 v1.7.3:真实 publish 到 bus(替换 MagicMock 默认 Mock,
+        否则 asyncio.create_task 拿到 Mock 而非 coroutine 抛 TypeError)。
+        """
+        from tgmonitor.core.events import MessagePinChanged
+
+        await bus.publish(
+            MessagePinChanged(channel_id=chat_id, telegram_msg_id=msg_id, is_pinned=is_pinned)
+        )
+
+    client._safe_publish_pin_changed = _real_safe_publish_pin  # type: ignore[attr-defined]
     return client
 
 
@@ -187,3 +199,73 @@ async def test_handlers_silent_on_broken_update(fake_client: MagicMock) -> None:
     await TdlibTelegramClient._on_chat_read_inbox(fake_client, fake_client, None)
     await TdlibTelegramClient._on_chat_read_outbox(fake_client, fake_client, None)
     await TdlibTelegramClient._on_chat_default_banned_rights(fake_client, fake_client, None)
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:`_on_message_pin_changed` 单测
+# ============================================================
+
+
+async def test_on_message_pin_changed_publishes_event(fake_client: MagicMock, bus: EventBus) -> None:
+    """v1.7.3:`_on_message_pin_changed` 必须 publish `MessagePinChanged`(True / False 都发)。"""
+    from tgmonitor.core.events import MessagePinChanged
+    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
+
+    received: list[MessagePinChanged] = []
+
+    async def _on(e: MessagePinChanged) -> None:
+        received.append(e)
+
+    bus.subscribe(MessagePinChanged, _on)
+
+    update = _FakeTdlibObject(chat_id=12345, message_id=99, is_pinned=True)
+    await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update)
+    await asyncio.sleep(0.05)
+    assert len(received) == 1
+    assert received[0].channel_id == 12345
+    assert received[0].telegram_msg_id == 99
+    assert received[0].is_pinned is True
+
+    # False 路径
+    update2 = _FakeTdlibObject(chat_id=12345, message_id=100, is_pinned=False)
+    await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update2)
+    await asyncio.sleep(0.05)
+    assert len(received) == 2
+    assert received[1].is_pinned is False
+
+
+async def test_on_message_pin_changed_missing_fields_silent(
+    fake_client: MagicMock, bus: EventBus
+) -> None:
+    """v1.7.3:缺 chat_id / message_id / is_pinned → handler 静默吞,不 publish。"""
+    from tgmonitor.core.events import MessagePinChanged
+    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
+
+    received: list[MessagePinChanged] = []
+
+    async def _on(e: MessagePinChanged) -> None:
+        received.append(e)
+
+    bus.subscribe(MessagePinChanged, _on)
+
+    # 缺 chat_id
+    update = _FakeTdlibObject(message_id=1, is_pinned=True)
+    await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update)
+    await asyncio.sleep(0.05)
+    assert received == []
+
+    # 缺 is_pinned
+    update2 = _FakeTdlibObject(chat_id=100, message_id=1)
+    await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update2)
+    await asyncio.sleep(0.05)
+    assert received == []
+
+
+async def test_on_message_pin_changed_no_bus_no_raise(fake_client: MagicMock) -> None:
+    """v1.7.3:bus 为 None → handler 不抛,asyncio.create_task 分支跳过。"""
+    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
+
+    fake_client._bus = None
+    update = _FakeTdlibObject(chat_id=100, message_id=1, is_pinned=True)
+    # 不应抛
+    await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update)

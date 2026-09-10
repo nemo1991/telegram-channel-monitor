@@ -759,6 +759,26 @@ class JsonlFileStore(StorageRepository):
             await cf.upsert(_message_to_dict(msg))
             await cf.flush()
 
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """2026-09-10 v1.7.3:Jsonl 读 → 改 → 写磁盘更新模式。
+
+        pin 推送频率不高(用户手动 pin / unpin 或服务端批量事件),
+        read-modify-write 成本可接受。`_write_lock` 防并发覆盖。
+        """
+        async with self._write_lock:
+            msg = await self.get_message(channel_id, telegram_msg_id)
+            if msg is None:
+                return
+            msg.is_pinned = is_pinned
+            cf = await self._file_for(channel_id)
+            await cf.upsert(_message_to_dict(msg))
+            await cf.flush()
+
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
         """单条消息;不存在返 None。"""
         cf = await self._file_for(channel_id)

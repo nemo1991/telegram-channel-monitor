@@ -32,6 +32,11 @@ COLUMNS = [
     "media_count",
     "media_types",
     "reply_to_msg_id",
+    # 2026-09-10 v1.7.3:用户元数据列 — `include_metadata=False` 时写空串,但列保留
+    # (避免 schema 字段变化破坏 pandas read_csv dtype 推断)。
+    "is_favorite",
+    "tags",
+    "notes",
 ]
 
 
@@ -41,6 +46,9 @@ class CsvExporter(Exporter):
 
     媒体列:`media_count` = 数量;`media_types` = `|` 分隔的类型名。
     `include_thumbnails` / `object_store` 参数 CSV 不用,保留 Protocol 形状。
+
+    2026-09-10 v1.7.3:`include_metadata=True`(默认)时输出 `is_favorite` /
+    `tags` / `notes` 3 列;False 时写空串,列保留(schema 不变)。
     """
 
     format = ExportFormat.CSV
@@ -53,6 +61,7 @@ class CsvExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
         """写 CSV → 返回字节数(便于进度回报)。"""
         with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
@@ -76,6 +85,12 @@ class CsvExporter(Exporter):
                         "reply_to_msg_id": m.reply_to_msg_id
                         if m.reply_to_msg_id is not None
                         else "",
+                        # 2026-09-10 v1.7.3:`include_metadata=False` 时留空(保留列)。
+                        # tags 走 `|` 分隔 — 沿用 `media_types` 列的 escape 模式;
+                        # CSV cell 内部不能含 `|`(避免与本列分隔符冲突),notes 可含任意。
+                        "is_favorite": (m.is_favorite if include_metadata else ""),
+                        "tags": ("|".join(m.tags) if include_metadata else ""),
+                        "notes": (_guard_csv_cell(m.notes) if include_metadata else ""),
                     }
                 )
         return out_path.stat().st_size  # noqa: ASYNC240 — 文件 IO 同步,与 write 同步完成

@@ -33,6 +33,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -147,6 +148,12 @@ class AppService:
         self.env_path: Path | None = env_path
         # 重入锁:reconfigure 期间阻止 save_message
         self._reconfiguring = False
+        # 2026-09-10 v1.7.3:批量操作取消 Event — 批量 facade 循环每 item
+        # 前检查 `self._cancel_event.is_set()` → set 时 break;UI 通过
+        # `cancel_current_batch()` 触发 set。不调 task.cancel:批量 facade 已在
+        # 主 task loop 里 await,set Event 即可让循环跳出;task.cancel 会触发
+        # CancelledError 被 run_coro 吞,无法发 BatchDone(error='cancelled')。
+        self._cancel_event: asyncio.Event = asyncio.Event()
 
         # 2026-08-24:与 monitor 共享同一个 MediaDownloader 实例(FULL 策略下
         # sync 也会复用做媒体下载);非 FULL 策略 / 未接线时传 None,sync 跳过下载。
@@ -390,6 +397,21 @@ class AppService:
         """当前是否处于暂停监听状态。"""
         return self._is_paused
 
+    # ---------- 批量取消(2026-09-10 v1.7.3)----------
+
+    def cancel_current_batch(self) -> None:
+        """2026-09-10 v1.7.3:取消当前批量操作 — set Event,facade 下一个 item 检查后 break。
+
+        不调 task.cancel:批量 facade 在主 task loop 里 await,设 Event 即可让循环跳出;
+        task.cancel 会触发 CancelledError 被 run_coro 吞,无法发
+        BatchDone(error='cancelled')。已发 TDLib RPC 可能 server-side 仍完成 —
+        best-effort,UI 上 BatchProgressDialog 提示「操作中断」即可。
+
+        多次调用安全(只是 set 已 set 的 Event);无批量进行时也无副作用
+        (下一次 facade 开头 _cancel_event.clear())。
+        """
+        self._cancel_event.set()
+
     async def pause_monitor(self, source: str = "tray") -> None:
         """2026-09-03 v1.6.1:暂停监听 — 断 TDLib + 取消 in-flight 下载。
 
@@ -565,14 +587,30 @@ class AppService:
 
         2026-09-09 v1.7.2:加 BatchProgress / BatchDone 进度事件 —
         MainWindow 据此驱动 BatchProgressDialog 进度条 + 收尾。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch — facade 内每次 RPC 前查
+        _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
+        delete_messages 走 monitor 同步方法,实际取消点是 RPC 之前;
+        已发出的 RPC 仍 server-side 完成,best-effort。
         """
         if not items:
             return 0
         assert self.monitor is not None
+        self._cancel_event.clear()
         await self.bus.publish(BatchProgress(op="delete", processed=0, total=len(items)))
+        if self._cancel_event.is_set():
+            await self.bus.publish(
+                BatchDone(op="delete", succeeded=0, failed=len(items), error="cancelled")
+            )
+            return 0
         deleted = await self.monitor.delete_messages(items)
         await self.bus.publish(
-            BatchDone(op="delete", succeeded=deleted, failed=len(items) - deleted)
+            BatchDone(
+                op="delete",
+                succeeded=deleted,
+                failed=len(items) - deleted,
+                error="cancelled" if self._cancel_event.is_set() else None,
+            )
         )
         return deleted
 
@@ -581,18 +619,26 @@ class AppService:
 
         按 channel_id 分组,各调一次 `client.mark_messages_read(cid, msg_ids)`。
         paused 状态(client 已 stop)返 0 + log warning,不抛 UI 错误。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch — 每个 cid group 前查
+        _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
         """
         if not items:
             return 0
         if self._is_paused:
             log.warning("AppService.mark_messages_read: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         # 按 cid 分组
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
+        cancelled = False
         for cid, msg_ids in by_cid.items():
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
             try:
                 await self.client.mark_messages_read(cid, msg_ids)
                 success += len(msg_ids)
@@ -602,7 +648,12 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception("mark_messages_read(cid=%s) failed", cid)
         await self.bus.publish(
-            BatchDone(op="mark_read", succeeded=success, failed=len(items) - success)
+            BatchDone(
+                op="mark_read",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
         )
         return success
 
@@ -611,18 +662,27 @@ class AppService:
 
         `items` 是 `(from_cid, mid)` 对;按 from_cid group,各走
         `_chunks(mids, 100)`(TDLib `forwardMessages` 上限)。paused 返 0。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch — 每个 chunk 前查
+        _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
+        已发的 chunk 不撤回(超出 facade 控制范围,best-effort)。
         """
         if not items:
             return 0
         if self._is_paused:
             log.warning("AppService.forward_messages: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
+        cancelled = False
         for from_cid, mids in by_cid.items():
             for chunk in _chunks(mids, 100):
+                if self._cancel_event.is_set():
+                    cancelled = True
+                    break
                 try:
                     await self.client.forward_messages(from_cid, to_chat_id, chunk)
                     success += len(chunk)
@@ -633,8 +693,15 @@ class AppService:
                     log.exception(
                         "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
                     )
+            if cancelled:
+                break
         await self.bus.publish(
-            BatchDone(op="forward", succeeded=success, failed=len(items) - success)
+            BatchDone(
+                op="forward",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
         )
         return success
 
@@ -642,38 +709,61 @@ class AppService:
         """2026-09-09 v1.7.2:批量钉选 — 走 TG client.pinMessages(per-cid,per-msg)。
 
         TDLib `pinChatMessage` 一次一条;按 cid group 减少 RPC 调用次数。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch — 每个 cid group 前查
+        _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
         """
         if not items:
             return 0
         if self._is_paused:
             log.warning("AppService.pin_messages: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
+        cancelled = False
         for cid, msg_ids in by_cid.items():
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
             try:
                 await self.client.pin_messages(cid, msg_ids)
                 success += len(msg_ids)
                 await self.bus.publish(BatchProgress(op="pin", processed=success, total=len(items)))
             except Exception:  # noqa: BLE001
                 log.exception("pin_messages(cid=%s) failed", cid)
-        await self.bus.publish(BatchDone(op="pin", succeeded=success, failed=len(items) - success))
+        await self.bus.publish(
+            BatchDone(
+                op="pin",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
+        )
         return success
 
     async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
-        """2026-09-09 v1.7.2:批量取消钉选 — 走 TG client.unpinMessages。"""
+        """2026-09-09 v1.7.2:批量取消钉选 — 走 TG client.unpinMessages。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch(同 pin_messages 模式)。
+        """
         if not items:
             return 0
         if self._is_paused:
             log.warning("AppService.unpin_messages: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
+        cancelled = False
         for cid, msg_ids in by_cid.items():
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
             try:
                 await self.client.unpin_messages(cid, msg_ids)
                 success += len(msg_ids)
@@ -683,7 +773,12 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception("unpin_messages(cid=%s) failed", cid)
         await self.bus.publish(
-            BatchDone(op="unpin", succeeded=success, failed=len(items) - success)
+            BatchDone(
+                op="unpin",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
         )
         return success
 
@@ -694,14 +789,22 @@ class AppService:
 
         TDLib `addMessageReaction` 一次一条;按 cid group 仅做日志可读性,
         实际调用仍是 per-msg(异常隔离粒度到单条)。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch — 每条 RPC 前查
+        _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
         """
         if not items or not emoji:
             return 0
         if self._is_paused:
             log.warning("AppService.add_reaction: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         success = 0
+        cancelled = False
         for cid, mid in items:
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
             try:
                 await self.client.add_reaction(cid, mid, emoji, is_big=is_big)
                 success += 1
@@ -711,19 +814,32 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
         await self.bus.publish(
-            BatchDone(op="react", succeeded=success, failed=len(items) - success)
+            BatchDone(
+                op="react",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
         )
         return success
 
     async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
-        """2026-09-09 v1.7.2:批量取消 emoji 回应 — 走 TG client.remove_reaction。"""
+        """2026-09-09 v1.7.2:批量取消 emoji 回应 — 走 TG client.remove_reaction。
+
+        2026-09-10 v1.7.3:支持 cancel_current_batch(同 add_reaction 模式)。
+        """
         if not items or not emoji:
             return 0
         if self._is_paused:
             log.warning("AppService.remove_reaction: client paused, skip %d items", len(items))
             return 0
+        self._cancel_event.clear()
         success = 0
+        cancelled = False
         for cid, mid in items:
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
             try:
                 await self.client.remove_reaction(cid, mid, emoji)
                 success += 1
@@ -733,7 +849,12 @@ class AppService:
             except Exception:  # noqa: BLE001
                 log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
         await self.bus.publish(
-            BatchDone(op="unreact", succeeded=success, failed=len(items) - success)
+            BatchDone(
+                op="unreact",
+                succeeded=success,
+                failed=len(items) - success,
+                error="cancelled" if cancelled else None,
+            )
         )
         return success
 

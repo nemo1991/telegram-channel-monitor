@@ -321,6 +321,22 @@ class StorageRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """2026-09-10 v1.7.3:更新一条消息的 pin 状态。
+
+        TDLib `updateMessageIsPinned` 推送触发;MonitorService 订阅后调
+        本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 📌
+        图标刷新。不存在消息 idempotent 不抛(与 `update_message_interactions`
+        一致 — 落库时机早于本 update 的旧历史消息)。
+        """
+        ...
+
     # ---- 频道元数据(2026-08-27 v1.4.0 PR #14) ----
 
     @abstractmethod

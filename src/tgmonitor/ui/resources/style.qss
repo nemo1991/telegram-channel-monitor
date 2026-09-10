@@ -120,6 +120,22 @@ QProgressBar#batchProgressBar::chunk {
     background: #4a90e2;
     border-radius: 3px;
 }
+/* 2026-09-10 v1.7.3:取消按钮(浅色主题)— 中性灰,点按后 disable 由 Qt 自带样式处理。 */
+QPushButton#batchProgressCancelBtn {
+    background: #f5f5f5;
+    color: #555555;
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    padding: 4px 12px;
+    min-width: 60px;
+}
+QPushButton#batchProgressCancelBtn:hover {
+    background: #e8e8e8;
+}
+QPushButton#batchProgressCancelBtn:disabled {
+    color: #aaaaaa;
+    background: #f5f5f5;
+}
 /* 2026-09-09 v1.7.2:Lightbox ▶/⏸ 与 ⏯ 按钮 — 透明背景沿用 _control_bar 风格 */
 QPushButton#lightboxPlayPauseBtn,
 QPushButton#lightboxSlideshowBtn {

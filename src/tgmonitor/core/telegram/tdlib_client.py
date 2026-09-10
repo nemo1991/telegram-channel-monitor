@@ -243,6 +243,12 @@ class TdlibTelegramClient(_AiClient):
             self._on_delete_messages,
             update_type="updateDeleteMessages",
         )
+        # 2026-09-10 v1.7.3:server-side pin / unpin 推送(任何端触发)→
+        # LIVE 行 📌 图标实时刷新。
+        self.add_event_handler(
+            self._on_message_pin_changed,
+            update_type="updateMessageIsPinned",
+        )
         # 频道元数据增量更新(2026-08-27 v1.4.0 PR #14)
         self.add_event_handler(
             self._on_channel_updated,
@@ -706,6 +712,66 @@ class TdlibTelegramClient(_AiClient):
                 )
         except Exception:  # noqa: BLE001
             log.exception("publish bulk MessageDeleted failed")
+
+    # 2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 — 服务端 pin /
+    # unpin(任何端触发)同步到 UI。handler 注册见 `add_event_handler` 块。
+    async def _on_message_pin_changed(self, client_self, update) -> None:
+        """TDLib `updateMessageIsPinned`(2026-09-10 v1.7.3)— pin 状态变化。
+
+        payload:`{chat_id, message_id, is_pinned}`(TDLib 把 message 包成
+        `{chat_id, id}` 二元组;v1.7.2 之前无此 handler,server-side pin 永不
+        推到 UI,LIVE 行 📌 图标只随本地 `AppService.pin_messages` RPC 后
+        自己改 DTO,从未响应外部变化)。
+
+        通过 bus 发 `MessagePinChanged`,MonitorService 订阅并落库 + re-fetch
+        DTO + publish `MessageEdited` 触发 UI 行 📌 刷新。
+        """
+        try:
+            chat_id = getattr(update, "chat_id", None)
+            msg_id = getattr(update, "message_id", None)
+            is_pinned = getattr(update, "is_pinned", None)
+            if chat_id is None or msg_id is None or is_pinned is None:
+                log.debug(
+                    "updateMessageIsPinned missing identifiers: %r",
+                    getattr(update, "@type", type(update).__name__),
+                )
+                return
+            log.info(
+                "updateMessageIsPinned: chat=%s msg=%s pinned=%s",
+                chat_id,
+                msg_id,
+                is_pinned,
+            )
+            if self._bus is not None:
+                asyncio.create_task(
+                    self._safe_publish_pin_changed(
+                        int(chat_id),
+                        int(msg_id),
+                        bool(is_pinned),
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("updateMessageIsPinned handling failed")
+
+    async def _safe_publish_pin_changed(
+        self,
+        chat_id: int,
+        msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        try:
+            from tgmonitor.core.events import MessagePinChanged
+
+            assert self._bus is not None
+            await self._bus.publish(
+                MessagePinChanged(
+                    channel_id=chat_id,
+                    telegram_msg_id=msg_id,
+                    is_pinned=is_pinned,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("publish MessagePinChanged failed")
 
     async def _on_channel_updated(self, client_self, update) -> None:
         """TDLib `updateChannel`(2026-08-27 v1.4.0 PR #14):频道元数据

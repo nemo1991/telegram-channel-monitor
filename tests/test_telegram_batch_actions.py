@@ -187,3 +187,97 @@ def test_fake_client_inherits_add_reaction_from_protocol() -> None:
 def test_fake_client_inherits_remove_reaction_from_protocol() -> None:
     assert hasattr(FakeTelegramClient, "remove_reaction")
     assert callable(getattr(FakeTelegramClient, "remove_reaction", None))
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:custom emoji reaction dispatch
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_standard_emoji_dispatches_emoji_type() -> None:
+    """v1.7.3:普通 emoji "🔥" → TDLib `reactionTypeEmoji`,非 CustomEmoji。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
+
+    captured: list[dict] = []
+
+    class _CaptureClient:
+        def _check_alive(self) -> None:  # noqa: D401 — ChannelsApi 内部调用
+            pass
+
+        async def request(self, payload: dict) -> None:
+            captured.append(payload)
+
+    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    await api.add_reaction(100, 42, "🔥")
+    assert len(captured) == 1
+    rt = captured[0]["reaction_type"]
+    assert rt == {"@type": "reactionTypeEmoji", "emoji": "🔥"}
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
+    """v1.7.3:`custom_emoji_id:<id>` → `reactionTypeCustomEmoji`。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
+
+    captured: list[dict] = []
+
+    class _CaptureClient:
+        def _check_alive(self) -> None:  # noqa: D401
+            pass
+
+        async def request(self, payload: dict) -> None:
+            captured.append(payload)
+
+    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    await api.add_reaction(100, 42, "custom_emoji_id:5368324170671202286")
+    assert len(captured) == 1
+    rt = captured[0]["reaction_type"]
+    assert rt == {
+        "@type": "reactionTypeCustomEmoji",
+        "custom_emoji_id": "5368324170671202286",
+    }
+
+
+@pytest.mark.asyncio
+async def test_remove_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
+    """v1.7.3:remove_reaction 也支持 `custom_emoji_id:` 前缀 dispatch。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
+
+    captured: list[dict] = []
+
+    class _CaptureClient:
+        def _check_alive(self) -> None:  # noqa: D401
+            pass
+
+        async def request(self, payload: dict) -> None:
+            captured.append(payload)
+
+    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    await api.remove_reaction(100, 42, "custom_emoji_id:5368324170671202286")
+    assert len(captured) == 1
+    assert captured[0]["@type"] == "removeMessageReaction"
+    assert captured[0]["reaction_type"] == {
+        "@type": "reactionTypeCustomEmoji",
+        "custom_emoji_id": "5368324170671202286",
+    }
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_empty_string_is_noop() -> None:
+    """v1.7.3:空 `reaction` 直接 return — 防 `[400] REACTION_INVALID`。"""
+    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
+
+    captured: list[dict] = []
+
+    class _CaptureClient:
+        def _check_alive(self) -> None:  # noqa: D401
+            pass
+
+        async def request(self, payload: dict) -> None:
+            captured.append(payload)
+
+    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    await api.add_reaction(100, 42, "")
+    await api.remove_reaction(100, 42, "")
+    assert captured == []

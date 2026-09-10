@@ -121,6 +121,22 @@ QProgressBar#batchProgressBar::chunk {
     background: #5a9fea;
     border-radius: 3px;
 }
+/* 2026-09-10 v1.7.3:取消按钮(暗色主题) */
+QPushButton#batchProgressCancelBtn {
+    background: #2a2a3e;
+    color: #c0c0c0;
+    border: 1px solid #3a3a4e;
+    border-radius: 4px;
+    padding: 4px 12px;
+    min-width: 60px;
+}
+QPushButton#batchProgressCancelBtn:hover {
+    background: #353550;
+}
+QPushButton#batchProgressCancelBtn:disabled {
+    color: #666666;
+    background: #2a2a3e;
+}
 QLabel#favoriteStarLabel {
     color: #f0c040;
     font-weight: bold;

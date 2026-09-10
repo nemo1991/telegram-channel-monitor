@@ -553,6 +553,22 @@ class MongoRepository(StorageRepository):
             {"$set": update},
         )
 
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """2026-09-10 v1.7.3:Mongo `$set` 单字段更新。
+
+        schema-less,`is_pinned` 缺省 False(`.get("is_pinned", False)` 在
+        `_doc_to_message`)。0 matched 不抛(idempotent)。
+        """
+        await self.db.messages.update_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
+            {"$set": {"is_pinned": is_pinned}},
+        )
+
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;media 子文档随父 doc 一同删。"""
         await self.db.messages.delete_one(

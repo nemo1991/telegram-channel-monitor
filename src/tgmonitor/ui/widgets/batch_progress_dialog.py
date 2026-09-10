@@ -4,9 +4,11 @@
 设计:
 - 非模态(QDialog.setModal(False)),允许批量操作时操作其它面板
 - 订阅 `vm.batch_progress` / `vm.batch_done` signal 更新 QProgressBar
-- **无取消按钮**(2026-09-09 v1.7.2 决策):TDLib 批量 RPC 一旦发出就
-  不能中途撤销,UI 给个"取消"反而误导用户以为停了 — 与 ExportProgressDialog
-  区别在此;后续 v1.7.3 真加 cancel 路径会从 TDLib 队列层补,UI 暂不开洞。
+- 2026-09-10 v1.7.3:加「取消」按钮 → 调 `vm.cancel_current_batch()` →
+  `AppService._cancel_event.set()`,批量 facade 下一个 item break。
+  best-effort:已发 TDLib RPC 可能 server-side 仍完成,但 UI 显示
+  「操作中断:cancelled」+ 自动 close,符合直觉。
+- react / unreact 标题插入 emoji(`"批量回应 😀 中…"`)— `extra` kwarg 传入。
 - 完成(BatchDone) → 自动 close;close 后解除 signal 连接。
 - 通用 op 字符串("delete"/"mark_read"/"forward"/"pin"/"react" 等),
   标题随 op 切换。
@@ -17,8 +19,10 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -42,17 +46,28 @@ class BatchProgressDialog(QDialog):
         dlg.show()
         await self._vm.app.delete_messages_batch(items)
         # BatchDone 自动 emit → dialog 收尾
+
+    2026-09-10 v1.7.3:加 `extra` kwarg 用于 react/unreact 标题显示 emoji;
+    加「取消」按钮触发协作式 cancel。
     """
 
     # 操作完成(成功 / 失败 / 取消)统一发,UI statusbar 据此显示"已完成 N 条"。
     finished = Signal(object)  # payload BatchDone
 
-    def __init__(self, vm, op: str = "", parent=None) -> None:
-        """`op` 为空用「批量操作中…」通用标题;非空走 `_OP_DEFAULT_TITLES`。"""
+    def __init__(self, vm, op: str = "", extra: str = "", parent=None) -> None:
+        """`op` 为空用「批量操作中…」通用标题;非空走 `_OP_DEFAULT_TITLES`。
+
+        2026-09-10 v1.7.3:`extra` 在 react/unreact 时传入 emoji char,标题
+        会插入(`"批量回应 😀 中…"`);其他 op 忽略 `extra`。
+        """
         super().__init__(parent)
         self._vm = vm
         self._op = op
+        self._extra = extra
         title = _OP_DEFAULT_TITLES.get(op, "批量操作中…")
+        if op in ("react", "unreact") and extra:
+            # 「批量回应 😀 中…」 — 把 emoji 插到「中」前
+            title = title.replace("中…", f"{extra} 中…")
         self.setWindowTitle(self.tr(title))
         self.setModal(False)
         self._build()
@@ -65,14 +80,35 @@ class BatchProgressDialog(QDialog):
         self.bar.setMinimum(0)
         self.bar.setMaximum(0)  # 默认 indeterminate,直到第一个 BatchProgress 推 total
         root.addWidget(self.bar)
+        # 2026-09-10 v1.7.3:取消按钮行
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self._btn_cancel = QPushButton(self.tr("取消"))
+        self._btn_cancel.setObjectName("batchProgressCancelBtn")
+        self._btn_cancel.clicked.connect(self._on_cancel_clicked)
+        btn_row.addWidget(self._btn_cancel)
+        root.addLayout(btn_row)
         # 订阅 VM progress / done signal
         self._vm.batch_progress.connect(self._on_progress)
         self._vm.batch_done.connect(self._on_done)
+
+    def _on_cancel_clicked(self) -> None:
+        """2026-09-10 v1.7.3:取消按钮 — 调 `vm.cancel_current_batch()`。
+
+        best-effort:已发 RPC 可能已完成。disable 自身防双击;真正收尾
+        等 BatchDone 到达(由 _on_done 处理)。
+        """
+        self.lbl_status.setText(self.tr("正在取消…"))
+        self._btn_cancel.setEnabled(False)
+        if hasattr(self._vm, "cancel_current_batch"):
+            self._vm.cancel_current_batch()
 
     def set_op_name(self, op: str) -> None:
         """运行期改 op(同 dialog 复用多种批量动作时,主窗口可调)。"""
         self._op = op
         title = _OP_DEFAULT_TITLES.get(op, "批量操作中…")
+        if op in ("react", "unreact") and self._extra:
+            title = title.replace("中…", f"{self._extra} 中…")
         self.setWindowTitle(self.tr(title))
 
     def _on_progress(self, e) -> None:

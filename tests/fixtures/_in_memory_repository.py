@@ -458,6 +458,19 @@ class InMemoryRepository(StorageRepository):
                 r if isinstance(r, ReactionDTO) else ReactionDTO.from_dict(r) for r in reactions
             ]
 
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """2026-09-10 v1.7.3:InMemory 直接覆盖 `is_pinned` 字段(测试桩)。"""
+        key = (channel_id, telegram_msg_id)
+        msg = self.messages.get(key)
+        if msg is None:
+            return  # idempotent — 0 matched 不抛
+        msg.is_pinned = is_pinned
+
     async def ping(self) -> bool:
         return True
 

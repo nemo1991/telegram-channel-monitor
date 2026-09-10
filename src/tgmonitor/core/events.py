@@ -118,6 +118,21 @@ class MessageDeleted(Event):
 
 
 @dataclass
+class MessagePinChanged(Event):
+    """2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 — 消息 pin / unpin
+    server-side 状态变化。
+
+    重要语义:TDLib 推送只携带 `(chat_id, message_id, is_pinned)` 三元组
+    (没有完整 message DTO)。MonitorService 订阅后从 storage re-fetch 完整
+    DTO + publish `MessageEdited` 触发 UI 行 📌 图标刷新。
+    """
+
+    channel_id: int = 0
+    telegram_msg_id: int = 0
+    is_pinned: bool = False
+
+
+@dataclass
 class MessageInteractionsChanged(Event):
     """2026-08-27 v1.4.0 PR #10:reactions / views 增量更新。
 

@@ -45,6 +45,11 @@ h2 { margin-top: 2em; }
 .media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0.5em; }
 .media img { max-width: 200px; max-height: 200px; border-radius: 4px; }
 .media .ph { font-size: 0.85em; color: #888; }
+/* 2026-09-10 v1.7.3:用户元数据行(★ / 🏷 / 📝)— 浅灰底+小图标 */
+.user-meta { background: #fff8e1; border-left: 3px solid #f5c518; padding: 4px 8px; margin: 4px 0; font-size: 0.85em; }
+.user-meta .tag { background: #f0e6ff; padding: 1px 6px; border-radius: 3px; margin-right: 4px; }
+.user-meta .fav { color: #d4a017; }
+@media (prefers-color-scheme: dark) { .user-meta { background: #3a3520; border-color: #d4a017; } .user-meta .tag { background: #2a2440; } }
 </style>
 </head>
 <body>
@@ -67,6 +72,13 @@ h2 { margin-top: 2em; }
       {% if m.edited %} · <em>edited</em>{% endif %}
     </div>
     {% if m.text %}<div class="text">{{ m.text }}</div>{% endif %}
+    {% if include_metadata and (m.is_favorite or m.tags or m.notes) %}
+    <div class="user-meta">
+      {% if m.is_favorite %}<span class="fav">★ 收藏</span>{% endif %}
+      {% for tag in m.tags %}<span class="tag">🏷 {{ tag }}</span>{% endfor %}
+      {% if m.notes %}<div>📝 {{ m.notes }}</div>{% endif %}
+    </div>
+    {% endif %}
     {% if m.media %}
     <div class="media">
     {% for med in m.media %}
@@ -110,8 +122,13 @@ class HtmlExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
-        """渲染 HTML;按 channel_id 分组 → 模板渲染 → 写文件 → 返回字节数。"""
+        """渲染 HTML;按 channel_id 分组 → 模板渲染 → 写文件 → 返回字节数。
+
+        2026-09-10 v1.7.3:`include_metadata=False` 时模板不输出 ★ / 🏷 / 📝 block
+        (用户主动选择只导出文本+媒体,不掺私人标注)。
+        """
         # 准备模板数据
         grouped: dict[int, list[MessageDTO]] = defaultdict(list)
         for m in messages:
@@ -149,6 +166,7 @@ class HtmlExporter(Exporter):
             message_count=len(messages),
             channels=grouped.items(),
             channels_title=channels_title,
+            include_metadata=include_metadata,
         )
         out_path.write_text(html, encoding="utf-8")  # noqa: ASYNC240 — 文件 IO 同步,已在 IO 阻塞路径,不切线程
         return out_path.stat().st_size  # noqa: ASYNC240 — 同上

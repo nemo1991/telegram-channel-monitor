@@ -34,6 +34,7 @@ from tgmonitor.core.events import (
     MessageDeleted,
     MessageEdited,
     MessageInteractionsChanged,
+    MessagePinChanged,  # 2026-09-10 v1.7.3:server-side pin / unpin 推送
     MessageReceived,
 )
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
@@ -169,6 +170,10 @@ class MonitorService:
         # TDLib 高频推 updateMessageInteractionInfo,落库走 bus → 单点 +
         # 订阅者异常被吞,比 stream 更安全。
         self.bus.subscribe(MessageInteractionsChanged, self._handle_interactions_changed)
+        # 2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 → 落库 + republish
+        # MessageEdited 触发 UI 行 📌 刷新(只有 republish 才能让 UI 实时感知
+        # 外部 pin,而不依赖下次 reload)。
+        self.bus.subscribe(MessagePinChanged, self._handle_pin_changed)
         # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
         # 减 object_key refcount,与 `delete_message` 路径同语义。
         self.bus.subscribe(MessageDeleted, self._handle_message_deleted)
@@ -738,6 +743,52 @@ class MonitorService:
             await self.bus.publish(
                 ErrorOccurred(
                     source="monitor.interactions",
+                    message=str(e),
+                    exception=e,
+                )
+            )
+
+    async def _handle_pin_changed(
+        self,
+        event: MessagePinChanged,
+    ) -> None:
+        """2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` → 落库 + republish。
+
+        与 `_handle_interactions_changed` 不同的是:这里**必须** republish
+        `MessageEdited` — UI 行的 📌 渲染依赖 in-memory DTO 的 `is_pinned`
+        字段,而 in-memory DTO 不会自动从 storage 同步(每次 `replace_message`
+        都靠 MessageEdited 触发)。republish 走完整 DTO re-fetch 保证 UI 拿到
+        最新值。
+
+        与 reactions 的 "不 republish" 区别:reactions 走 detail panel 单独
+        订阅,而 pin 只走 LIVE 行的 📌 图标 — 没有 detail panel 兜底,
+        必须 republish。
+        """
+        try:
+            await self.storage.update_message_pin(
+                event.channel_id,
+                event.telegram_msg_id,
+                event.is_pinned,
+            )
+            # 重新从 storage 拉完整 DTO(落库可能改变其它字段,虽然本方法
+            # 只动 is_pinned;为防 schema 漂移,re-fetch 是稳妥做法)。
+            updated = await self.storage.get_message(
+                event.channel_id,
+                event.telegram_msg_id,
+            )
+            if updated is not None:
+                await self.bus.publish(MessageEdited(message=updated))
+            log.debug(
+                "pin updated: channel=%s msg=%s pinned=%s",
+                event.channel_id,
+                event.telegram_msg_id,
+                event.is_pinned,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("update pin failed: %s", e)
+            await self.bus.publish(
+                ErrorOccurred(
+                    source="monitor.pin",
                     message=str(e),
                     exception=e,
                 )

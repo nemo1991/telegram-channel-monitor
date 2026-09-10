@@ -852,3 +852,116 @@ def test_stress_10k_messages_append_dedup_truncate(qapp):
     # 性能阈值 — 防 O(N³) 极端退化(append 本身 O(N) shift 是 by design,
     # 累计 O(N²) 不在本 PR 范围;未来 PR 可改 deque + index map 做到 O(1) amortized)
     assert elapsed < 30.0, f"stress 应 < 30s,实测 {elapsed:.2f}s(可能 O(N³) 退化)"
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:行渲染 ★ / 🏷 / 📝 / 📌
+# ============================================================
+#
+# v1.7.2 加了 is_favorite / tags / notes / is_pinned 字段但没渲染,用户右键
+# ★ 后行没变化。本版本补上 _format_meta_icons。
+
+
+def _make_meta_msg(
+    *,
+    channel_id: int = 1,
+    telegram_msg_id: int = 100,
+    is_favorite: bool = False,
+    tags: list[str] | None = None,
+    notes: str = "",
+    is_pinned: bool = False,
+) -> MessageDTO:
+    """构造带 metadata 的 message DTO,默认全空。"""
+    return MessageDTO(
+        id=0,
+        channel_id=channel_id,
+        telegram_msg_id=telegram_msg_id,
+        text="x",
+        author=None,
+        date=datetime(2026, 7, 15, 13, 0, 0),
+        is_favorite=is_favorite,
+        tags=tags or [],
+        notes=notes,
+        is_pinned=is_pinned,
+    )
+
+
+def test_format_meta_icons_all_empty_returns_empty(qapp):
+    """v1.7.3:无任何 metadata 时 _format_meta_icons 返空串(原 head 不变)。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_meta_msg()
+    assert _format_meta_icons(m) == ""
+
+
+def test_format_meta_icons_favorite_star(qapp):
+    """v1.7.3:is_favorite=True → ★ icon。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_meta_msg(is_favorite=True)
+    assert "★" in _format_meta_icons(m)
+
+
+def test_format_meta_icons_tags(qapp):
+    """v1.7.3:tags=["tech", "ai"] → "🏷tech,ai"。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_meta_msg(tags=["tech", "ai"])
+    assert "🏷tech,ai" in _format_meta_icons(m)
+
+
+def test_format_meta_icons_notes_snippet(qapp):
+    """v1.7.3:notes <= 30 chars 全部显示;> 30 截断加 `…`。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    short = _make_meta_msg(notes="需要 review")
+    assert "📝需要 review" in _format_meta_icons(short)
+
+    long_text = "x" * 50
+    long = _make_meta_msg(notes=long_text)
+    out = _format_meta_icons(long)
+    # 30 chars + …
+    assert "📝" in out
+    assert "…" in out
+    assert long_text not in out  # 完整 50 chars 不应出现
+
+
+def test_format_meta_icons_pinned(qapp):
+    """v1.7.3:is_pinned=True → 📌 icon。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_meta_msg(is_pinned=True)
+    assert "📌" in _format_meta_icons(m)
+
+
+def test_format_meta_icons_combined(qapp):
+    """v1.7.3:4 类全有 → ★ 🏷 📝 📌 都在输出里(顺序 ★ → 🏷 → 📝 → 📌)。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_meta_msg(
+        is_favorite=True,
+        tags=["tech"],
+        notes="review",
+        is_pinned=True,
+    )
+    out = _format_meta_icons(m)
+    assert out == "★ 🏷tech 📝review 📌"
+
+
+def test_format_message_view_renders_metadata_icons(qapp):
+    """v1.7.3:端到端 — view.append(msg) 后 model._format 输出含 ★ / 🏷 / 📝 / 📌。"""
+    view = MessageView()
+    msg = _make_meta_msg(
+        telegram_msg_id=42,
+        is_favorite=True,
+        tags=["vip"],
+        notes="check",
+        is_pinned=True,
+    )
+    view.append(msg)
+    text = _item_text(view, 0)
+    # 4 个 icon 都应在行里
+    assert "★" in text
+    assert "🏷vip" in text
+    assert "📝check" in text
+    assert "📌" in text

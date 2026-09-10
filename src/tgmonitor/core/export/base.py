@@ -30,8 +30,14 @@ class Exporter(ABC):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,  # 2026-09-10 v1.7.3:CSV / Markdown / HTML / MEDIA_CSV 控元数据列
     ) -> int:
-        """写出到 out_path,返回写入字节数。"""
+        """写出到 out_path,返回写入字节数。
+
+        `include_metadata=True` 时导出 `is_favorite` / `tags` / `notes`(JSON / ZIP
+        永远含,asdict 透明);False 时只走原始字段。默认 True 保持 v1.7.2
+        视觉行为对 ★ / 🏷 / 📝 敏感的用户不踩坑。
+        """
         ...
 
 

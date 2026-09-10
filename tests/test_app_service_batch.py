@@ -374,3 +374,152 @@ async def test_list_by_tag_delegates_to_storage(
     result = await app.list_by_tag("tech")
     app._storage.list_by_tag.assert_awaited_once_with("tech")  # type: ignore[attr-defined]
     assert result is expected
+
+
+# ============================================================
+# 2026-09-10 v1.7.3:批量操作取消路径
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_cancel_current_batch_sets_event(
+    app: AppService,
+) -> None:
+    """v1.7.3:`cancel_current_batch()` 必须 set `_cancel_event`。"""
+    assert not app._cancel_event.is_set()  # type: ignore[attr-defined]
+    app.cancel_current_batch()
+    assert app._cancel_event.is_set()  # type: ignore[attr-defined]
+    # 多次调用安全(再次 set 已 set 的 Event)
+    app.cancel_current_batch()
+    assert app._cancel_event.is_set()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_cancel_marks_read_stops_mid_loop(app: AppService, collected: list) -> None:
+    """v1.7.3:`mark_messages_read` 取消 — break 后 stop 调 client。"""
+    # 3 cid 分组各 1 条。cancel 在 cid 1 RPC 完成后触发 → cid 2 起被 break。
+    items = [(1, 1), (2, 2), (3, 3)]
+    call_count = 0
+
+    async def _side_effect(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:  # 第 1 次 RPC 返回后触发 cancel
+            app.cancel_current_batch()
+
+    app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
+    result = await app.mark_messages_read(items)
+    # cid 1 RPC 已发出 → success += 1;cid 2 起 is_set → break
+    assert result == 1
+    assert call_count == 1
+    done = [e for e in collected if isinstance(e, BatchDone)]
+    assert len(done) == 1
+    assert done[0].op == "mark_read"
+    assert done[0].succeeded == 1
+    assert done[0].failed == 2
+    assert done[0].error == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_pin_stops_mid_loop(app: AppService, collected: list) -> None:
+    """v1.7.3:`pin_messages` 取消 — break 后 stop 调 client。"""
+    items = [(1, 1), (2, 2), (3, 3)]
+    call_count = 0
+
+    async def _side_effect(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            app.cancel_current_batch()
+
+    app.client.pin_messages.side_effect = _side_effect  # type: ignore[attr-defined]
+    result = await app.pin_messages(items)
+    assert result == 1
+    assert call_count == 1
+    done = [e for e in collected if isinstance(e, BatchDone)]
+    assert len(done) == 1
+    assert done[0].op == "pin"
+    assert done[0].succeeded == 1
+    assert done[0].error == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_react_stops_mid_loop(app: AppService, collected: list) -> None:
+    """v1.7.3:`add_reaction` 取消 — break 后 stop 调 client。"""
+    items = [(1, 10), (1, 11), (1, 12), (1, 13)]
+    call_count = 0
+
+    async def _side_effect(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            app.cancel_current_batch()
+
+    app.client.add_reaction.side_effect = _side_effect  # type: ignore[attr-defined]
+    result = await app.add_reaction(items, "🔥")
+    assert result == 1  # 第 1 条 RPC 已发出
+    assert call_count == 1
+    done = [e for e in collected if isinstance(e, BatchDone)]
+    assert len(done) == 1
+    assert done[0].op == "react"
+    assert done[0].succeeded == 1
+    assert done[0].failed == 3
+    assert done[0].error == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_completion_no_error(
+    app: AppService, collected: list
+) -> None:
+    """v1.7.3:批量全完成后 cancel — 无副作用,BatchDone.error is None。"""
+    items = [(1, 1), (1, 2)]
+    await app.mark_messages_read(items)
+    # 已 set 的 event 不影响已完成的 facade;此 facade 内部 clear → 全过完
+    app.cancel_current_batch()
+    # clear 由下次 facade 进入时做;此处直接看最后一次 BatchDone
+    done = [e for e in collected if isinstance(e, BatchDone)]
+    assert done[-1].error is None
+    assert done[-1].succeeded == 2
+
+
+@pytest.mark.asyncio
+async def test_multiple_cancel_calls_safe(app: AppService) -> None:
+    """v1.7.3:多次 cancel_current_batch 调用安全 — Event 多次 set。"""
+    app.cancel_current_batch()
+    app.cancel_current_batch()
+    app.cancel_current_batch()
+    assert app._cancel_event.is_set()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_event_cleared_by_next_facade(
+    app: AppService, collected: list
+) -> None:
+    """v1.7.3:facade 开头 `_cancel_event.clear()` — 上次 cancel 不影响下次。"""
+    # 第 1 次 facade:cancel after first RPC
+    items1 = [(1, 1), (2, 2), (3, 3)]
+    call_count = 0
+
+    async def _side_effect(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            app.cancel_current_batch()
+
+    app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
+    await app.mark_messages_read(items1)
+    done1 = [e for e in collected if isinstance(e, BatchDone)]
+    assert done1[0].error == "cancelled"
+    assert done1[0].succeeded == 1
+
+    # clear collected
+    collected.clear()
+    # 解除 side_effect → 默认 AsyncMock 不抛
+    app.client.mark_messages_read.side_effect = None  # type: ignore[attr-defined]
+
+    # 第 2 次 facade 不应被上次的 event 影响(开头 clear)
+    items2 = [(1, 100), (1, 101)]
+    await app.mark_messages_read(items2)
+    done2 = [e for e in collected if isinstance(e, BatchDone)]
+    assert done2[0].error is None
+    assert done2[0].succeeded == 2

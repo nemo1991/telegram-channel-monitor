@@ -31,8 +31,16 @@ class JsonExporter(Exporter):
         *,
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
+        include_metadata: bool = True,
     ) -> int:
-        """写 JSON → 返回字节数。`object_store` / `include_thumbnails` JSON 不用,仅保形。"""
+        """写 JSON → 返回字节数。
+
+        `object_store` / `include_thumbnails` JSON 不用,仅保形。
+        `include_metadata`(v1.7.3)对 JSON 是 no-op — asdict 总是含全部字段
+        (is_favorite / tags / notes),否则用户得做 `if False` 删字段,
+        反而更脆。协议签名加这个 kwarg 是为了与 ABC 对齐。
+        """
+        del include_metadata  # JSON 永远含 — 用户拿到完整 DTO
         payload = {
             "schema": "tgmonitor.export/v1",
             "channels": [asdict(c) for c in channels.values()],

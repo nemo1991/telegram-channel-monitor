@@ -5,6 +5,58 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.3] - 2026-09-10
+
+主题:**UX 缺陷修复 — 导出含元数据 + Pin 实时同步 + 行渲染 ★/🏷/📝/📌 + 批量取消 + custom emoji**。
+
+### 修复(Fixes)
+
+- **导出含用户元数据**:v1.7.2 引入的 `is_favorite` / `tags` / `notes` 在 JSON/ZIP 走 `asdict` 自动含,但 CSV / Markdown / HTML / MEDIA_CSV 没有 — 导出后 ★ / 🏷 / 📝 丢了。新版本加 `include_metadata: bool = True` 字段 + ExportDialog 默认勾选 checkbox + 4 个导出器加列或 block。
+- **Pin 状态 UI 同步**:TDLib `updateMessageIsPinned` handler 未注册,server-side pin/unpin 后 UI 行永远不变。新增 `MessagePinChanged` event + `_on_message_pin_changed` TDLib handler + 4 后端 `update_message_pin` 实现 + UI 行尾 📌 渲染。
+- **★ / 🏷 / 📝 / 📌 行首/行尾不可见**:v1.7.2 已写入 metadata + 持久化 + UI 入口,但 `MessageListModel._format` 没渲染 — 用户右键 ★ 后行没变化以为没生效。新增 `_format_meta_icons()` helper 在行头渲染 4 个 icon(★ / 🏷tags / 📝snippet[≤30 chars] / 📌)。
+- **批量操作无取消路径**:100+ 条选错批量删除 / 转发无法中止,CHANGELOG v1.7.2 称"TDLib 批量 RPC 一旦发出不能中途撤销"是错的 — `tdlib_client.request()` 包裹的 `asyncio.Event.wait()` 可被协作式 cancel 干净中断。新增 `AppService.cancel_current_batch()` 方法 + 6 个 batch facade(`delete_messages_batch` / `mark_messages_read` / `forward_messages` / `pin_messages` / `unpin_messages` / `add_reaction` / `remove_reaction`)开头 `_cancel_event.clear()`、每 item 处理前 `_cancel_event.is_set() → break`、发 `BatchDone(error="cancelled")`。
+- **Custom emoji reaction silently fail**:channels with premium-only reactions 调 `add_reaction` 抛 `[400] REACTION_INVALID`。新增 `"custom_emoji_id:<id>"` 前缀 dispatch `reactionTypeCustomEmoji`(`add_reaction` + `remove_reaction`)。
+
+### 新增(Added)
+
+- **BatchProgressDialog 取消按钮**:v1.7.2 决策「无取消按钮」是错的;v1.7.3 加 `QPushButton("取消")` → `vm.cancel_current_batch()` → `AppService._cancel_event.set()`。best-effort:已发 TDLib RPC 可能 server-side 仍完成,但 UI 显示「操作中断:cancelled」+ 自动 close,符合直觉。
+- **BatchProgressDialog react emoji 标题**:批量回应时标题「批量回应 😀 中…」(取代通用「批量回应中…」)— 新增 `extra: str = ""` kwarg,只在 `op in ("react", "unreact")` 时插入 emoji。
+
+### 测试(Tests)
+
+- 1021 tests pass(Stage 8 全量回归:含 6 个 v1.7.3 新文件 / 4 扩展后扩展)
+  - `tests/test_app_service_batch.py` 扩展 +7 cancel 场景
+  - `tests/test_batch_progress_dialog.py` 扩展 +9 cancel button + react emoji title
+  - `tests/test_telegram_batch_actions.py` 扩展 +4 custom emoji dispatch
+  - `tests/test_telegram_handlers.py` 扩展 +3 `_on_message_pin_changed`
+  - `tests/test_storage_backends.py` 扩展 +4 `update_message_pin` parity
+  - `tests/test_message_view.py` 扩展 +7 `_format_meta_icons` + render 4 icon
+- `ruff check` 0 errors / `mypy src/tgmonitor` 0 errors
+
+### 视觉回归(Visual Regression)
+
+- macOS pre-existing flake 已知(`test_close_event_disconnects_signals` RuntimeWarning + `test_media_manager_widget.py` 偶发 segfault),v1.7.3 不引入新视觉漂移;新行头 ★ / 🏷 / 📝 / 📌 icon 在 macOS HiDPI 黄金图可能影响,本地开发者手动验证。
+
+### Out of scope(显式排除,推到 v1.7.4)
+
+- PyPI 发布(用户明确说永远不做)
+- 视觉回归黄金图重生(macOS 环境问题,无 CI lane)
+- Emoji picker grid(`_on_live_react` 仍走 `QInputDialog.getText`)
+- Channel picker dialog(`_on_live_forward` 仍走 `QInputDialog.getInt`)
+- Reactions UI 实时刷新(push → row)
+- Lightbox 缩略图栏 / 视频字幕 / 章节 / 幻灯片过渡动画
+- 表情撤回 reaction 历史(`getMessageAddedReactions`)
+- Pin 列表侧栏 / "被 pin 的消息" filter
+- 标签层级 / 全文搜索标签
+- 收藏夹分组 / 智能收藏
+- Export include_metadata 细粒度控制(只能 all-on / all-off,不能 "只 tags 不要 notes")
+- 自定义 emoji picker UI(用户手动输 `custom_emoji_id:` 前缀)
+- TDLib `pinChatMessage` `only_for_self=False` 支持(目前固定 True,不影响其它端)
+- Forward 取消后已发 chunk 撤回(只能阻止后续 chunk,已发的不撤)
+- Cancel 时显示剩余数量 ETA / 速率
+
+---
+
 ## [1.7.2] - 2026-09-10
 
 主题:**UX 增强 — Lightbox ▶/⏸ + 批量 forward/pin/react + 收藏/标签/备注 + 进度事件**。
