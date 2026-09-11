@@ -337,3 +337,38 @@ def test_progress_eta_skipped_when_processed_equals_total(vm: _MockVM, qapp: QAp
     dlg.close()
     dlg.deleteLater()
     _drain(qapp)
+
+
+# ============================================================
+# 2026-09-11 v1.7.4 regression:disconnect 第二次不抛 RuntimeWarning
+# ============================================================
+
+
+def test_disconnect_signals_no_runtime_warning(vm: _MockVM, qapp: QApplication) -> None:
+    """回归修 #5a:closeEvent 走 _disconnect_signals,二次 disconnect 应静默。
+
+    PySide6 第二次 sig.disconnect(slot) 走 shiboken 抛 RuntimeWarning(不 raise)
+    — 原 try/except (RuntimeError, TypeError) 接不住,造成 stderr 噪声。
+    修复用 warnings.catch_warnings 抑制。
+
+    验证:close → close 不打 RuntimeWarning(用 warnings.catch_warnings
+    + simplefilter("error") 反过来测试 — 把 warning 转 raise 应不触发)。
+    """
+    import warnings
+
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    dlg.show()
+    _drain(qapp)
+
+    # 第一次 close:closeEvent → _disconnect_signals → 成功断第一个
+    dlg.close()
+    _drain(qapp)
+
+    # 关窗后 done() 通常不会再被调,但 PySide6 内部 X 按钮可能触发
+    # 双 disconnect。我们显式再调一次 _disconnect_signals,确认不 raise。
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        dlg._disconnect_signals()  # noqa: SLF001 — 测试私有方法
+        dlg._disconnect_signals()  # noqa: SLF001 — 二次也无 warning
+    _drain(qapp)
+    dlg.deleteLater()

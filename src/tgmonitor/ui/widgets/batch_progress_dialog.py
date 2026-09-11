@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
@@ -177,12 +179,17 @@ class BatchProgressDialog(QDialog):
 
         try/except 容错:Qt signal disconnect 对已断开的会抛 RuntimeError,
         closeEvent + done() 都会被调到,只解一次也安全。
+        注:PySide6 第二次 disconnect 走 shiboken 路径会打 RuntimeWarning
+        而非 raise,关窗后 emit 测试的 stderr 噪声源 — 用 catch_warnings
+        吞掉 RuntimeWarning,行为不变。
         """
-        for sig, slot in (
-            (self._vm.batch_progress, self._on_progress),
-            (self._vm.batch_done, self._on_done),
-        ):
-            try:
-                sig.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for sig, slot in (
+                (self._vm.batch_progress, self._on_progress),
+                (self._vm.batch_done, self._on_done),
+            ):
+                try:
+                    sig.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
