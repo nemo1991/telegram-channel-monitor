@@ -61,11 +61,15 @@ include = [
     "src/tgmonitor/resources/*.svg",
     "src/tgmonitor/resources/icons/*.svg",
     "src/tgmonitor/ui/resources/*.qss",
-    # 2026-09-02 v1.5.3 PR #D3:i18n 翻译文件 — Qt 走 QTranslator.load(str(qm)),
-    # 缺则 fallback 原文(.ts 由 pyside6-lupdate 生成,git 提交;.qm 由
-    # pyside6-lrelease 编,运行时需要 — 兜底源码即默认翻译,无需翻译 .qm)
-    "src/tgmonitor/i18n/*.qm",
 ]
+# 2026-09-02 v1.5.3 PR #D3 + 2026-09-11 v1.7.4 regression fix:i18n 翻译文件
+# (.qm 是 pyside6-lrelease 编译的二进制 Qt translation)— 走 `force_include`
+# 绕过 hatchling VCS-ignore 过滤(`include` glob 对 binary 默认不生效)。
+# Qt 走 QTranslator.load(str(qm)),缺则 fallback 原文 — 不会崩,但双语
+# 界面会变成 fallback 原文。force_include 显式列源 → wheel 内目标路径。
+[tool.hatch.build.targets.wheel.force-include]
+"src/tgmonitor/i18n/en_US.qm" = "tgmonitor/i18n/en_US.qm"
+"src/tgmonitor/i18n/zh_CN.qm" = "tgmonitor/i18n/zh_CN.qm"
 
 [tool.ruff]
 line-length = 100
