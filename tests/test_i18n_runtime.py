@@ -102,6 +102,49 @@ def test_translate_en_us_returns_english(qapp_no_locale_force: QApplication) -> 
     )
 
 
+def test_v174_translations_both_locales(qapp_no_locale_force: QApplication) -> None:
+    """2026-09-11 v1.7.4:13 个新 i18n key 在 zh_CN / en_US 双语均非空。
+
+    之前回归发现 v1.7.4 新 key 只在 en_US 译、zh_CN 全空(用户体验差);
+    本测试锁死 v1.7.4 双语全覆盖。emoji_picker / channel_picker /
+    batch_progress ETA 三个新 widget 的关键 key。
+    """
+    # zh_CN
+    install_translator(qapp_no_locale_force, locale="zh_CN")
+    # EmojiPickerDialog
+    assert QCoreApplication.translate("EmojiPickerDialog", "选择表情回应…") == "选择表情回应…"
+    assert QCoreApplication.translate("EmojiPickerDialog", "大表情(animate;仅普通 emoji 生效)") == (
+        "大表情(animate;仅普通 emoji 生效)"
+    )
+    # ChannelPickerDialog
+    assert QCoreApplication.translate("ChannelPickerDialog", "选择目标频道…") == "选择目标频道…"
+    assert QCoreApplication.translate("ChannelPickerDialog", "输入关键字过滤…") == "输入关键字过滤…"
+    assert QCoreApplication.translate("ChannelPickerDialog", "(无标题)") == "(无标题)"
+    # BatchProgressDialog ETA 文案
+    assert "条/秒" in QCoreApplication.translate(
+        "BatchProgressDialog",
+        "已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒",
+    ).format(done=5, total=10, rate=2.5, eta=2)
+
+    # en_US
+    install_translator(qapp_no_locale_force, locale="en_US")
+    assert (
+        QCoreApplication.translate("EmojiPickerDialog", "选择表情回应…") == "Pick reaction emoji…"
+    )
+    assert QCoreApplication.translate("EmojiPickerDialog", "大表情(animate;仅普通 emoji 生效)") == (
+        "Big emoji (animate; plain emoji only)"
+    )
+    assert (
+        QCoreApplication.translate("ChannelPickerDialog", "选择目标频道…") == "Pick target channel…"
+    )
+    assert QCoreApplication.translate("ChannelPickerDialog", "输入关键字过滤…") == "Type to filter…"
+    eta_en = QCoreApplication.translate(
+        "BatchProgressDialog",
+        "已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒",
+    ).format(done=5, total=10, rate=2.5, eta=2)
+    assert "msg/s" in eta_en and "remaining" in eta_en
+
+
 def test_qm_files_exist_and_nonempty() -> None:
     """2026-09-07 v1.6.8:en_US.qm / zh_CN.qm 编译产物存在 + 非空 + 215+ 翻译条目。"""
     i18n_dir = Path("src/tgmonitor/i18n")
