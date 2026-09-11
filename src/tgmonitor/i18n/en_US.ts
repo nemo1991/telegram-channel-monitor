@@ -52,37 +52,37 @@
 <context>
     <name>ChannelPickerDialog</name>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="42"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="40"/>
         <source>选择目标频道…</source>
         <translation>Pick target channel…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="52"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="50"/>
         <source>搜索(title / @username):</source>
         <translation>Search (title / @username):</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="55"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="53"/>
         <source>输入关键字过滤…</source>
         <translation>Type to filter…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="99"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="97"/>
         <source>chat_id: {cid} · {kind}</source>
         <translation>chat_id: {cid} · {kind}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="111"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="107"/>
         <source>(无标题)</source>
         <translation>(no title)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="140"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="135"/>
         <source>共 {n} 个频道</source>
         <translation>{n} channels total</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/channel_picker_dialog.py" line="143"/>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="138"/>
         <source>显示 {shown} / {total} 个频道</source>
         <translation>Showing {shown} / {total}</translation>
     </message>
@@ -138,27 +138,27 @@
 <context>
     <name>EmojiPickerDialog</name>
     <message>
-        <location filename="../ui/widgets/emoji_picker_dialog.py" line="81"/>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="165"/>
         <source>选择表情回应…</source>
         <translation>Pick reaction emoji…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/emoji_picker_dialog.py" line="95"/>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="179"/>
         <source>━━ {label} ━━</source>
         <translation>━━ {label} ━━</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/emoji_picker_dialog.py" line="115"/>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="199"/>
         <source>或手输(custom emoji id 用 `custom_emoji_id:N`):</source>
         <translation>Or type (custom emoji id: `custom_emoji_id:N`):</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/emoji_picker_dialog.py" line="118"/>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="202"/>
         <source>例如 🔥 或 custom_emoji_id:123</source>
         <translation>e.g. 🔥 or custom_emoji_id:123</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/emoji_picker_dialog.py" line="128"/>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="212"/>
         <source>大表情(animate;仅普通 emoji 生效)</source>
         <translation>Big emoji (animate; plain emoji only)</translation>
     </message>
@@ -894,32 +894,32 @@ to view full content, media attachments and raw data</translation>
 <context>
     <name>MessageView</name>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="673"/>
+        <location filename="../ui/widgets/message_view.py" line="669"/>
         <source>导出…</source>
         <translation>Export…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="679"/>
+        <location filename="../ui/widgets/message_view.py" line="675"/>
         <source>删除</source>
         <translation>Delete</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="685"/>
+        <location filename="../ui/widgets/message_view.py" line="681"/>
         <source>标记已读</source>
         <translation>Mark as Read</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="692"/>
+        <location filename="../ui/widgets/message_view.py" line="688"/>
         <source>★ 收藏 / 取消收藏</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="706"/>
+        <location filename="../ui/widgets/message_view.py" line="702"/>
         <source>🏷 设置标签…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="713"/>
+        <location filename="../ui/widgets/message_view.py" line="709"/>
         <source>📝 设置备注…</source>
         <translation type="unfinished"></translation>
     </message>
