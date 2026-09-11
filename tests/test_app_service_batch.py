@@ -638,3 +638,85 @@ async def test_compute_rate_zero_elapsed_returns_zero_rate(app: AppService) -> N
     app._start_batch_timer()
     elapsed2, rate2 = app._compute_rate(5)
     assert rate2 == 0.0  # elapsed < 1ms
+
+
+# ============================================================
+# 2026-09-11 v1.7.4 regression:delete_messages_batch cancel/paused 一致性
+# ============================================================
+
+
+async def test_delete_messages_batch_paused_returns_zero_without_calling_monitor(
+    paused_app: AppService,
+) -> None:
+    """回归修 #3a:paused 状态调 delete_messages_batch 返 0,不调 monitor.delete_messages。
+
+    原 facade 漏 _is_paused 守卫,会走到 monitor.delete_messages(可能 hang 或
+    在 monitor 已停时抛错)。paused 守卫与其他 6 facade 一致。
+    """
+    paused_app.monitor = AsyncMock()
+    paused_app.monitor.delete_messages = AsyncMock(return_value=42)  # type: ignore[attr-defined]
+    items = [(1, 1), (1, 2), (2, 3)]
+
+    deleted = await paused_app.delete_messages_batch(items)
+
+    assert deleted == 0
+    paused_app.monitor.delete_messages.assert_not_called()  # type: ignore[attr-defined]
+
+
+async def test_delete_messages_batch_passes_cancel_event_to_monitor(
+    app: AppService,
+) -> None:
+    """回归修 #3a:facade 透传 _cancel_event 给 monitor.delete_messages。
+
+    原 facade 一次性调 monitor.delete_messages(items) 不可中断;现在透传 cancel_event
+    让 monitor 在循环里查 → break。验证 monitor 收到的参数是 _cancel_event 实例。
+    """
+    app.monitor = AsyncMock()
+    app.monitor.delete_messages = AsyncMock(return_value=3)  # type: ignore[attr-defined]
+
+    items = [(1, 1), (1, 2), (2, 3)]
+    await app.delete_messages_batch(items)
+
+    # monitor.delete_messages 应被调一次,参数 = (items, cancel_event=app._cancel_event)
+    app.monitor.delete_messages.assert_called_once()  # type: ignore[attr-defined]
+    call_args = app.monitor.delete_messages.call_args  # type: ignore[attr-defined]
+    assert call_args.args[0] == items  # items 位置参数
+    assert call_args.kwargs.get("cancel_event") is app._cancel_event
+
+
+async def test_delete_messages_batch_emits_cancelled_when_cancel_set_before_call(
+    app: AppService,
+) -> None:
+    """回归修 #3a:facade 跑完 monitor.delete_messages 后,cancel_event 已 set →
+    BatchDone.error = 'cancelled'(与其它 6 facade 行为一致)。
+    """
+    received: list[BatchDone] = []
+
+    async def _on(e: BatchDone) -> None:
+        received.append(e)
+
+    bus_subscribe_app(app, BatchDone, _on)
+
+    # monitor 同步返 3,但模拟 cancel 已在 monitor 跑完后 set 上
+    async def _fake_delete(items, cancel_event=None):
+        if cancel_event is not None:
+            cancel_event.set()
+        return 3
+
+    app.monitor = AsyncMock()
+    app.monitor.delete_messages = AsyncMock(side_effect=_fake_delete)  # type: ignore[attr-defined]
+
+    items = [(1, 1), (1, 2), (2, 3)]
+    await app.delete_messages_batch(items)
+
+    assert len(received) == 1
+    done = received[0]
+    assert done.op == "delete"
+    assert done.succeeded == 3
+    assert done.failed == 0
+    assert done.error == "cancelled"
+
+
+def bus_subscribe_app(app: AppService, evt_type, fn) -> None:  # type: ignore[no-untyped-def]
+    """helper:订阅 app.bus 上的事件(供 inline 定义使用)。"""
+    app.bus.subscribe(evt_type, fn)

@@ -634,7 +634,11 @@ class MonitorService:
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
 
-    async def delete_messages(self, items: list[tuple[int, int]]) -> int:
+    async def delete_messages(
+        self,
+        items: list[tuple[int, int]],
+        cancel_event: asyncio.Event | None = None,
+    ) -> int:
         """2026-09-08 v1.7.0:批量删 N 条消息 + 清孤儿 + 发 N 次 MessageDeleted。
 
         按 (channel_id,) 分组后各调 `storage.delete_messages` 一次性 SQL,
@@ -642,12 +646,20 @@ class MonitorService:
         object_key 的两条消息被删时 refcount 正确递减)。单条失败不阻断,
         返成功条数。
 
+        2026-09-11 v1.7.4 (regression fix):`cancel_event` 可选 — 每条 RPC
+        前查 `cancel_event.is_set()`,True 则 break(不 publish,不发
+        MessageDeleted);原 facade 一次跑完整批无法中断,改为可选事件以
+        兼容旧调用点 + 让 AppService.delete_messages_batch 走真批量路径
+        而非退化为 per-item。
+
         Out of scope(v1.8+):整体 refcount 收集优化(N×media → 1 round-trip)。
         """
         if not items:
             return 0
         succeeded: list[tuple[int, int]] = []
         for cid, mid in items:
+            if cancel_event is not None and cancel_event.is_set():
+                break
             try:
                 await self._delete_with_orphan_check(cid, mid)
                 succeeded.append((cid, mid))

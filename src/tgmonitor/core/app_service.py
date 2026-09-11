@@ -636,19 +636,30 @@ class AppService:
         _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
         delete_messages 走 monitor 同步方法,实际取消点是 RPC 之前;
         已发出的 RPC 仍 server-side 完成,best-effort。
+
+        2026-09-11 v1.7.4 (regression fix):原 facade 一次性调
+        `monitor.delete_messages(items)`(整批同步跑完),无法在循环中途
+        中断。给 monitor.delete_messages 加 cancel_event 可选参数,
+        facade 透传 — 保留批量 SQL 路径 + 支持中途 break。补 _is_paused
+        守卫与其他 6 facade 一致。
         """
         if not items:
+            return 0
+        if self._is_paused:
+            log.warning(
+                "AppService.delete_messages_batch: monitor paused, skip %d items",
+                len(items),
+            )
             return 0
         assert self.monitor is not None
         self._cancel_event.clear()
         self._start_batch_timer()
         await self._publish_batch_progress("delete", 0, len(items))
-        if self._cancel_event.is_set():
-            await self.bus.publish(
-                BatchDone(op="delete", succeeded=0, failed=len(items), error="cancelled")
-            )
-            return 0
-        deleted = await self.monitor.delete_messages(items)
+        deleted = await self.monitor.delete_messages(items, cancel_event=self._cancel_event)
+        # ETA 进度:由于 monitor 内部循环不会逐条 emit,我们只能按 (deleted, total)
+        # 在末尾发一次完整进度。UI dialog 看的是「已完成 N」,ETA 依赖 elapsed,
+        # 也能从 BatchDone 前的最后一次 emit 算。
+        await self._publish_batch_progress("delete", deleted, len(items))
         await self.bus.publish(
             BatchDone(
                 op="delete",

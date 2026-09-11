@@ -1702,3 +1702,66 @@ async def test_monitor_channel_metadata_does_not_republish(monitor, storage, bus
             bus.unsubscribe(ChannelMetadataChanged, _count)
     finally:
         await monitor.stop()
+
+
+# ============================================================
+# 2026-09-11 v1.7.4 regression:MonitorService.delete_messages cancel_event 支持
+# ============================================================
+
+
+async def test_monitor_delete_messages_supports_cancel_event(monitor, storage, bus) -> None:
+    """回归修 #3a:`monitor.delete_messages(items, cancel_event=...)` 在 cancel_event
+    set 后 break,只删到 cancel 之前成功的项,后面的 items 不动。
+
+    旧 facade 一次性调 monitor.delete_messages(items) 不可中断;现在支持
+    可选 cancel_event 让 facade 可中途 break。
+    """
+    # 预存 5 条消息
+    for mid in range(1, 6):
+        await storage.save_message(
+            make_message(channel_id=100, msg_id=mid, text=f"msg-{mid}"),
+        )
+    # 用真 cancel_event,在删了 2 条后 set
+    cancel = asyncio.Event()
+
+    # 包装 _delete_with_orphan_check,记录被调次数 + 设 cancel
+    deleted_calls: list[tuple[int, int]] = []
+
+    orig = monitor._delete_with_orphan_check  # type: ignore[attr-defined]
+
+    async def _counting_delete(cid: int, mid: int) -> None:
+        deleted_calls.append((cid, mid))
+        if len(deleted_calls) >= 2:
+            cancel.set()
+        await orig(cid, mid)
+
+    monitor._delete_with_orphan_check = _counting_delete  # type: ignore[attr-defined]
+
+    items = [(100, m) for m in range(1, 6)]
+    succeeded = await monitor.delete_messages(items, cancel_event=cancel)
+
+    # 只删了 2 条,后 3 条不应被调用
+    assert succeeded == 2
+    assert deleted_calls == [(100, 1), (100, 2)]
+
+    # 后 3 条仍存在
+    for mid in range(3, 6):
+        m = await storage.get_message(100, mid)
+        assert m is not None, f"msg-{mid} 不应被删"
+
+
+async def test_monitor_delete_messages_no_cancel_event_runs_full(monitor, storage, bus) -> None:
+    """回归修 #3a:不传 cancel_event 时行为不变(向后兼容)。"""
+    for mid in range(1, 4):
+        await storage.save_message(
+            make_message(channel_id=100, msg_id=mid, text=f"msg-{mid}"),
+        )
+
+    items = [(100, m) for m in range(1, 4)]
+    # 不传 cancel_event(默认 None)
+    succeeded = await monitor.delete_messages(items)
+
+    assert succeeded == 3
+    for mid in range(1, 4):
+        m = await storage.get_message(100, mid)
+        assert m is None
