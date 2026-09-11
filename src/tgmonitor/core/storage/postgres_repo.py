@@ -698,8 +698,7 @@ class PostgresRepository(StorageRepository):
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
-                "UPDATE messages SET is_pinned = $3 "
-                "WHERE channel_id = $1 AND telegram_msg_id = $2",
+                "UPDATE messages SET is_pinned = $3 WHERE channel_id = $1 AND telegram_msg_id = $2",
                 channel_id,
                 telegram_msg_id,
                 is_pinned,

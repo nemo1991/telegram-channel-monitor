@@ -907,7 +907,9 @@ async def test_csv_exporter_includes_metadata_columns(tmp_path):
 
     rows = list(csv_mod.DictReader(out.read_text(encoding="utf-8").splitlines()))
     # 找到带 metadata 的那条(ch100 msg1 = favorite)
-    fav_row = next(r for r in rows if int(r["telegram_msg_id"]) == 1 and int(r["channel_id"]) == 100)
+    fav_row = next(
+        r for r in rows if int(r["telegram_msg_id"]) == 1 and int(r["channel_id"]) == 100
+    )
     # 默认 include_metadata=True → 字段填充
     assert fav_row["is_favorite"] in ("True", "true", "1"), fav_row
     assert fav_row["tags"] == "tech|ai"
@@ -1150,6 +1152,7 @@ def test_export_request_include_metadata_default_true() -> None:
 def test_export_dialog_metadata_checkbox_default() -> None:
     """v1.7.3:ExportDialog 默认勾选"包含收藏 / 标签 / 备注"checkbox。"""
     import os
+
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 

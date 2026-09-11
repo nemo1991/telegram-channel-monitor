@@ -58,12 +58,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MessageDTO, SyncOptions
+from tgmonitor.core.dto import ChannelDTO, MessageDTO, SyncOptions
 from tgmonitor.core.events import (
     AuthErrorOccurred,
     LoginStateChanged,
     MediaDownloaded,
     MessageDeleted,
+    MessageInteractionsChanged,
     NotificationRequested,
     QuitRequested,
 )
@@ -1078,16 +1079,24 @@ class MainWindow(QMainWindow):
         self._show_batch_progress_dialog("pin")
         run_coro(self.loop, self.app.pin_messages(items), error_label="live_pin")
 
-    def _run_live_react(self, items: list[tuple[int, int]], emoji: str) -> None:
+    def _run_live_react(
+        self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
+    ) -> None:
         """2026-09-09 v1.7.2:批量 emoji 回应。
 
         2026-09-10 v1.7.3:`extra=emoji` 传给 BatchProgressDialog,标题显示
         「批量回应 😀 中…」(unreact 类似)。
+        2026-09-11 v1.7.4:`is_big` 透传到 AppService.add_reaction — 由
+        EmojiPickerDialog 的「大表情」checkbox 决定。
         """
         if not items or not emoji:
             return
         self._show_batch_progress_dialog("react", extra=emoji)
-        run_coro(self.loop, self.app.add_reaction(items, emoji), error_label="live_react")
+        run_coro(
+            self.loop,
+            self.app.add_reaction(items, emoji, is_big=is_big),
+            error_label="live_react",
+        )
 
     def _show_batch_progress_dialog(self, op: str, extra: str = "") -> None:
         """2026-09-09 v1.7.2:构造 + show 非模态 BatchProgressDialog,
@@ -1105,26 +1114,29 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _on_live_forward(self, items: list) -> None:
-        """2026-09-09 v1.7.2:批量转发入口 — 弹目标频道选择 dialog,接收 ID 后转发。"""
+        """2026-09-09 v1.7.2:批量转发入口 — 弹目标频道选择 dialog,接收 ID 后转发。
+
+        2026-09-11 v1.7.4:升级为 ChannelPickerDialog(列表 + 搜索 + 双击),取代
+        QInputDialog.getInt 输入整数 chat_id(易输错,无候选)。
+        """
         normalized = _normalize_selection_items(items)
         if not normalized:
             return
-        # 用 QInputDialog 让用户输入目标 chat_id(简单方案;
-        # v1.7.3 升级为 channel list picker)。
-        cid_text, ok = QInputDialog.getText(
-            self,
-            self.tr("转发到…"),
-            self.tr("目标频道 chat_id(整数):"),
-        )
-        if not ok or not cid_text.strip():
-            return
-        try:
-            to_cid = int(cid_text.strip())
-        except ValueError:
-            QMessageBox.warning(self, self.tr("无效输入"), self.tr("chat_id 必须是整数。"))
-            return
-        self._run_live_forward(normalized, to_cid)
-        self.live_view.clear_selection()
+
+        async def _go() -> list[ChannelDTO]:
+            return await self.app.list_joined_channels()
+
+        def _on_channels(channels: list[ChannelDTO]) -> None:
+            # 局部 import — channel picker 是次常用路径,避免启动开销。
+            from tgmonitor.ui.widgets.channel_picker_dialog import ChannelPickerDialog
+
+            to_cid = ChannelPickerDialog.pick_channel(self, channels)
+            if to_cid is None:
+                return
+            self._run_live_forward(normalized, to_cid)
+            self.live_view.clear_selection()
+
+        run_coro(self.loop, _go(), on_success=_on_channels, error_label="live_forward_pick")
 
     def _on_live_pin(self, items: list) -> None:
         """2026-09-09 v1.7.2:批量钉选入口 — 直接转发(无需弹额外对话框)。"""
@@ -1137,19 +1149,20 @@ class MainWindow(QMainWindow):
     def _on_live_react(self, items: list) -> None:
         """2026-09-09 v1.7.2:批量 emoji 回应入口 — 弹 QInputDialog 输入 emoji 字符。
 
-        v1.7.2 走方案 A(QInputDialog.getText);v1.7.3 升级 grid picker。
+        2026-09-11 v1.7.4:升级为 EmojiPickerDialog(60+ grid + is_big + 手输兜底),
+        取代 QInputDialog.getText。
         """
         normalized = _normalize_selection_items(items)
         if not normalized:
             return
-        emoji, ok = QInputDialog.getText(
-            self,
-            self.tr("表情回应…"),
-            self.tr("输入 emoji 字符(如 🔥、👍、❤️):"),
-        )
-        if not ok or not emoji.strip():
+        # 局部 import — emoji picker 是次常用路径,避免 main_window 启动开销。
+        from tgmonitor.ui.widgets.emoji_picker_dialog import EmojiPickerDialog
+
+        result = EmojiPickerDialog.get_emoji(self)
+        if result is None:
             return
-        self._run_live_react(normalized, emoji.strip())
+        emoji, is_big = result
+        self._run_live_react(normalized, emoji, is_big=is_big)
         self.live_view.clear_selection()
 
     def _on_live_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
@@ -1239,6 +1252,10 @@ class MainWindow(QMainWindow):
         # vm.search_messages(...) 完成后 emit `message_search_results(list[MessageDTO])`,
         # MainWindow 接到直接 `set_messages` 替换视图(覆盖原有 LIVE 流)。
         self._vm.message_search_results.connect(self.live_view.set_messages)
+        # 2026-09-11 v1.7.4:reactions 增量推送 → LIVE 行局部刷新。
+        # TDLib `updateMessageReactions` bots-only(user client 不收),
+        # 仅靠 `updateMessageInteractionInfo`,服务端推送策略决定延迟。
+        self._vm.message_interactions_changed.connect(self._on_message_interactions_changed)
         # Media Manager 转发(2026-08-24)
         self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
         self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
@@ -1391,6 +1408,26 @@ class MainWindow(QMainWindow):
         按 (channel_id, telegram_msg_id) 找现有 row,不增删。
         """
         self.live_view.replace_message(m)
+
+    def _on_message_interactions_changed(self, e) -> None:
+        """2026-09-11 v1.7.4:TDLib `updateMessageInteractionInfo` → reactions / views 变化。
+
+        LIVE 行:`live_view.refresh_reactions` 局部更新一行 — 不重建列表,
+        不丢失滚动 / 选中状态。详情面板:若正显示同一条,重新 show_message
+        渲染 reactions / views。
+
+        **TDLib 限制**:`updateMessageReactions` 是 bots-only,user client
+        不收;本路径依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged
+        .reactions`),服务端推送策略决定延迟。Anonymous reactions 永远看不到。
+        """
+        if not isinstance(e, MessageInteractionsChanged):
+            return
+        # LIVE 行 reactions 局部刷新(reactions=None 时 refresh_reactions 内部忽略)
+        self.live_view.refresh_reactions(e.channel_id, e.telegram_msg_id, e.reactions)
+        # 详情面板同步:若正显示该消息,用 LIVE 模型里的最新 DTO 重建(reactions 已就地更新)。
+        dto = self.live_view.dto_by_key(e.channel_id, e.telegram_msg_id)
+        if dto is not None:
+            self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
 
     def _on_media_downloaded(self, e) -> None:
         """媒体下载结束(成功/失败) → 实时流行与详情面板刷新状态。"""

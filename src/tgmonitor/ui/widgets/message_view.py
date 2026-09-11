@@ -45,7 +45,8 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ReactionDTO
+from tgmonitor.ui.widgets._reaction_format import format_reactions_short
 from tgmonitor.ui.widgets.form_row import empty_hint
 
 # ============================================================
@@ -59,6 +60,11 @@ def _format_meta_icons(m: MessageDTO) -> str:
     顺序固定:★ → 🏷 → 📝 → 📌(★ 最重要,放最前;📌 server-side state 放最后)。
     tags 用 `,` 分隔(与 LIVE 行 hover / MessageDetail 一致);notes 超过
     30 字符截断加 `…`(行高可控,避免 100 字备注撑爆单行)。
+
+    2026-09-11 v1.7.4:reactions 拼到末尾(`🔥 5  👍 3`)— 由
+    MessageInteractionsChanged event 触发本地刷新,实时性受限于 TDLib
+    `updateMessageInteractionInfo` 推送(bots-only `updateMessageReactions`
+    user client 不收)。
     """
     parts: list[str] = []
     if m.is_favorite:
@@ -70,6 +76,10 @@ def _format_meta_icons(m: MessageDTO) -> str:
         parts.append(f"📝{snippet}")
     if m.is_pinned:
         parts.append("📌")
+    if m.reactions:
+        rx = format_reactions_short(m.reactions, max_show=3, mark_chosen=False)
+        if rx:
+            parts.append(rx)
     return " ".join(parts)
 
 
@@ -286,6 +296,41 @@ class MessageListModel(QAbstractListModel):
                 break
         idx = self.index(row, 0)
         self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
+
+    def refresh_reactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        reactions: list[ReactionDTO] | None,
+    ) -> None:
+        """2026-09-11 v1.7.4:TDLib `MessageInteractionsChanged` 触发 — 局部刷新一行 reactions。
+
+        TDLib `updateMessageReactions` 是 bots-only,user client 收不到 —
+        本方法依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),
+        服务端推送策略决定实时性。
+
+        Args:
+            channel_id:目标消息频道。
+            telegram_msg_id:目标消息 id。
+            reactions:新 reactions 列表(`None` 表示服务端「无变化」,
+                直接忽略,避免无谓 refresh)。
+        """
+        if reactions is None:
+            return
+        row = self._index_of.get((channel_id, telegram_msg_id))
+        if row is None:
+            return
+        # MessageDTO 是 mutable dataclass,直接赋值即可。
+        self._items[row].reactions = list(reactions) if reactions else None
+        idx = self.index(row, 0)
+        self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
+
+    def dto_by_key(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
+        """2026-09-11 v1.7.4:按 (cid, mid) 拿当前 DTO 引用 — 不存在返 None。"""
+        row = self._index_of.get((channel_id, telegram_msg_id))
+        if row is None:
+            return None
+        return self._items[row]
 
     # ---- 过滤 / 格式化工具 ----
 
@@ -536,6 +581,26 @@ class MessageView(QListView):
     def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
         """异步下载结束回调 — 委托 model。"""
         self._model.update_media_status(channel_id, telegram_msg_id, media)
+
+    def refresh_reactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        reactions: list[ReactionDTO] | None,
+    ) -> None:
+        """2026-09-11 v1.7.4:TDLib push reactions 变化 → 局部刷新一行。
+
+        详见 `MessageListModel.refresh_reactions`(调用同方法)。
+        """
+        self._model.refresh_reactions(channel_id, telegram_msg_id, reactions)
+
+    def dto_by_key(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
+        """2026-09-11 v1.7.4:按 (cid, mid) 拿当前 DTO 引用 — 给详情面板同步 reactions 用。
+
+        返回 LIVE 模型里那个对象(可变引用) — 详情面板拿到后 view 自己
+        `show_message(dto)` 重建;若不存在返回 None(已被截断 / 不在 LIVE 视图)。
+        """
+        return self._model.dto_by_key(channel_id, telegram_msg_id)
 
     def count(self) -> int:
         """行数 — 兼容 QListWidget.count()。"""

@@ -116,15 +116,28 @@ class BatchProgressDialog(QDialog):
 
         `e.total=0` → indeterminate(批开始时 first emit)
         `e.total>0` → 确定模式 + 设值
+
+        2026-09-11 v1.7.4:rate > 0 时附加「N 条/秒,剩余 M 秒」ETA —
+        `e.rate_per_second` 来自 facade(`_compute_rate` helper,
+        `processed / elapsed_since_facade_start`)。
         """
         total = getattr(e, "total", 0)
         processed = getattr(e, "processed", 0)
+        rate = getattr(e, "rate_per_second", 0.0)
         if total <= 0:
             self.bar.setMaximum(0)
             self.lbl_status.setText(self.tr("处理中…"))
+            return
+        self.bar.setMaximum(total)
+        self.bar.setValue(processed)
+        if rate > 0 and processed < total:
+            eta_seconds = (total - processed) / rate
+            self.lbl_status.setText(
+                self.tr("已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒").format(
+                    done=processed, total=total, rate=rate, eta=eta_seconds
+                )
+            )
         else:
-            self.bar.setMaximum(total)
-            self.bar.setValue(processed)
             self.lbl_status.setText(
                 self.tr("已完成 {done} / {total}").format(done=processed, total=total)
             )

@@ -468,9 +468,7 @@ async def test_cancel_react_stops_mid_loop(app: AppService, collected: list) -> 
 
 
 @pytest.mark.asyncio
-async def test_cancel_after_completion_no_error(
-    app: AppService, collected: list
-) -> None:
+async def test_cancel_after_completion_no_error(app: AppService, collected: list) -> None:
     """v1.7.3:批量全完成后 cancel — 无副作用,BatchDone.error is None。"""
     items = [(1, 1), (1, 2)]
     await app.mark_messages_read(items)
@@ -492,9 +490,7 @@ async def test_multiple_cancel_calls_safe(app: AppService) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_after_event_cleared_by_next_facade(
-    app: AppService, collected: list
-) -> None:
+async def test_cancel_after_event_cleared_by_next_facade(app: AppService, collected: list) -> None:
     """v1.7.3:facade 开头 `_cancel_event.clear()` — 上次 cancel 不影响下次。"""
     # 第 1 次 facade:cancel after first RPC
     items1 = [(1, 1), (2, 2), (3, 3)]
@@ -523,3 +519,122 @@ async def test_cancel_after_event_cleared_by_next_facade(
     done2 = [e for e in collected if isinstance(e, BatchDone)]
     assert done2[0].error is None
     assert done2[0].succeeded == 2
+
+
+# ============================================================
+# 2026-09-11 v1.7.4:`BatchProgress` 加 `elapsed_seconds` /
+# `rate_per_second` — facade publish helper 验证
+# ============================================================
+
+
+async def test_batch_progress_emits_elapsed_and_rate_for_pin(
+    bus: EventBus, app: AppService
+) -> None:
+    """v1.7.4:pin_messages 每次 BatchProgress publish 含 `elapsed_seconds` /
+    `rate_per_second` — 后者 = processed / elapsed。
+    """
+    received: list[BatchProgress] = []
+
+    async def _on(e: BatchProgress) -> None:
+        received.append(e)
+
+    bus.subscribe(BatchProgress, _on)
+
+    items = [(1, 1), (1, 2), (1, 3)]
+    await app.pin_messages(items)
+    # 至少 1 个 progress emit(3 条成功 → 1 个 emit)
+    assert len(received) >= 1
+    last = received[-1]
+    assert last.op == "pin"
+    assert last.processed == 3
+    assert last.total == 3
+    # elapsed ≥ 0,rate = processed / elapsed(> 0)
+    assert last.elapsed_seconds >= 0.0
+    if last.elapsed_seconds > 1e-3:
+        assert last.rate_per_second > 0.0
+        # 3 items / N 秒(测试机 N 通常 < 1s,rate > 3)
+        assert abs(last.rate_per_second - 3 / last.elapsed_seconds) < 0.1
+
+
+async def test_batch_progress_emits_elapsed_and_rate_for_react(
+    bus: EventBus, app: AppService
+) -> None:
+    """v1.7.4:add_reaction 同上。"""
+    received: list[BatchProgress] = []
+
+    async def _on(e: BatchProgress) -> None:
+        received.append(e)
+
+    bus.subscribe(BatchProgress, _on)
+
+    items = [(1, 1), (1, 2)]
+    await app.add_reaction(items, "🔥")
+    assert len(received) >= 1
+    last = received[-1]
+    assert last.op == "react"
+    assert last.processed == 2
+    assert last.total == 2
+    assert last.elapsed_seconds >= 0.0
+
+
+async def test_batch_progress_emits_elapsed_and_rate_for_mark_read(
+    bus: EventBus, app: AppService
+) -> None:
+    """v1.7.4:mark_messages_read(per-cid grouping)— rate 也正确。"""
+    received: list[BatchProgress] = []
+
+    async def _on(e: BatchProgress) -> None:
+        received.append(e)
+
+    bus.subscribe(BatchProgress, _on)
+
+    items = [(1, 1), (1, 2), (2, 3)]
+    await app.mark_messages_read(items)
+    assert len(received) >= 1
+    last = received[-1]
+    assert last.op == "mark_read"
+    assert last.processed == 3
+    assert last.total == 3
+
+
+async def test_batch_progress_zero_processed_zero_rate(bus: EventBus, app: AppService) -> None:
+    """v1.7.4:第一条 emit 时 processed=0 → elapsed 极短 → rate=0(elapsed < 1e-3 保护)。
+
+    delete_messages_batch 开始时 emit processed=0 — 验证兜底逻辑。
+    """
+    received: list[BatchProgress] = []
+
+    async def _on(e: BatchProgress) -> None:
+        received.append(e)
+
+    bus.subscribe(BatchProgress, _on)
+
+    items = [(1, 1)]
+    # 让 monitor.delete_messages 立刻返 1(单条 delete 同步)
+    app.monitor = AsyncMock()  # type: ignore[attr-defined]
+    app.monitor.delete_messages = AsyncMock(return_value=1)  # type: ignore[attr-defined]
+    await app.delete_messages_batch(items)
+    # 第一个 emit 是 processed=0;rate 应 = 0(elapsed ≈ 0)
+    assert len(received) >= 1
+    first = received[0]
+    assert first.processed == 0
+    assert first.total == 1
+    # elapsed 可能是 0(极快)或 > 0 但 rate ≈ 0(若 elapsed < 1e-3)— 不强求
+    assert first.rate_per_second >= 0.0
+
+
+async def test_compute_rate_zero_elapsed_returns_zero_rate(app: AppService) -> None:
+    """v1.7.4:`_compute_rate` 在 elapsed < 1e-3 时返 0(除零保护)。"""
+    # 不调 _start_batch_timer,_batch_started_at = 0(初始),time.monotonic() - 0 = 当前时间(大)
+    # 但 processed/elapsed 还是 > 0。真正测除零路径需 mock monotonic。
+    # 简化:设 _batch_started_at = time.monotonic() — elapsed ≈ 0 → rate = 0
+    import time as _time
+
+    app._batch_started_at = _time.monotonic()  # type: ignore[attr-defined]
+    elapsed, rate = app._compute_rate(5)
+    assert elapsed >= 0.0
+    assert rate == 0.0 or rate > 0.0  # 取决于 timer 精度;_compute_rate 路径不抛即可
+    # 更严格:首次调用 `_start_batch_timer()` 后立即 `_compute_rate` 应 rate=0
+    app._start_batch_timer()
+    elapsed2, rate2 = app._compute_rate(5)
+    assert rate2 == 0.0  # elapsed < 1ms

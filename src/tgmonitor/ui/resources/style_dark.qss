@@ -137,6 +137,69 @@ QPushButton#batchProgressCancelBtn:disabled {
     color: #666666;
     background: #2a2a3e;
 }
+
+/* 2026-09-11 v1.7.4:EmojiPickerDialog — 暗色主题 */
+QLabel#emojiGroupTitle {
+    color: #8888aa;
+    font-weight: bold;
+    padding: 4px 0 2px 0;
+}
+QLineEdit#emojiManualInput {
+    padding: 4px 8px;
+    border: 1px solid #3a3a4e;
+    border-radius: 3px;
+    background: #1e1e2e;
+    color: #c0c4d0;
+}
+QCheckBox#emojiIsBigCheckbox {
+    padding: 4px 0;
+    color: #c0c4d0;
+}
+QPushButton[emojiChar] {
+    background: #2c2c40;
+    border: 1px solid #353550;
+    border-radius: 4px;
+    font-size: 18px;
+    color: #c0c4d0;
+}
+QPushButton[emojiChar]:hover {
+    background: #353560;
+    border-color: #5a9fea;
+}
+QPushButton[emojiChar]:checked {
+    background: #2a4a7a;
+    border: 2px solid #5a9fea;
+}
+
+/* 2026-09-11 v1.7.4:ChannelPickerDialog — 暗色主题 */
+QLabel#channelSearchLabel {
+    color: #c0c4d0;
+}
+QLineEdit#channelSearchInput {
+    padding: 4px 8px;
+    border: 1px solid #3a3a4e;
+    border-radius: 3px;
+    background: #1e1e2e;
+    color: #c0c4d0;
+}
+QListWidget#channelList {
+    border: 1px solid #3a3a4e;
+    border-radius: 3px;
+    background: #2c2c40;
+    color: #c0c4d0;
+}
+QListWidget#channelList::item {
+    padding: 6px 8px;
+    border-bottom: 1px solid #353550;
+}
+QListWidget#channelList::item:selected {
+    background: #2a4a7a;
+    color: #ffffff;
+}
+QLabel#channelCountLabel {
+    color: #8888aa;
+    padding: 4px 0;
+}
 QLabel#favoriteStarLabel {
     color: #f0c040;
     font-weight: bold;

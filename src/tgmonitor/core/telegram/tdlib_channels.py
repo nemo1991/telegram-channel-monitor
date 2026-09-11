@@ -625,6 +625,6 @@ def _reaction_type_from_str(reaction: str) -> dict:
     if reaction.startswith(prefix):
         return {
             "@type": "reactionTypeCustomEmoji",
-            "custom_emoji_id": reaction[len(prefix):],
+            "custom_emoji_id": reaction[len(prefix) :],
         }
     return {"@type": "reactionTypeEmoji", "emoji": reaction}

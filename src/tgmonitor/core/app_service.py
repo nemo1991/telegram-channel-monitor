@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
@@ -154,6 +155,10 @@ class AppService:
         # 主 task loop 里 await,set Event 即可让循环跳出;task.cancel 会触发
         # CancelledError 被 run_coro 吞,无法发 BatchDone(error='cancelled')。
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        # 2026-09-11 v1.7.4:批量 ETA 计算 — 6 个 facade 开头记 `time.monotonic()`,
+        # 每次 BatchProgress emit 前调 `_compute_rate` 算 elapsed / rate_per_second。
+        self._batch_started_at: float = 0.0
 
         # 2026-08-24:与 monitor 共享同一个 MediaDownloader 实例(FULL 策略下
         # sync 也会复用做媒体下载);非 FULL 策略 / 未接线时传 None,sync 跳过下载。
@@ -412,6 +417,45 @@ class AppService:
         """
         self._cancel_event.set()
 
+    # ---------- 批量 ETA(2026-09-11 v1.7.4)----------
+
+    def _start_batch_timer(self) -> None:
+        """2026-09-11 v1.7.4:批量开始 — 记 `time.monotonic()` 起点。
+
+        每个 facade 开头调一次。简单到不需要 lock — Python `time.monotonic()`
+        跨 asyncio task 共享,UI 进度计算只关心 elapsed,精度 1ms 足矣。
+        """
+        self._batch_started_at = time.monotonic()
+
+    def _compute_rate(self, processed: int) -> tuple[float, float]:
+        """2026-09-11 v1.7.4:算 elapsed_seconds / rate_per_second — 给 BatchProgress 用。
+
+        Returns:
+            `(elapsed_seconds, rate_per_second)` — 后者 = processed / elapsed。
+            elapsed < 1e-3 时 rate 返 0.0(避免除零;UI 显示时也跳过 ETA)。
+        """
+        elapsed = time.monotonic() - self._batch_started_at
+        rate = processed / elapsed if elapsed > 1e-3 else 0.0
+        return elapsed, rate
+
+    async def _publish_batch_progress(self, op: str, processed: int, total: int) -> None:
+        """2026-09-11 v1.7.4:发布 BatchProgress,自动加 elapsed_seconds / rate_per_second。
+
+        facade 改 helper 后 5 处循环内的 BatchProgress(...) 调改为
+        `await self._publish_batch_progress(op, success, total)` — 替换
+        4 个 BatchProgress emit 实例 + 1 个 delete 开始 emit。
+        """
+        elapsed, rate = self._compute_rate(processed)
+        await self.bus.publish(
+            BatchProgress(
+                op=op,
+                processed=processed,
+                total=total,
+                elapsed_seconds=elapsed,
+                rate_per_second=rate,
+            )
+        )
+
     async def pause_monitor(self, source: str = "tray") -> None:
         """2026-09-03 v1.6.1:暂停监听 — 断 TDLib + 取消 in-flight 下载。
 
@@ -597,7 +641,8 @@ class AppService:
             return 0
         assert self.monitor is not None
         self._cancel_event.clear()
-        await self.bus.publish(BatchProgress(op="delete", processed=0, total=len(items)))
+        self._start_batch_timer()
+        await self._publish_batch_progress("delete", 0, len(items))
         if self._cancel_event.is_set():
             await self.bus.publish(
                 BatchDone(op="delete", succeeded=0, failed=len(items), error="cancelled")
@@ -629,6 +674,7 @@ class AppService:
             log.warning("AppService.mark_messages_read: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         # 按 cid 分组
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
@@ -642,9 +688,7 @@ class AppService:
             try:
                 await self.client.mark_messages_read(cid, msg_ids)
                 success += len(msg_ids)
-                await self.bus.publish(
-                    BatchProgress(op="mark_read", processed=success, total=len(items))
-                )
+                await self._publish_batch_progress("mark_read", success, len(items))
             except Exception:  # noqa: BLE001
                 log.exception("mark_messages_read(cid=%s) failed", cid)
         await self.bus.publish(
@@ -673,6 +717,7 @@ class AppService:
             log.warning("AppService.forward_messages: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
@@ -686,9 +731,7 @@ class AppService:
                 try:
                     await self.client.forward_messages(from_cid, to_chat_id, chunk)
                     success += len(chunk)
-                    await self.bus.publish(
-                        BatchProgress(op="forward", processed=success, total=len(items))
-                    )
+                    await self._publish_batch_progress("forward", success, len(items))
                 except Exception:  # noqa: BLE001
                     log.exception(
                         "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
@@ -719,6 +762,7 @@ class AppService:
             log.warning("AppService.pin_messages: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
@@ -731,7 +775,7 @@ class AppService:
             try:
                 await self.client.pin_messages(cid, msg_ids)
                 success += len(msg_ids)
-                await self.bus.publish(BatchProgress(op="pin", processed=success, total=len(items)))
+                await self._publish_batch_progress("pin", success, len(items))
             except Exception:  # noqa: BLE001
                 log.exception("pin_messages(cid=%s) failed", cid)
         await self.bus.publish(
@@ -755,6 +799,7 @@ class AppService:
             log.warning("AppService.unpin_messages: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         by_cid: dict[int, list[int]] = {}
         for cid, mid in items:
             by_cid.setdefault(cid, []).append(mid)
@@ -767,9 +812,7 @@ class AppService:
             try:
                 await self.client.unpin_messages(cid, msg_ids)
                 success += len(msg_ids)
-                await self.bus.publish(
-                    BatchProgress(op="unpin", processed=success, total=len(items))
-                )
+                await self._publish_batch_progress("unpin", success, len(items))
             except Exception:  # noqa: BLE001
                 log.exception("unpin_messages(cid=%s) failed", cid)
         await self.bus.publish(
@@ -799,6 +842,7 @@ class AppService:
             log.warning("AppService.add_reaction: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         success = 0
         cancelled = False
         for cid, mid in items:
@@ -808,9 +852,7 @@ class AppService:
             try:
                 await self.client.add_reaction(cid, mid, emoji, is_big=is_big)
                 success += 1
-                await self.bus.publish(
-                    BatchProgress(op="react", processed=success, total=len(items))
-                )
+                await self._publish_batch_progress("react", success, len(items))
             except Exception:  # noqa: BLE001
                 log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
         await self.bus.publish(
@@ -834,6 +876,7 @@ class AppService:
             log.warning("AppService.remove_reaction: client paused, skip %d items", len(items))
             return 0
         self._cancel_event.clear()
+        self._start_batch_timer()
         success = 0
         cancelled = False
         for cid, mid in items:
@@ -843,9 +886,7 @@ class AppService:
             try:
                 await self.client.remove_reaction(cid, mid, emoji)
                 success += 1
-                await self.bus.publish(
-                    BatchProgress(op="unreact", processed=success, total=len(items))
-                )
+                await self._publish_batch_progress("unreact", success, len(items))
             except Exception:  # noqa: BLE001
                 log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
         await self.bus.publish(

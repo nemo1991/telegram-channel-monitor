@@ -285,7 +285,10 @@ def test_all_tr_calls_extracted_to_ts() -> None:
     # 2026-09-09 v1.7.2:新增 Lightbox ▶/⏸/⏯ + 快捷键帮助 + BatchProgressDialog +
     # 转发/钉选/表情 3 工具栏按钮 + 收藏/标签/备注 3 元数据菜单项 等 ~26 个
     # 新 tr(),源数 ~294;放宽上限到 305。
-    assert 180 <= ts_sources <= 305, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
+    # 2026-09-11 v1.7.4:新增 EmojiPickerDialog(8 tr) + ChannelPickerDialog(7 tr)
+    # + BatchProgressDialog ETA 文案(1) + QInputDialog 移除残影,源数 ~310;
+    # 放宽上限到 325。
+    assert 180 <= ts_sources <= 325, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
     # 大致覆盖率
     coverage = ts_sources / max(py_tr_calls, 1)
     # 2026-09-07 v1.6.8:lupdate 对 Python 的 `self.tr(f"...{x}...")` 动态

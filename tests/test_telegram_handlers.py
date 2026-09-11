@@ -206,7 +206,9 @@ async def test_handlers_silent_on_broken_update(fake_client: MagicMock) -> None:
 # ============================================================
 
 
-async def test_on_message_pin_changed_publishes_event(fake_client: MagicMock, bus: EventBus) -> None:
+async def test_on_message_pin_changed_publishes_event(
+    fake_client: MagicMock, bus: EventBus
+) -> None:
     """v1.7.3:`_on_message_pin_changed` 必须 publish `MessagePinChanged`(True / False 都发)。"""
     from tgmonitor.core.events import MessagePinChanged
     from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient

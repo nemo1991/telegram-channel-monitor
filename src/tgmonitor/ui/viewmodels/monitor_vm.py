@@ -41,6 +41,7 @@ from tgmonitor.core.events import (
     MediaReconcileFinished,
     MediaRetried,
     MessageEdited,
+    MessageInteractionsChanged,
     MessageReceived,
     NotificationRequested,
     QuitRequested,
@@ -138,6 +139,12 @@ class MonitorViewModel(QObject):
     # MainWindow 接到 → live_view.set_messages(messages) 批量替换。
     # 空 list = 清空视图(query 没命中或被 clear)。
     message_search_results = Signal(object)
+    # 2026-09-11 v1.7.4:reactions 增量推送 — payload `MessageInteractionsChanged`。
+    # TDLib `updateMessageReactions` 是 bots-only,user client 不收 — 依赖
+    # `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),
+    # 实时性受服务端策略限制。MainWindow 接到 → 调 LIVE 行
+    # `refresh_reactions`(局部更新,不重建列表)。
+    message_interactions_changed = Signal(object)
 
     def __init__(
         self,
@@ -166,6 +173,8 @@ class MonitorViewModel(QObject):
         b: EventBus = self.app.bus
         b.subscribe(MessageReceived, self._on_message_received)
         b.subscribe(MessageEdited, self._on_message_edited)
+        # 2026-09-11 v1.7.4:reactions / views 增量推送 → MainWindow 局部刷新 LIVE 行。
+        b.subscribe(MessageInteractionsChanged, self._on_message_interactions_changed)
         b.subscribe(MediaDownloaded, self._on_media_downloaded)
         # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发 — TDLib 端 0.5s
         # 节流,VM 不再节流,直接 emit 给 UI(Qt coalesce 自动批量)。
@@ -211,6 +220,17 @@ class MonitorViewModel(QObject):
         if not isinstance(e, MessageEdited) or e.message is None:
             return
         self.message_edited.emit(e.message)
+
+    async def _on_message_interactions_changed(self, e: Event) -> None:
+        """2026-09-11 v1.7.4:TDLib `updateMessageInteractionInfo` 来的 reactions / views 变化。
+
+        转发到 MainWindow,后者区分 reactions / views 分别走局部刷新路径。
+        详见 `message_interactions_changed` signal docstring — TDLib 限制:
+        `updateMessageReactions` bots-only,user client 不收。
+        """
+        if not isinstance(e, MessageInteractionsChanged):
+            return
+        self.message_interactions_changed.emit(e)
 
     async def _on_media_downloaded(self, e: Event) -> None:
         if not isinstance(e, MediaDownloaded):

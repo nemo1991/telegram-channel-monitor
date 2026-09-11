@@ -259,3 +259,81 @@ def test_dialog_closes_on_batch_done_with_error(vm: _MockVM, qapp: QApplication)
     assert dlg.result() == QDialog.Accepted
     assert len(captured) == 1
     assert "cancelled" in dlg.lbl_status.text()
+
+
+# ============================================================
+# 2026-09-11 v1.7.4:Cancel ETA / 速率显示 — `BatchProgress` 加
+# `elapsed_seconds` / `rate_per_second`,dialog `_on_progress` 算 ETA
+# ============================================================
+
+
+def test_progress_shows_rate_and_eta_when_positive(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.4:`processed=5,total=10,rate=2.0` → status 含「2.0 条/秒,剩余 3 秒」。
+
+    (10 - 5) / 2.0 = 2.5 秒,四舍五入到 3(`.0f` 保留 1 位小数 → 2 或 3 看 round 行为,
+    这里 `:.0f` 是 round half to even,但 2.5 round → 2;直接用整数测试
+    `processed=4,total=10,rate=2.0` → (10-4)/2=3.0 → ETA=3 秒更稳)。
+    """
+    from tgmonitor.core.events import BatchProgress
+
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    _drain(qapp)
+    vm.batch_progress.emit(BatchProgress(op="delete", processed=4, total=10, rate_per_second=2.0))
+    _drain(qapp)
+    text = dlg.lbl_status.text()
+    assert "2.0" in text
+    assert "条/秒" in text
+    assert "3" in text  # ETA 秒
+    assert "/" in text  # 已完成 N / total
+    dlg.close()
+    dlg.deleteLater()
+    _drain(qapp)
+
+
+def test_progress_omits_eta_when_rate_zero(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.4:`rate=0`(极短 elapsed / 第一条)→ status 不显 ETA。"""
+    from tgmonitor.core.events import BatchProgress
+
+    dlg = BatchProgressDialog(vm, op="pin", parent=None)
+    _drain(qapp)
+    vm.batch_progress.emit(BatchProgress(op="pin", processed=0, total=10, rate_per_second=0.0))
+    _drain(qapp)
+    text = dlg.lbl_status.text()
+    # indeterminate 或确定模式都只显「处理中…」/「已完成 0 / 10」
+    assert "条/秒" not in text
+    assert "剩余" not in text
+    dlg.close()
+    dlg.deleteLater()
+    _drain(qapp)
+
+
+def test_progress_elapsed_field_zero_at_start(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.4:`elapsed_seconds=0` → 不参与 ETA 计算(避免除零),UI 行为同 rate=0。"""
+    from tgmonitor.core.events import BatchProgress
+
+    dlg = BatchProgressDialog(vm, op="react", parent=None)
+    _drain(qapp)
+    vm.batch_progress.emit(
+        BatchProgress(op="react", processed=1, total=10, elapsed_seconds=0.0, rate_per_second=0.0)
+    )
+    _drain(qapp)
+    text = dlg.lbl_status.text()
+    assert "条/秒" not in text
+    dlg.close()
+    dlg.deleteLater()
+    _drain(qapp)
+
+
+def test_progress_eta_skipped_when_processed_equals_total(vm: _MockVM, qapp: QApplication) -> None:
+    """v1.7.4:processed==total → 不显示「剩余 0 秒」(冗余;done 接管)。"""
+    from tgmonitor.core.events import BatchProgress
+
+    dlg = BatchProgressDialog(vm, op="delete", parent=None)
+    _drain(qapp)
+    vm.batch_progress.emit(BatchProgress(op="delete", processed=10, total=10, rate_per_second=2.0))
+    _drain(qapp)
+    text = dlg.lbl_status.text()
+    assert "剩余" not in text  # 已完成,不再 ETA
+    dlg.close()
+    dlg.deleteLater()
+    _drain(qapp)

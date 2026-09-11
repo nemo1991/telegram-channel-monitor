@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, TypeVar
 
-from tgmonitor.core.dto import ChannelDTO, ExportResult, MediaDTO, MessageDTO
+from tgmonitor.core.dto import ChannelDTO, ExportResult, MediaDTO, MessageDTO, ReactionDTO
 
 log = logging.getLogger(__name__)
 
@@ -146,9 +146,11 @@ class MessageInteractionsChanged(Event):
     channel_id: int = 0
     telegram_msg_id: int = 0
     views: int | None = None
-    reactions: list[object] | None = (
-        None  # list[ReactionDTO] | None(避免循环 import,list[object] 占位)
-    )
+    # 2026-09-11 v1.7.4:从 list[object] 占位升级为 list[ReactionDTO] —
+    # reactions 跟 MessageDTO.reactions 一致,事件 payload 类型对得上,
+    # UI 调用 refresh_reactions 时无需 cast。TDLib JSON deserializer 仍
+    # 接受 dict(走 dataclasses.from_dict 兼容路径)。
+    reactions: list[ReactionDTO] | None = None
 
 
 @dataclass
@@ -246,11 +248,18 @@ class BatchProgress(Event):
 
     `op` 用于 UI 在同一 dialog 上区分当前批量动作标题(批量删除 / 批量转发)。
     `processed` 累加,`total` 在批量开始时一次 publish 已知值,UI 拿来算百分比。
+
+    2026-09-11 v1.7.4:`elapsed_seconds` / `rate_per_second` 供 UI 算 ETA
+    与速率展示(「N 条/秒,剩余 M 秒」)— 前者 facade 启动时记录
+    `time.monotonic()` 后每次 emit 时算 elapsed;后者 = processed / elapsed。
     """
 
     op: str = ""
     processed: int = 0
     total: int = 0
+    # 2026-09-11 v1.7.4:ETA 显示字段
+    elapsed_seconds: float = 0.0
+    rate_per_second: float = 0.0
 
 
 @dataclass

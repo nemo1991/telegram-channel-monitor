@@ -5,6 +5,75 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.4] - 2026-09-11
+
+主题:**UX 升级 — Emoji Picker Grid + Channel Picker Dialog + Reactions 实时 push + Cancel ETA 显示**。
+
+### Added
+
+- **`EmojiPickerDialog`** 新 widget(60+ emoji 按 7 类分组 grid + 大表情 toggle + 手输兜底)— `src/tgmonitor/ui/widgets/emoji_picker_dialog.py`(+~190 LOC)
+  - 取代 `QInputDialog.getText` 输入 emoji;静态入口 `EmojiPickerDialog.get_emoji(parent) -> (emoji, is_big) | None`,语义同 `QInputDialog.getText`
+  - `is_big` checkbox 透传到 `AppService.add_reaction(items, emoji, is_big=...)`(TDLib `reactionTypeEmoji.is_big`)
+  - 手输支持 `custom_emoji_id:N` 走 v1.7.3 自定义 emoji 路径
+- **`ChannelPickerDialog`** 新 widget(频道列表 + 搜索 + 双击选)— `src/tgmonitor/ui/widgets/channel_picker_dialog.py`(+~110 LOC)
+  - 取代 `QInputDialog.getInt` 输入 chat_id(易输错,无候选)
+  - 数据源:`AppService.list_joined_channels()` 返回的 `ChannelDTO` 列表
+  - 大小写不敏感搜索(title / @username 子串)+ 双击/「确定」两种确认方式
+  - 静态入口 `ChannelPickerDialog.pick_channel(parent, channels) -> channel_id | None`
+- **Reactions UI 实时 push** — `src/tgmonitor/ui/widgets/_reaction_format.py`(新,+~30 LOC)+ 现有 `MessageListModel` / `MessageView` / `MonitorViewModel` / `MainWindow` 加 wire
+  - `_format_reactions` 实现下沉到 `format_reactions_short` 公共 helper,详情面板 + LIVE 行复用一份代码(避免分叉)
+  - `MessageListModel.refresh_reactions(cid, mid, reactions)` + `MessageView.refresh_reactions` 局部刷新一行(emit `dataChanged`)
+  - `MessageDTO.reactions` 是 mutable(`@dataclass`,无 frozen),直接 mutate 即可
+  - VM `message_interactions_changed = Signal(object)` 转发 `MessageInteractionsChanged`;MainWindow 接 → `live_view.refresh_reactions` + detail panel `refresh_if_showing`
+  - **`MessageInteractionsChanged.reactions`** 类型从 `list[object] | None` 升级为 `list[ReactionDTO] | None`(避免下游 cast)
+  - LIVE 行 `_format_meta_icons` 加 reactions 段(`🔥 5  👍 3`,max_show=3 控行宽,`mark_chosen=False` 避免 `[]` 膨胀)
+- **Cancel ETA / 速率显示** — `BatchProgress` 加 `elapsed_seconds` / `rate_per_second` 2 字段
+  - `AppService._start_batch_timer()` + `_compute_rate(processed) -> (elapsed, rate)` + `_publish_batch_progress(op, processed, total)` helper,6 个 facade 统一接入(`delete` / `mark_read` / `forward` / `pin` / `unpin` / `react` / `unreact`)
+  - `BatchProgressDialog._on_progress` 在 `rate > 0 && processed < total` 时附加「N 条/秒,剩余 M 秒」
+  - i18n key:`已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒`
+- **i18n 翻译** — `en_US.ts` / `zh_CN.ts` 加 13 个新 tr key,英文翻译补完(包括 v1.7.3 残留 1 条);`pyside6-lrelease` 编译 `.qm`
+- **QSS 样式** — `style.qss` + `style_dark.qss` 加 EmojiPickerDialog / ChannelPickerDialog 两套主题(浅/暗)
+
+### Tests
+
+- `tests/test_emoji_picker_dialog.py`(新,12 cases)— grid / 手输 / is_big / 静态入口 / 取消路径
+- `tests/test_channel_picker_dialog.py`(新,14 cases)— 列表 / 搜索 / 双击 / 静态入口 / 空列表
+- `tests/test_reaction_format.py`(新,9 cases)— count=0 跳过 / max_show 截断 / 自投 marker
+- `tests/test_message_view.py` 扩展 8 cases — LIVE 行 reactions / `refresh_reactions` 局部更新 / `dto_by_key`
+- `tests/test_monitor_vm.py`(新,3 cases)— `message_interactions_changed` 转发 / 非匹配事件忽略
+- `tests/test_app_service_batch.py` 扩展 5 cases — ETA 字段在 pin/mark_read/react/delete emit
+- `tests/test_batch_progress_dialog.py` 扩展 4 cases — ETA / rate 显示条件
+
+合计:**55 新增 cases,全量 1076 passed**(lint / mypy / i18n 干净)
+
+### 已知限制(诚实记录)
+
+- **TDLib `updateMessageReactions` 是 bots-only**,user client(`TDLib` JSON client,非 bot token)**不会收到**推送。本 v1.7.4 reactions 实时刷新依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),服务端推送策略决定延迟,可能延迟数秒到数分钟。
+- **Anonymous reactions 永远盲区**:TDLib 文档明确匿名 reactions 不走 user client 推送通道 — 不在 v1.7.4 解决范围。
+- **Cancel ETA 是平均速率**:6 facade 用 `processed / elapsed` 算,前几条数据波动大(高速阶段特别明显);v1.7.5 评估滑动窗口。
+- **Linux headless emoji 字体**:emoji 字符表选 Linux / Win / macOS 字体覆盖度高的常用集合,但极端 headless 环境仍可能 tofu(只影响渲染,selection 返原字符串不受影响)。
+- **`EmojiPickerDialog` 字符表国际化**:emoji 本身跨语言,文案(按钮 / 提示)走 i18n,emoji 字符表目前中文标签。
+
+### Out of scope(显式排除)
+
+- PyPI 发布(用户明确说永远不做)
+- Emoji picker 搜索(60+ 字符覆盖足够)
+- Channel picker 头像 / member count / last message preview
+- Channel picker「新建对话」(forward 只能到已订阅频道)
+- Reactions picker 撤自己投过的(`remove_reaction` 单独入口)
+- Channel picker multi-select
+- Reactions 历史详情(`getMessageAddedReactions`)
+- Pin list sidebar(只 filter 列 is_pinned 消息)
+- 全文搜索 messages(无现成 LIKE/regex)
+- 标签层级 / 全文搜索标签
+- 收藏夹分组 / 智能收藏
+- 自定义 emoji picker UI 集成(手输路径已支持)
+- TDLib `pinChatMessage` `only_for_self=False`
+- Forward 取消后已发 chunk 撤回
+- reactions 实时刷新对 anonymous reactions 的支持(TDLib 端无解)
+- Cancel ETA 滑动窗口率
+- Cancel 后 partial success 列表展示
+
 ## [1.7.3] - 2026-09-10
 
 主题:**UX 缺陷修复 — 导出含元数据 + Pin 实时同步 + 行渲染 ★/🏷/📝/📌 + 批量取消 + custom emoji**。

@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QBrush  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO  # noqa: E402
+from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
 from tgmonitor.ui.widgets.message_view import (  # noqa: E402
     MessageItemDelegate,
     MessageListModel,
@@ -965,3 +965,145 @@ def test_format_message_view_renders_metadata_icons(qapp):
     assert "🏷vip" in text
     assert "📝check" in text
     assert "📌" in text
+
+
+# ============================================================
+# 2026-09-11 v1.7.4:`_format_meta_icons` 加 reactions 渲染 +
+# `MessageListModel.refresh_reactions` 局部更新
+# ============================================================
+
+
+def _make_msg_with_reactions(
+    *,
+    telegram_msg_id: int = 100,
+    reactions: list | None = None,
+) -> MessageDTO:
+    """2026-09-11 v1.7.4:构造带 reactions 的 message DTO。"""
+
+    return MessageDTO(
+        id=0,
+        channel_id=1,
+        telegram_msg_id=telegram_msg_id,
+        text="x",
+        date=datetime(2026, 7, 15, 13, 0, 0),
+        reactions=reactions,
+    )
+
+
+def test_format_meta_icons_includes_reactions(qapp):
+    """v1.7.4:reactions 非空 → 拼到末尾:`🔥 5  👍 3`(LIVE 行 mark_chosen=False)。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_msg_with_reactions(
+        reactions=[
+            ReactionDTO(emoji="🔥", count=5),
+            ReactionDTO(emoji="👍", count=3, is_chosen=True),
+        ]
+    )
+    out = _format_meta_icons(m)
+    # 顺序固定:★ → 🏷 → 📝 → 📌 → reactions;self-chosen 不加 [] (LIVE 行模式)
+    assert out == "🔥 5  👍 3"
+
+
+def test_format_meta_icons_reactions_limited_to_three(qapp):
+    """v1.7.4:LIVE 行 max_show=3 — 5 个 emoji 只显前 3 + `+2`。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m = _make_msg_with_reactions(
+        reactions=[
+            ReactionDTO(emoji="🔥", count=5),
+            ReactionDTO(emoji="👍", count=3),
+            ReactionDTO(emoji="❤️", count=2),
+            ReactionDTO(emoji="🎉", count=1),
+            ReactionDTO(emoji="🤔", count=1),
+        ]
+    )
+    out = _format_meta_icons(m)
+    assert out == "🔥 5  👍 3  ❤️ 2  +2"
+
+
+def test_format_meta_icons_empty_reactions_skipped(qapp):
+    """v1.7.4:reactions=None / [] → _format_meta_icons 不输出 reactions 段。"""
+    from tgmonitor.ui.widgets.message_view import _format_meta_icons
+
+    m_none = _make_msg_with_reactions(reactions=None)
+    m_empty = _make_msg_with_reactions(reactions=[])
+    assert _format_meta_icons(m_none) == ""
+    assert _format_meta_icons(m_empty) == ""
+
+
+def test_refresh_reactions_updates_existing_row(qapp):
+    """v1.7.4:refresh_reactions 命中现有 row → DTO.reactions 替换 + dataChanged emit。"""
+    from PySide6.QtCore import QModelIndex
+
+    from tgmonitor.core.dto import ReactionDTO
+
+    view = MessageView()
+    msg = _make_msg_with_reactions(
+        telegram_msg_id=99,
+        reactions=[ReactionDTO(emoji="🔥", count=2)],
+    )
+    view.append(msg)
+    # 接住 dataChanged 信号
+    emitted: list[tuple[QModelIndex, QModelIndex, list]] = []
+    view._model.dataChanged.connect(lambda top, bottom, roles: emitted.append((top, bottom, roles)))
+
+    new_reactions = [
+        ReactionDTO(emoji="🔥", count=5),
+        ReactionDTO(emoji="👍", count=3),
+    ]
+    view.refresh_reactions(1, 99, new_reactions)
+
+    # DTO 已 mutate
+    assert msg.reactions == new_reactions
+    # dataChanged 至少 emit 1 次
+    assert len(emitted) >= 1
+    # roles 包含 DtoRole + FormattedRole(供 delegate 重 paint)
+    roles = emitted[0][2]
+    assert MessageListModel.DtoRole in roles
+    assert MessageListModel.FormattedRole in roles
+
+
+def test_refresh_reactions_none_is_noop(qapp):
+    """v1.7.4:reactions=None(仅 views 变化)→ refresh_reactions 静默,不 mutate 不 emit。"""
+
+    view = MessageView()
+    msg = _make_msg_with_reactions(
+        telegram_msg_id=99,
+        reactions=[ReactionDTO(emoji="🔥", count=2)],
+    )
+    view.append(msg)
+    original = msg.reactions
+    emitted: list = []
+    view._model.dataChanged.connect(lambda *args: emitted.append(args))
+
+    view.refresh_reactions(1, 99, None)  # 仅 views,reactions 没新数据
+
+    assert msg.reactions == original  # 没变
+    assert emitted == []  # 没 emit
+
+
+def test_refresh_reactions_missing_key_is_noop(qapp):
+    """v1.7.4:目标 msg 不在 LIVE 视图(truncated / filter 隐藏)→ 静默。"""
+    view = MessageView()
+    emitted: list = []
+    view._model.dataChanged.connect(lambda *args: emitted.append(args))
+
+    view.refresh_reactions(99, 999, [ReactionDTO(emoji="🔥", count=1)])  # 不存在
+
+    assert emitted == []
+
+
+def test_dto_by_key_returns_dto(qapp):
+    """v1.7.4:MessageView.dto_by_key 返回 LIVE 模型里当前 DTO 引用。"""
+    view = MessageView()
+    msg = _make_msg_with_reactions(telegram_msg_id=42)
+    view.append(msg)
+    got = view.dto_by_key(1, 42)
+    assert got is msg  # 同一引用
+
+
+def test_dto_by_key_missing_returns_none(qapp):
+    """v1.7.4:key 不存在 → dto_by_key 返 None。"""
+    view = MessageView()
+    assert view.dto_by_key(1, 999) is None
