@@ -36,7 +36,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QAction, QColor, QTextDocument
+from PySide6.QtGui import QAction, QPalette, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
@@ -397,11 +397,14 @@ class MessageItemDelegate(QStyledItemDelegate):
     """2026-09-02 v1.5.3 PR #D1:lazy paint delegate。
 
     - hidden=True → 不画(节省 paint 开销)
-    - media 行 → fillRect 底色(232,240,248)
+    - media 行 → fillRect 底色(走 palette AlternateBase,主题切换不破皮)
     - 普通行 → QTextDocument 渲 rich text(支持 word wrap)
-    """
 
-    MEDIA_BG = QColor(232, 240, 248)
+    2026-09-11 v1.7.5:删 `MEDIA_BG = QColor(232, 240, 248)` 硬编码浅蓝
+    → 改走 `option.palette.brush(QPalette.AlternateBase)`(Qt 主题感知,
+    暗色主题下自动给 darker shade)。同时支持 `style.qss` `#messageMediaRow`
+    selector 自定义(若 QSS 设置 QPalette,override 优先级 QtStyle 决定)。
+    """
 
     def paint(
         self,
@@ -413,7 +416,9 @@ class MessageItemDelegate(QStyledItemDelegate):
             return
         has_media = bool(index.data(MessageListModel.HasMediaRole))
         if has_media:
-            painter.fillRect(option.rect, self.MEDIA_BG)
+            # 2026-09-11 v1.7.5:用 palette 替代硬编码 QColor — 暗色主题下自动
+            # 变暗,无需手动 if/else。palette 由 Qt theme + style.qss 提供。
+            painter.fillRect(option.rect, option.palette.brush(QPalette.AlternateBase))
         text = index.data(MessageListModel.FormattedRole) or ""
         if not text:
             return

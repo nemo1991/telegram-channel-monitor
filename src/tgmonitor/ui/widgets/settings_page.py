@@ -450,13 +450,16 @@ class SettingsPage(QWidget):
         # 快捷键帮助(只读 label,PR #A5 plan 列「快捷键组可改(v1 不持久化,
         # session 内生效)」)— v1.5.0 暂只显示帮助,不改键位。
         # 2026-09-07 v1.6.8:多行 hint 整体走 tr()。
+        # 2026-09-11 v1.7.5:删过期文案「(后续 v1.5.5 支持)」— 实际上快捷键是
+        # 已实装的硬编码快捷键(v1.5.0 起就在),不应再说「未来支持」误导用户。
+        # 把那行替换为快捷键作用域说明(只 session 内有效,不持久化)。
         self.help_shortcuts = QLabel(
             self.tr(
                 "快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换\n"
                 "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
                 "        Ctrl+C 复制当前消息文本\n"
                 "\n"
-                "快捷键目前 session 内生效,不持久化(后续 v1.5.5 支持)."
+                "快捷键为 session 内绑定,重启后不持久化(在 v1.5.0 已实装)。"
             )
         )
         self.help_shortcuts.setObjectName("helpText")

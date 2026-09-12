@@ -4,47 +4,47 @@
 <context>
     <name>BatchProgressDialog</name>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="77"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="79"/>
         <source>准备中…</source>
         <translation>Preparing…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="86"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="88"/>
         <source>取消</source>
         <translation>Cancel</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="101"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="103"/>
         <source>正在取消…</source>
         <translation>Cancelling…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="129"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="131"/>
         <source>处理中…</source>
         <translation>Processing…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="136"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="138"/>
         <source>已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒</source>
         <translation>{done} / {total} done — {rate:.1f} msg/s, ~{eta:.0f}s remaining</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="142"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="144"/>
         <source>已完成 {done} / {total}</source>
         <translation>Completed {done} / {total}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="151"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="153"/>
         <source>操作中断:{err}</source>
         <translation>Operation interrupted: {err}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="154"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="156"/>
         <source>完成 {ok} 条,失败 {fail} 条</source>
         <translation>{ok} succeeded, {fail} failed</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="157"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="159"/>
         <source>完成 {ok} 条</source>
         <translation>{ok} succeeded</translation>
     </message>
@@ -716,39 +716,218 @@ Please log in again to continue monitoring.</translation>
 <context>
     <name>MediaManagerWidget</name>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="246"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="303"/>
         <source>排序键</source>
         <translation>Sort key</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="254"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="315"/>
         <source>排序方向</source>
         <translation>Sort direction</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="273"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="255"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="334"/>
         <source>上一页</source>
         <translation>Previous page</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="285"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="237"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="282"/>
+        <source>全部频道</source>
+        <translation>All channels</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="238"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="287"/>
+        <source>全部类型</source>
+        <translation>All types</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="239"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="294"/>
+        <source>全部状态</source>
+        <translation>All status</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="244"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="306"/>
+        <source>日期</source>
+        <translation>Date</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="245"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="307"/>
+        <source>大小</source>
+        <translation>Size</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="246"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="308"/>
+        <source>状态</source>
+        <translation>Status</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="250"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="320"/>
+        <source>↓ 降序</source>
+        <translation>↓ Desc</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="251"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="320"/>
+        <source>↑ 升序</source>
+        <translation>↑ Asc</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="253"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="325"/>
+        <source>搜索文件名…</source>
+        <translation>Search filename…</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="256"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="346"/>
         <source>下一页</source>
         <translation>Next page</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="357"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="257"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="351"/>
+        <source>🔄 刷新</source>
+        <translation>🔄 Refresh</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="258"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="353"/>
+        <source>重新载入媒体列表(F5)</source>
+        <translation>Reload media list (F5)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="260"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="369"/>
+        <source>全选</source>
+        <translation type="unfinished">Select All</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="261"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="374"/>
+        <source>重试所选</source>
+        <translation>Retry Selected</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="262"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="380"/>
+        <source>删除所选</source>
+        <translation>Delete Selected</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="263"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="388"/>
+        <source>🗑 清空频道</source>
+        <translation>🗑 Clear Channel</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="264"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="391"/>
+        <source>删除该频道全部消息(不可撤销)</source>
+        <translation>Delete ALL messages in the selected channel (irreversible)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="265"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="399"/>
+        <source>📤 导出 CSV</source>
+        <translation>📤 Export CSV</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="266"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="402"/>
+        <source>导出当前筛选/排序视图到 CSV(全部页)</source>
+        <translation>Export current filter/sort view to CSV (all pages)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="267"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="411"/>
+        <source>📦 导出 ZIP</source>
+        <translation>📦 Export ZIP</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="269"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="414"/>
+        <source>把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip</source>
+        <translation>Pack current filter view's media bytes + manifest.json into .zip</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="271"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="429"/>
+        <source>🧹 清理孤儿</source>
+        <translation>🧹 Prune Orphans</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="273"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="420"/>
         <source>含缩略图</source>
         <translation>Include thumbnails</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="729"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="423"/>
+        <source>打包 ZIP 时,同时拉每条媒体 thumb_key 写入 thumb_&lt;arcname&gt;</source>
+        <translation>When packing ZIP, also fetch each media's thumb_key and write thumb_&lt;arcname&gt;</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="432"/>
+        <source>扫描 ObjectStore vs storage 并删除孤儿 bytes(不可撤销)</source>
+        <translation>Scan ObjectStore vs storage and delete orphan bytes (irreversible)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="440"/>
+        <source>加载中…</source>
+        <translation>Loading…</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="641"/>
+        <source>扫描 ObjectStore ({backend}) vs storage 并删除孤儿 bytes(不可撤销)</source>
+        <translation>Scan ObjectStore ({backend}) vs storage and delete orphan bytes (irreversible)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="686"/>
+        <source>{total} 条媒体 · {done} 完成 · {failed} 失败 · 总大小 {size}</source>
+        <translation>{total} media · {done} done · {failed} failed · {size} total</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="800"/>
         <source>点击查看大图</source>
         <translation>Click to view full image</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="928"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="843"/>
+        <source>错误: {err}</source>
+        <translation>Error: {err}</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="999"/>
         <source>导出 Media Manager 当前视图</source>
         <translation>Export Media Manager current view</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1001"/>
+        <source>CSV 文件 (*.csv)</source>
+        <translation>CSV files (*.csv)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1021"/>
+        <source>导出 Media Manager 当前视图为 ZIP</source>
+        <translation>Export Media Manager current view as ZIP</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1023"/>
+        <source>ZIP 文件 (*.zip)</source>
+        <translation>ZIP files (*.zip)</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1032"/>
+        <source>已清空频道 #{cid}: 删除 {n} 条消息</source>
+        <translation>Cleared channel #{cid}: {n} messages removed</translation>
     </message>
 </context>
 <context>
@@ -894,32 +1073,32 @@ to view full content, media attachments and raw data</translation>
 <context>
     <name>MessageView</name>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="669"/>
+        <location filename="../ui/widgets/message_view.py" line="674"/>
         <source>导出…</source>
         <translation>Export…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="675"/>
+        <location filename="../ui/widgets/message_view.py" line="680"/>
         <source>删除</source>
         <translation>Delete</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="681"/>
+        <location filename="../ui/widgets/message_view.py" line="686"/>
         <source>标记已读</source>
         <translation>Mark as Read</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="688"/>
+        <location filename="../ui/widgets/message_view.py" line="693"/>
         <source>★ 收藏 / 取消收藏</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="702"/>
+        <location filename="../ui/widgets/message_view.py" line="707"/>
         <source>🏷 设置标签…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="709"/>
+        <location filename="../ui/widgets/message_view.py" line="714"/>
         <source>📝 设置备注…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1037,19 +1216,19 @@ to view full content, media attachments and raw data</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="94"/>
-        <location filename="../ui/widgets/settings_page.py" line="955"/>
+        <location filename="../ui/widgets/settings_page.py" line="958"/>
         <source>设置</source>
         <translation>Settings</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="134"/>
-        <location filename="../ui/widgets/settings_page.py" line="958"/>
+        <location filename="../ui/widgets/settings_page.py" line="961"/>
         <source>仅保存到 .env</source>
         <translation>Save to .env only</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="140"/>
-        <location filename="../ui/widgets/settings_page.py" line="959"/>
+        <location filename="../ui/widgets/settings_page.py" line="962"/>
         <source>保存并应用</source>
         <translation>Save and apply</translation>
     </message>
@@ -1098,9 +1277,9 @@ to view full content, media attachments and raw data</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="193"/>
-        <location filename="../ui/widgets/settings_page.py" line="894"/>
-        <location filename="../ui/widgets/settings_page.py" line="921"/>
-        <location filename="../ui/widgets/settings_page.py" line="1019"/>
+        <location filename="../ui/widgets/settings_page.py" line="897"/>
+        <location filename="../ui/widgets/settings_page.py" line="924"/>
+        <location filename="../ui/widgets/settings_page.py" line="1022"/>
         <source>测试连接</source>
         <translation>Test connection</translation>
     </message>
@@ -1202,13 +1381,13 @@ to view full content, media attachments and raw data</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="310"/>
-        <location filename="../ui/widgets/settings_page.py" line="966"/>
+        <location filename="../ui/widgets/settings_page.py" line="969"/>
         <source>简体中文</source>
         <translation>Simplified Chinese</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="311"/>
-        <location filename="../ui/widgets/settings_page.py" line="967"/>
+        <location filename="../ui/widgets/settings_page.py" line="970"/>
         <source>English</source>
         <translation>English</translation>
     </message>
@@ -1229,19 +1408,19 @@ to view full content, media attachments and raw data</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="431"/>
-        <location filename="../ui/widgets/settings_page.py" line="980"/>
+        <location filename="../ui/widgets/settings_page.py" line="983"/>
         <source>浅色</source>
         <translation>light</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="432"/>
-        <location filename="../ui/widgets/settings_page.py" line="981"/>
+        <location filename="../ui/widgets/settings_page.py" line="984"/>
         <source>暗色</source>
         <translation>dark</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="433"/>
-        <location filename="../ui/widgets/settings_page.py" line="982"/>
+        <location filename="../ui/widgets/settings_page.py" line="985"/>
         <source>跟随系统</source>
         <translation>Follow system</translation>
     </message>
@@ -1252,82 +1431,90 @@ to view full content, media attachments and raw data</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="445"/>
-        <location filename="../ui/widgets/settings_page.py" line="991"/>
+        <location filename="../ui/widgets/settings_page.py" line="994"/>
         <source>持久化主题(写 .env `TG_KEY_THEME`,重启应用仍生效)</source>
         <translation>Persist theme (write .env `TG_KEY_THEME`, applied on next launch)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="455"/>
+        <location filename="../ui/widgets/settings_page.py" line="458"/>
+        <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
+        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消
+        Ctrl+C 复制当前消息文本
+
+快捷键为 session 内绑定,重启后不持久化(在 v1.5.0 已实装)。</source>
+        <translation>Shortcuts are session-bound and not persisted (implemented in v1.5.0).</translation>
+    </message>
+    <message>
         <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
         Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消
         Ctrl+C 复制当前消息文本
 
 快捷键目前 session 内生效,不持久化(后续 v1.5.5 支持).</source>
-        <translation>Shortcuts: Ctrl+1..5 switch tab · Ctrl+F search · Ctrl+E export · Ctrl+T toggle theme
+        <translation type="vanished">Shortcuts: Ctrl+1..5 switch tab · Ctrl+F search · Ctrl+E export · Ctrl+T toggle theme
         Ctrl+R refresh channels · Ctrl+Q quit · Ctrl+, settings · Esc cancel
         Ctrl+C copy current message text
 
 Shortcuts are session-only for now, not persisted (planned for v1.5.5).</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="515"/>
+        <location filename="../ui/widgets/settings_page.py" line="518"/>
         <source>🔄 同步参数</source>
         <translation>🔄 Sync Parameters</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="521"/>
+        <location filename="../ui/widgets/settings_page.py" line="524"/>
         <source>频道间间隔:</source>
         <translation>Inter-channel delay:</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="530"/>
+        <location filename="../ui/widgets/settings_page.py" line="533"/>
         <source>分页间隔:</source>
         <translation>Pagination delay:</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="537"/>
+        <location filename="../ui/widgets/settings_page.py" line="540"/>
         <source>续拉(从已保存位置继续)</source>
         <translation>Resume (continue from saved position)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="754"/>
-        <location filename="../ui/widgets/settings_page.py" line="786"/>
-        <location filename="../ui/widgets/settings_page.py" line="817"/>
-        <location filename="../ui/widgets/settings_page.py" line="875"/>
+        <location filename="../ui/widgets/settings_page.py" line="757"/>
+        <location filename="../ui/widgets/settings_page.py" line="789"/>
+        <location filename="../ui/widgets/settings_page.py" line="820"/>
+        <location filename="../ui/widgets/settings_page.py" line="878"/>
         <source>保存失败</source>
         <translation>Save failed</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="754"/>
-        <location filename="../ui/widgets/settings_page.py" line="817"/>
+        <location filename="../ui/widgets/settings_page.py" line="757"/>
+        <location filename="../ui/widgets/settings_page.py" line="820"/>
         <source>读取表单失败: {exc}</source>
         <translation>Failed to read form: {exc}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="758"/>
-        <location filename="../ui/widgets/settings_page.py" line="839"/>
+        <location filename="../ui/widgets/settings_page.py" line="761"/>
+        <location filename="../ui/widgets/settings_page.py" line="842"/>
         <source>校验失败</source>
         <translation>Validation failed</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="775"/>
+        <location filename="../ui/widgets/settings_page.py" line="778"/>
         <source>已保存</source>
         <translation>Saved</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="775"/>
+        <location filename="../ui/widgets/settings_page.py" line="778"/>
         <source>设置已写入 {self._env_path}</source>
         <translation>Settings written to {self._env_path}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="782"/>
-        <location filename="../ui/widgets/settings_page.py" line="871"/>
+        <location filename="../ui/widgets/settings_page.py" line="785"/>
+        <location filename="../ui/widgets/settings_page.py" line="874"/>
         <source>.env 写入失败</source>
         <translation>.env write failed</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="788"/>
-        <location filename="../ui/widgets/settings_page.py" line="877"/>
+        <location filename="../ui/widgets/settings_page.py" line="791"/>
+        <location filename="../ui/widgets/settings_page.py" line="880"/>
         <source>后端配置未通过校验,已放弃保存(设置未写入 .env):
 
 {exc}
@@ -1340,12 +1527,12 @@ Shortcuts are session-only for now, not persisted (planned for v1.5.5).</transla
 Please verify your database / object storage configuration and that the corresponding services are reachable, then retry.</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="833"/>
+        <location filename="../ui/widgets/settings_page.py" line="836"/>
         <source>快捷键冲突</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="834"/>
+        <location filename="../ui/widgets/settings_page.py" line="837"/>
         <source>以下快捷键重复绑定:
 {pretty}
 
@@ -1353,59 +1540,59 @@ Please verify your database / object storage configuration and that the correspo
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="867"/>
+        <location filename="../ui/widgets/settings_page.py" line="870"/>
         <source>已应用</source>
         <translation>Applied</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="867"/>
+        <location filename="../ui/widgets/settings_page.py" line="870"/>
         <source>设置已保存并热重载</source>
         <translation>Settings saved and hot-reloaded</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="894"/>
+        <location filename="../ui/widgets/settings_page.py" line="897"/>
         <source>请先填写代理 URL</source>
         <translation>Please enter a proxy URL first</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="897"/>
-        <location filename="../ui/widgets/settings_page.py" line="1021"/>
+        <location filename="../ui/widgets/settings_page.py" line="900"/>
+        <location filename="../ui/widgets/settings_page.py" line="1024"/>
         <source>测试中…</source>
         <translation>Testing…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="912"/>
+        <location filename="../ui/widgets/settings_page.py" line="915"/>
         <source>✅ 可达: {host}:{port}</source>
         <translation>✅ Reachable: {host}:{port}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="914"/>
+        <location filename="../ui/widgets/settings_page.py" line="917"/>
         <source>❌ 超时: 3 秒未响应</source>
         <translation>❌ Timeout: no response within 3 seconds</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="916"/>
+        <location filename="../ui/widgets/settings_page.py" line="919"/>
         <source>❌ 失败: {exc}</source>
         <translation>❌ Failed: {exc}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="922"/>
+        <location filename="../ui/widgets/settings_page.py" line="925"/>
         <source>测试结果</source>
         <translation>Test result</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="928"/>
+        <location filename="../ui/widgets/settings_page.py" line="931"/>
         <source>❌ 异常: {e}</source>
         <translation>❌ Error: {e}</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="999"/>
+        <location filename="../ui/widgets/settings_page.py" line="1002"/>
         <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
         Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消
         Ctrl+C 复制当前消息文本
 
 完整可编辑列表见下方「⌨ 快捷键」分组。</source>
-        <translation type="unfinished"></translation>
+        <translation>Full editable list is below in the "⌨ Shortcuts" section.</translation>
     </message>
 </context>
 <context>
