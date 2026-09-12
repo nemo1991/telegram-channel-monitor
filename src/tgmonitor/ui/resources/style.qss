@@ -533,3 +533,36 @@ QLabel[role="error"] {
 QLabel#emptyHintIcon {
     font-size: 36px;
 }
+
+/* ===== 搜索框(2026-09-11 v1.7.5:从 SearchBar 内联样式迁到 QSS,
+   主题切换不破皮) ===== */
+#searchBar {
+    background: #f0f1f5;
+    border: 1px solid #e2e4e9;
+    border-radius: 16px;
+}
+#searchBar QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 4px 0;
+}
+#searchBar QPushButton,
+#searchBar QToolButton {
+    background: transparent;
+    border: none;
+    color: #8a8d92;
+    font-size: 13px;
+}
+#searchBar QPushButton:hover,
+#searchBar QToolButton:hover {
+    color: #1a1a2e;
+}
+/* scope toggle(🌐)checked 时高亮 — 「已切到全部含已退订频道历史」 */
+#searchBar QToolButton[scopeActive="true"] {
+    background: #e3f2fd;
+    border-radius: 12px;
+    color: #1976d2;
+}
+#searchBar QToolButton[scopeActive="true"]:hover {
+    background: #c5e1f9;
+}
