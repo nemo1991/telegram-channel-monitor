@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -215,6 +215,63 @@ class MediaManagerWidget(QWidget):
         # 3) 底部 toolbar + status
         root.addLayout(self._build_toolbar())
 
+    # ---- 2026-09-11 v1.7.5:LanguageChange 触发 retranslateUi ----
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt override
+        """Qt 在 LanguageChange 事件 → 重调 retranslateUi 刷新所有文案。"""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslateUi()
+
+    def retranslateUi(self) -> None:  # noqa: N802 — Qt naming
+        """2026-09-11 v1.7.5:语言切换后重建所有动态 tr() 文案。
+
+        直接重设 `self.cmb_*` 的 item(避免触发 currentIndexChanged),toolbar 按钮
+        text/tooltip,status label 重翻译。筛选条件(value)不变 — user 不感知。
+
+        设计:combo 的「全部频道/全部类型/全部状态」index 0 是 None 占位,
+        不能简单 clear+repopulate(会触发信号 + 漏掉占位),改用 setItemText
+        精准改 index 0 文字。
+        """
+        # filter combo index 0 placeholder
+        self.cmb_channel.setItemText(0, self.tr("全部频道"))
+        self.cmb_type.setItemText(0, self.tr("全部类型"))
+        self.cmb_status.setItemText(0, self.tr("全部状态"))
+        # sort key labels(index 0..N 一一对应 SortKey 枚举顺序)
+        sort_keys = list(SortKey)
+        for i, sk in enumerate(sort_keys, start=0):
+            label = {
+                "date": self.tr("日期"),
+                "size": self.tr("大小"),
+                "status": self.tr("状态"),
+            }[sk.value]
+            self.cmb_sort.setItemText(i, label)
+        # dir
+        self.cmb_dir.setItemText(0, self.tr("↓ 降序"))
+        self.cmb_dir.setItemText(1, self.tr("↑ 升序"))
+        # search placeholder
+        self.edit_search.setPlaceholderText(self.tr("搜索文件名…"))
+        # pagination + refresh
+        self.btn_prev.setToolTip(self.tr("上一页"))
+        self.btn_next.setToolTip(self.tr("下一页"))
+        self.btn_refresh.setText(self.tr("🔄 刷新"))
+        self.btn_refresh.setToolTip(self.tr("重新载入媒体列表(F5)"))
+        # toolbar 操作
+        self.btn_select_all.setText(self.tr("全选"))
+        self.btn_retry_sel.setText(self.tr("重试所选"))
+        self.btn_delete_sel.setText(self.tr("删除所选"))
+        self.btn_clear_channel.setText(self.tr("🗑 清空频道"))
+        self.btn_clear_channel.setToolTip(self.tr("删除该频道全部消息(不可撤销)"))
+        self.btn_export_csv.setText(self.tr("📤 导出 CSV"))
+        self.btn_export_csv.setToolTip(self.tr("导出当前筛选/排序视图到 CSV(全部页)"))
+        self.btn_export_zip.setText(self.tr("📦 导出 ZIP"))
+        self.btn_export_zip.setToolTip(
+            self.tr("把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip"),
+        )
+        self.btn_prune.setText(self.tr("🧹 清理孤儿"))
+        # chk_zip_thumbs:label 已建时 tr 过,重建得走一次 tr 刷新
+        self.chk_zip_thumbs.setText(self.tr("含缩略图"))
+
     def _build_filter_bar(self) -> QHBoxLayout:
         """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search🔍] [◀ Page N/M ▶] [Refresh]。"""
         hbox = QHBoxLayout()
@@ -222,19 +279,19 @@ class MediaManagerWidget(QWidget):
 
         self.cmb_channel = QComboBox()
         self.cmb_channel.setMinimumWidth(160)
-        self.cmb_channel.addItem("All channels", None)
+        self.cmb_channel.addItem(self.tr("全部频道"), None)
         hbox.addWidget(self.cmb_channel)
 
         self.cmb_type = QComboBox()
         self.cmb_type.setMinimumWidth(120)
-        self.cmb_type.addItem("All types", None)
+        self.cmb_type.addItem(self.tr("全部类型"), None)
         for mt in MediaType:
             self.cmb_type.addItem(mt.value, mt)
         hbox.addWidget(self.cmb_type)
 
         self.cmb_status = QComboBox()
         self.cmb_status.setMinimumWidth(120)
-        self.cmb_status.addItem("All status", None)
+        self.cmb_status.addItem(self.tr("全部状态"), None)
         for st in MediaDownloadStatus:
             self.cmb_status.addItem(st.value, st)
         hbox.addWidget(self.cmb_status)
@@ -245,7 +302,11 @@ class MediaManagerWidget(QWidget):
         self.cmb_sort.setMinimumWidth(110)
         self.cmb_sort.setToolTip(self.tr("排序键"))
         for sk in SortKey:
-            label = {"date": "Date", "size": "Size", "status": "Status"}[sk.value]
+            label = {
+                "date": self.tr("日期"),
+                "size": self.tr("大小"),
+                "status": self.tr("状态"),
+            }[sk.value]
             self.cmb_sort.addItem(label, sk)
         hbox.addWidget(self.cmb_sort)
 
@@ -256,12 +317,12 @@ class MediaManagerWidget(QWidget):
         # 是 v1.2.0 既有行为;SortDir 枚举的 .value 字典序是 ASC 在前,但
         # UI 默认走 DESC)。
         for sd in (SortDir.DESC, SortDir.ASC):
-            label = "↓ Desc" if sd == SortDir.DESC else "↑ Asc"
+            label = self.tr("↓ 降序") if sd == SortDir.DESC else self.tr("↑ 升序")
             self.cmb_dir.addItem(label, sd)
         hbox.addWidget(self.cmb_dir)
 
         self.edit_search = QLineEdit()
-        self.edit_search.setPlaceholderText("Search filename…")
+        self.edit_search.setPlaceholderText(self.tr("搜索文件名…"))
         self.edit_search.setClearButtonEnabled(True)
         self.edit_search.setMinimumWidth(220)
         hbox.addWidget(self.edit_search, 1)
@@ -286,9 +347,10 @@ class MediaManagerWidget(QWidget):
         self.btn_next.clicked.connect(self._on_page_next)
         hbox.addWidget(self.btn_next)
 
-        self.btn_refresh = QPushButton("🔄 Refresh")
+        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语都覆盖
+        self.btn_refresh = QPushButton(self.tr("🔄 刷新"))
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
-        self.btn_refresh.setToolTip("Reload media list (F5)")
+        self.btn_refresh.setToolTip(self.tr("重新载入媒体列表(F5)"))
         self.btn_refresh.clicked.connect(self.refresh_requested.emit)
         hbox.addWidget(self.btn_refresh)
 
@@ -303,18 +365,19 @@ class MediaManagerWidget(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(8)
 
-        self.btn_select_all = QPushButton("Select All")
+        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语覆盖
+        self.btn_select_all = QPushButton(self.tr("全选"))
         self.btn_select_all.setCursor(Qt.PointingHandCursor)
         self.btn_select_all.clicked.connect(self._on_select_all)
         actions.addWidget(self.btn_select_all)
 
-        self.btn_retry_sel = QPushButton("Retry Selected")
+        self.btn_retry_sel = QPushButton(self.tr("重试所选"))
         self.btn_retry_sel.setCursor(Qt.PointingHandCursor)
         self.btn_retry_sel.setEnabled(False)
         self.btn_retry_sel.clicked.connect(self._on_batch_retry)
         actions.addWidget(self.btn_retry_sel)
 
-        self.btn_delete_sel = QPushButton("Delete Selected")
+        self.btn_delete_sel = QPushButton(self.tr("删除所选"))
         self.btn_delete_sel.setCursor(Qt.PointingHandCursor)
         self.btn_delete_sel.setEnabled(False)
         self.btn_delete_sel.clicked.connect(self._on_batch_delete)
@@ -322,10 +385,10 @@ class MediaManagerWidget(QWidget):
 
         # 2026-08-25 PR #4:按频道批量删除 — 清空 filter 选中频道的全部 message
         # (含 media + bytes);MainWindow 接到信号二次确认后再调 VM。
-        self.btn_clear_channel = QPushButton("🗑 Clear Channel")
+        self.btn_clear_channel = QPushButton(self.tr("🗑 清空频道"))
         self.btn_clear_channel.setCursor(Qt.PointingHandCursor)
         self.btn_clear_channel.setToolTip(
-            "Delete ALL messages in the selected channel (irreversible)",
+            self.tr("删除该频道全部消息(不可撤销)"),
         )
         self.btn_clear_channel.clicked.connect(self._on_clear_channel)
         actions.addWidget(self.btn_clear_channel)
@@ -333,10 +396,10 @@ class MediaManagerWidget(QWidget):
         # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
         # (filter / sort / 全部页,不只是当前页)。MainWindow 接信号 → 构造
         # MediaExportRequest → 调 vm.export_media_list。
-        self.btn_export_csv = QPushButton("📤 Export CSV")
+        self.btn_export_csv = QPushButton(self.tr("📤 导出 CSV"))
         self.btn_export_csv.setCursor(Qt.PointingHandCursor)
         self.btn_export_csv.setToolTip(
-            "Export current filter/sort view to CSV (all pages)",
+            self.tr("导出当前筛选/排序视图到 CSV(全部页)"),
         )
         self.btn_export_csv.clicked.connect(self._on_export_csv)
         actions.addWidget(self.btn_export_csv)
@@ -345,10 +408,10 @@ class MediaManagerWidget(QWidget):
         # `export_zip_requested(out_path, include_thumbnails)`。缩略图勾
         # 选用 widget 内的 `chk_zip_thumbs` 开关;MainWindow 接到后构造
         # `ExportRequest(format=ZIP, include_thumbnails=...)`。
-        self.btn_export_zip = QPushButton("📦 Export ZIP")
+        self.btn_export_zip = QPushButton(self.tr("📦 导出 ZIP"))
         self.btn_export_zip.setCursor(Qt.PointingHandCursor)
         self.btn_export_zip.setToolTip(
-            "Pack current filter view's media bytes + manifest.json into .zip",
+            self.tr("把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip"),
         )
         self.btn_export_zip.clicked.connect(self._on_export_zip)
         actions.addWidget(self.btn_export_zip)
@@ -357,24 +420,22 @@ class MediaManagerWidget(QWidget):
         self.chk_zip_thumbs = QCheckBox(self.tr("含缩略图"))
         self.chk_zip_thumbs.setCursor(Qt.PointingHandCursor)
         self.chk_zip_thumbs.setToolTip(
-            "When packing ZIP, also fetch each media's thumb_key and write thumb_<arcname>",
+            self.tr("打包 ZIP 时,同时拉每条媒体 thumb_key 写入 thumb_<arcname>"),
         )
         actions.addWidget(self.chk_zip_thumbs)
 
         actions.addStretch(1)
 
-        self.btn_prune = QPushButton("🧹 Prune Orphans")
+        self.btn_prune = QPushButton(self.tr("🧹 清理孤儿"))
         self.btn_prune.setCursor(Qt.PointingHandCursor)
-        self.btn_prune.setToolTip(
-            "Scan ObjectStore vs storage and delete orphan bytes (irreversible)"
-        )
+        self.btn_prune.setToolTip(self.tr("扫描 ObjectStore vs storage 并删除孤儿 bytes(不可撤销)"))
         self.btn_prune.clicked.connect(self.prune_requested.emit)
         actions.addWidget(self.btn_prune)
 
         vbox.addLayout(actions)
 
         # status 行
-        self.lbl_status = QLabel("Loading…")
+        self.lbl_status = QLabel(self.tr("加载中…"))
         self.lbl_status.setObjectName("mediaManagerStatus")
         self.lbl_status.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         vbox.addWidget(self.lbl_status)
@@ -574,7 +635,9 @@ class MediaManagerWidget(QWidget):
         # + 与 __init__ 一致的 tooltip(backend 名拼进去,信息更明确)。
         self.btn_prune.setEnabled(True)
         self.btn_prune.setToolTip(
-            f"Scan ObjectStore ({backend}) vs storage and delete orphan bytes (irreversible)"
+            self.tr("扫描 ObjectStore ({backend}) vs storage 并删除孤儿 bytes(不可撤销)").format(
+                backend=backend
+            )
         )
 
         # 更新 status
@@ -617,8 +680,12 @@ class MediaManagerWidget(QWidget):
         # 更新 footer 状态
         total = len(self._rows)
         self.lbl_status.setText(
-            f"{total} media · {count_done} done · {count_failed} failed · "
-            f"{_format_size(total_bytes) if total_bytes else '0B'} total"
+            self.tr("{total} 条媒体 · {done} 完成 · {failed} 失败 · 总大小 {size}").format(
+                total=total,
+                done=count_done,
+                failed=count_failed,
+                size=_format_size(total_bytes) if total_bytes else "0B",
+            )
         )
         # 选中变化 → enable/disable toolbar
         self._on_selection_changed()
@@ -769,7 +836,7 @@ class MediaManagerWidget(QWidget):
         if med.download_status == MediaDownloadStatus.FAILED:
             lbl_status.setStyleSheet("color: #c0392b;")
             if med.download_error:
-                lbl_status.setToolTip(f"Error: {med.download_error}")
+                lbl_status.setToolTip(self.tr("错误: {err}").format(err=med.download_error))
         elif med.download_status == MediaDownloadStatus.DONE:
             lbl_status.setStyleSheet("color: #27ae60;")
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
@@ -927,7 +994,7 @@ class MediaManagerWidget(QWidget):
             self,
             self.tr("导出 Media Manager 当前视图"),
             default_name,
-            "CSV files (*.csv)",
+            self.tr("CSV 文件 (*.csv)"),
         )
         if not path:
             return
@@ -947,9 +1014,9 @@ class MediaManagerWidget(QWidget):
         default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "导出 Media Manager 当前视图为 ZIP",
+            self.tr("导出 Media Manager 当前视图为 ZIP"),
             default_name,
-            "ZIP files (*.zip)",
+            self.tr("ZIP 文件 (*.zip)"),
         )
         if not path:
             return
@@ -958,7 +1025,7 @@ class MediaManagerWidget(QWidget):
     def on_channel_cleared(self, channel_id: int, deleted: int) -> None:
         """2026-08-25 PR #4:VM 反馈 → status bar + 自动 reload 当前 filter 列表。"""
         self.lbl_status.setText(
-            f"Cleared channel #{channel_id}: {deleted} messages removed",
+            self.tr("已清空频道 #{cid}: 删除 {n} 条消息").format(cid=channel_id, n=deleted),
         )
         # 重 load 当前 filter(可能就是这个 channel)刷新 UI
         self.refresh_requested.emit()
