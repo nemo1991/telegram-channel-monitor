@@ -102,12 +102,17 @@ class SearchBar(QWidget):
 
         # 范围 toggle:🌐 默认未选(已订阅),选中后切「全部(含已退订频道历史)」
         # 2026-09-03 v1.5.3 PR #D2
+        # 2026-09-11 v1.7.5:加 dynamic property `scopeActive` 配合 QSS,
+        # 切 checked 时立即刷新样式 — QSS selector `[scopeActive="true"]`
+        # 在 style.qss / style_dark.qss 里加背景色区分(肉眼能看)。
         self.scope_btn = QToolButton()
         self.scope_btn.setText("🌐")
         self.scope_btn.setCheckable(True)
         self.scope_btn.setFixedSize(24, 24)
         self.scope_btn.setCursor(Qt.PointingHandCursor)
         self.scope_btn.setToolTip(self.tr("搜索范围:已订阅(默认)/ 全部(含已退订频道历史)"))
+        # 2026-09-11 v1.7.5:初始化时刷 property = false(QSS 应用 unchecked 样式)
+        self.scope_btn.setProperty("scopeActive", "false")
         hbox.addWidget(self.scope_btn)
 
         # 固定第一行 32px
@@ -153,16 +158,9 @@ class SearchBar(QWidget):
         self.dt_to.dateTimeChanged.connect(self._emit_date)
         self.scope_btn.toggled.connect(self._on_scope_changed)
 
-        self.setStyleSheet(
-            "SearchBar, #searchBar {"
-            "  background: #f0f1f5;"
-            "  border: 1px solid #e2e4e9;"
-            "  border-radius: 16px;"
-            "}"
-            "QLineEdit { background: transparent; border: none; padding: 4px 0; }"
-            "QPushButton, QToolButton { background: transparent; border: none; color: #8a8d92; font-size: 13px; }"
-            "QPushButton:hover, QToolButton:hover { color: #1a1a2e; }"
-        )
+        # 2026-09-11 v1.7.5:删 inline styleSheet — 之前硬编码 #f0f1f5 / #8a8d92
+        # 浅色,暗色主题下 SearchBar 破皮。改走全局 style.qss / style_dark.qss
+        # 的 `#searchBar` selector(QPalette 主题感知)。
 
     def text(self) -> str:
         """当前输入文本(strip 首尾空白)— 给 caller 直接读用。"""
@@ -223,5 +221,24 @@ class SearchBar(QWidget):
 
         `True` = 全部(含已退订频道历史)/ `False` = 已订阅(默认)。
         MainWindow 用此触发 `_search_debounce` 重拉(不 clear view)。
+        2026-09-11 v1.7.5:同时刷 tooltip + dynamic property(让 QSS 应用
+        checked 视觉反馈 — 否则 🌐 toggle 状态肉眼不可辨)。
         """
+        self.scope_btn.setToolTip(
+            self.tr("搜索范围:全部(含已退订频道历史)")
+            if checked
+            else self.tr("搜索范围:已订阅(默认)")
+        )
+        self._update_scope_visual(checked)
         self.scope_changed.emit(checked)
+
+    def _update_scope_visual(self, checked: bool) -> None:
+        """2026-09-11 v1.7.5:刷 dynamic property `scopeActive` 让 QSS 区分。
+
+        QSS selector `QToolButton[scopeActive="true"]` 配不同背景色
+        (浅色:`#e3f2fd` / 暗色:`#1e3a5f`)。unpolish/repolish 让 QSS 立刻应用。
+        """
+        self.scope_btn.setProperty("scopeActive", "true" if checked else "false")
+        # unpolish/repolish 让 QSS 重新应用(单纯 setProperty 不触发)
+        self.scope_btn.style().unpolish(self.scope_btn)
+        self.scope_btn.style().polish(self.scope_btn)

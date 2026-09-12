@@ -552,3 +552,15 @@ QLabel#emptyHintIcon {
 #searchBar QPushButton:hover {
     color: #f0f1fa;
 }
+
+/* 2026-09-11 v1.7.5:scope toggle(🌐) checked 时高亮 — 让用户看出
+「已切到全部含已退订频道历史」状态。`scopeActive` dynamic property 由
+`SearchBar._update_scope_visual()` 切换。 */
+#searchBar QToolButton[scopeActive="true"] {
+    background: #1e3a5f;
+    border-radius: 12px;
+    color: #66b3ff;
+}
+#searchBar QToolButton[scopeActive="true"]:hover {
+    background: #2a4d7a;
+}
