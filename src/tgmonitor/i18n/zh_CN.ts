@@ -553,62 +553,84 @@ S            切换幻灯片自动播放
         <translation>已复制 %d 字符</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1186"/>
+        <location filename="../ui/main_window.py" line="1153"/>
+        <source>钉选确认</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/main_window.py" line="1154"/>
+        <source>确定钉选选中的 %d 条消息?
+操作不可撤销。</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/main_window.py" line="1184"/>
+        <source>回应确认</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/main_window.py" line="1185"/>
+        <source>确定对选中的 %d 条消息打 %s 反应?
+操作不可撤销。</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/main_window.py" line="1213"/>
         <source>设置标签</source>
         <translation>设置标签</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1187"/>
+        <location filename="../ui/main_window.py" line="1214"/>
         <source>输入标签(逗号或空格分隔,如 tech, news):</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1203"/>
+        <location filename="../ui/main_window.py" line="1230"/>
         <source>设置备注</source>
         <translation>设置备注</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1204"/>
+        <location filename="../ui/main_window.py" line="1231"/>
         <source>为本条消息添加备注(支持多行):</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1229"/>
+        <location filename="../ui/main_window.py" line="1256"/>
         <source>当前消息无文本</source>
         <translation>当前消息无文本</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1234"/>
+        <location filename="../ui/main_window.py" line="1261"/>
         <source>已复制 {n} 字</source>
         <translation>已复制 {n} 字</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1277"/>
+        <location filename="../ui/main_window.py" line="1304"/>
         <source>拉取频道列表…</source>
         <translation>拉取频道列表…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1282"/>
+        <location filename="../ui/main_window.py" line="1309"/>
         <source>导出</source>
         <translation>导出</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1282"/>
+        <location filename="../ui/main_window.py" line="1309"/>
         <source>请先订阅至少一个频道</source>
         <translation>请先订阅至少一个频道</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1299"/>
+        <location filename="../ui/main_window.py" line="1326"/>
         <source>全量同步</source>
         <translation>全量同步</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1299"/>
+        <location filename="../ui/main_window.py" line="1326"/>
         <source>已监听列表为空,先订阅频道</source>
         <translation>已监听列表为空,先订阅频道</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1444"/>
+        <location filename="../ui/main_window.py" line="1471"/>
         <source>登录状态: {state}</source>
         <translation>登录状态: {state}</translation>
     </message>
@@ -637,46 +659,46 @@ S            切换幻灯片自动播放
         <translation type="vanished">TG {state}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1462"/>
+        <location filename="../ui/main_window.py" line="1489"/>
         <source>导出失败</source>
         <translation>导出失败</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1466"/>
+        <location filename="../ui/main_window.py" line="1493"/>
         <source>导出完成</source>
         <translation>导出完成</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1467"/>
+        <location filename="../ui/main_window.py" line="1494"/>
         <source>已写入 {path}
 {n_msg} 条消息,{n_bytes} 字节</source>
         <translation>已写入 {path}
 {n_msg} 条消息,{n_bytes} 字节</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1498"/>
+        <location filename="../ui/main_window.py" line="1525"/>
         <source>已热重载: {what} → {backend}</source>
         <translation>已热重载: {what} → {backend}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1503"/>
+        <location filename="../ui/main_window.py" line="1530"/>
         <source>凭据已变更</source>
         <translation>凭据已变更</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1504"/>
+        <location filename="../ui/main_window.py" line="1531"/>
         <source>Telegram 凭据已变更。
 请重新登录以继续监听。</source>
         <translation>Telegram 凭据已变更。
 请重新登录以继续监听。</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1775"/>
+        <location filename="../ui/main_window.py" line="1802"/>
         <source>Lightbox</source>
         <translation>Lightbox</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1775"/>
+        <location filename="../ui/main_window.py" line="1802"/>
         <source>图片解码失败。</source>
         <translation>图片解码失败。</translation>
     </message>
@@ -843,57 +865,57 @@ S            切换幻灯片自动播放
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="432"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="431"/>
         <source>扫描 ObjectStore vs storage 并删除孤儿 bytes(不可撤销)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="440"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="438"/>
         <source>加载中…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="641"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="638"/>
         <source>扫描 ObjectStore ({backend}) vs storage 并删除孤儿 bytes(不可撤销)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="686"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="683"/>
         <source>{total} 条媒体 · {done} 完成 · {failed} 失败 · 总大小 {size}</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="800"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="796"/>
         <source>点击查看大图</source>
         <translation>点击查看大图</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="843"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="839"/>
         <source>错误: {err}</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="999"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="995"/>
         <source>导出 Media Manager 当前视图</source>
         <translation>导出 Media Manager 当前视图</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="1001"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="997"/>
         <source>CSV 文件 (*.csv)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="1021"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1017"/>
         <source>导出 Media Manager 当前视图为 ZIP</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="1023"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1019"/>
         <source>ZIP 文件 (*.zip)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/media_manager_widget.py" line="1032"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1028"/>
         <source>已清空频道 #{cid}: 删除 {n} 条消息</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1084,15 +1106,25 @@ S            切换幻灯片自动播放
         <translation>按日期范围过滤</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="110"/>
+        <location filename="../ui/widgets/search_bar.py" line="113"/>
         <source>搜索范围:已订阅(默认)/ 全部(含已退订频道历史)</source>
         <translation>搜索范围:已订阅(默认)/ 全部(含已退订频道历史)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="135"/>
-        <location filename="../ui/widgets/search_bar.py" line="144"/>
+        <location filename="../ui/widgets/search_bar.py" line="140"/>
+        <location filename="../ui/widgets/search_bar.py" line="149"/>
         <source>不限</source>
         <translation>不限</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="228"/>
+        <source>搜索范围:全部(含已退订频道历史)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="230"/>
+        <source>搜索范围:已订阅(默认)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -1707,43 +1739,43 @@ S            切换幻灯片自动播放
 <context>
     <name>_HeaderBar</name>
     <message>
-        <location filename="../ui/main_window.py" line="1984"/>
+        <location filename="../ui/main_window.py" line="2011"/>
         <source>tgmonitor</source>
         <translation>tgmonitor</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1994"/>
+        <location filename="../ui/main_window.py" line="2021"/>
         <source>⚪</source>
         <translation>⚪</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1998"/>
+        <location filename="../ui/main_window.py" line="2025"/>
         <source>就绪</source>
         <translation>就绪</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2002"/>
-        <location filename="../ui/main_window.py" line="2037"/>
+        <location filename="../ui/main_window.py" line="2029"/>
+        <location filename="../ui/main_window.py" line="2064"/>
         <source>登录</source>
         <translation>登录</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2007"/>
+        <location filename="../ui/main_window.py" line="2034"/>
         <source>登出</source>
         <translation>登出</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2020"/>
+        <location filename="../ui/main_window.py" line="2047"/>
         <source>切换主题(Ctrl+T)</source>
         <translation>切换主题(Ctrl+T)</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2041"/>
+        <location filename="../ui/main_window.py" line="2068"/>
         <source>验证码</source>
         <translation>验证码</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2045"/>
+        <location filename="../ui/main_window.py" line="2072"/>
         <source>2FA 密码</source>
         <translation>2FA 密码</translation>
     </message>
@@ -1751,63 +1783,63 @@ S            切换幻灯片自动播放
 <context>
     <name>_SelectionToolbar</name>
     <message>
-        <location filename="../ui/main_window.py" line="2085"/>
+        <location filename="../ui/main_window.py" line="2112"/>
         <source>已选 0 条</source>
         <translation>已选 0 条</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2090"/>
-        <location filename="../ui/main_window.py" line="2156"/>
+        <location filename="../ui/main_window.py" line="2117"/>
+        <location filename="../ui/main_window.py" line="2183"/>
         <source>全选</source>
         <translation>全选</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2095"/>
-        <location filename="../ui/main_window.py" line="2157"/>
+        <location filename="../ui/main_window.py" line="2122"/>
+        <location filename="../ui/main_window.py" line="2184"/>
         <source>反选</source>
         <translation>反选</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2100"/>
-        <location filename="../ui/main_window.py" line="2158"/>
+        <location filename="../ui/main_window.py" line="2127"/>
+        <location filename="../ui/main_window.py" line="2185"/>
         <source>清除选择</source>
         <translation>清除选择</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2108"/>
-        <location filename="../ui/main_window.py" line="2159"/>
+        <location filename="../ui/main_window.py" line="2135"/>
+        <location filename="../ui/main_window.py" line="2186"/>
         <source>✓ 标记已读</source>
         <translation>✓ 标记已读</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2113"/>
-        <location filename="../ui/main_window.py" line="2160"/>
+        <location filename="../ui/main_window.py" line="2140"/>
+        <location filename="../ui/main_window.py" line="2187"/>
         <source>📤 导出选中</source>
         <translation>📤 导出选中</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2118"/>
-        <location filename="../ui/main_window.py" line="2161"/>
+        <location filename="../ui/main_window.py" line="2145"/>
+        <location filename="../ui/main_window.py" line="2188"/>
         <source>🗑 删除选中</source>
         <translation>🗑 删除选中</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2124"/>
+        <location filename="../ui/main_window.py" line="2151"/>
         <source>📤 转发到…</source>
         <translation>📤 转发到…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2129"/>
+        <location filename="../ui/main_window.py" line="2156"/>
         <source>📌 钉选</source>
         <translation>📌 钉选</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2134"/>
+        <location filename="../ui/main_window.py" line="2161"/>
         <source>😀 表情回应…</source>
         <translation>😀 表情回应…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2144"/>
+        <location filename="../ui/main_window.py" line="2171"/>
         <source>已选 %d 条</source>
         <translation>已选 %d 条</translation>
     </message>

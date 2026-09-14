@@ -1139,9 +1139,23 @@ class MainWindow(QMainWindow):
         run_coro(self.loop, _go(), on_success=_on_channels, error_label="live_forward_pick")
 
     def _on_live_pin(self, items: list) -> None:
-        """2026-09-09 v1.7.2:批量钉选入口 — 直接转发(无需弹额外对话框)。"""
+        """2026-09-09 v1.7.2:批量钉选入口。
+
+        2026-09-13 v1.7.5 PR #3 (P0-C):二次确认 — 钉选是「写服务端 +
+        不能 quick undo」的操作,与批量删除对齐。
+        """
         normalized = _normalize_selection_items(items)
         if not normalized:
+            return
+        n = len(normalized)
+        ans = QMessageBox.warning(
+            self,
+            self.tr("钉选确认"),
+            self.tr("确定钉选选中的 %d 条消息?\n操作不可撤销。") % n,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
             return
         self._run_live_pin(normalized)
         self.live_view.clear_selection()
@@ -1151,6 +1165,8 @@ class MainWindow(QMainWindow):
 
         2026-09-11 v1.7.4:升级为 EmojiPickerDialog(60+ grid + is_big + 手输兜底),
         取代 QInputDialog.getText。
+        2026-09-13 v1.7.5 PR #3 (P0-C):emoji 选完后弹二次确认 — 批量打
+        emoji 是「写服务端」操作,不可撤销,与 pin / delete 对齐。
         """
         normalized = _normalize_selection_items(items)
         if not normalized:
@@ -1162,6 +1178,16 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         emoji, is_big = result
+        n = len(normalized)
+        ans = QMessageBox.warning(
+            self,
+            self.tr("回应确认"),
+            self.tr("确定对选中的 %d 条消息打 %s 反应?\n操作不可撤销。") % (n, emoji),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
         self._run_live_react(normalized, emoji, is_big=is_big)
         self.live_view.clear_selection()
 
