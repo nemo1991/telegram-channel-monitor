@@ -145,7 +145,55 @@ def test_v174_translations_both_locales(qapp_no_locale_force: QApplication) -> N
     assert "msg/s" in eta_en and "remaining" in eta_en
 
 
-def test_qm_files_exist_and_nonempty() -> None:
+def test_v175_pr6_batch_failure_and_auth_translations(
+    qapp_no_locale_force: QApplication,
+) -> None:
+    """2026-09-14 v1.7.5 PR #6:批量失败明细 + Auth 错误入口关键 key 双语覆盖。
+
+    覆盖:
+      - BatchProgressDialog「查看失败详情」
+      - BatchFailureDetailDialog「批量操作失败详情 / 共 N 条失败:」
+      - MainWindow「鉴权错误 / 验证码错误 / 两步验证密码错误」
+      - _ErrorLogDialog「错误日志 / 清空日志」
+    """
+    # zh_CN
+    install_translator(qapp_no_locale_force, locale="zh_CN")
+    assert QCoreApplication.translate("BatchProgressDialog", "查看失败详情") == "查看失败详情"
+    assert (
+        QCoreApplication.translate("BatchFailureDetailDialog", "批量操作失败详情")
+        == "批量操作失败详情"
+    )
+    assert (
+        QCoreApplication.translate("BatchFailureDetailDialog", "共 {n} 条失败:").format(n=3)
+        == "共 3 条失败:"
+    )
+    assert QCoreApplication.translate("MainWindow", "鉴权错误") == "鉴权错误"
+    assert QCoreApplication.translate("MainWindow", "验证码错误") == "验证码错误"
+    assert QCoreApplication.translate("MainWindow", "两步验证密码错误") == "两步验证密码错误"
+    assert QCoreApplication.translate("_ErrorLogDialog", "错误日志") == "错误日志"
+    assert QCoreApplication.translate("_ErrorLogDialog", "清空日志") == "清空日志"
+
+    # en_US
+    install_translator(qapp_no_locale_force, locale="en_US")
+    assert (
+        QCoreApplication.translate("BatchProgressDialog", "查看失败详情")
+        == "View Failure Details"
+    )
+    assert (
+        QCoreApplication.translate("BatchFailureDetailDialog", "批量操作失败详情")
+        == "Batch Failure Details"
+    )
+    assert (
+        QCoreApplication.translate("BatchFailureDetailDialog", "共 {n} 条失败:").format(n=3)
+        == "3 failure(s):"
+    )
+    assert QCoreApplication.translate("MainWindow", "鉴权错误") == "Authentication error"
+    assert QCoreApplication.translate("MainWindow", "验证码错误") == "Invalid verification code"
+    assert (
+        QCoreApplication.translate("MainWindow", "两步验证密码错误") == "Invalid 2FA password"
+    )
+    assert QCoreApplication.translate("_ErrorLogDialog", "错误日志") == "Error Log"
+    assert QCoreApplication.translate("_ErrorLogDialog", "清空日志") == "Clear log"
     """2026-09-07 v1.6.8:en_US.qm / zh_CN.qm 编译产物存在 + 非空 + 215+ 翻译条目。"""
     i18n_dir = Path("src/tgmonitor/i18n")
     for name in ("zh_CN.qm", "en_US.qm"):
@@ -333,7 +381,10 @@ def test_all_tr_calls_extracted_to_ts() -> None:
     # 放宽上限到 325。
     # 2026-09-11 v1.7.5:Media Manager 整页 i18n(filter combo / sort / toolbar /
     # status / file dialog)+ 快捷键说明文案更新,源数 ~342;放宽上限到 360。
-    assert 180 <= ts_sources <= 360, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
+    # 2026-09-14 v1.7.5 PR #6:BatchProgressDialog 失败详情(3 tr)+
+    # MainWindow 鉴权错误入口(8 tr)+ _ErrorLogDialog(5 tr),源数 ~375;
+    # 放宽上限到 395。
+    assert 180 <= ts_sources <= 395, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
     # 大致覆盖率
     coverage = ts_sources / max(py_tr_calls, 1)
     # 2026-09-07 v1.6.8:lupdate 对 Python 的 `self.tr(f"...{x}...")` 动态

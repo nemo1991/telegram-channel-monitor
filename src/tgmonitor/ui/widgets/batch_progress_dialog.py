@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -61,11 +63,15 @@ class BatchProgressDialog(QDialog):
 
         2026-09-10 v1.7.3:`extra` 在 react/unreact 时传入 emoji char,标题
         会插入(`"批量回应 😀 中…"`);其他 op 忽略 `extra`。
+
+        2026-09-14 v1.7.5 PR #6 (P0-J):`_failures` 缓存 BatchDone.failures
+        列表,失败 > 0 时显示「查看失败详情」按钮 + 自动弹 dialog。
         """
         super().__init__(parent)
         self._vm = vm
         self._op = op
         self._extra = extra
+        self._failures: list[tuple[int, int, str]] = []
         title = _OP_DEFAULT_TITLES.get(op, "批量操作中…")
         if op in ("react", "unreact") and extra:
             # 「批量回应 😀 中…」 — 把 emoji 插到「中」前
@@ -82,9 +88,15 @@ class BatchProgressDialog(QDialog):
         self.bar.setMinimum(0)
         self.bar.setMaximum(0)  # 默认 indeterminate,直到第一个 BatchProgress 推 total
         root.addWidget(self.bar)
-        # 2026-09-10 v1.7.3:取消按钮行
+        # 按钮行 — 取消 + 查看失败详情(失败时启用)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        # 2026-09-14 v1.7.5 PR #6 (P0-J):失败详情按钮 — 默认隐藏,失败>0 时显示
+        self._btn_detail = QPushButton(self.tr("查看失败详情"))
+        self._btn_detail.setObjectName("batchProgressDetailBtn")
+        self._btn_detail.setVisible(False)
+        self._btn_detail.clicked.connect(self._on_detail_clicked)
+        btn_row.addWidget(self._btn_detail)
         self._btn_cancel = QPushButton(self.tr("取消"))
         self._btn_cancel.setObjectName("batchProgressCancelBtn")
         self._btn_cancel.clicked.connect(self._on_cancel_clicked)
@@ -145,10 +157,15 @@ class BatchProgressDialog(QDialog):
             )
 
     def _on_done(self, e) -> None:
-        """VM 转发的 BatchDone 事件 — 显示完成状态 + 自动 accept。"""
+        """VM 转发的 BatchDone 事件 — 显示完成状态 + 自动 accept。
+
+        2026-09-14 v1.7.5 PR #6 (P0-J):失败 > 0 时显示「查看失败详情」按钮,
+        点击弹出 `BatchFailureDetailDialog` 展示每条 (cid, mid, error_str)。
+        """
         succeeded = getattr(e, "succeeded", 0)
         failed = getattr(e, "failed", 0)
         error = getattr(e, "error", None)
+        failures = getattr(e, "failures", []) or []
         if error:
             self.lbl_status.setText(self.tr("操作中断:{err}").format(err=error))
         elif failed > 0:
@@ -157,8 +174,29 @@ class BatchProgressDialog(QDialog):
             )
         else:
             self.lbl_status.setText(self.tr("完成 {ok} 条").format(ok=succeeded))
+        # 失败 > 0 且有具体 failures 列表 → 显示详情按钮
+        if failed > 0 and failures:
+            self._failures = failures
+            self._btn_detail.setVisible(True)
+            # 自动弹一次(让用户立刻看到);非模态,不阻塞主窗口
+            self._show_failure_dialog()
         self.finished.emit(e)
         self.accept()
+
+    def _on_detail_clicked(self) -> None:
+        """2026-09-14 v1.7.5 PR #6 (P0-J):手动重开失败详情 dialog。"""
+        self._show_failure_dialog()
+
+    def _show_failure_dialog(self) -> None:
+        """弹 `BatchFailureDetailDialog` 展示每条失败 (cid, mid, error_str)。
+
+        用 `.show()`(非模态)而非 `.exec()`,这样:
+          - 不阻塞 BatchProgressDialog 关闭路径(`self.accept()` 后续)
+          - 用户可在主窗口操作的同时查看详情
+          - 父对象=BatchProgressDialog,关窗时 Qt 自动清理
+        """
+        dlg = BatchFailureDetailDialog(self._failures, parent=self)
+        dlg.show()
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         """关窗(X / Alt+F4)清理 signal 连接。
@@ -193,3 +231,44 @@ class BatchProgressDialog(QDialog):
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
                     pass
+
+
+class BatchFailureDetailDialog(QDialog):
+    """2026-09-14 v1.7.5 PR #6 (P0-J):批量失败明细对话框。
+
+    列出每条失败的 `(cid, mid, error_str)` — 用户可滚动 / 复制到剪贴板。
+    模态(`exec()`),但 parent 是 `BatchProgressDialog`,故主窗口不阻塞。
+    """
+
+    def __init__(self, failures: list[tuple[int, int, str]], parent=None) -> None:
+        super().__init__(parent)
+        self._failures = list(failures)
+        self.setObjectName("batchFailureDetailDialog")
+        self.setWindowTitle(self.tr("批量操作失败详情"))
+        self.resize(640, 360)
+        self._build()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        # 顶部摘要
+        header = QLabel(self.tr("共 {n} 条失败:").format(n=len(self._failures)))
+        header.setObjectName("batchFailureHeader")
+        root.addWidget(header)
+        # 失败列表
+        self.list = QListWidget()
+        for cid, mid, err in self._failures:
+            item = QListWidgetItem(self._format_row(cid, mid, err))
+            self.list.addItem(item)
+        root.addWidget(self.list, 1)
+        # 按钮行 — 关闭
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_close = QPushButton(self.tr("关闭"))
+        btn_close.setObjectName("batchFailureCloseBtn")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+    def _format_row(self, cid: int, mid: int, err: str) -> str:
+        # 三列对齐:cid / mid / error — 等宽风格便于扫读
+        return f"cid={cid:<12}  mid={mid:<12}  {err}"

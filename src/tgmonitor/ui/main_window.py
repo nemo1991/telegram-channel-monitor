@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
@@ -49,6 +50,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -500,6 +503,16 @@ class MainWindow(QMainWindow):
         )
         self._paused_label.setVisible(False)
         self.status_bar.addPermanentWidget(self._paused_label)
+        # 2026-09-14 v1.7.5 PR #6 (P0-K):错误日志铃铛按钮 — 默认隐藏,
+        # 收到 AuthErrorOccurred 时显示 + 自增计数;点击 → 弹错误日志 dialog。
+        self._error_log: list[tuple[datetime, str, str]] = []  # (when, source, msg)
+        self._bell_btn = QPushButton(self.tr("🔔"))
+        self._bell_btn.setObjectName("errorBellBtn")
+        self._bell_btn.setToolTip(self.tr("查看错误日志"))
+        self._bell_btn.setVisible(False)
+        self._bell_btn.setFlat(True)
+        self._bell_btn.clicked.connect(self._on_bell_clicked)
+        self.status_bar.addPermanentWidget(self._bell_btn)
         # v1.0.22:启动时对象存储 connect 失败 → 状态栏红字常驻提示(不只写日志)。
         # 用户从日志看不到问题,媒体下载又静默失败,必须让「对象存储不可用」在
         # UI 上直接可见;设置页热重载成功(`_on_settings_changed`)后自动移除。
@@ -1430,9 +1443,64 @@ class MainWindow(QMainWindow):
         self._refresh_state()
 
     async def _on_bus_auth_error(self, e) -> None:
+        """2026-09-14 v1.7.5 PR #6 (P0-K):鉴权错误入口。
+
+        旧实现:仅 status_bar 临时消息 5s,用户容易错过(验证码错得重输)。
+        新实现:
+          1. 把错误压入 ring buffer(`self._error_log`, 上限 100 条)
+          2. 状态栏出现「🔔 N」铃铛按钮 — 点击可看历史错误
+          3. 立即弹一个 `QMessageBox.warning`(icon=Critical,非自动消失),
+             用户显式确认才关,验证码错误时这点至关重要 — 否则用户以为
+             自己没输过重新再输会再次超时。
+        """
         if not isinstance(e, AuthErrorOccurred):
             return
-        self.status_bar.showMessage(f"⚠ {e.message}", 5000)
+        # 1. ring buffer(仅留最近 100 条,防内存膨胀)
+        when = datetime.now(UTC)
+        self._error_log.append((when, e.source, e.message))
+        if len(self._error_log) > 100:
+            self._error_log = self._error_log[-100:]
+        # 2. 铃铛按钮显示 + 计数
+        self._bell_btn.setVisible(True)
+        self._bell_btn.setText(self.tr("🔔 {n}").format(n=len(self._error_log)))
+        # 3. 弹 Critical QMessageBox(非模态,不阻塞主窗口 — 但用户必须显式关)
+        #    source: "code" / "password" / "phone" / "telegram_internal"
+        kind = {
+            "code": self.tr("验证码错误"),
+            "password": self.tr("两步验证密码错误"),
+            "phone": self.tr("手机号错误"),
+            "telegram_internal": self.tr("Telegram 内部错误"),
+        }.get(e.source, self.tr("鉴权错误"))
+        QMessageBox.warning(
+            self,
+            self.tr("⚠ {kind}").format(kind=kind),
+            (
+                f"{e.message}\n\n"
+                + self.tr("详细错误日志可点击状态栏「🔔 {n}」按钮查看。").format(
+                    n=len(self._error_log)
+                )
+            ),
+            QMessageBox.Ok,
+        )
+
+    def _on_bell_clicked(self) -> None:
+        """2026-09-14 v1.7.5 PR #6 (P0-K):铃铛按钮 — 弹错误日志 dialog。
+
+        列出最近 `self._error_log` 中所有 `(when, source, msg)`,支持:
+        - 清空日志(按钮)
+        - 单条滚动查看(时间倒序)
+        - 关窗(不影响下次错误计数 — 仅隐藏当前 dialog)
+        """
+        dlg = _ErrorLogDialog(self._error_log, parent=self)
+        dlg.exec()
+
+    def _clear_error_log(self) -> None:
+        """2026-09-14 v1.7.5 PR #6 (P0-K):清空错误日志。
+
+        仅清空日志内容,铃铛按钮隐藏 — 下次新错误再次出现并自增计数。
+        """
+        self._error_log.clear()
+        self._bell_btn.setVisible(False)
 
     # ======================== VM 事件回调 ========================
 
@@ -2205,3 +2273,65 @@ class _SelectionToolbar(QWidget):
         self._btn_mark_read.setText(self.tr("✓ 标记已读"))
         self._btn_export.setText(self.tr("📤 导出选中"))
         self._btn_delete.setText(self.tr("🗑 删除选中"))
+
+
+class _ErrorLogDialog(QDialog):
+    """2026-09-14 v1.7.5 PR #6 (P0-K):错误日志 dialog — 状态栏铃铛入口。
+
+    显示 `MainWindow._error_log`(时间 / 来源 / 消息),时间倒序。
+    提供「清空日志」按钮 — 但清空不影响铃铛隐藏逻辑(下次错误又增)。
+    """
+
+    def __init__(
+        self,
+        entries: list[tuple[datetime, str, str]],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._entries = list(entries)
+        self.setObjectName("errorLogDialog")
+        self.setWindowTitle(self.tr("错误日志"))
+        self.resize(640, 360)
+        self._build()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        header = QLabel(self.tr("最近 {n} 条错误(倒序):").format(n=len(self._entries)))
+        header.setObjectName("errorLogHeader")
+        root.addWidget(header)
+        self.list = QListWidget()
+        # 倒序:最新在最上面
+        for when, source, msg in reversed(self._entries):
+            text = f"{when.strftime('%H:%M:%S')}  [{source}]  {msg}"
+            item = QListWidgetItem(text)
+            self.list.addItem(item)
+        if not self._entries:
+            empty = QListWidgetItem(self.tr("(暂无错误)"))
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list.addItem(empty)
+        root.addWidget(self.list, 1)
+        # 按钮行:清空 + 关闭
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self._btn_clear = QPushButton(self.tr("清空日志"))
+        self._btn_clear.setObjectName("errorLogClearBtn")
+        self._btn_clear.clicked.connect(self._on_clear)
+        btn_row.addWidget(self._btn_clear)
+        btn_close = QPushButton(self.tr("关闭"))
+        btn_close.setObjectName("errorLogCloseBtn")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+    def _on_clear(self) -> None:
+        """清空日志 — 同时调 MainWindow 自身的 _error_log 引用。"""
+        # 通过 parent 调用 MainWindow 的清空入口(而非直接改 self._entries),
+        # 这样铃铛按钮的隐藏逻辑(可选)能跟上。
+        win = self.parent()
+        if win is not None and hasattr(win, "_clear_error_log"):
+            win._clear_error_log()
+        self._entries = []
+        self.list.clear()
+        empty = QListWidgetItem(self.tr("(暂无错误)"))
+        empty.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.list.addItem(empty)
