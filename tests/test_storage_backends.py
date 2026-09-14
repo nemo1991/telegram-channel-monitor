@@ -21,6 +21,7 @@ from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
+    MessageDTO,
     ReactionDTO,
     SortDir,
     SortKey,
@@ -1250,3 +1251,189 @@ async def test_jsonl_update_pin_nonexistent_silent(jsonl_repo):
     """v1.7.3:Jsonl 同样 idempotent 不抛(0 matched)。"""
     await jsonl_repo.update_message_pin(999, 1, True)
     assert await jsonl_repo.get_message(999, 1) is None
+
+
+# ============================================================
+# 2026-09-14 v1.7.5 PR #8:`list_messages` favorite_only / tag_only / pinned_only
+# 3 个 kwarg 在 InMemory + Jsonl 两后端的 parity 验证。
+# ============================================================
+
+
+def _meta_msg(
+    *,
+    channel_id: int,
+    msg_id: int,
+    is_favorite: bool = False,
+    tags: list[str] | None = None,
+    is_pinned: bool = False,
+    text: str = "x",
+    date: datetime | None = None,
+) -> MessageDTO:
+    """构造带 metadata 的 MessageDTO(extend factories)。"""
+    return MessageDTO(
+        id=0,
+        channel_id=channel_id,
+        telegram_msg_id=msg_id,
+        text=text,
+        author="alice",
+        date=date or datetime(2026, 1, 1, 12, 0, 0),
+        is_favorite=is_favorite,
+        tags=tags or [],
+        is_pinned=is_pinned,
+    )
+
+
+async def _seed_meta_messages(repo) -> None:
+    """种 4 条覆盖 3 个 metadata 维度:1 全空,1 fav,1 tagged,1 pinned。"""
+    repo_needs_subscribe = not isinstance(repo, InMemoryRepository)
+    if repo_needs_subscribe:
+        from tgmonitor.core.dto import ChannelDTO
+
+        for cid in (1, 2):
+            await repo.upsert_channel(ChannelDTO(id=cid, title=f"#{cid}"))
+            await repo.set_channel_subscribed(cid, True)
+
+    await repo.save_message(
+        _meta_msg(channel_id=1, msg_id=100)  # 全空
+    )
+    await repo.save_message(_meta_msg(channel_id=1, msg_id=101, is_favorite=True))
+    await repo.save_message(_meta_msg(channel_id=1, msg_id=102, tags=["tech", "ai"]))
+    await repo.save_message(_meta_msg(channel_id=2, msg_id=200, is_pinned=True))
+
+
+@pytest_asyncio.fixture
+async def in_mem_meta_repo() -> InMemoryRepository:
+    repo = InMemoryRepository()
+    await _seed_meta_messages(repo)
+    return repo
+
+
+@pytest_asyncio.fixture
+async def jsonl_meta_repo(tmp_path):
+    repo = JsonlFileStore(root=tmp_path)
+    await repo.connect()
+    await repo.init_schema()
+    await _seed_meta_messages(repo)
+    return repo
+
+
+async def test_pr8_in_mem_list_messages_favorite_only(in_mem_meta_repo):
+    """PR #8:InMemory `list_messages(favorite_only=True)` 只返 is_favorite=True。"""
+    msgs = await in_mem_meta_repo.list_messages(channel_ids=[1, 2], favorite_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [101]
+
+
+async def test_pr8_jsonl_list_messages_favorite_only(jsonl_meta_repo):
+    """PR #8:Jsonl `list_messages(favorite_only=True)` parity — 只返 is_favorite=True。"""
+    msgs = await jsonl_meta_repo.list_messages(channel_ids=[1, 2], favorite_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [101]
+
+
+async def test_pr8_in_mem_list_messages_tag_only(in_mem_meta_repo):
+    """PR #8:InMemory `list_messages(tag_only=True)` 只返 tags 非空。"""
+    msgs = await in_mem_meta_repo.list_messages(channel_ids=[1, 2], tag_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [102]
+
+
+async def test_pr8_jsonl_list_messages_tag_only(jsonl_meta_repo):
+    """PR #8:Jsonl `list_messages(tag_only=True)` parity。"""
+    msgs = await jsonl_meta_repo.list_messages(channel_ids=[1, 2], tag_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [102]
+
+
+async def test_pr8_in_mem_list_messages_pinned_only(in_mem_meta_repo):
+    """PR #8:InMemory `list_messages(pinned_only=True)` 只返 is_pinned=True。"""
+    msgs = await in_mem_meta_repo.list_messages(channel_ids=[1, 2], pinned_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [200]
+
+
+async def test_pr8_jsonl_list_messages_pinned_only(jsonl_meta_repo):
+    """PR #8:Jsonl `list_messages(pinned_only=True)` parity。"""
+    msgs = await jsonl_meta_repo.list_messages(channel_ids=[1, 2], pinned_only=True)
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [200]
+
+
+async def test_pr8_in_mem_list_messages_combined_and(in_mem_meta_repo):
+    """PR #8:InMemory 3 filter 同时开 → AND 语义(任何 1 条都只命中 1 个条件)。"""
+    msgs = await in_mem_meta_repo.list_messages(
+        channel_ids=[1, 2],
+        favorite_only=True,
+        tag_only=True,
+        pinned_only=True,
+    )
+    # 没有 1 条消息同时是 fav + tagged + pinned → 0 results
+    assert msgs == []
+
+
+async def test_pr8_jsonl_list_messages_combined_and(jsonl_meta_repo):
+    """PR #8:Jsonl 3 filter AND parity — 0 hits 因为没消息同时命中全部 3 个条件。"""
+    msgs = await jsonl_meta_repo.list_messages(
+        channel_ids=[1, 2],
+        favorite_only=True,
+        tag_only=True,
+        pinned_only=True,
+    )
+    assert msgs == []
+
+
+async def test_pr8_in_mem_list_messages_combined_with_text(in_mem_meta_repo):
+    """PR #8:InMemory text + favorite + pinned 组合 → AND 语义生效。
+
+    种 1 条 `fav + pinned` + text 含 "needle" 验证同时 3 个 filter 命中。
+    """
+    await in_mem_meta_repo.save_message(
+        _meta_msg(
+            channel_id=1,
+            msg_id=300,
+            is_favorite=True,
+            is_pinned=True,
+            text="needle in haystack",
+        )
+    )
+    msgs = await in_mem_meta_repo.list_messages(
+        channel_ids=[1, 2],
+        search="needle",
+        favorite_only=True,
+        pinned_only=True,
+    )
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [300]
+
+
+async def test_pr8_jsonl_list_messages_combined_with_text(jsonl_meta_repo):
+    """PR #8:Jsonl text + favorite + pinned 组合 AND parity。"""
+    await jsonl_meta_repo.save_message(
+        _meta_msg(
+            channel_id=1,
+            msg_id=300,
+            is_favorite=True,
+            is_pinned=True,
+            text="needle in haystack",
+        )
+    )
+    msgs = await jsonl_meta_repo.list_messages(
+        channel_ids=[1, 2],
+        search="needle",
+        favorite_only=True,
+        pinned_only=True,
+    )
+    ids = sorted(m.telegram_msg_id for m in msgs)
+    assert ids == [300]
+
+
+async def test_pr8_in_mem_list_messages_no_filter_returns_all(in_mem_meta_repo):
+    """PR #8 regression:不加 metadata filter 时,所有 4 条都返(向后兼容)。"""
+    msgs = await in_mem_meta_repo.list_messages(channel_ids=[1, 2])
+    assert len(msgs) == 4
+
+
+async def test_pr8_jsonl_list_messages_no_filter_returns_all(jsonl_meta_repo):
+    """PR #8 regression:Jsonl 同上。"""
+    msgs = await jsonl_meta_repo.list_messages(channel_ids=[1, 2])
+    assert len(msgs) == 4

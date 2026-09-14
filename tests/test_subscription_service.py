@@ -272,6 +272,91 @@ async def test_list_messages_returns_storage_result(
 
 
 # ============================================================
+# 2026-09-14 v1.7.5 PR #8:`list_messages` 接 favorite_only / tag_only / pinned_only
+# 3 kwarg → 透传给 storage.list_messages。
+# ============================================================
+
+
+def _seed_subscribed(fake_storage: AsyncMock) -> None:
+    """让 `list_subscribed_channels` 返 1 个 channel — 不然 service 直接返 []。"""
+    fake_storage.list_subscribed_channels.return_value = [ChannelDTO(id=1, title="a")]
+
+
+async def test_pr8_list_messages_passes_favorite_only_kwarg(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """PR #8:SubscriptionService.list_messages(favorite_only=True) 透传给 storage。"""
+    _seed_subscribed(fake_storage)
+    fake_storage.list_messages.return_value = []
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.list_messages(favorite_only=True)
+    fake_storage.list_messages.assert_awaited_once()
+    kwargs = fake_storage.list_messages.await_args.kwargs
+    assert kwargs.get("favorite_only") is True
+
+
+async def test_pr8_list_messages_passes_tag_only_kwarg(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """PR #8:SubscriptionService.list_messages(tag_only=True) 透传给 storage。"""
+    _seed_subscribed(fake_storage)
+    fake_storage.list_messages.return_value = []
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.list_messages(tag_only=True)
+    fake_storage.list_messages.assert_awaited_once()
+    kwargs = fake_storage.list_messages.await_args.kwargs
+    assert kwargs.get("tag_only") is True
+
+
+async def test_pr8_list_messages_passes_pinned_only_kwarg(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """PR #8:SubscriptionService.list_messages(pinned_only=True) 透传给 storage。"""
+    _seed_subscribed(fake_storage)
+    fake_storage.list_messages.return_value = []
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.list_messages(pinned_only=True)
+    fake_storage.list_messages.assert_awaited_once()
+    kwargs = fake_storage.list_messages.await_args.kwargs
+    assert kwargs.get("pinned_only") is True
+
+
+async def test_pr8_list_messages_passes_all_3_kwargs(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """PR #8:3 kwarg 同传(AND 语义)— 全透传到 storage.list_messages。"""
+    _seed_subscribed(fake_storage)
+    fake_storage.list_messages.return_value = []
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.list_messages(
+        favorite_only=True,
+        tag_only=True,
+        pinned_only=True,
+    )
+    fake_storage.list_messages.assert_awaited_once()
+    kwargs = fake_storage.list_messages.await_args.kwargs
+    assert kwargs.get("favorite_only") is True
+    assert kwargs.get("tag_only") is True
+    assert kwargs.get("pinned_only") is True
+
+
+async def test_pr8_list_messages_default_kwargs_false(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """PR #8 regression:不传 kwargs → 默认 False(向后兼容)。"""
+    _seed_subscribed(fake_storage)
+    fake_storage.list_messages.return_value = []
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.list_messages()
+    fake_storage.list_messages.assert_awaited_once()
+    kwargs = fake_storage.list_messages.await_args.kwargs
+    # 默认值应明确为 False(不窄化)
+    assert kwargs.get("favorite_only") is False
+    assert kwargs.get("tag_only") is False
+    assert kwargs.get("pinned_only") is False
+
+
+# ============================================================
 # 实时流
 # ============================================================
 

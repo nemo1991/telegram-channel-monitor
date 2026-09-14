@@ -250,6 +250,9 @@ class InMemoryRepository(StorageRepository):
         limit: int | None = None,
         offset: int = 0,
         search: str = "",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         out = []
         search_lo = search.lower() if search else ""
@@ -261,6 +264,13 @@ class InMemoryRepository(StorageRepository):
             if date_to and m.date > date_to:
                 continue
             if search_lo and not self._matches_search(m, search_lo):
+                continue
+            # 2026-09-14 v1.7.5 PR #8:用户元数据 3 过滤 — AND 语义任一 True 必须命中。
+            if favorite_only and not m.is_favorite:
+                continue
+            if tag_only and not m.tags:
+                continue
+            if pinned_only and not m.is_pinned:
                 continue
             out.append(m)
         # 归一化为 aware UTC 再排序 — 测试 fixture 默认 datetime() 是 naive,

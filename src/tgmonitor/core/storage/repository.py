@@ -151,6 +151,9 @@ class StorageRepository(ABC):
         limit: int | None = None,
         offset: int = 0,
         search: str = "",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """按时间升序返回。两实现必须排序一致。
 
@@ -163,6 +166,12 @@ class StorageRepository(ABC):
         `text` 或 `media.file_name` 任一字段即命中。默认 `""` 不过滤,
         向后兼容所有现有调用方;Postgres / Mongo LIKE/REGRESS 通配符
         必须 escape 防止注入。
+
+        2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
+        3 个用户元数据过滤(对应 SearchBar ★/🏷/📌 3 toggle)。默认 False
+        不过滤;True 时仅返回满足条件的消息 — UI AND 语义:任一 True 字段
+        必须命中。`tag_only=True` 表示「有任意 tag 即可」,精细 tag 选择
+        留 v1.7.6。
         """
         ...
 

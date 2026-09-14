@@ -343,11 +343,16 @@ class AppService:
         limit: int | None = 200,
         search: str = "",
         include_unsubscribed: bool = False,
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """转发 SubscriptionService.list_messages。
 
         - 2026-09-01 v1.5.1 PR #B2 加 `search`
         - 2026-09-03 v1.5.3 PR #D2 加 `include_unsubscribed`(默认 False 与现状一致)
+        - 2026-09-14 v1.7.5 PR #8 加 `favorite_only` / `tag_only` / `pinned_only`
+          (SearchBar ★/🏷/📌 3 toggle 控制,AND 语义)
         """
         return await self._sub.list_messages(
             channel_ids,
@@ -356,6 +361,9 @@ class AppService:
             limit,
             search=search,
             include_unsubscribed=include_unsubscribed,
+            favorite_only=favorite_only,
+            tag_only=tag_only,
+            pinned_only=pinned_only,
         )
 
     # ---------- 同步(直接转 channel_sync) ----------

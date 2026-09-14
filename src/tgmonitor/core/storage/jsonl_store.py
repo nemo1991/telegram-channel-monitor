@@ -795,6 +795,9 @@ class JsonlFileStore(StorageRepository):
         limit: int | None = None,
         offset: int = 0,
         search: str = "",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """按时间升序;两实现必须排序一致(date asc, id asc 兜底)。
 
@@ -804,6 +807,9 @@ class JsonlFileStore(StorageRepository):
 
         `search` (v1.5.1 PR #B2):子串过滤(大小写不敏感),匹配 text 或
         media.file_name 任一;空 = 不过滤。
+
+        2026-09-14 v1.7.5 PR #8:3 个用户元数据过滤 — favorite / tag /
+        pinned。AND 语义:任一 True 必须命中。
         """
         out: list[MessageDTO] = []
         search_lo = search.lower() if search else ""
@@ -819,6 +825,12 @@ class JsonlFileStore(StorageRepository):
                 if date_to and d.date and d.date > date_to:
                     continue
                 if search_lo and not self._matches_search(d, search_lo):
+                    continue
+                if favorite_only and not d.is_favorite:
+                    continue
+                if tag_only and not d.tags:
+                    continue
+                if pinned_only and not d.is_pinned:
                     continue
                 out.append(d)
         out.sort(key=lambda m: (m.date or datetime.min, m.id or 0))

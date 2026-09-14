@@ -20,6 +20,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QBrush  # noqa: E402
+from PySide6.QtTest import QSignalSpy  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
@@ -1107,3 +1108,149 @@ def test_dto_by_key_missing_returns_none(qapp):
     """v1.7.4:key 不存在 → dto_by_key 返 None。"""
     view = MessageView()
     assert view.dto_by_key(1, 999) is None
+
+
+# ============================================================
+# 2026-09-14 v1.7.5 PR #8:★/🏷/📌 filter 测试(AND 语义)
+# ============================================================
+
+
+def _hidden_role(view: MessageView, row: int) -> bool:
+    """读 MessageListModel HiddenRole — True = hidden(被过滤掉)。"""
+    idx = view.model().index(row, 0)
+    return bool(view.model().data(idx, MessageListModel.HiddenRole))
+
+
+def test_pr8_set_filter_default_kwargs_compat(qapp):
+    """PR #8 向后兼容:旧调用 `set_filter(text)` 仍能用,元数据维度默认 False。"""
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    # _make_msg 默认 text="x",搜索 "x" 应命中
+    view.set_filter("x")
+    assert _hidden_role(view, 0) is False
+    view.set_filter("nonexistent")
+    assert _hidden_role(view, 0) is True
+
+
+def test_pr8_set_filter_favorite_only_narrows(qapp):
+    """PR #8:`favorite_only=True` → 仅 is_favorite=True 的消息通过。
+
+    注:`MessageView.append` 走 newest-first(后插入的行 row 号更小),
+    因此两行 append 后,row 0 是后者(normal),row 1 是前者(fav)。
+    """
+    view = MessageView()
+    fav = _make_meta_msg(telegram_msg_id=100, is_favorite=True)
+    normal = _make_meta_msg(telegram_msg_id=101, is_favorite=False)
+    view.append(fav)
+    view.append(normal)
+    view.set_filter(favorite_only=True)
+    assert _hidden_role(view, 0) is True  # normal hidden
+    assert _hidden_role(view, 1) is False  # fav 通过
+
+
+def test_pr8_set_filter_tag_only_narrows(qapp):
+    """PR #8:`tag_only=True` → 仅 tags 非空的消息通过(newest-first 顺序)。"""
+    view = MessageView()
+    tagged = _make_meta_msg(telegram_msg_id=100, tags=["tech", "ai"])
+    untagged = _make_meta_msg(telegram_msg_id=101)
+    view.append(tagged)
+    view.append(untagged)
+    view.set_filter(tag_only=True)
+    assert _hidden_role(view, 0) is True  # untagged hidden
+    assert _hidden_role(view, 1) is False  # tagged 通过
+
+
+def test_pr8_set_filter_pinned_only_narrows(qapp):
+    """PR #8:`pinned_only=True` → 仅 is_pinned=True 的消息通过(newest-first)。"""
+    view = MessageView()
+    pinned = _make_meta_msg(telegram_msg_id=100, is_pinned=True)
+    normal = _make_meta_msg(telegram_msg_id=101, is_pinned=False)
+    view.append(pinned)
+    view.append(normal)
+    view.set_filter(pinned_only=True)
+    assert _hidden_role(view, 0) is True  # normal hidden
+    assert _hidden_role(view, 1) is False  # pinned 通过
+
+
+def test_pr8_set_filter_combined_and_semantics(qapp):
+    """PR #8:多 filter 同时启用 → AND 语义(任一不满足就 hidden)。
+
+    3 条 append 后 newest-first 顺序:no_fav (row 0), no_pin (row 1),
+    full_match (row 2)。
+    """
+    view = MessageView()
+    # 完全命中:fav + tag + pinned
+    full_match = _make_meta_msg(
+        telegram_msg_id=100,
+        is_favorite=True,
+        tags=["tech"],
+        is_pinned=True,
+    )
+    # 缺 pinned
+    no_pin = _make_meta_msg(telegram_msg_id=101, is_favorite=True, tags=["tech"])
+    # 缺 favorite
+    no_fav = _make_meta_msg(telegram_msg_id=102, tags=["tech"], is_pinned=True)
+    view.append(full_match)
+    view.append(no_pin)
+    view.append(no_fav)
+    view.set_filter(favorite_only=True, tag_only=True, pinned_only=True)
+    assert _hidden_role(view, 0) is True  # no_fav hidden(缺 fav)
+    assert _hidden_role(view, 1) is True  # no_pin hidden(缺 pin)
+    assert _hidden_role(view, 2) is False  # full_match 通过
+
+
+def test_pr8_set_filter_combined_with_text(qapp):
+    """PR #8:text + favorite + tag 组合 → AND 语义全部生效(newest-first 顺序)。"""
+    view = MessageView()
+    # text="alpha", fav=True, tags=["a"]
+    full = _make_meta_msg(telegram_msg_id=100, is_favorite=True, tags=["a"])
+    full.text = "alpha content"
+    # text="beta" 但 fav=True
+    text_miss = _make_meta_msg(telegram_msg_id=101, is_favorite=True)
+    text_miss.text = "beta content"
+    view.append(full)
+    view.append(text_miss)
+    view.set_filter("alpha", favorite_only=True, tag_only=True)
+    assert _hidden_role(view, 0) is True  # text_miss(beta, row 0)— hidden
+    assert _hidden_role(view, 1) is False  # full(alpha, row 1)— 通过
+
+
+# 注:_make_meta_msg 默认 text=f"msg{telegram_msg_id}",会被 "msg" 搜索命中
+# (因未单独改 text)。上面组合测试显式改 .text 为 "alpha content" / "beta content"
+# 以验证 text + 元数据 AND 语义。
+
+
+def test_pr8_set_filter_emits_data_changed_for_hidden_role(qapp):
+    """PR #8:set_filter 后 emit dataChanged(所有 row, [HiddenRole])。"""
+    view = MessageView()
+    view.append(_make_meta_msg(telegram_msg_id=100))
+    view.append(_make_msg(1, 101))
+    spy = QSignalSpy(view.model().dataChanged)
+    view.set_filter(favorite_only=True)
+    assert spy.count() >= 1
+
+
+def test_pr8_set_filter_persists_state_after_set_messages(qapp):
+    """PR #8:set_messages 后 filter state 持久(text + 3 元数据都生效)。
+
+    regression:之前只 persist `_filter_text`,元数据 filter 会被 reset
+    后清空。
+
+    注:`set_messages` 内部 `list(reversed(msgs))` 后 reset,传入 [200, 201]
+    顺序时,row 0 是 telegram_msg_id=201(后入),row 1 是 200。
+    """
+    view = MessageView()
+    view.append(_make_meta_msg(telegram_msg_id=100, is_favorite=True))
+    view.set_filter(favorite_only=True)
+    # 此时 row 0 是 fav(单条)→ 通过
+    assert _hidden_role(view, 0) is False
+
+    # set_messages 整批替换(走 model.reset)
+    msgs = [
+        _make_meta_msg(telegram_msg_id=200, is_favorite=True),
+        _make_meta_msg(telegram_msg_id=201, is_favorite=False),
+    ]
+    view.set_messages(msgs)
+    # row 0 = normal(201, hidden),row 1 = fav(200, 通过)
+    assert _hidden_role(view, 0) is True
+    assert _hidden_role(view, 1) is False

@@ -646,9 +646,12 @@ class MonitorViewModel(QObject):
         limit: int = 200,
         channel_ids: list[int] | None = None,
         scope: str = "subscribed",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> None:
-        """2026-09-02 v1.5.2 PR #B5 + 2026-09-03 v1.5.3 PR #D2:
-        VM 异步拉搜索结果 → emit `message_search_results`。
+        """2026-09-02 v1.5.2 PR #B5 + 2026-09-03 v1.5.3 PR #D2 +
+        2026-09-14 v1.7.5 PR #8:VM 异步拉搜索结果 → emit `message_search_results`。
 
         行为契约:
         - `text=""` 且 `date_from/to` 全 None → 无意义查询,emit `[]`(清空视图)。
@@ -660,6 +663,9 @@ class MonitorViewModel(QObject):
           有历史消息的频道)。
         - `channel_ids=...` 显式传 → 忽略 scope(精细控制场景)。
         - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
+        - 2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
+          (SearchBar ★/🏷/📌 3 toggle),透传 `app.list_messages` → 存储层
+          SQL / Mongo 子句,AND 语义任一 True 必须命中。
 
         走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
         线程 loop,Qt signal 安全 → `live_view.set_messages(...)` 主线程 op。
@@ -680,6 +686,9 @@ class MonitorViewModel(QObject):
                 limit=limit,
                 search=text,
                 include_unsubscribed=include_unsub,
+                favorite_only=favorite_only,
+                tag_only=tag_only,
+                pinned_only=pinned_only,
             )
             self.message_search_results.emit(msgs)
 

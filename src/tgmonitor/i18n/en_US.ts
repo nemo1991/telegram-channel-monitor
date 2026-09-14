@@ -4,17 +4,17 @@
 <context>
     <name>BatchFailureDetailDialog</name>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="241"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="247"/>
         <source>批量操作失败详情</source>
         <translation>Batch Failure Details</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="249"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="254"/>
         <source>共 {n} 条失败:</source>
         <translation>{n} failure(s):</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/batch_progress_dialog.py" line="262"/>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="266"/>
         <source>关闭</source>
         <translation>Close</translation>
     </message>
@@ -470,8 +470,8 @@ Scroll wheel Zoom</translation>
     <name>MainWindow</name>
     <message>
         <location filename="../ui/main_window.py" line="222"/>
-        <location filename="../ui/main_window.py" line="722"/>
-        <location filename="../ui/main_window.py" line="728"/>
+        <location filename="../ui/main_window.py" line="727"/>
+        <location filename="../ui/main_window.py" line="733"/>
         <source>tgmonitor · Telegram 频道监听</source>
         <translation>tgmonitor · Telegram Channel Monitor</translation>
     </message>
@@ -536,82 +536,82 @@ Scroll wheel Zoom</translation>
         <translation>Ready</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="659"/>
+        <location filename="../ui/main_window.py" line="664"/>
         <source>显示主窗口</source>
         <translation>Show main window</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="664"/>
+        <location filename="../ui/main_window.py" line="669"/>
         <source>暂停监听</source>
         <translation>Pause monitoring</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="669"/>
+        <location filename="../ui/main_window.py" line="674"/>
         <source>退出</source>
         <translation>Quit</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="852"/>
-        <location filename="../ui/main_window.py" line="881"/>
+        <location filename="../ui/main_window.py" line="857"/>
+        <location filename="../ui/main_window.py" line="886"/>
         <source>已切换到 {kind} 主题</source>
         <translation>Switched to {kind} theme</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="853"/>
-        <location filename="../ui/main_window.py" line="882"/>
+        <location filename="../ui/main_window.py" line="858"/>
+        <location filename="../ui/main_window.py" line="887"/>
         <source>暗色</source>
         <translation>dark</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="853"/>
-        <location filename="../ui/main_window.py" line="882"/>
+        <location filename="../ui/main_window.py" line="858"/>
+        <location filename="../ui/main_window.py" line="887"/>
         <source>浅色</source>
         <translation>light</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="976"/>
-        <location filename="../ui/main_window.py" line="1019"/>
+        <location filename="../ui/main_window.py" line="981"/>
+        <location filename="../ui/main_window.py" line="1024"/>
         <source>删除确认</source>
         <translation>Confirm Delete</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="979"/>
+        <location filename="../ui/main_window.py" line="984"/>
         <source>确定删除选中的 %d 条消息?
 删除后无法撤销。</source>
         <translation>Delete %d selected messages?
 This action cannot be undone.</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1020"/>
+        <location filename="../ui/main_window.py" line="1025"/>
         <source>确定删除这条消息?
 删除后无法撤销。</source>
         <translation>Delete this message?
 This action cannot be undone.</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1037"/>
+        <location filename="../ui/main_window.py" line="1042"/>
         <source>已复制 %d 字符</source>
         <translation>Copied %d characters</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1173"/>
+        <location filename="../ui/main_window.py" line="1178"/>
         <source>钉选确认</source>
         <translation>Pin confirmation</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1174"/>
+        <location filename="../ui/main_window.py" line="1179"/>
         <source>确定钉选选中的 %d 条消息?
 操作不可撤销。</source>
         <translation>Pin the %d selected messages?
 This action cannot be undone.</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1204"/>
+        <location filename="../ui/main_window.py" line="1209"/>
         <source>回应确认</source>
         <translation>React confirmation</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1205"/>
+        <location filename="../ui/main_window.py" line="1210"/>
         <source>确定对选中的 %d 条消息打 %s 反应?
 操作不可撤销。</source>
         <translation>Send %s reaction to the %d selected messages?
@@ -642,102 +642,102 @@ This action cannot be undone.</translation>
         <translation type="vanished">Enter emoji (e.g. 🔥, 👍, ❤️):</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1232"/>
+        <location filename="../ui/main_window.py" line="1237"/>
         <source>设置标签</source>
         <translation>Set tags</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1233"/>
+        <location filename="../ui/main_window.py" line="1238"/>
         <source>输入标签(逗号或空格分隔,如 tech, news):</source>
         <translation>Enter tags (comma or space separated, e.g. tech, news):</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1249"/>
+        <location filename="../ui/main_window.py" line="1254"/>
         <source>设置备注</source>
         <translation>Set notes</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1250"/>
+        <location filename="../ui/main_window.py" line="1255"/>
         <source>为本条消息添加备注(支持多行):</source>
         <translation>Add notes for this message (multi-line):</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1275"/>
+        <location filename="../ui/main_window.py" line="1280"/>
         <source>当前消息无文本</source>
         <translation>Current message has no text</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1280"/>
+        <location filename="../ui/main_window.py" line="1285"/>
         <source>已复制 {n} 字</source>
         <translation>Copied {n} characters</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1323"/>
+        <location filename="../ui/main_window.py" line="1328"/>
         <source>拉取频道列表…</source>
         <translation>Fetching channel list…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1328"/>
+        <location filename="../ui/main_window.py" line="1333"/>
         <source>导出</source>
         <translation>Export</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1328"/>
+        <location filename="../ui/main_window.py" line="1333"/>
         <source>请先订阅至少一个频道</source>
         <translation>Please subscribe to at least one channel first</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1345"/>
+        <location filename="../ui/main_window.py" line="1350"/>
         <source>全量同步</source>
         <translation>Full sync</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1345"/>
+        <location filename="../ui/main_window.py" line="1350"/>
         <source>已监听列表为空,先订阅频道</source>
         <translation>Watched list is empty. Subscribe to channels first</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1465"/>
+        <location filename="../ui/main_window.py" line="1511"/>
         <source>🔔 {n}</source>
         <translation>🔔 {n}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1469"/>
+        <location filename="../ui/main_window.py" line="1515"/>
         <source>验证码错误</source>
         <translation>Invalid verification code</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1470"/>
+        <location filename="../ui/main_window.py" line="1516"/>
         <source>两步验证密码错误</source>
         <translation>Invalid 2FA password</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1471"/>
+        <location filename="../ui/main_window.py" line="1517"/>
         <source>手机号错误</source>
         <translation>Invalid phone number</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1472"/>
+        <location filename="../ui/main_window.py" line="1518"/>
         <source>Telegram 内部错误</source>
         <translation>Telegram internal error</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1473"/>
+        <location filename="../ui/main_window.py" line="1519"/>
         <source>鉴权错误</source>
         <translation>Authentication error</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1476"/>
+        <location filename="../ui/main_window.py" line="1522"/>
         <source>⚠ {kind}</source>
         <translation>⚠ {kind}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1480"/>
+        <location filename="../ui/main_window.py" line="1525"/>
         <source>详细错误日志可点击状态栏「🔔 {n}」按钮查看。</source>
-        <translation>Click the "🔔 {n}" button in the status bar to view the full error log.</translation>
+        <translation>Click the &quot;🔔 {n}&quot; button in the status bar to view the full error log.</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1552"/>
+        <location filename="../ui/main_window.py" line="1598"/>
         <source>登录状态: {state}</source>
         <translation>Login state: {state}</translation>
     </message>
@@ -766,46 +766,46 @@ This action cannot be undone.</translation>
         <translation type="vanished">TG {state}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1570"/>
+        <location filename="../ui/main_window.py" line="1616"/>
         <source>导出失败</source>
         <translation>Export failed</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1574"/>
+        <location filename="../ui/main_window.py" line="1620"/>
         <source>导出完成</source>
         <translation>Export complete</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1575"/>
+        <location filename="../ui/main_window.py" line="1621"/>
         <source>已写入 {path}
 {n_msg} 条消息,{n_bytes} 字节</source>
         <translation>Written to {path}
 {n_msg} messages, {n_bytes} bytes</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1606"/>
+        <location filename="../ui/main_window.py" line="1652"/>
         <source>已热重载: {what} → {backend}</source>
         <translation>Hot-reloaded: {what} → {backend}</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1611"/>
+        <location filename="../ui/main_window.py" line="1657"/>
         <source>凭据已变更</source>
         <translation>Credentials changed</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1612"/>
+        <location filename="../ui/main_window.py" line="1658"/>
         <source>Telegram 凭据已变更。
 请重新登录以继续监听。</source>
         <translation>Telegram credentials have changed.
 Please log in again to continue monitoring.</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1883"/>
+        <location filename="../ui/main_window.py" line="1929"/>
         <source>Lightbox</source>
         <translation>Lightbox</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="1883"/>
+        <location filename="../ui/main_window.py" line="1929"/>
         <source>图片解码失败。</source>
         <translation>Image decode failed.</translation>
     </message>
@@ -1170,74 +1170,74 @@ to view full content, media attachments and raw data</translation>
 <context>
     <name>MessageView</name>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="542"/>
+        <location filename="../ui/widgets/message_view.py" line="576"/>
         <source>0 条新消息 ↓</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="692"/>
+        <location filename="../ui/widgets/message_view.py" line="752"/>
         <source>导出…</source>
         <translation>Export…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="698"/>
+        <location filename="../ui/widgets/message_view.py" line="758"/>
         <source>删除</source>
         <translation>Delete</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="704"/>
+        <location filename="../ui/widgets/message_view.py" line="764"/>
         <source>标记已读</source>
         <translation>Mark as Read</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="711"/>
+        <location filename="../ui/widgets/message_view.py" line="771"/>
         <source>★ 收藏 / 取消收藏</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="725"/>
+        <location filename="../ui/widgets/message_view.py" line="785"/>
         <source>🏷 设置标签…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="732"/>
+        <location filename="../ui/widgets/message_view.py" line="792"/>
         <source>📝 设置备注…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="775"/>
+        <location filename="../ui/widgets/message_view.py" line="835"/>
         <source>%d 条新消息 ↓</source>
         <translation>%d new messages ↓</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="805"/>
+        <location filename="../ui/widgets/message_view.py" line="865"/>
         <source>未订阅频道</source>
         <translation>No subscribed channels</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="806"/>
+        <location filename="../ui/widgets/message_view.py" line="866"/>
         <source>先去「频道」页双击订阅一个频道,
 新消息会实时显示在这里。</source>
         <translation>Go to the Channels page and double-click one to subscribe.
 New messages will appear here in real time.</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="810"/>
+        <location filename="../ui/widgets/message_view.py" line="870"/>
         <source>无匹配结果</source>
         <translation>No matches found</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="810"/>
+        <location filename="../ui/widgets/message_view.py" line="870"/>
         <source>试试更换关键词或日期范围。</source>
         <translation>Try different keywords or a wider date range.</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="813"/>
+        <location filename="../ui/widgets/message_view.py" line="873"/>
         <source>暂无消息</source>
         <translation>No messages yet</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/message_view.py" line="813"/>
+        <location filename="../ui/widgets/message_view.py" line="873"/>
         <source>新消息会实时显示。</source>
         <translation>New messages will appear here in real time.</translation>
     </message>
@@ -1245,33 +1245,48 @@ New messages will appear here in real time.</translation>
 <context>
     <name>SearchBar</name>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="80"/>
+        <location filename="../ui/widgets/search_bar.py" line="87"/>
         <source>搜索消息、频道…</source>
         <translation>Search messages, channels…</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="100"/>
+        <location filename="../ui/widgets/search_bar.py" line="107"/>
         <source>按日期范围过滤</source>
         <translation>Filter by date range</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="113"/>
+        <location filename="../ui/widgets/search_bar.py" line="120"/>
         <source>搜索范围:已订阅(默认)/ 全部(含已退订频道历史)</source>
         <translation>Search scope: Subscribed (default) / All (including unsubscribed history)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="140"/>
-        <location filename="../ui/widgets/search_bar.py" line="149"/>
+        <location filename="../ui/widgets/search_bar.py" line="128"/>
+        <source>只看收藏</source>
+        <translation>Favorite only</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="129"/>
+        <source>只看有标签</source>
+        <translation>Tagged only</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="130"/>
+        <source>只看置顶</source>
+        <translation>Pinned only</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="157"/>
+        <location filename="../ui/widgets/search_bar.py" line="166"/>
         <source>不限</source>
         <translation>Unlimited</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="228"/>
+        <location filename="../ui/widgets/search_bar.py" line="271"/>
         <source>搜索范围:全部(含已退订频道历史)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/search_bar.py" line="230"/>
+        <location filename="../ui/widgets/search_bar.py" line="273"/>
         <source>搜索范围:已订阅(默认)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1888,28 +1903,28 @@ Please verify your database / object storage configuration and that the correspo
 <context>
     <name>_ErrorLogDialog</name>
     <message>
-        <location filename="../ui/main_window.py" line="2293"/>
+        <location filename="../ui/main_window.py" line="2339"/>
         <source>错误日志</source>
         <translation>Error Log</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2300"/>
+        <location filename="../ui/main_window.py" line="2345"/>
         <source>最近 {n} 条错误(倒序):</source>
         <translation>Recent {n} error(s) (newest first):</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2314"/>
-        <location filename="../ui/main_window.py" line="2340"/>
+        <location filename="../ui/main_window.py" line="2355"/>
+        <location filename="../ui/main_window.py" line="2381"/>
         <source>(暂无错误)</source>
         <translation>(No errors)</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2321"/>
+        <location filename="../ui/main_window.py" line="2362"/>
         <source>清空日志</source>
         <translation>Clear log</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2325"/>
+        <location filename="../ui/main_window.py" line="2366"/>
         <source>关闭</source>
         <translation type="unfinished">Close</translation>
     </message>
@@ -1917,43 +1932,43 @@ Please verify your database / object storage configuration and that the correspo
 <context>
     <name>_HeaderBar</name>
     <message>
-        <location filename="../ui/main_window.py" line="2098"/>
+        <location filename="../ui/main_window.py" line="2144"/>
         <source>tgmonitor</source>
         <translation>tgmonitor</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2108"/>
+        <location filename="../ui/main_window.py" line="2154"/>
         <source>⚪</source>
         <translation>⚪</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2112"/>
+        <location filename="../ui/main_window.py" line="2158"/>
         <source>就绪</source>
         <translation>Ready</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2116"/>
-        <location filename="../ui/main_window.py" line="2151"/>
+        <location filename="../ui/main_window.py" line="2162"/>
+        <location filename="../ui/main_window.py" line="2197"/>
         <source>登录</source>
         <translation>Login</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2121"/>
+        <location filename="../ui/main_window.py" line="2167"/>
         <source>登出</source>
         <translation>Logout</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2134"/>
+        <location filename="../ui/main_window.py" line="2180"/>
         <source>切换主题(Ctrl+T)</source>
         <translation>Toggle theme (Ctrl+T)</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2155"/>
+        <location filename="../ui/main_window.py" line="2201"/>
         <source>验证码</source>
         <translation>Verification code</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2159"/>
+        <location filename="../ui/main_window.py" line="2205"/>
         <source>2FA 密码</source>
         <translation>2FA password</translation>
     </message>
@@ -1961,63 +1976,63 @@ Please verify your database / object storage configuration and that the correspo
 <context>
     <name>_SelectionToolbar</name>
     <message>
-        <location filename="../ui/main_window.py" line="2199"/>
+        <location filename="../ui/main_window.py" line="2245"/>
         <source>已选 0 条</source>
         <translation>0 selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2204"/>
-        <location filename="../ui/main_window.py" line="2270"/>
+        <location filename="../ui/main_window.py" line="2250"/>
+        <location filename="../ui/main_window.py" line="2316"/>
         <source>全选</source>
         <translation>Select All</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2209"/>
-        <location filename="../ui/main_window.py" line="2271"/>
+        <location filename="../ui/main_window.py" line="2255"/>
+        <location filename="../ui/main_window.py" line="2317"/>
         <source>反选</source>
         <translation>Invert</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2214"/>
-        <location filename="../ui/main_window.py" line="2272"/>
+        <location filename="../ui/main_window.py" line="2260"/>
+        <location filename="../ui/main_window.py" line="2318"/>
         <source>清除选择</source>
         <translation>Clear Selection</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2222"/>
-        <location filename="../ui/main_window.py" line="2273"/>
+        <location filename="../ui/main_window.py" line="2268"/>
+        <location filename="../ui/main_window.py" line="2319"/>
         <source>✓ 标记已读</source>
         <translation>✓ Mark as Read</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2227"/>
-        <location filename="../ui/main_window.py" line="2274"/>
+        <location filename="../ui/main_window.py" line="2273"/>
+        <location filename="../ui/main_window.py" line="2320"/>
         <source>📤 导出选中</source>
         <translation>📤 Export Selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2232"/>
-        <location filename="../ui/main_window.py" line="2275"/>
+        <location filename="../ui/main_window.py" line="2278"/>
+        <location filename="../ui/main_window.py" line="2321"/>
         <source>🗑 删除选中</source>
         <translation>🗑 Delete Selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2238"/>
+        <location filename="../ui/main_window.py" line="2284"/>
         <source>📤 转发到…</source>
         <translation>📤 Forward to…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2243"/>
+        <location filename="../ui/main_window.py" line="2289"/>
         <source>📌 钉选</source>
         <translation>📌 Pin</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2248"/>
+        <location filename="../ui/main_window.py" line="2294"/>
         <source>😀 表情回应…</source>
         <translation>😀 React…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2258"/>
+        <location filename="../ui/main_window.py" line="2304"/>
         <source>已选 %d 条</source>
         <translation>%d selected</translation>
     </message>

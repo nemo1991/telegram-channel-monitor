@@ -754,6 +754,9 @@ class PostgresRepository(StorageRepository):
         limit: int | None = None,
         offset: int = 0,
         search: str = "",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """按时间升序 + id 升序(与 Mongo / JSONL 对齐);media 二次查询拼回。
 
@@ -765,6 +768,10 @@ class PostgresRepository(StorageRepository):
 
         `search` (v1.5.1 PR #B2):`LOWER(text) LIKE` OR `EXISTS media.file_name LIKE`,
         通配符 `\\` / `%` / `_` 必须 escape,否则用户输入 `%` 匹配一切。
+
+        2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
+        走 SQL `WHERE` 子句(`is_favorite` / `cardinality(tags) > 0` /
+        `is_pinned`);AND 语义任一 True 必须命中。
         """
         assert self._pool is not None
         if not channel_ids:
@@ -777,6 +784,13 @@ class PostgresRepository(StorageRepository):
         if date_to is not None:
             params.append(date_to)
             where.append(f"date <= ${len(params)}")
+        if favorite_only:
+            where.append("is_favorite = TRUE")
+        if tag_only:
+            # 2026-09-14 v1.7.5 PR #8:tags TEXT[] 非空判定 — cardinality() O(1)。
+            where.append("cardinality(tags) > 0")
+        if pinned_only:
+            where.append("is_pinned = TRUE")
         if search:
             # 转义 LIKE 通配符:`%` / `_` / `\`(用户输入的 `\` 也需转义为 `\\`)。
             escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
