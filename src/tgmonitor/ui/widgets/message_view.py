@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
     QMenu,
+    QPushButton,
     QStyledItemDelegate,
     QStyleOptionViewItem,
 )
@@ -518,6 +519,7 @@ class MessageView(QListView):
             sel_model.selectionChanged.connect(self._on_selection_changed)
 
         # 空状态占位(默认显示,首条消息到达自动隐藏)
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):三态 overlay — 未订阅 / 搜索无结果 / LIVE 空
         self._empty_overlay = empty_hint(
             icon="💬",
             title="暂无消息",
@@ -526,10 +528,24 @@ class MessageView(QListView):
         )
         self._empty_overlay.raise_()
         self._refresh_empty_state()
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):默认 state — MainWindow 在登录后
+        # 通过 `live_view.set_empty_state(...)` 切到对应 overlay。
+        self._empty_state = "no_subscribed"
         # model 行数变化时刷新 overlay
         self._model.rowsInserted.connect(self._refresh_empty_state)
         self._model.rowsRemoved.connect(self._refresh_empty_state)
         self._model.modelReset.connect(self._refresh_empty_state)
+        # 2026-09-14 v1.7.5 PR #5 (P0-I):新消息浮条 — 用户在浏览旧消息时,
+        # 有新 LIVE 消息到达且不在 scroll top → 显示「N 条新消息 ↓」浮动按钮。
+        # 点 → scrollToTop + 隐藏。
+        self._new_msg_count: int = 0
+        self._floating_btn = QPushButton(self.tr("0 条新消息 ↓"), self)
+        self._floating_btn.setObjectName("floatingNewMsgBtn")
+        self._floating_btn.setCursor(Qt.PointingHandCursor)
+        self._floating_btn.hide()
+        self._floating_btn.clicked.connect(self._on_floating_btn_clicked)
+        # rowsInserted → 检查 scroll position 决定是否 +1 + 显示
+        self._model.rowsInserted.connect(self._on_row_inserted_floating)
 
     # ---- 公开 API(全部保留) ----
 
@@ -552,14 +568,16 @@ class MessageView(QListView):
         空列表 = 清空视图 + `_index_of` 表(同 `clear_view()`)。
         """
         self.clear_view()
-        # 保持 newest-first:`messages` 按 date ASC 拉回 — 正常顺序逐条
-        # `append()`,最新一条最后 append → 走 model.append 的 beginInsertRows(0,0) →
-        # 自然落到 row 0(`_index_of[key] = 0`)。`reversed` 会反过来,旧消息
-        # 反而顶到 row 0 — 错。
-        for m in messages:
-            self.append(m)
-        # 截断后 apply 现有 filter(set_filter 在每条 append 时已逐条应用,
-        # 但 set_messages 整体替换完后再保险跑一次 — 处理 filter 在中途变化的情况)
+        # 2026-09-14 v1.7.5 PR #5 (P0-I):set_messages 是批量替换,清空浮条计数
+        self.clear_new_msg_counter()
+        # 2026-09-14 v1.7.5 PR #9 perf hint:set_messages 走单次 modelReset
+        # 而非 N×append(避免 rowsInserted 触发浮条计数误累加)。model.reset
+        # 接受按 list 顺序存储,而 view 是 newest-first(top=row 0 是最新),
+        # 所以 caller 给 messages 是 date ASC(newest-last)→ model.reset
+        # 时 caller 调 reversed 传入。详细见 _model.reset。
+        if messages:
+            self._model.reset(list(reversed(messages)))
+        # 截断后 apply 现有 filter(set_messages 整批替换,apply 一次省心)
         if self._model._filter_text:
             self._model.set_filter(self._model._filter_text)
 
@@ -737,3 +755,80 @@ class MessageView(QListView):
         y = max(0, self.height() // 3 - hint_size.height() // 2)
         self._empty_overlay.setGeometry(x, y, hint_size.width(), hint_size.height())
         self._empty_overlay.raise_()
+        # 2026-09-14 v1.7.5 PR #5 (P0-I):浮条 resize 时也跟浮动 top-right。
+        self._reposition_floating_btn()
+
+    # ---- 2026-09-14 v1.7.5 PR #5:新消息浮条 + 空状态分型 ----
+
+    def _on_row_inserted_floating(self, parent, first: int, last: int) -> None:
+        """rowsInserted handler:若 scroll 不在最顶 → 累加未读数 + 显示浮条。
+
+        `first == last == 0` 是 LIVE 单条到达场景。set_messages 是
+        modelReset(emit modelReset,不 emit rowsInserted),所以本 handler
+        不会被它触发 — 不需要在这里清零 counter。
+        """
+        # 在最顶 → 不算「错过的新消息」(用户在看最新)
+        if self.verticalScrollBar().value() <= 0:
+            return
+        added = last - first + 1
+        self._new_msg_count += added
+        self._floating_btn.setText(self.tr("%d 条新消息 ↓").format(self._new_msg_count))
+        self._floating_btn.show()
+        self._reposition_floating_btn()
+
+    def _reposition_floating_btn(self) -> None:
+        """浮条贴 top-right,留 16px padding。"""
+        if not self._floating_btn.isVisible():
+            return
+        size = self._floating_btn.sizeHint()
+        x = max(0, self.width() - size.width() - 16)
+        self._floating_btn.setGeometry(x, 16, size.width(), size.height())
+        self._floating_btn.raise_()
+
+    def _on_floating_btn_clicked(self) -> None:
+        """点浮条 → scrollToTop + 清计数 + 隐藏。"""
+        # newest-first 列表,top row = 最新一条
+        self.scrollToTop()
+        self._new_msg_count = 0
+        self._floating_btn.hide()
+
+    def set_empty_state(self, state: str) -> None:
+        """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案。
+
+        Args:
+            state: "no_subscribed" / "searching" / "live_empty"。
+        """
+        self._empty_state = state
+        if state == "no_subscribed":
+            self._empty_overlay_title(
+                "💬",
+                self.tr("未订阅频道"),
+                self.tr("先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。"),
+            )
+        elif state == "searching":
+            self._empty_overlay_title(
+                "🔍", self.tr("无匹配结果"), self.tr("试试更换关键词或日期范围。")
+            )
+        elif state == "live_empty":
+            self._empty_overlay_title("💬", self.tr("暂无消息"), self.tr("新消息会实时显示。"))
+
+    def _empty_overlay_title(self, icon: str, title: str, hint: str) -> None:
+        """直接改 overlay 内 icon / title / hint label 文字(不重建 widget)。"""
+        # empty_hint 返回 widget 含 3 个子 widget:icon QLabel + title QLabel + hint QLabel
+        # 通过 findChildren 拿 label 后改 text。
+        from PySide6.QtWidgets import QLabel
+
+        labels = self._empty_overlay.findChildren(QLabel)
+        # labels 顺序:[icon, title, hint](empty_hint 实现保证)
+        if len(labels) >= 1:
+            labels[0].setText(icon)
+        if len(labels) >= 2:
+            labels[1].setText(title)
+        if len(labels) >= 3:
+            labels[2].setText(hint)
+        self._empty_overlay.raise_()
+
+    def clear_new_msg_counter(self) -> None:
+        """VM 搜索 / set_messages reset 时清浮条计数。"""
+        self._new_msg_count = 0
+        self._floating_btn.hide()
