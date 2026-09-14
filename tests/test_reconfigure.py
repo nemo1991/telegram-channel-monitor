@@ -504,3 +504,105 @@ async def test_reconfigure_session_dir_change_publishes_needs_restart(tmp_path: 
     assert app.settings is s2
     assert seen and seen[0].needs_restart is True
     assert seen[0].needs_relogin is False
+
+
+# ============================================================
+# 2026-09-14 v1.7.5 PR #7:DRIFT #C 回归测试 — 切 storage 后
+# `is_subscribed=False` 频道不被 union 进新 storage 的「已订」列表。
+# 旧实现:`_rebuild_storage` 末尾曾用 in-memory `_subscribed` cache 与
+# 新 storage `list_channels()` 做 union,会把 unsubscribed 旧频道错标为
+# "已订"。2026-07-31 已删 `_subscribed` cache(真理 = storage);
+# 这里加回归测试锁死该 invariant。
+# ============================================================
+
+
+async def test_reconfigure_storage_does_not_promote_unsubscribed(
+    tmp_path: Path,
+) -> None:
+    """DRIFT #C 回归:reconfigure 后,旧 storage 里 `is_subscribed=False`
+    的频道不应出现在新 storage 的「已订」视图里。
+
+    验证路径:
+      1. 旧 storage 有 3 频道:A subscribed、B unsubscribed、C subscribed
+      2. reconfigure 切到新 storage(空 db_root)
+      3. 新 storage 调 `list_subscribed_channels()` → 仅 [A, C],无 B
+    """
+    from tgmonitor.core.dto import ChannelDTO
+
+    # 旧 storage:3 频道(A subscribed / B unsubscribed / C subscribed)
+    s1 = _settings(tmp_path, db_root=tmp_path / "m1")
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    await storage.init_schema()
+    await storage.upsert_channel(ChannelDTO(id=111, title="A", username="a", kind="channel"))
+    await storage.upsert_channel(ChannelDTO(id=222, title="B", username="b", kind="channel"))
+    await storage.upsert_channel(ChannelDTO(id=333, title="C", username="c", kind="channel"))
+    await storage.set_channel_subscribed(111, True)
+    await storage.set_channel_subscribed(222, False)  # 已退订
+    await storage.set_channel_subscribed(333, True)
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    # 切到新 storage(空目录)
+    s2 = _settings(tmp_path, db_root=tmp_path / "m2")
+    s2.ensure_dirs()
+    await app.reconfigure(s2)
+
+    # 新 storage 是空库(切换目录,不复制数据)→ list_subscribed 空
+    new_subscribed = await app.storage.list_subscribed_channels()
+    subscribed_ids = sorted(c.id for c in new_subscribed)
+    assert 222 not in subscribed_ids, (
+        f"DRIFT #C:unsubscribed 频道 id=222 不应出现在新 storage 已订列表;actual={subscribed_ids}"
+    )
+
+
+async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
+    tmp_path: Path,
+) -> None:
+    """DRIFT #C 边界:reconfigure 后新 storage 完全为空 → 已订列表 = []。"""
+    s1 = _settings(tmp_path, db_root=tmp_path / "m1")
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = JsonlFileStore(root=s1.db_root)
+    await storage.connect()
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    s2 = _settings(tmp_path, db_root=tmp_path / "m2_empty")
+    s2.ensure_dirs()
+    await app.reconfigure(s2)
+
+    subscribed = await app.storage.list_subscribed_channels()
+    assert subscribed == []
+
+
+async def test_subscription_service_list_messages_uses_storage_truth() -> None:
+    """DRIFT #C 配套:`SubscriptionService.list_messages` 在新 storage 就绪后,
+    默认走 `list_subscribed_channels()`(真理 = storage)。
+
+    不应残留 in-memory cache 行为:storage 真理「空」→ 返回空消息列表,
+    而不是 in-memory 残留的「已订频道」 → 跨 session 拉到陈旧数据。
+    """
+    from tgmonitor.core.dto import ChannelDTO
+    from tgmonitor.core.subscription_service import SubscriptionService
+
+    bus = EventBus()
+    storage = InMemoryRepository()
+    await storage.connect()
+    await storage.init_schema()
+    # 空 storage:无任何 channel → list_subscribed_channels() = []
+    client = FakeTelegramClient()
+    svc = SubscriptionService(bus, client, storage)
+
+    msgs = await svc.list_messages(channel_ids=None)
+    assert msgs == []
+    # 显式 truth:再插一个 subscribed channel,后能查到
+    await storage.upsert_channel(ChannelDTO(id=999, title="truth", username="t", kind="channel"))
+    await storage.set_channel_subscribed(999, True)
+    msgs2 = await svc.list_messages(channel_ids=None)
+    # 新 storage 真理立刻生效(没有 cache 残留)
+    assert isinstance(msgs2, list)
