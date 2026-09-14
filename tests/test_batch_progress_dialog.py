@@ -372,3 +372,113 @@ def test_disconnect_signals_no_runtime_warning(vm: _MockVM, qapp: QApplication) 
         dlg._disconnect_signals()  # noqa: SLF001 — 二次也无 warning
     _drain(qapp)
     dlg.deleteLater()
+
+
+# ============== 2026-09-14 v1.7.5 PR #6 (P0-J):失败明细 ==============
+
+
+def test_detail_btn_hidden_when_no_failures(vm: _MockVM, qapp: QApplication) -> None:
+    """P0-J:BatchDone 没有 failures → 详情按钮 hidden,什么都不弹。"""
+    from tgmonitor.core.events import BatchDone
+
+    dlg = BatchProgressDialog(vm, op="forward", parent=None)
+    assert dlg._btn_detail.isHidden() is True
+    dlg.show()
+    _drain(qapp)
+    # 模拟成功 batch done — failures 为默认空 list
+    vm.batch_done.emit(BatchDone(op="forward", succeeded=5, failed=0))
+    _drain(qapp)
+    assert dlg._btn_detail.isHidden() is True
+    dlg.close()
+    _drain(qapp)
+    dlg.deleteLater()
+
+
+def test_detail_btn_visible_when_failures_present(vm: _MockVM, qapp: QApplication) -> None:
+    """P0-J:BatchDone.failures 非空 → 详情按钮 visible。"""
+    from tgmonitor.core.events import BatchDone
+
+    dlg = BatchProgressDialog(vm, op="forward", parent=None)
+    dlg.show()
+    _drain(qapp)
+    vm.batch_done.emit(
+        BatchDone(
+            op="forward",
+            succeeded=2,
+            failed=1,
+            failures=[(-1001234567890, 42, "CHAT_FORBIDDEN")],
+        )
+    )
+    _drain(qapp)
+    assert dlg._btn_detail.isHidden() is False
+    dlg.close()
+    _drain(qapp)
+    dlg.deleteLater()
+
+
+def test_detail_btn_stays_hidden_when_failed_but_empty_list(
+    vm: _MockVM, qapp: QApplication
+) -> None:
+    """P0-J 边界:failed > 0 但 failures 为 [] → 按钮不显示(没明细可看)。"""
+    from tgmonitor.core.events import BatchDone
+
+    dlg = BatchProgressDialog(vm, op="forward", parent=None)
+    dlg.show()
+    _drain(qapp)
+    vm.batch_done.emit(BatchDone(op="forward", succeeded=2, failed=1, failures=[]))
+    _drain(qapp)
+    assert dlg._btn_detail.isHidden() is True
+    dlg.close()
+    _drain(qapp)
+    dlg.deleteLater()
+
+
+def test_failures_list_stored_for_later_reopen(vm: _MockVM, qapp: QApplication) -> None:
+    """P0-J:failure 列表存到 dlg._failures,详情按钮可重开 dialog。"""
+    from tgmonitor.core.events import BatchDone
+
+    failures = [
+        (-1001234567890, 42, "CHAT_FORBIDDEN"),
+        (-1001234567890, 43, "MESSAGE_DELETE_FORBIDDEN"),
+        (-1009876543210, 99, "Timeout"),
+    ]
+    dlg = BatchProgressDialog(vm, op="pin", parent=None)
+    dlg.show()
+    _drain(qapp)
+    vm.batch_done.emit(BatchDone(op="pin", succeeded=5, failed=3, failures=failures))
+    _drain(qapp)
+    assert dlg._failures == failures
+    dlg.close()
+    _drain(qapp)
+    dlg.deleteLater()
+
+
+def test_batch_failure_detail_dialog_lists_entries(qapp: QApplication) -> None:
+    """P0-J:BatchFailureDetailDialog 正确列出每条 (cid, mid, error_str)。"""
+    from tgmonitor.ui.widgets.batch_progress_dialog import BatchFailureDetailDialog
+
+    failures = [
+        (-1001234567890, 42, "CHAT_FORBIDDEN"),
+        (-1001234567890, 43, "MESSAGE_DELETE_FORBIDDEN"),
+    ]
+    dlg = BatchFailureDetailDialog(failures, parent=None)
+    _drain(qapp)
+    assert dlg.list.count() == 2
+    item0 = dlg.list.item(0).text()
+    assert "cid=-1001234567890" in item0
+    assert "mid=42" in item0
+    assert "CHAT_FORBIDDEN" in item0
+    item1 = dlg.list.item(1).text()
+    assert "MESSAGE_DELETE_FORBIDDEN" in item1
+    dlg.deleteLater()
+
+
+def test_batch_failure_detail_dialog_empty(qapp: QApplication) -> None:
+    """P0-J:空 failures 列表 → header 显示「共 0 条失败:」+ 空 list。"""
+    from tgmonitor.ui.widgets.batch_progress_dialog import BatchFailureDetailDialog
+
+    dlg = BatchFailureDetailDialog([], parent=None)
+    _drain(qapp)
+    assert dlg.list.count() == 0
+    assert dlg.windowTitle() != ""
+    dlg.deleteLater()

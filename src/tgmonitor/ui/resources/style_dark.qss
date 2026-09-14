@@ -137,6 +137,41 @@ QPushButton#batchProgressCancelBtn:disabled {
     color: #666666;
     background: #2a2a3e;
 }
+/* 2026-09-14 v1.7.5 PR #6 (P0-J):查看失败详情按钮(暗色)— 警告色 */
+QPushButton#batchProgressDetailBtn {
+    background: #3a2828;
+    color: #e08080;
+    border: 1px solid #5a3a3a;
+    border-radius: 4px;
+    padding: 4px 12px;
+    min-width: 80px;
+    font-weight: 600;
+}
+QPushButton#batchProgressDetailBtn:hover {
+    background: #4a3030;
+    border-color: #7a4a4a;
+}
+/* 2026-09-14 v1.7.5 PR #6 (P0-J):失败明细 dialog(暗色) */
+QDialog#batchFailureDetailDialog {
+    background: #1e1e2e;
+}
+QLabel#batchFailureHeader {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e08080;
+    padding: 4px 0;
+}
+QPushButton#batchFailureCloseBtn {
+    background: #2a2a3e;
+    color: #c0c0c0;
+    border: 1px solid #3a3a4e;
+    border-radius: 4px;
+    padding: 4px 14px;
+    min-width: 60px;
+}
+QPushButton#batchFailureCloseBtn:hover {
+    background: #353550;
+}
 
 /* 2026-09-11 v1.7.4:EmojiPickerDialog — 暗色主题 */
 QLabel#emojiGroupTitle {
@@ -576,5 +611,50 @@ QPushButton#floatingNewMsgBtn {
     font-weight: 600;
 }
 QPushButton#floatingNewMsgBtn:hover {
+    background: {accentHover};
+}
+
+/* ===== 2026-09-14 v1.7.5 PR #6 (P0-K):错误日志铃铛按钮(暗色) ===== */
+QPushButton#errorBellBtn {
+    background: transparent;
+    color: #e08080;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0 6px;
+}
+QPushButton#errorBellBtn:hover {
+    color: #f0a0a0;
+}
+/* 2026-09-14 v1.7.5 PR #6 (P0-K):错误日志 dialog(暗色) */
+QDialog#errorLogDialog {
+    background: #1e1e2e;
+}
+QLabel#errorLogHeader {
+    font-size: 13px;
+    font-weight: 600;
+    color: #b4b7c3;
+    padding: 4px 0;
+}
+QPushButton#errorLogClearBtn {
+    background: #2a2a3e;
+    color: #c0c0c0;
+    border: 1px solid #3a3a4e;
+    border-radius: 4px;
+    padding: 4px 12px;
+    min-width: 70px;
+}
+QPushButton#errorLogClearBtn:hover {
+    background: #353550;
+}
+QPushButton#errorLogCloseBtn {
+    background: {accent};
+    color: #1a1a26;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 14px;
+    min-width: 60px;
+}
+QPushButton#errorLogCloseBtn:hover {
     background: {accentHover};
 }

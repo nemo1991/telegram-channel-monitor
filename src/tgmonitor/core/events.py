@@ -268,12 +268,16 @@ class BatchDone(Event):
 
     `failed` 是异常隔离后失败的条数;`error` 是顶层错误(例如 AppService
     paused 直接短路),与 `failed > 0` 不互斥(部分失败时 `error is None`)。
+    2026-09-14 v1.7.5 PR #6 (P0-J):`failures` 列出每条失败的 `(cid, mid,
+    error_str)` 三元组 — 给「查看失败详情」按钮弹 dialog 用。默认 `[]`
+    兼容老 facade。
     """
 
     op: str = ""
     succeeded: int = 0
     failed: int = 0
     error: str | None = None
+    failures: list[tuple[int, int, str]] = field(default_factory=list)
 
 
 @dataclass

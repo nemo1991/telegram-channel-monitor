@@ -655,7 +655,16 @@ class AppService:
         self._cancel_event.clear()
         self._start_batch_timer()
         await self._publish_batch_progress("delete", 0, len(items))
-        deleted = await self.monitor.delete_messages(items, cancel_event=self._cancel_event)
+        # 2026-09-14 v1.7.5 PR #6 (P0-J):失败明细 — monitor.delete_messages 走
+        # 同步 SQL,per-item 异常不抛 → 整批 try/except 兜底,记 failures。
+        failures: list[tuple[int, int, str]] = []
+        try:
+            deleted = await self.monitor.delete_messages(items, cancel_event=self._cancel_event)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("delete_messages_batch 全批失败")
+            deleted = 0
+            for cid, mid in items:
+                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         # ETA 进度:由于 monitor 内部循环不会逐条 emit,我们只能按 (deleted, total)
         # 在末尾发一次完整进度。UI dialog 看的是「已完成 N」,ETA 依赖 elapsed,
         # 也能从 BatchDone 前的最后一次 emit 算。
@@ -666,6 +675,7 @@ class AppService:
                 succeeded=deleted,
                 failed=len(items) - deleted,
                 error="cancelled" if self._cancel_event.is_set() else None,
+                failures=failures,
             )
         )
         return deleted
@@ -692,6 +702,7 @@ class AppService:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for cid, msg_ids in by_cid.items():
             if self._cancel_event.is_set():
                 cancelled = True
@@ -700,14 +711,17 @@ class AppService:
                 await self.client.mark_messages_read(cid, msg_ids)
                 success += len(msg_ids)
                 await self._publish_batch_progress("mark_read", success, len(items))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("mark_messages_read(cid=%s) failed", cid)
+                for mid in msg_ids:
+                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         await self.bus.publish(
             BatchDone(
                 op="mark_read",
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
@@ -734,6 +748,7 @@ class AppService:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for from_cid, mids in by_cid.items():
             for chunk in _chunks(mids, 100):
                 if self._cancel_event.is_set():
@@ -743,10 +758,12 @@ class AppService:
                     await self.client.forward_messages(from_cid, to_chat_id, chunk)
                     success += len(chunk)
                     await self._publish_batch_progress("forward", success, len(items))
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     log.exception(
                         "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
                     )
+                    for mid in chunk:
+                        failures.append((from_cid, mid, str(exc) or exc.__class__.__name__))
             if cancelled:
                 break
         await self.bus.publish(
@@ -755,6 +772,7 @@ class AppService:
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
@@ -779,6 +797,7 @@ class AppService:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for cid, msg_ids in by_cid.items():
             if self._cancel_event.is_set():
                 cancelled = True
@@ -787,14 +806,17 @@ class AppService:
                 await self.client.pin_messages(cid, msg_ids)
                 success += len(msg_ids)
                 await self._publish_batch_progress("pin", success, len(items))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("pin_messages(cid=%s) failed", cid)
+                for mid in msg_ids:
+                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         await self.bus.publish(
             BatchDone(
                 op="pin",
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
@@ -816,6 +838,7 @@ class AppService:
             by_cid.setdefault(cid, []).append(mid)
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for cid, msg_ids in by_cid.items():
             if self._cancel_event.is_set():
                 cancelled = True
@@ -824,14 +847,17 @@ class AppService:
                 await self.client.unpin_messages(cid, msg_ids)
                 success += len(msg_ids)
                 await self._publish_batch_progress("unpin", success, len(items))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("unpin_messages(cid=%s) failed", cid)
+                for mid in msg_ids:
+                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         await self.bus.publish(
             BatchDone(
                 op="unpin",
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
@@ -846,6 +872,7 @@ class AppService:
 
         2026-09-10 v1.7.3:支持 cancel_current_batch — 每条 RPC 前查
         _cancel_event.is_set(),True 则 break + 发 BatchDone(error='cancelled')。
+        2026-09-14 v1.7.5 PR #6 (P0-J):失败明细 — 每条失败 append (cid, mid, error)。
         """
         if not items or not emoji:
             return 0
@@ -856,6 +883,7 @@ class AppService:
         self._start_batch_timer()
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for cid, mid in items:
             if self._cancel_event.is_set():
                 cancelled = True
@@ -864,14 +892,16 @@ class AppService:
                 await self.client.add_reaction(cid, mid, emoji, is_big=is_big)
                 success += 1
                 await self._publish_batch_progress("react", success, len(items))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
+                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         await self.bus.publish(
             BatchDone(
                 op="react",
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
@@ -880,6 +910,7 @@ class AppService:
         """2026-09-09 v1.7.2:批量取消 emoji 回应 — 走 TG client.remove_reaction。
 
         2026-09-10 v1.7.3:支持 cancel_current_batch(同 add_reaction 模式)。
+        2026-09-14 v1.7.5 PR #6 (P0-J):失败明细。
         """
         if not items or not emoji:
             return 0
@@ -890,6 +921,7 @@ class AppService:
         self._start_batch_timer()
         success = 0
         cancelled = False
+        failures: list[tuple[int, int, str]] = []
         for cid, mid in items:
             if self._cancel_event.is_set():
                 cancelled = True
@@ -898,14 +930,16 @@ class AppService:
                 await self.client.remove_reaction(cid, mid, emoji)
                 success += 1
                 await self._publish_batch_progress("unreact", success, len(items))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
+                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         await self.bus.publish(
             BatchDone(
                 op="unreact",
                 succeeded=success,
                 failed=len(items) - success,
                 error="cancelled" if cancelled else None,
+                failures=failures,
             )
         )
         return success
