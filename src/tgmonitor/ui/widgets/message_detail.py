@@ -98,9 +98,12 @@ class MessageDetail(QScrollArea):
         self.setFrameShape(QFrame.NoFrame)
         self.setWidgetResizable(True)
         self.setMinimumWidth(280)
-        self.setMaximumWidth(420)
+        # 2026-09-14 v1.7.5 PR #4 (P0-H):max 删 — QSplitter 接管,用户可
+        # 自由拖到 1/2 屏幕宽度(原 280-420 锁死,加锁 splitter 会被强制回弹)。
 
         self._current: MessageDTO | None = None
+        # 2026-09-14 v1.7.5 PR #4 (P0-H):删 setMaximumWidth(420) —
+        # 让 QSplitter 接管,用户拖拽自由(原 280-420 锁死)。保留 min=280。
         self._build_empty_state()
 
     def _build_empty_state(self) -> None:
@@ -139,10 +142,23 @@ class MessageDetail(QScrollArea):
 
         2026-09-07 v1.6.8:所有用户可见 label 走 tr();每次 rebuild 自然用当前
         locale;LanguageChange 由 retranslateUi() 主动触发重建。
+        2026-09-14 v1.7.5 PR #4 (P2 bonus):同 cid+mid 已显示 → 跳过
+        rebuild,保留 QScrollArea 滚动位置(用户切到别的消息再切回时,
+        不再被甩回顶部)。
         """
+        prev = self._current
         self._current = m
         if m is None:
             self._build_empty_state()
+            return
+        # 2026-09-14 v1.7.5 PR #4:同 cid+mid 已显示 → 保留 widget,只刷 _current
+        if (
+            prev is not None
+            and self.widget() is not None
+            and prev.channel_id == m.channel_id
+            and prev.telegram_msg_id == m.telegram_msg_id
+        ):
+            # 已显示同一条 → 跳过 rebuild(滚动位置保留)
             return
 
         wrap = QWidget()

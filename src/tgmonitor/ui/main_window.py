@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
-from PySide6.QtCore import QCoreApplication, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -422,7 +423,9 @@ class MainWindow(QMainWindow):
         # 0: 实时流(MessageView + MessageDetail 横向并排)
         # 2026-09-08 v1.7.0:LIVE 顶部增加 _SelectionToolbar(默认 hidden,
         # 多选 >0 才 show)。从单层 QHBoxLayout → QVBoxLayout 嵌套:
-        # 上 toolbar / 下 body(QHBoxLayout[live_view, message_detail])。
+        # 上 toolbar / 下 body(QSplitter[live_view, message_detail])。
+        # 2026-09-14 v1.7.5 PR #4 (P0-H):QHBoxLayout → QSplitter,用户可拖
+        # 详情面板宽度自由(原 280-420 锁死)。splitter 比例 2:1(live 占大头)。
         live_page = QWidget()
         live_layout = QVBoxLayout(live_page)
         live_layout.setContentsMargins(0, 0, 0, 0)
@@ -430,14 +433,18 @@ class MainWindow(QMainWindow):
         self._selection_toolbar = _SelectionToolbar()
         self._selection_toolbar.setVisible(False)
         live_layout.addWidget(self._selection_toolbar)
-        body = QHBoxLayout()
+        body = QSplitter(Qt.Horizontal)
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setHandleWidth(1)
+        body.setChildrenCollapsible(False)  # 防止用户拖到极窄被隐
         self.live_view = MessageView()
         self.message_detail = MessageDetail()
-        body.addWidget(self.live_view, 1)
-        body.addWidget(self.message_detail, 0)
-        live_layout.addLayout(body, 1)
+        body.addWidget(self.live_view)
+        body.addWidget(self.message_detail)
+        body.setStretchFactor(0, 2)  # live 优先占 2/3
+        body.setStretchFactor(1, 1)  # detail 占 1/3
+        body.setSizes([800, 400])  # 启动默认(800px wide → 详情 400)
+        live_layout.addWidget(body, 1)
         self.stack.addWidget(live_page)
 
         # 1: 大盘
