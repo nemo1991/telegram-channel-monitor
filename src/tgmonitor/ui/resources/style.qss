@@ -601,6 +601,21 @@ QLabel#emptyHintIcon {
 #searchBar QToolButton[scopeActive="true"]:hover {
     background: #c5e1f9;
 }
+/* 2026-09-14 v1.7.5 PR #8:★/🏷/📌 3 filter toggle checked 时高亮
+   (浅色主题) — 黄底 + 暗棕字,语义「正在过滤」明显但比 scope 的蓝底
+   低调(避免 4 个 toggle 全亮时满屏颜色爆炸)。 */
+#searchBar QToolButton[favoriteActive="true"],
+#searchBar QToolButton[tagActive="true"],
+#searchBar QToolButton[pinnedActive="true"] {
+    background: #fff3cd;
+    border-radius: 12px;
+    color: #5a4a00;
+}
+#searchBar QToolButton[favoriteActive="true"]:hover,
+#searchBar QToolButton[tagActive="true"]:hover,
+#searchBar QToolButton[pinnedActive="true"]:hover {
+    background: #ffe69c;
+}
 
 /* ===== 2026-09-14 v1.7.5 PR #5 (P0-I):新消息浮条 — top-right 浮动 ===== */
 QPushButton#floatingNewMsgBtn {

@@ -45,11 +45,18 @@ class SearchBar(QWidget):
 
     2026-09-03 v1.5.3 PR #D2:加 🌐 scope toggle button + `scope_changed`
     signal — 控制搜索范围("已订阅" / "全部含已退订")。
+
+    2026-09-14 v1.7.5 PR #8:加 ★ favorite / 🏷 tag / 📌 pinned 3 个 toggle button,
+    每个 emit 独立 `favorite_toggled(bool)` / `tag_toggled(bool)` / `pinned_toggled(bool)`
+    signal(mirror `scope_changed` 模式)。MainWindow 接 3 signal → debounce 重拉。
     """
 
     text_changed = Signal(str)
     date_changed = Signal(object, object)  # (datetime | None, datetime | None)
     scope_changed = Signal(bool)  # True = all(全部) / False = subscribed(已订阅,默认)
+    favorite_toggled = Signal(bool)
+    tag_toggled = Signal(bool)
+    pinned_toggled = Signal(bool)
 
     def __init__(
         self,
@@ -115,6 +122,16 @@ class SearchBar(QWidget):
         self.scope_btn.setProperty("scopeActive", "false")
         hbox.addWidget(self.scope_btn)
 
+        # 2026-09-14 v1.7.5 PR #8:★ favorite / 🏷 tag / 📌 pinned 3 filter toggle。
+        # 每个独立 checkable + checked → filterActive="true" QSS 高亮
+        # (浅色:#fff3cd / 暗色:#5a4a00)。emit 各自 bool signal — MainWindow 接。
+        self.favorite_btn = self._build_filter_btn("★", self.tr("只看收藏"), "favoriteActive")
+        self.tag_btn = self._build_filter_btn("🏷", self.tr("只看有标签"), "tagActive")
+        self.pinned_btn = self._build_filter_btn("📌", self.tr("只看置顶"), "pinnedActive")
+        hbox.addWidget(self.favorite_btn)
+        hbox.addWidget(self.tag_btn)
+        hbox.addWidget(self.pinned_btn)
+
         # 固定第一行 32px
         row1 = QWidget()
         row1.setFixedHeight(32)
@@ -157,6 +174,10 @@ class SearchBar(QWidget):
         self.dt_from.dateTimeChanged.connect(self._emit_date)
         self.dt_to.dateTimeChanged.connect(self._emit_date)
         self.scope_btn.toggled.connect(self._on_scope_changed)
+        # 2026-09-14 v1.7.5 PR #8:3 filter toggle 接各自 signal,emit 给 MainWindow。
+        self.favorite_btn.toggled.connect(self._on_favorite_toggled)
+        self.tag_btn.toggled.connect(self._on_tag_toggled)
+        self.pinned_btn.toggled.connect(self._on_pinned_toggled)
 
         # 2026-09-11 v1.7.5:删 inline styleSheet — 之前硬编码 #f0f1f5 / #8a8d92
         # 浅色,暗色主题下 SearchBar 破皮。改走全局 style.qss / style_dark.qss
@@ -177,6 +198,18 @@ class SearchBar(QWidget):
         """
         return self.scope_btn.isChecked()
 
+    def is_favorite_active(self) -> bool:
+        """2026-09-14 v1.7.5 PR #8:★ favorite toggle 状态。"""
+        return self.favorite_btn.isChecked()
+
+    def is_tag_active(self) -> bool:
+        """2026-09-14 v1.7.5 PR #8:🏷 tag toggle 状态。"""
+        return self.tag_btn.isChecked()
+
+    def is_pinned_active(self) -> bool:
+        """2026-09-14 v1.7.5 PR #8:📌 pinned toggle 状态。"""
+        return self.pinned_btn.isChecked()
+
     @staticmethod
     def _date_to_python(editor: QDateTimeEdit) -> datetime | None:
         """QDateTimeEdit → Python datetime。"不限"特殊值(= 1900-01-01)→ None。"""
@@ -193,7 +226,13 @@ class SearchBar(QWidget):
         return cast(datetime, qt.toPython())
 
     def clear(self) -> None:
-        """清空输入 + 重置日期 + 隐藏 date panel + 折叠按钮 + 重置 scope。"""
+        """清空输入 + 重置日期 + 隐藏 date panel + 折叠按钮 + 重置 scope +
+        重置 ★/🏷/📌 3 filter toggle。
+
+        2026-09-14 v1.7.5 PR #8:加 reset 3 filter toggle;与 scope_btn 同语义
+        (`setChecked(False)` → Qt 触发 toggled → signal 自动 emit,MainWindow
+        debounce 重拉 → 收到 is_xxx_active()=False)。
+        """
         self.edit.clear()
         self.btn_clear.setVisible(False)
         # 重置日期为 "不限" 状态
@@ -203,6 +242,10 @@ class SearchBar(QWidget):
         self.adv_btn.setChecked(False)
         # 2026-09-03 v1.5.3 PR #D2:重置 scope 到「已订阅」(默认)
         self.scope_btn.setChecked(False)
+        # 2026-09-14 v1.7.5 PR #8:重置 3 filter toggle 到默认(全 False)。
+        self.favorite_btn.setChecked(False)
+        self.tag_btn.setChecked(False)
+        self.pinned_btn.setChecked(False)
         # 不显式 emit text_changed / date_changed / scope_changed — Qt 自己
         # 触发(QDateTimeEdit reset → dateTimeChanged signal;QLineEdit
         # clear → textChanged signal;QToolButton.setChecked → toggled signal)。
@@ -242,3 +285,49 @@ class SearchBar(QWidget):
         # unpolish/repolish 让 QSS 重新应用(单纯 setProperty 不触发)
         self.scope_btn.style().unpolish(self.scope_btn)
         self.scope_btn.style().polish(self.scope_btn)
+
+    # ---- 2026-09-14 v1.7.5 PR #8:★/🏷/📌 3 filter toggle ----
+
+    def _build_filter_btn(self, icon: str, tooltip: str, prop: str) -> QToolButton:
+        """3 个 filter toggle 共享的构造模板。
+
+        Args:
+            icon:按钮文字(emoji icon:★ / 🏷 / 📌)。
+            tooltip:默认 tooltip(unchecked 状态)。
+            prop:dynamic property 名(`favoriteActive` / `tagActive` /
+                `pinnedActive`),QSS 用 `[prop="true"]` 选择器加 checked 视觉。
+        """
+        btn = QToolButton()
+        btn.setText(icon)
+        btn.setCheckable(True)
+        btn.setFixedSize(24, 24)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(tooltip)
+        btn.setProperty(prop, "false")
+        return btn
+
+    def _on_favorite_toggled(self, checked: bool) -> None:
+        """★ toggle → emit `favorite_toggled(bool)`。
+
+        2026-09-14 v1.7.5 PR #8:刷 dynamic property + emit signal。
+        MainWindow 接 signal → `_search_debounce.start()` 重拉 + LIVE 流
+        即时 narrow。
+        """
+        self.favorite_btn.setProperty("favoriteActive", "true" if checked else "false")
+        self.favorite_btn.style().unpolish(self.favorite_btn)
+        self.favorite_btn.style().polish(self.favorite_btn)
+        self.favorite_toggled.emit(checked)
+
+    def _on_tag_toggled(self, checked: bool) -> None:
+        """🏷 toggle → emit `tag_toggled(bool)`。"""
+        self.tag_btn.setProperty("tagActive", "true" if checked else "false")
+        self.tag_btn.style().unpolish(self.tag_btn)
+        self.tag_btn.style().polish(self.tag_btn)
+        self.tag_toggled.emit(checked)
+
+    def _on_pinned_toggled(self, checked: bool) -> None:
+        """📌 toggle → emit `pinned_toggled(bool)`。"""
+        self.pinned_btn.setProperty("pinnedActive", "true" if checked else "false")
+        self.pinned_btn.style().unpolish(self.pinned_btn)
+        self.pinned_btn.style().polish(self.pinned_btn)
+        self.pinned_toggled.emit(checked)

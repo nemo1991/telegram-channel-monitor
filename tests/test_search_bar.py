@@ -211,3 +211,110 @@ def test_search_bar_scope_btn_tooltip_set(qapp):
     tooltip = bar.scope_btn.toolTip()
     assert "已订阅" in tooltip
     assert "全部" in tooltip
+
+
+# ============================================================
+# 2026-09-14 v1.7.5 PR #8:★/🏷/📌 3 filter toggle 测试
+# ============================================================
+
+
+def test_search_bar_filter_toggles_default_false(qapp):
+    """PR #8:新建 SearchBar → 3 filter toggle 默认 False(不窄化)。"""
+    bar = SearchBar()
+    assert bar.is_favorite_active() is False
+    assert bar.is_tag_active() is False
+    assert bar.is_pinned_active() is False
+
+
+def test_search_bar_favorite_toggled_fires_signal(qapp):
+    """PR #8:click ★ favorite_btn → emit favorite_toggled(True)。"""
+    bar = SearchBar()
+    spy = _SignalSpy()
+    bar.favorite_toggled.connect(spy.slot)
+    bar.favorite_btn.setChecked(True)
+    QApplication.processEvents()
+    assert spy.args[-1] is True
+    assert bar.is_favorite_active() is True
+
+
+def test_search_bar_tag_toggled_fires_signal(qapp):
+    """PR #8:click 🏷 tag_btn → emit tag_toggled(True)。"""
+    bar = SearchBar()
+    spy = _SignalSpy()
+    bar.tag_toggled.connect(spy.slot)
+    bar.tag_btn.setChecked(True)
+    QApplication.processEvents()
+    assert spy.args[-1] is True
+    assert bar.is_tag_active() is True
+
+
+def test_search_bar_pinned_toggled_fires_signal(qapp):
+    """PR #8:click 📌 pinned_btn → emit pinned_toggled(True)。"""
+    bar = SearchBar()
+    spy = _SignalSpy()
+    bar.pinned_toggled.connect(spy.slot)
+    bar.pinned_btn.setChecked(True)
+    QApplication.processEvents()
+    assert spy.args[-1] is True
+    assert bar.is_pinned_active() is True
+
+
+def test_search_bar_filter_toggles_independent(qapp):
+    """PR #8:3 toggle 互不影响 — 切 ★ 不应触发 🏷 / 📌。"""
+    bar = SearchBar()
+    fav_spy = _SignalSpy()
+    tag_spy = _SignalSpy()
+    pin_spy = _SignalSpy()
+    bar.favorite_toggled.connect(fav_spy.slot)
+    bar.tag_toggled.connect(tag_spy.slot)
+    bar.pinned_toggled.connect(pin_spy.slot)
+
+    bar.favorite_btn.setChecked(True)
+    QApplication.processEvents()
+    assert fav_spy.args == [True]
+    # tag / pinned 不应被触发
+    assert tag_spy.args == []
+    assert pin_spy.args == []
+
+
+def test_search_bar_clear_resets_filter_toggles(qapp):
+    """PR #8:clear() 重置 ★/🏷/📌 → 全 False。"""
+    bar = SearchBar()
+    bar.favorite_btn.setChecked(True)
+    bar.tag_btn.setChecked(True)
+    bar.pinned_btn.setChecked(True)
+    assert bar.is_favorite_active() is True
+    assert bar.is_tag_active() is True
+    assert bar.is_pinned_active() is True
+
+    bar.clear()
+    QApplication.processEvents()
+    assert bar.is_favorite_active() is False
+    assert bar.is_tag_active() is False
+    assert bar.is_pinned_active() is False
+
+
+def test_search_bar_filter_toggle_dynamic_property(qapp):
+    """PR #8:toggle 切 checked → dynamic property "favoriteActive" / "tagActive" /
+    "pinnedActive" 同步切换(配合 QSS 应用高亮样式)。
+    """
+    bar = SearchBar()
+    assert bar.favorite_btn.property("favoriteActive") == "false"
+    assert bar.tag_btn.property("tagActive") == "false"
+    assert bar.pinned_btn.property("pinnedActive") == "false"
+
+    bar.favorite_btn.setChecked(True)
+    QApplication.processEvents()
+    assert bar.favorite_btn.property("favoriteActive") == "true"
+
+    bar.favorite_btn.setChecked(False)
+    QApplication.processEvents()
+    assert bar.favorite_btn.property("favoriteActive") == "false"
+
+
+def test_search_bar_filter_toggle_tooltips_set(qapp):
+    """PR #8:3 toggle tooltip 含功能描述(中文字)。"""
+    bar = SearchBar()
+    assert "收藏" in bar.favorite_btn.toolTip()
+    assert "标签" in bar.tag_btn.toolTip()
+    assert "置顶" in bar.pinned_btn.toolTip()

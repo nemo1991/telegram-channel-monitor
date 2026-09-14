@@ -605,6 +605,9 @@ class MongoRepository(StorageRepository):
         limit: int | None = None,
         offset: int = 0,
         search: str = "",
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """按 (date ASC, _id ASC) 排序 — 与 Postgres / JSONL 对齐;`$in` 走 channel_ids。
 
@@ -615,6 +618,9 @@ class MongoRepository(StorageRepository):
 
         `search` (v1.5.1 PR #B2):`$or` 匹配 text 或 media.file_name 子串,
         走 `$regex` + `$options: "i"` 大小写不敏感,`_escape_regex` 防注入。
+
+        2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
+        走 Mongo `$eq` / `$exists` 子句;AND 语义任一 True 必须命中。
         """
         if not channel_ids:
             return []
@@ -626,6 +632,13 @@ class MongoRepository(StorageRepository):
             if date_to is not None:
                 date_q["$lte"] = date_to
             q["date"] = date_q
+        if favorite_only:
+            q["is_favorite"] = True
+        if tag_only:
+            # 2026-09-14 v1.7.5 PR #8:`tags` 数组非空 — `$not: {$size: 0}` 判定。
+            q["tags"] = {"$not": {"$size": 0}}
+        if pinned_only:
+            q["is_pinned"] = True
         if search:
             # 复用 list_media 的 `_escape_regex`(已转义 regex 元字符);
             # `text` 与 `media.file_name` 任一命中即过。

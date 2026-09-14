@@ -97,6 +97,9 @@ class SubscriptionService:
         limit: int | None = 200,
         search: str = "",
         include_unsubscribed: bool = False,
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
     ) -> list[MessageDTO]:
         """查消息 — `channel_ids=None` 时走 storage「已订」真理(修 #B 双真理问题)。
 
@@ -111,6 +114,8 @@ class SubscriptionService:
         # 子串过滤 text + media.file_name,空 = 不过滤。
         # 2026-09-03 v1.5.3 PR #D2:加 `include_unsubscribed`,默认 False 与
         # 现状一致,True 时跨频道聚合搜索(UI SearchBar scope toggle 控制)。
+        # 2026-09-14 v1.7.5 PR #8:加 `favorite_only` / `tag_only` / `pinned_only`
+        # 透传到 storage.list_messages,UI SearchBar ★/🏷/📌 3 toggle 控制。
         """
         if channel_ids is None:
             if include_unsubscribed:
@@ -129,6 +134,9 @@ class SubscriptionService:
             date_to,
             limit,
             search=search,
+            favorite_only=favorite_only,
+            tag_only=tag_only,
+            pinned_only=pinned_only,
         )
 
     # ---------- 实时流 ----------

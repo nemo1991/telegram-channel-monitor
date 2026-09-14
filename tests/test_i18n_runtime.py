@@ -176,8 +176,7 @@ def test_v175_pr6_batch_failure_and_auth_translations(
     # en_US
     install_translator(qapp_no_locale_force, locale="en_US")
     assert (
-        QCoreApplication.translate("BatchProgressDialog", "查看失败详情")
-        == "View Failure Details"
+        QCoreApplication.translate("BatchProgressDialog", "查看失败详情") == "View Failure Details"
     )
     assert (
         QCoreApplication.translate("BatchFailureDetailDialog", "批量操作失败详情")
@@ -189,11 +188,30 @@ def test_v175_pr6_batch_failure_and_auth_translations(
     )
     assert QCoreApplication.translate("MainWindow", "鉴权错误") == "Authentication error"
     assert QCoreApplication.translate("MainWindow", "验证码错误") == "Invalid verification code"
-    assert (
-        QCoreApplication.translate("MainWindow", "两步验证密码错误") == "Invalid 2FA password"
-    )
+    assert QCoreApplication.translate("MainWindow", "两步验证密码错误") == "Invalid 2FA password"
     assert QCoreApplication.translate("_ErrorLogDialog", "错误日志") == "Error Log"
     assert QCoreApplication.translate("_ErrorLogDialog", "清空日志") == "Clear log"
+
+
+def test_v175_pr8_searchbar_filter_toggle_tooltips_bilingual(
+    qapp_no_locale_force: QApplication,
+) -> None:
+    """2026-09-14 v1.7.5 PR #8:SearchBar ★/🏷/📌 3 toggle tooltip 双语覆盖。
+
+    覆盖:
+      - SearchBar「只看收藏」/「只看有标签」/「只看置顶」
+    """
+    # zh_CN
+    install_translator(qapp_no_locale_force, locale="zh_CN")
+    assert QCoreApplication.translate("SearchBar", "只看收藏") == "只看收藏"
+    assert QCoreApplication.translate("SearchBar", "只看有标签") == "只看有标签"
+    assert QCoreApplication.translate("SearchBar", "只看置顶") == "只看置顶"
+
+    # en_US
+    install_translator(qapp_no_locale_force, locale="en_US")
+    assert QCoreApplication.translate("SearchBar", "只看收藏") == "Favorite only"
+    assert QCoreApplication.translate("SearchBar", "只看有标签") == "Tagged only"
+    assert QCoreApplication.translate("SearchBar", "只看置顶") == "Pinned only"
     """2026-09-07 v1.6.8:en_US.qm / zh_CN.qm 编译产物存在 + 非空 + 215+ 翻译条目。"""
     i18n_dir = Path("src/tgmonitor/i18n")
     for name in ("zh_CN.qm", "en_US.qm"):

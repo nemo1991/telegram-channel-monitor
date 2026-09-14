@@ -110,6 +110,10 @@ class MessageListModel(QAbstractListModel):
         self._row_to_key: dict[int, tuple[int, int]] = {}
         self._channel_titles: dict[int, str] = {}
         self._filter_text: str = ""
+        # 2026-09-14 v1.7.5 PR #8:3 个用户元数据过滤维度(AND 语义)。
+        self._favorite_only: bool = False
+        self._tag_only: bool = False
+        self._pinned_only: bool = False
 
     # ---- Qt model 接口 ----
 
@@ -134,9 +138,7 @@ class MessageListModel(QAbstractListModel):
         if role == self.HasMediaRole:
             return bool(m.has_media)
         if role == self.HiddenRole:
-            if not self._filter_text:
-                return False
-            return not self._matches(m, self._filter_text)
+            return not self._matches(m)
         if role == self.FormattedRole or role == Qt.DisplayRole:
             return self._format(m)
         return None
@@ -249,9 +251,26 @@ class MessageListModel(QAbstractListModel):
             del self._index_of[removed_key]
         del self._items[last]
 
-    def set_filter(self, text: str) -> None:
-        """设过滤文本 — 所有 row 的 HiddenRole 变化 → emit dataChanged。"""
+    def set_filter(
+        self,
+        text: str = "",
+        *,
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
+    ) -> None:
+        """设过滤条件 — 所有 row 的 HiddenRole 变化 → emit dataChanged。
+
+        向后兼容:旧调用 `set_filter(text)` 仍能用(默认 favorite/tag/pinned=False)。
+
+        2026-09-14 v1.7.5 PR #8:加 favorite/tag/pinned 3 个 bool kwarg(AND
+        语义)。SearchBar ★/🏷/📌 toggle 状态走这条路径 — 即时 narrow LIVE
+        流已加载消息,无 IO。`search_messages` 异步路径另走 storage 服务端过滤。
+        """
         self._filter_text = text.strip().lower()
+        self._favorite_only = favorite_only
+        self._tag_only = tag_only
+        self._pinned_only = pinned_only
         if self.rowCount() == 0:
             return
         top = self.index(0, 0)
@@ -335,8 +354,23 @@ class MessageListModel(QAbstractListModel):
 
     # ---- 过滤 / 格式化工具 ----
 
-    def _matches(self, m: MessageDTO, text: str) -> bool:
-        """匹配规则:正文 / 作者 / 频道名 / #msg_id(大小写不敏感)。"""
+    def _matches(self, m: MessageDTO) -> bool:
+        """匹配规则:text + favorite + tag + pinned(AND 语义 — 任一不满足就 False)。
+
+        2026-09-14 v1.7.5 PR #8:filter state 走 self 上的 4 个字段:
+        `_filter_text` / `_favorite_only` / `_tag_only` / `_pinned_only`。
+        `_filter_text` 空 = 不参与 AND(只过滤元数据);元数据字段 False
+        = 不参与 AND。
+        """
+        if self._favorite_only and not m.is_favorite:
+            return False
+        if self._tag_only and not m.tags:
+            return False
+        if self._pinned_only and not m.is_pinned:
+            return False
+        text = self._filter_text
+        if not text:
+            return True
         if m.text and text in m.text.lower():
             return True
         if m.author and text in m.author.lower():
@@ -578,16 +612,42 @@ class MessageView(QListView):
         if messages:
             self._model.reset(list(reversed(messages)))
         # 截断后 apply 现有 filter(set_messages 整批替换,apply 一次省心)
-        if self._model._filter_text:
-            self._model.set_filter(self._model._filter_text)
+        # 2026-09-14 v1.7.5 PR #8:apply 当前完整 filter state(text + 3 元数据)。
+        if (
+            self._model._filter_text
+            or self._model._favorite_only
+            or self._model._tag_only
+            or self._model._pinned_only
+        ):
+            self._model.set_filter(
+                self._model._filter_text,
+                favorite_only=self._model._favorite_only,
+                tag_only=self._model._tag_only,
+                pinned_only=self._model._pinned_only,
+            )
 
     def set_channel_titles(self, titles: dict[int, str]) -> None:
         """外部注入频道 id → title 映射 — 委托 model。"""
         self._model.set_channel_titles(titles)
 
-    def set_filter(self, text: str) -> None:
-        """按文本过滤。空 = 显示全部。"""
-        self._model.set_filter(text)
+    def set_filter(
+        self,
+        text: str = "",
+        *,
+        favorite_only: bool = False,
+        tag_only: bool = False,
+        pinned_only: bool = False,
+    ) -> None:
+        """过滤 LIVE 流 — 文本 + 3 元数据维度(2026-09-14 v1.7.5 PR #8)。
+
+        向后兼容:旧调用 `set_filter(text)` 仍能工作(元数据维度默认 False)。
+        """
+        self._model.set_filter(
+            text,
+            favorite_only=favorite_only,
+            tag_only=tag_only,
+            pinned_only=pinned_only,
+        )
 
     def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
         """删一行 — 委托 model。"""
