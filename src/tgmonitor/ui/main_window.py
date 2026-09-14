@@ -1348,9 +1348,16 @@ class MainWindow(QMainWindow):
 
         双过滤不冲突:快过滤是「视觉欺骗」(本地 hide/show),set_messages 是
         「权威」(server-side 命中替换)。
+        2026-09-14 v1.7.5 PR #5 (P0-L):搜索激活 → searching overlay(无匹配结果);
+        清空搜索词 → live_empty / no_subscribed(由 channels_changed 决定)。
         """
         # 1) 即时快过滤(无 IO)
         self.live_view.set_filter(txt)
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):搜索词非空 → 切 searching overlay
+        # (覆盖 live_empty / no_subscribed);清空搜索词 → 由 _refresh_state
+        # 触发回到正确 state。
+        if txt.strip():
+            self.live_view.set_empty_state("searching")
         # 2) debounce 启动 timer;每次输入重置,只有 300ms 内没新输入才触发
         self._search_debounce.start()
 
@@ -1985,6 +1992,12 @@ class MainWindow(QMainWindow):
         self.channel_panel.set_subscribed(subscribed)
 
         self.live_view.set_channel_titles({cid: ch.title for cid, ch in all_known.items()})
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):订阅数为 0 → no_subscribed overlay;
+        # > 0 → live_empty(LIVE 流空状态)。搜索无结果 by search handler 切。
+        if not subscribed:
+            self.live_view.set_empty_state("no_subscribed")
+        else:
+            self.live_view.set_empty_state("live_empty")
         self._vm.load_recent_messages()
 
         # 更新 dashboard 统计

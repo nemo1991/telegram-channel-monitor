@@ -566,3 +566,17 @@ QLabel#emptyHintIcon {
 #searchBar QToolButton[scopeActive="true"]:hover {
     background: #c5e1f9;
 }
+
+/* ===== 2026-09-14 v1.7.5 PR #5 (P0-I):新消息浮条 — top-right 浮动 ===== */
+QPushButton#floatingNewMsgBtn {
+    background: {accent};
+    color: #ffffff;
+    border: none;
+    border-radius: 14px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#floatingNewMsgBtn:hover {
+    background: {accentHover};
+}
