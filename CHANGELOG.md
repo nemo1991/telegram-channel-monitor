@@ -5,6 +5,56 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.5] - 2026-09-15
+
+主题:**UI 全面优化 — 9 PR 拆分(i18n + 主题 + 批量确认 + 详情可拖拽 + LIVE 浮条 + 失败明细 + DRIFT 回归 + 多过滤 toggle + perf)**。
+
+### PR #9 — Perf(MessageListModel O(N²) → O(N) + delegate cache)
+
+**生产** (`src/tgmonitor/ui/widgets/message_view.py`):
+
+- **`MessageListModel._items: list` → `deque`** — `appendleft` O(1) head-insert 替
+  `list.insert(0)` O(N) shift;`pop()` O(1) tail pop 替 `del list[last]` O(N)。
+  单条 append 总耗时从 O(N log N) 降为 O(N)(含 `_index_of` bump)。
+- **删 `_row_to_key` mirror 索引** — `deque[last]` 直接 O(1) 拿 key,
+  维护成本降低。
+- **`_format_cache: dict[(cid, mid), str]`** — `data(FormattedRole)` 缓存,
+  paint 不再每次重 `_format()`(`datetime.astimezone` + 8 个 f-string,
+  ~10µs/次 → ~50ns/次 dict 查)。
+- **`MessageItemDelegate._size_hint_cache: dict[(cid, mid, width), QSize]`** —
+  sizeHint 命中后省 `QTextDocument` 重建(~50µs/次 → ~10ns/次)。
+- **`MessageItemDelegate._doc_cache: LRU 200 QTextDocument`** — paint 复用 doc 实例,
+  省 setHtml 重做。`reset()` 时由 model 通知 delegate `clear_caches()`。
+- **`MessageView.set_messages` 改单次 `model.reset()`** — 不再 `clear_view()` +
+  N×append 双 reset 信号,单次 emit `modelReset`。
+- **`MessageListModel.set_delegate()`** — model 注入 delegate 引用,`reset()` 时通知清 cache。
+
+**测试** (`tests/test_message_view.py`):
+
+- 删 `_row_to_key` 相关 3 invariant test,改 `_index_of` 与 `_items` 严格对应
+  双向断言(`test_index_of_in_sync_with_items` + `_assert_invariant` +
+  `test_reset_populates_index_of` + `test_remove_row_updates_index_of`)。
+- +10 新 PR #9 测试:`append_constant_time_per_call`(1K/5K/10K 单条 < 5ms) +
+  `set_messages_emits_single_model_reset`(锁定 PR #5 契约) +
+  `format_cache_hit_avoids_recompute` + `format_cache_invalidated_on_replace_message` +
+  `format_cache_cleared_on_set_channel_titles` +
+  `size_hint_cache_hit_returns_same_size` + `doc_cache_cleared_on_reset` +
+  `max_items_truncates_correctly`(deque.pop 删最旧) +
+  `append_existing_key_replaces_in_place` + `remove_by_key_clears_index`。
+
+**Perf baseline** (`tests/perf/benchmark_message_view.py`,本地 only):
+
+- append 10K: ~530µs/call(vs pre-PR ~10ms/call,~19x 提升)
+- FormattedRole cached: 100k reads in 271ms(~2.7µs/read)
+- sizeHint cached: 100k calls in 720ms(~7.2µs/call)
+- set_messages 10K: 2.9ms 单次 modelReset(vs pre-PR ~2-3s + 10K rowsInserted)
+
+### Out of scope(本 PR 不做)
+
+- `tag_only` 选特定 tag(留 v1.7.6)
+- perf 持续流(benchmark 需引入 `pytest-benchmark` + `--benchmark-only`)
+- pytest-benchmark 不进 dev 依赖(本地手工跑)
+
 ## [1.7.4] - 2026-09-11
 
 主题:**UX 升级 — Emoji Picker Grid + Channel Picker Dialog + Reactions 实时 push + Cancel ETA 显示**。

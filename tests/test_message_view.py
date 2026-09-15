@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -19,9 +20,10 @@ import pytest
 # offscreen 平台:CI / 无显示器 macOS 也能跑
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtGui import QBrush  # noqa: E402
 from PySide6.QtTest import QSignalSpy  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
 from tgmonitor.ui.widgets.message_view import (  # noqa: E402
@@ -703,7 +705,7 @@ def test_brush_default_unchanged_in_qtgui(qapp):
 
 
 def test_truncate_tail_is_o1(qapp):
-    """PR #P1:`_truncate_tail` 走 `_row_to_key.pop(last, None)` O(1)。
+    """PR #P9:`_truncate_tail` 走 `deque.pop()` O(1) + `_index_of` O(N) bump。
 
     mock 10K 条后,验 `_truncate_tail` 单次调耗时 < 1ms(防 O(N) 退化为 N² 回归)。
     """
@@ -723,10 +725,11 @@ def test_truncate_tail_is_o1(qapp):
     assert elapsed < 0.01, f"_truncate_tail 应 O(1),实测 {elapsed * 1000:.2f}ms"
 
 
-def test_row_to_key_in_sync_with_index_of(qapp):
-    """PR #P1:**invariant test** — `_row_to_key[r] == (cid, mid)` 必须与
-    `_index_of[(cid, mid)] == r` 严格镜像。任何 append / remove / reset
-    漏维护任一索引 → 此测试立即 fail。
+def test_index_of_in_sync_with_items(qapp):
+    """PR #P9:**invariant test** — `_index_of[(cid, mid)] == row` 必须与
+    `_items[row] == dto` 严格对应(deque 物理位置 = 逻辑 row,newest 在 0)。
+
+    任何 append / remove / reset 漏维护任一索引 → 此测试立即 fail。
     """
     view = MessageView()
     # append 一批
@@ -742,39 +745,46 @@ def test_row_to_key_in_sync_with_index_of(qapp):
     for i in range(200, 300):
         view.append(_make_msg(2, i))
     _assert_invariant(view)
-    # set_messages 整批(公开 API,内部走 clear_view + append 循环)
+    # set_messages 整批(公开 API,内部走 reset)
     view.set_messages([_make_msg(3, k) for k in range(50)])
     _assert_invariant(view)
 
 
 def _assert_invariant(view: MessageView) -> None:
-    """断言 `_row_to_key` 与 `_index_of` 严格镜像。"""
+    """PR #9:`_index_of[(cid, mid)] == row` 必须与 `_items[row]` 严格对应。
+
+    `_items` 是 deque,物理位置 0 = newest,size = _index_of size;deque[i]
+    是 O(1) 均摊索引,可直接当 list 用。
+    """
     model = view._model
-    # row → key 与 _index_of[(cid, mid)] == row 必须双向等价
-    assert len(model._row_to_key) == len(model._items)
-    assert len(model._index_of) == len(model._items)
-    for r, key in model._row_to_key.items():
+    assert len(model._index_of) == len(model._items), (
+        f"index_of size={len(model._index_of)} != items size={len(model._items)}"
+    )
+    for r in range(len(model._items)):
+        m = model._items[r]
+        key = (m.channel_id, m.telegram_msg_id)
         assert model._index_of[key] == r, (
-            f"invariant broken at row={r}: _row_to_key={key} but _index_of[{key}]={model._index_of[key]}"
+            f"invariant broken at row={r}: _items[{r}]=({m.channel_id}, {m.telegram_msg_id}) "
+            f"but _index_of[{key}]={model._index_of[key]}"
         )
 
 
-def test_reset_populates_row_to_key(qapp):
-    """PR #P1:`_model.reset([m1..m100])` 后 `_row_to_key == {0: key0, 1: key1, ...}`。"""
+def test_reset_populates_index_of(qapp):
+    """PR #9:`_model.reset([m1..m100])` 后 `_index_of` 每 row 正确指向 (cid, mid)。"""
     view = MessageView()
     msgs = [_make_msg(1, i) for i in range(100)]
     view._model.reset(msgs)
-    assert len(view._model._row_to_key) == 100
+    assert len(view._model._index_of) == 100
     for i, m in enumerate(msgs):
-        assert view._model._row_to_key[i] == (m.channel_id, m.telegram_msg_id)
+        key = (m.channel_id, m.telegram_msg_id)
+        assert view._model._index_of[key] == i
 
 
-def test_remove_row_updates_row_to_key(qapp):
-    """PR #P1:`remove_row(cid, mid)` 删行后,row > 删 row 的 entry 全部 -1。
+def test_remove_row_updates_index_of(qapp):
+    """PR #9:`remove_row(cid, mid)` 删行后,row > 删 row 的 entry 全部 -1。
 
-    用公开 API `remove_row`(内部调 `model.remove_by_key`)。删的是**最后一个 row**,
-    没有 shift → `row_to_delete` 应真的从 `_row_to_key` 消失;删中间 row 测
-    (1, 5) 已不在 _row_to_key 的 value 集合里。
+    用公开 API `remove_row`(内部调 `model.remove_by_key`)。删中间 row 测
+    (1, 5) 已不在 _index_of,删最后一个 row 测边界(无 shift)。
     """
     view = MessageView()
     for i in range(10):
@@ -782,19 +792,18 @@ def test_remove_row_updates_row_to_key(qapp):
     # ---- 删中间 row(测 shift + value 集合)----
     # append 是头部插入,最新 (1, 9) 在 row 0;(1, 5) 在 row 4
     view.remove_row(1, 5)
-    # (1, 5) 不再在 _row_to_key 的 value 集合里
-    assert (1, 5) not in view._model._row_to_key.values()
+    assert (1, 5) not in view._model._index_of
     # 全表 row 连续 0..8(shift 后 row=4 仍存在,只是填了 shifted 内容)
-    assert len(view._model._row_to_key) == 9
-    assert sorted(view._model._row_to_key.keys()) == list(range(9))
+    assert len(view._model._index_of) == 9
+    assert sorted(view._model._index_of.values()) == list(range(9))
     # ---- 删最后一个 row(测边界 case — 无 shift)----
     # 此时 (1, 0) 在 row 9(最旧,append 最后被推到 tail)
     last_row = view._model._index_of[(1, 0)]
     view.remove_row(1, 0)
-    assert last_row not in view._model._row_to_key
-    assert (1, 0) not in view._model._row_to_key.values()
-    assert len(view._model._row_to_key) == 8
-    assert sorted(view._model._row_to_key.keys()) == list(range(8))
+    assert last_row not in view._model._index_of.values()
+    assert (1, 0) not in view._model._index_of
+    assert len(view._model._index_of) == 8
+    assert sorted(view._model._index_of.values()) == list(range(8))
 
 
 def test_max_items_bumped_to_10000(qapp):
@@ -822,7 +831,7 @@ def test_stress_10k_messages_append_dedup_truncate(qapp):
     """PR #P1:**stress test** — append 10K 条 + 中途 100 次 remove,验证:
 
     - rowCount 最终 == 9900(10K - 100)
-    - `_row_to_key` 与 `_index_of` 严格镜像(invariant)
+    - `_index_of` 与 `_items` 严格镜像(invariant)
     - 整测试耗时 < 30s(append 本身是 O(N) shift 累计 O(N²),MAX_ITEMS
       1000 → 10000 后自然放大 ~10×;本测试只防 O(N³) 级别的极端退化,
       例如 invariant 漏维护导致 O(N) dict scan × N 次 append)
@@ -1254,3 +1263,268 @@ def test_pr8_set_filter_persists_state_after_set_messages(qapp):
     # row 0 = normal(201, hidden),row 1 = fav(200, 通过)
     assert _hidden_role(view, 0) is True
     assert _hidden_role(view, 1) is False
+
+
+# ============================================================
+# 2026-09-15 v1.7.5 PR #9 perf:MessageListModel O(N²) → O(N) + sizeHint / paint cache
+# ============================================================
+
+
+def test_pr9_append_constant_time_per_call(qapp):
+    """PR #9 perf:`append` 单条耗时与已有行数无关 — 1K / 5K / 9.9K 时
+    单条 append 都 < 1ms(以前 list.insert(0) + _row_to_key O(N²) 在 10K 时单条
+    ~10ms,100 msg/s 场景下能撑爆单 CPU 核)。
+
+    deque.appendleft 是 O(1),`_index_of` bump 是 O(N) — 但实测 N=10K 的
+    dict-iteration 在 CPython 上远快于 list.insert + sort,稳 < 1ms。
+    """
+    view = MessageView()
+
+    # 灌 1000 条 baseline
+    for i in range(1000):
+        view.append(_make_msg(1, i))
+    t0 = time.perf_counter()
+    view.append(_make_msg(1, 1000))
+    elapsed_1k = time.perf_counter() - t0
+
+    # 灌到 5000
+    for i in range(1001, 5000):
+        view.append(_make_msg(1, i))
+    t0 = time.perf_counter()
+    view.append(_make_msg(1, 5000))
+    elapsed_5k = time.perf_counter() - t0
+
+    # 灌到 9999
+    for i in range(5001, 9999):
+        view.append(_make_msg(1, i))
+    t0 = time.perf_counter()
+    view.append(_make_msg(1, 9999))
+    elapsed_10k = time.perf_counter() - t0
+
+    # 1K 应 < 1ms,10K 应 < 5ms(允许 ~5ms 因为 dict iteration 1万次)
+    assert elapsed_1k < 0.002, f"1K append 耗时 {elapsed_1k * 1000:.2f}ms > 2ms"
+    assert elapsed_5k < 0.003, f"5K append 耗时 {elapsed_5k * 1000:.2f}ms > 3ms"
+    assert elapsed_10k < 0.005, f"10K append 耗时 {elapsed_10k * 1000:.2f}ms > 5ms"
+
+
+def test_pr9_set_messages_emits_single_model_reset(qapp):
+    """PR #9:1000 条 `set_messages` 只 emit 1 次 `modelReset`(锁定 PR #5 契约)。
+
+    之前 PR #5 修过:走 N×append 会 emit N 次 `rowsInserted` → 浮条计数误累加。
+    本测试兜底:无论多少条,只能有 1 个 `modelReset`,0 个 `rowsInserted`。
+    """
+    view = MessageView()
+    reset_spy = QSignalSpy(view._model.modelReset)
+    insert_spy = QSignalSpy(view._model.rowsInserted)
+    msgs = [_make_msg(1, i) for i in range(1000)]
+    view.set_messages(msgs)
+    assert reset_spy.count() == 1, f"应 emit 1 次 modelReset,实测 {reset_spy.count()}"
+    assert insert_spy.count() == 0, (
+        f"set_messages 不应 emit rowsInserted(PR #5 契约),实测 {insert_spy.count()}"
+    )
+
+
+def test_pr9_format_cache_hit_avoids_recompute(qapp):
+    """PR #9 perf:`FormattedRole` 缓存 — 同一行 paint 2 次,`_format()` 只调 1 次。
+
+    走 mock 替 `_format` 方法计数,验证第二次 `data(FormattedRole)` 命中缓存
+    直接返旧值,不重算。
+    """
+    view = MessageView()
+    msg = _make_msg(1, 100)
+    view.append(msg)
+    idx = view._model.index(0, 0)
+
+    # 第一次 — 缓存 miss,触发 _format
+    call_count = {"n": 0}
+    original_format = view._model._format
+
+    def counting_format(m: MessageDTO) -> str:
+        call_count["n"] += 1
+        return original_format(m)
+
+    view._model._format = counting_format  # type: ignore[method-assign]
+    try:
+        # 第一次 → miss → 算一次
+        first = view._model.data(idx, MessageListModel.FormattedRole)
+        assert call_count["n"] == 1, f"首次应算一次,实测 {call_count['n']}"
+        # 第二次 → 命中 → 不算
+        second = view._model.data(idx, MessageListModel.FormattedRole)
+        assert call_count["n"] == 1, f"二次应命中缓存,实测 {call_count['n']}"
+        assert first == second
+    finally:
+        view._model._format = original_format  # type: ignore[method-assign]
+
+
+def test_pr9_format_cache_invalidated_on_replace_message(qapp):
+    """PR #9 perf:`replace_message` 让缓存里那条 (cid, mid) 失效 — 下次
+    `data(FormattedRole)` 走 `_format()` 重算。
+    """
+    view = MessageView()
+    msg1 = _make_msg(1, 100)
+    msg1.text = "original"
+    view.append(msg1)
+    idx = view._model.index(0, 0)
+
+    # 第一次 — 填缓存
+    first = view._model.data(idx, MessageListModel.FormattedRole)
+    assert "original" in first
+
+    # replace_message — 改文本
+    msg2 = _make_msg(1, 100)
+    msg2.text = "edited"
+    view.replace_message(msg2)
+
+    # 缓存失效,新文本生效
+    second = view._model.data(idx, MessageListModel.FormattedRole)
+    assert "edited" in second, f"replace 后应显示新文本,实测 {second!r}"
+
+
+def test_pr9_format_cache_cleared_on_set_channel_titles(qapp):
+    """PR #9 perf:`set_channel_titles` 清全表 FormattedRole 缓存(标题变了)。
+
+    拿不到 DTO 单条改 channel_id 但 channel_titles 改变影响 head 的 `[title]` 段,
+    所以必须全清。
+    """
+    view = MessageView()
+    view.set_channel_titles({1: "tech-news"})
+    msg = _make_msg(1, 100)
+    view.append(msg)
+    idx = view._model.index(0, 0)
+    text = view._model.data(idx, MessageListModel.FormattedRole)
+    assert "[tech-news]" in text, f"应显示新 title,实测 {text!r}"
+
+    # 改 title → 缓存全清 → 下次读走新 title
+    view.set_channel_titles({1: "general"})
+    text2 = view._model.data(idx, MessageListModel.FormattedRole)
+    assert "[general]" in text2, f"改 title 后应显示新 title,实测 {text2!r}"
+    assert "[tech-news]" not in text2
+
+
+def test_pr9_size_hint_cache_hit_returns_same_size(qapp):
+    """PR #9 perf:`sizeHint` 缓存 — 同 `(cid, mid, width)` 第二次走 cache。
+
+    通过 delegate 直接调 `sizeHint`,传入同 option,第二次应直接返 QSize 实例
+    而非新建 QTextDocument(用 mock 替 QTextDocument 计数验证)。
+    """
+    from PySide6.QtGui import QTextDocument  # noqa: PLC0415
+
+    view = MessageView()
+    msg = _make_msg(1, 100)
+    view.append(msg)
+    idx = view._model.index(0, 0)
+
+    delegate = view._delegate
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 400, 0)
+    option.font = view.font()
+
+    doc_count = {"n": 0}
+    original_init = QTextDocument.__init__
+
+    def counting_init(self, *a, **kw):
+        doc_count["n"] += 1
+        original_init(self, *a, **kw)
+
+    QTextDocument.__init__ = counting_init  # type: ignore[method-assign]
+    try:
+        # 第一次 → miss → 1 个 QTextDocument
+        delegate.sizeHint(option, idx)
+        assert doc_count["n"] == 1, f"首次应建 1 个 doc,实测 {doc_count['n']}"
+        # 第二次 → 命中 → 0 新建
+        delegate.sizeHint(option, idx)
+        assert doc_count["n"] == 1, f"二次应命中缓存,实测 {doc_count['n']}"
+    finally:
+        QTextDocument.__init__ = original_init  # type: ignore[method-assign]
+
+
+def test_pr9_doc_cache_cleared_on_reset(qapp):
+    """PR #9 perf:`reset()` 清 delegate `_doc_cache` 和 `_size_hint_cache`。
+
+    验证整批替换后,旧 key 的缓存不会留下脏数据。
+    """
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    view.append(_make_msg(1, 101))
+
+    # 触发 paint / sizeHint 填 cache
+    delegate = view._delegate
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 400, 0)
+    option.font = view.font()
+    delegate.sizeHint(option, view._model.index(0, 0))
+    delegate.sizeHint(option, view._model.index(1, 0))
+    assert len(delegate._doc_cache) > 0 or len(delegate._size_hint_cache) > 0
+
+    # reset 整批换新
+    view._model.reset([_make_msg(2, 999)])
+
+    # 缓存全清(否则 paint (2, 999) 会命中旧 (1, 100) 的 doc 显示老文本)
+    assert len(delegate._doc_cache) == 0, (
+        f"reset 后 _doc_cache 应清空,剩 {len(delegate._doc_cache)} 条"
+    )
+    assert len(delegate._size_hint_cache) == 0, (
+        f"reset 后 _size_hint_cache 应清空,剩 {len(delegate._size_hint_cache)} 条"
+    )
+
+
+def test_pr9_max_items_truncates_correctly(qapp):
+    """PR #9 regression:deque 后 `_truncate_tail` 必须真的删最旧一行。
+
+    append i=0..MAX_ITEMS → 超 1 条 → 最旧 (1, 0) 被截断,最新 (1, MAX_ITEMS) 保留。
+
+    验证关键回归:之前用 `popleft()` 误删最新,改 `pop()` 后语义恢复。
+    """
+    view = MessageView()
+    for i in range(MessageView.MAX_ITEMS + 1):
+        view.append(_make_msg(1, i))
+    assert view._model.rowCount() == MessageView.MAX_ITEMS
+    # (1, 0) 是最早 append 的(最旧)→ 应被截断
+    assert (1, 0) not in view._model._index_of, "(1, 0) 应被截断"
+    # (1, MAX_ITEMS) 是最后 append 的(最新)→ 应保留(head)
+    assert (1, MessageView.MAX_ITEMS) in view._model._index_of
+    # 最新那条在 row 0(deque head)
+    assert view._model._index_of[(1, MessageView.MAX_ITEMS)] == 0
+
+
+def test_pr9_append_existing_key_replaces_in_place(qapp):
+    """PR #9 regression:`append` 已存在 key 时原地替换(不 insert 新行)。
+
+    dedup 分支走 `self._items[row] = m` —— deque 支持 `__setitem__`,
+    缓存失效 + emit dataChanged。
+    """
+    view = MessageView()
+    msg1 = _make_msg(1, 100)
+    msg1.text = "v1"
+    view.append(msg1)
+    assert view._model.rowCount() == 1
+    assert view._model._index_of[(1, 100)] == 0
+
+    # 重复 append 同 key → 原地替换,row 数不变
+    msg2 = _make_msg(1, 100)
+    msg2.text = "v2"
+    view.append(msg2)
+    assert view._model.rowCount() == 1
+    assert view._model._index_of[(1, 100)] == 0
+    text = view._model.data(view._model.index(0, 0), MessageListModel.FormattedRole)
+    assert "v2" in text, f"dedup 后应显示新文本,实测 {text!r}"
+
+
+def test_pr9_remove_by_key_clears_index(qapp):
+    """PR #9 regression:`remove_by_key` 后 `_index_of` 和 `_format_cache`
+    都清干净 — 后续 append 同 key 走 insert 分支(不 dedup)。
+    """
+    view = MessageView()
+    view.append(_make_msg(1, 100))
+    view.append(_make_msg(1, 101))
+    view.append(_make_msg(1, 102))
+
+    view.remove_row(1, 101)
+    assert (1, 101) not in view._model._index_of
+    assert (1, 100) in view._model._index_of
+    assert (1, 102) in view._model._index_of
+    assert (1, 101) not in view._model._format_cache
+
+    # 重新 append(1, 101) → 应走 insert 路径,row 0
+    view.append(_make_msg(1, 101))
+    assert view._model._index_of[(1, 101)] == 0

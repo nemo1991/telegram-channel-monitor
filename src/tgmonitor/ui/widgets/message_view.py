@@ -26,6 +26,7 @@ signal / `_seen` / `count()` / `MAX_ITEMS`,`main_window._copy_current_message_te
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import UTC
 
 from PySide6.QtCore import (
@@ -33,6 +34,7 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QSize,
     Qt,
     Signal,
 )
@@ -100,20 +102,33 @@ class MessageListModel(QAbstractListModel):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._items: list[MessageDTO] = []
+        # 2026-09-15 v1.7.5 PR #9 perf:deque 替 list,O(1) head-insert + O(1) tail pop。
+        # `deque[i]` 索引是 O(1) 均摊,可直接当 list 用。appendleft 给最新消息落 row 0
+        # (newest-first 语义),`deque.pop()`(tail side)给 `_truncate_tail` 删最旧。
+        self._items: deque[MessageDTO] = deque()
+        # key → row(`_items` 物理位置 = 逻辑 row,newest 在 0)
         self._index_of: dict[tuple[int, int], int] = {}
-        # 2026-09-03 v1.5.4 PR #P1:反向索引 — row → key,_truncate_tail O(1) 拿 key。
-        # 旧版 `next((k for k, v in self._index_of.items() if v == last), None)`
-        # 是 O(N) 扫表,高频频道 append 时累计退化为 O(N²);新索引与 _index_of 严格
-        # 镜像(任何 append / remove / reset 都必须同步维护两索引 — 由
-        # `test_row_to_key_in_sync_with_index_of` invariant test 兜底)。
-        self._row_to_key: dict[int, tuple[int, int]] = {}
+        # 2026-09-15 v1.7.5 PR #9 perf:FormattedRole 缓存。`_format()` 涉及
+        # datetime.astimezone + strftime + 多 f-string,每个 paint 触发 60+ 次。
+        # 缓存 keyed on (cid, mid),数据变更时由 model 显式 pop(详见各
+        # mutation 方法的 `_format_cache.pop(...)`)。
+        self._format_cache: dict[tuple[int, int], str] = {}
+        # 2026-09-03 v1.5.4 PR #P1 已删:`_row_to_key` 反向索引。2026-09-15
+        # PR #9 改成 deque 后,`_items[last]` 拿 key 已是 O(1),无需 mirror 索引 —
+        # 维护成本降低,append 路径去掉 O(N log N) sort + O(N) shift,降为
+        # 单纯 O(N) `_index_of` bump(bump 仍是 O(N),因为所有现有 row index +1)
+        # + O(1) deque.appendleft / O(1) deque.pop(头/尾插入删除都是常数时间)。
         self._channel_titles: dict[int, str] = {}
         self._filter_text: str = ""
         # 2026-09-14 v1.7.5 PR #8:3 个用户元数据过滤维度(AND 语义)。
         self._favorite_only: bool = False
         self._tag_only: bool = False
         self._pinned_only: bool = False
+        # 2026-09-15 v1.7.5 PR #9 perf:`set_messages` / `clear_view` 走
+        # `reset()` 时整批消息换新 → delegate 的 `_doc_cache` / `_size_hint_cache`
+        # 失效。否则 paint 命中过期的 (cid, mid) → 显示老消息文本。
+        # 调用方(MessageView.__init__)注入;默认 None = 单测无 delegate。
+        self._delegate: MessageItemDelegate | None = None
 
     # ---- Qt model 接口 ----
 
@@ -140,7 +155,17 @@ class MessageListModel(QAbstractListModel):
         if role == self.HiddenRole:
             return not self._matches(m)
         if role == self.FormattedRole or role == Qt.DisplayRole:
-            return self._format(m)
+            # 2026-09-15 v1.7.5 PR #9 perf:FormattedRole 缓存 — paint 热路径
+            # 避免每帧重 _format(datetime.astimezone + 8 个 f-string)。
+            # Cache 由 mutation 路径(replace / update_media_status /
+            # refresh_reactions / append-dedup / remove / reset)显式 invalidate。
+            key = (m.channel_id, m.telegram_msg_id)
+            cached = self._format_cache.get(key)
+            if cached is not None:
+                return cached
+            result = self._format(m)
+            self._format_cache[key] = result
+            return result
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -151,12 +176,19 @@ class MessageListModel(QAbstractListModel):
     # ---- 业务接口(给 MessageView 调) ----
 
     def append(self, m: MessageDTO) -> None:
-        """实时追加一条 — 已存在替换,否则插入头部(newest-first)。"""
+        """实时追加一条 — 已存在替换,否则插入头部(newest-first)。
+
+        2026-09-15 v1.7.5 PR #9 perf:`deque.appendleft` 替 `list.insert(0)` 拿到
+        O(1) head-insert(原 list.insert(0) 是 O(N) Python element shift)。
+        `_index_of` bump 仍是 O(N)(所有现有 row 索引 +1),但去掉了 `_row_to_key`
+        O(N log N) sort + O(N) shift — 单条 append 总开销从 O(N log N) 降到 O(N)。
+        """
         key = (m.channel_id, m.telegram_msg_id)
         if key in self._index_of:
             # 已存在 — 文本可能更新(edit),替换那一行
             row = self._index_of[key]
-            self._items[row] = m
+            self._items[row] = m  # deque 支持 __setitem__
+            self._format_cache.pop(key, None)  # PR #9:失效缓存
             idx = self.index(row, 0)
             self.dataChanged.emit(
                 idx,
@@ -164,60 +196,52 @@ class MessageListModel(QAbstractListModel):
                 [self.DtoRole, self.FormattedRole, self.HiddenRole, self.HasMediaRole],
             )
             return
-        # 插入头部
+        # 插入头部 — O(1) via deque.appendleft
         self.beginInsertRows(QModelIndex(), 0, 0)
-        self._items.insert(0, m)
-        # _index_of 全部 +1(现有 row 都向后挪 1)
+        self._items.appendleft(m)
+        # _index_of 全部 +1(现有 row 都向后挪 1)— O(N) bump
         for k in self._index_of:
             self._index_of[k] += 1
         self._index_of[key] = 0
-        # 2026-09-03 v1.5.4 PR #P1:同步维护反向索引 — 镜像 _index_of 偏移。
-        # **必须反向迭代** sorted(keys, reverse=True):正向迭代时,先 pop(r) 再 set
-        # _row_to_key[r+1] 会**覆盖**下一个迭代要 pop 的位置(后续 r+1 拿到的是刚
-        # set 的值,而非原值,链式覆盖最终只剩最后一个 entry)。反向迭代 r 从大到小,
-        # set r+1 不影响当前/更小的 keys — 安全。
-        for r in sorted(self._row_to_key.keys(), reverse=True):
-            self._row_to_key[r + 1] = self._row_to_key.pop(r)
-        self._row_to_key[0] = key
         self.endInsertRows()
-        # MAX_ITEMS 截断(尾部删)
+        # MAX_ITEMS 截断(尾部删,走 O(1) deque.pop())
         while len(self._items) > MessageView.MAX_ITEMS:
             self._truncate_tail()
 
     def _truncate_tail(self) -> None:
-        """删尾部一行 — 同步 _index_of + _row_to_key 偏移。"""
-        last = len(self._items) - 1
-        if last < 0:
+        """删尾部一行(物理位置 len-1 = 最旧)— 不需要 _index_of shift。
+
+        newest-first 布局:`_items[0]` = newest(刚 appendleft 进来的),
+        `_items[len-1]` = oldest。MAX_ITEMS 超限要砍最旧 = 删 row len-1。
+        删最末 row 不影响其他 row 的 index(`_index_of` 存的值不变)。
+        """
+        if not self._items:
             return
+        last = len(self._items) - 1
         self.beginRemoveRows(QModelIndex(), last, last)
-        # 2026-09-03 v1.5.4 PR #P1:O(1) 拿 key(原 O(N) `next(... if v == last)` 退化为 N²)
-        removed_key = self._row_to_key.pop(last, None)
-        if removed_key is not None:
-            del self._index_of[removed_key]
-        del self._items[last]
+        # O(1) 拿 key:最旧的在 `_items[last]`(deque[-1] 也是 O(1))。
+        oldest = self._items[last]
+        removed_key = (oldest.channel_id, oldest.telegram_msg_id)
+        del self._index_of[removed_key]
+        self._format_cache.pop(removed_key, None)  # PR #9:失效缓存
+        self._items.pop()  # O(1) deque tail pop — 删最末 row
         self.endRemoveRows()
 
     def remove_by_key(self, channel_id: int, telegram_msg_id: int) -> None:
-        """按 (channel_id, telegram_msg_id) 删一行 — 找不到 idempotent。"""
+        """按 (channel_id, telegram_msg_id) 删一行 — 找不到 idempotent。
+
+        2026-09-15 PR #9:deque 不支持 `del d[i]`,改用 slice rebuild。仍是 O(N),
+        但 remove_by_key 不是热路径(MessageDeleted 频率低)。
+        """
         key = (channel_id, telegram_msg_id)
         row = self._index_of.pop(key, None)
         if row is None:
             return
         self.beginRemoveRows(QModelIndex(), row, row)
-        del self._items[row]
-        # 2026-09-03 v1.5.4 PR #P1:同步删 _row_to_key + row > row 的 entry -1。
-        # 先显式 pop(row),然后剩下的 > row 全部 -1。
-        # 若不先 pop,删除最后一行的边界 case(row == len-1)会留下 stale entry —
-        # 因为 `r > row` 分支不会触碰 r == row,row 自己永远不会被清。
-        self._row_to_key.pop(row, None)
-        # 2026-09-03 v1.5.4 PR #P1:必须按**数值升序**处理 — append 阶段用 reverse 写,
-        # 导致 `_row_to_key` 的插入顺序与 key 数值顺序相反(大 key 先插入);
-        # 用 `list(self._row_to_key.keys())` 按插入序遍历会先 pop 大 row,但 set r-1
-        # 又把刚移走的值塞回去 — cascading overwrite 丢 entry。sorted() 按数值序遍历,
-        # set r-1 不影响更小的 row,安全。
-        for r in sorted(r for r in self._row_to_key if r > row):
-            self._row_to_key[r - 1] = self._row_to_key.pop(r)
-        # 后面 row index -1(_index_of 镜像)
+        # 重建 deque 跳过 `row` 位 — O(N)
+        self._items = deque(m for i, m in enumerate(self._items) if i != row)
+        self._format_cache.pop(key, None)  # PR #9:失效缓存
+        # row > row 的 entry -1
         for k in self._index_of:
             if self._index_of[k] > row:
                 self._index_of[k] -= 1
@@ -229,27 +253,43 @@ class MessageListModel(QAbstractListModel):
         `messages` 按 date ASC 传入(latest 在末尾)— model 保持传入顺序,
         caller 负责保证 newest-last。**不要 reversed** —— 反向迭代会让
         最旧消息顶到 row 0,顺序颠倒(同 v1.5.2 PR #B5 set_messages 语义)。
+
+        2026-09-15 v1.7.5 PR #9:`_items` 改 deque,`_row_to_key` 删,
+        `_format_cache` 全清(`messages` 列表里的 key 集合变了),
+        并通知 delegate 清 `_doc_cache` / `_size_hint_cache`。
         """
         self.beginResetModel()
-        self._items = list(messages)
+        self._items = deque(messages)
         self._index_of = {(m.channel_id, m.telegram_msg_id): i for i, m in enumerate(self._items)}
-        # 2026-09-03 v1.5.4 PR #P1:批量构反向索引(与 _index_of 镜像)
-        self._row_to_key = {i: (m.channel_id, m.telegram_msg_id) for i, m in enumerate(self._items)}
+        self._format_cache.clear()  # PR #9:cache 全清(消息集合可能全换)
+        # PR #9:delegate cache 全清 — 旧 (cid, mid) 文档 + sizeHint 都失效。
+        if self._delegate is not None:
+            self._delegate.clear_caches()
         # MAX_ITEMS 截断(尾部删,不走 beginRemoveRows 因为已在 resetModel 中)
         while len(self._items) > MessageView.MAX_ITEMS:
             self._truncate_tail_inplace()
         self.endResetModel()
 
+    def set_delegate(self, delegate: MessageItemDelegate | None) -> None:
+        """PR #9:注入 delegate 引用 — `reset()` 时通知其清 cache。
+
+        `MessageView.__init__` 里 model 与 delegate 都建好后调用一次。
+        单测里没 delegate 时可保持 None,不影响行为。
+        """
+        self._delegate = delegate
+
     def _truncate_tail_inplace(self) -> None:
-        """reset 中用 — 不走 beginRemoveRows/endRemoveRows(已在 resetModel 中)。"""
+        """reset 中用 — 不走 beginRemoveRows/endRemoveRows(已在 resetModel 中)。
+
+        PR #9:对应 `_truncate_tail`,但省略 Qt signal。`_items.pop()` 删最旧。
+        """
         if not self._items:
             return
-        last = len(self._items) - 1
-        # 2026-09-03 v1.5.4 PR #P1:O(1) 拿 key(原 O(N) `next(... if v == last)` 退化为 N²)
-        removed_key = self._row_to_key.pop(last, None)
-        if removed_key is not None:
-            del self._index_of[removed_key]
-        del self._items[last]
+        oldest = self._items[len(self._items) - 1]
+        removed_key = (oldest.channel_id, oldest.telegram_msg_id)
+        del self._index_of[removed_key]
+        self._format_cache.pop(removed_key, None)
+        self._items.pop()  # O(1) deque tail pop — 删最旧
 
     def set_filter(
         self,
@@ -278,8 +318,13 @@ class MessageListModel(QAbstractListModel):
         self.dataChanged.emit(top, bottom, [self.HiddenRole])
 
     def set_channel_titles(self, titles: dict[int, str]) -> None:
-        """设 channel_titles + FormattedRole 全部失效(影响 head 频道名)。"""
+        """设 channel_titles + FormattedRole 全部失效(影响 head 频道名)。
+
+        PR #9:channel titles 影响每行的 head 频道名 → 全表 FormattedRole 都失效,
+        缓存全清。
+        """
         self._channel_titles = dict(titles)
+        self._format_cache.clear()  # PR #9:全表失效
         if self.rowCount() == 0:
             return
         top = self.index(0, 0)
@@ -295,6 +340,7 @@ class MessageListModel(QAbstractListModel):
             self.append(msg)
             return
         self._items[row] = msg
+        self._format_cache.pop(key, None)  # PR #9:失效缓存
         idx = self.index(row, 0)
         self.dataChanged.emit(
             idx,
@@ -304,7 +350,8 @@ class MessageListModel(QAbstractListModel):
 
     def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
         """异步下载结束回调:更新 DTO.media + 重 format。"""
-        row = self._index_of.get((channel_id, telegram_msg_id))
+        key = (channel_id, telegram_msg_id)
+        row = self._index_of.get(key)
         if row is None:
             return
         dto = self._items[row]
@@ -314,6 +361,7 @@ class MessageListModel(QAbstractListModel):
             ):
                 dto.media[i] = media
                 break
+        self._format_cache.pop(key, None)  # PR #9:失效缓存
         idx = self.index(row, 0)
         self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
 
@@ -342,6 +390,7 @@ class MessageListModel(QAbstractListModel):
             return
         # MessageDTO 是 mutable dataclass,直接赋值即可。
         self._items[row].reactions = list(reactions) if reactions else None
+        self._format_cache.pop((channel_id, telegram_msg_id), None)  # PR #9:失效缓存
         idx = self.index(row, 0)
         self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
 
@@ -439,7 +488,38 @@ class MessageItemDelegate(QStyledItemDelegate):
     → 改走 `option.palette.brush(QPalette.AlternateBase)`(Qt 主题感知,
     暗色主题下自动给 darker shade)。同时支持 `style.qss` `#messageMediaRow`
     selector 自定义(若 QSS 设置 QPalette,override 优先级 QtStyle 决定)。
+
+    2026-09-15 v1.7.5 PR #9 perf:加 `_size_hint_cache` + `_doc_cache` —
+    - `_size_hint_cache: dict[(cid, mid, width), QSize]` — sizeHint O(1) 命中,
+      避免每帧 QTextDocument 重建(setHtml + setTextWidth + size + idealWidth)
+      单 row paint ~5-10ms → 缓存命中 ~0.1ms。
+    - `_doc_cache: dict[(cid, mid), QTextDocument]` — paint 命中复用 doc 实例,
+      避免 setHtml 重做。LRU 200(队列里 FIFO 淘汰,贴近真实窗口可见行 30-50,
+      留 4x 缓冲)。dataChanged 时由调用方主动 clear(详见 `clear_caches`)。
     """
+
+    # PR #9:doc 缓存上限。10K 行 × ~30KB doc ≈ 300MB,LRU 200 ≈ 6MB 可接受。
+    _DOC_CACHE_MAX = 200
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        # PR #9 perf:sizeHint 缓存 — keyed by (cid, mid, width)。width
+        # 变化(窗口 resize)时本 row 自然 miss → 重算 + 缓存。
+        self._size_hint_cache: dict[tuple[int, int, int], QSize] = {}
+        # PR #9 perf:paint doc 缓存 — keyed by (cid, mid),LRU 200 淘汰。
+        # doc 实例在 `paint` 内 reuse,只调 `setTextWidth(rect.width())`
+        # 适配当前行宽 — 比重建省一次 setHtml。
+        self._doc_cache: dict[tuple[int, int], QTextDocument] = {}
+        self._doc_cache_lru: list[tuple[int, int]] = []  # FIFO 队列
+
+    def clear_caches(self) -> None:
+        """2026-09-15 v1.7.5 PR #9:数据全表失效(set_messages / reset /
+        set_channel_titles / 大批 append)时清两个 cache。普通编辑路径由
+        model.dataChanged([FormattedRole]) 自动覆盖 → 不必每条都 clear。
+        """
+        self._size_hint_cache.clear()
+        self._doc_cache.clear()
+        self._doc_cache_lru.clear()
 
     def paint(
         self,
@@ -457,9 +537,23 @@ class MessageItemDelegate(QStyledItemDelegate):
         text = index.data(MessageListModel.FormattedRole) or ""
         if not text:
             return
-        doc = QTextDocument()
-        doc.setDefaultFont(option.font)
-        doc.setHtml(self._plain_to_html(text))
+        # 2026-09-15 v1.7.5 PR #9 perf:复用缓存 QTextDocument — 命中时省
+        # setHtml 一遍(对长消息 ~1-3ms);未命中时新建 + 缓存 + 写 LRU。
+        dto = index.data(MessageListModel.DtoRole)
+        key = (dto.channel_id, dto.telegram_msg_id) if isinstance(dto, MessageDTO) else None
+        doc: QTextDocument | None = None
+        if key is not None and key in self._doc_cache:
+            doc = self._doc_cache[key]
+        else:
+            doc = QTextDocument()
+            doc.setDefaultFont(option.font)
+            doc.setHtml(self._plain_to_html(text))
+            if key is not None:
+                self._doc_cache[key] = doc
+                self._doc_cache_lru.append(key)
+                if len(self._doc_cache_lru) > self._DOC_CACHE_MAX:
+                    evict = self._doc_cache_lru.pop(0)
+                    self._doc_cache.pop(evict, None)
         painter.save()
         painter.translate(option.rect.topLeft())
         doc.setTextWidth(option.rect.width())
@@ -474,13 +568,29 @@ class MessageItemDelegate(QStyledItemDelegate):
         text = index.data(MessageListModel.FormattedRole) or ""
         if not text:
             return super().sizeHint(option, index)
+        # 2026-09-15 v1.7.5 PR #9 perf:sizeHint 缓存。key = (cid, mid, width)。
+        # width 变化 → miss → 重算并覆盖缓存(width 是 cache key 的一部分)。
+        dto = index.data(MessageListModel.DtoRole)
+        if isinstance(dto, MessageDTO):
+            width = option.rect.width() if option.rect.width() > 0 else 280
+            cache_key = (dto.channel_id, dto.telegram_msg_id, int(width))
+            cached = self._size_hint_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            doc = QTextDocument()
+            doc.setDefaultFont(option.font)
+            doc.setHtml(self._plain_to_html(text))
+            doc.setTextWidth(width)
+            size = QSize(int(doc.idealWidth()), int(doc.size().height()) + 8)
+            self._size_hint_cache[cache_key] = size
+            return size
+        # 没 DTO(model 直接给 FormattedRole)→ 走老路径
         doc = QTextDocument()
         doc.setDefaultFont(option.font)
         doc.setHtml(self._plain_to_html(text))
-        doc.setTextWidth(option.rect.width() if option.rect.width() > 0 else 280)
+        width = option.rect.width() if option.rect.width() > 0 else 280
+        doc.setTextWidth(width)
         # 高度 = 内容 + 上下各 4px padding
-        from PySide6.QtCore import QSize
-
         return QSize(int(doc.idealWidth()), int(doc.size().height()) + 8)
 
     @staticmethod
@@ -542,6 +652,10 @@ class MessageView(QListView):
         self.setModel(self._model)
 
         self._delegate = MessageItemDelegate(self)
+        # 2026-09-15 v1.7.5 PR #9:model 注入 delegate 引用,`reset()` 时通知
+        # 清 doc / sizeHint cache;避免 set_messages 切换频道后 paint 命中
+        # 旧消息的 doc。
+        self._model.set_delegate(self._delegate)
         self.setItemDelegate(self._delegate)
 
         # 点击 → 取 DTO → emit
@@ -600,17 +714,18 @@ class MessageView(QListView):
         正确处理(替换 text 不增 row)。这是预期行为。
 
         空列表 = 清空视图 + `_index_of` 表(同 `clear_view()`)。
+
+        2026-09-15 v1.7.5 PR #9:整批替换只 emit 1 次 `modelReset`,避免
+        `clear_view() + reset(...)` 双 reset 带来的 2 次 signal + 2 次
+        delegate cache 清。
         """
-        self.clear_view()
         # 2026-09-14 v1.7.5 PR #5 (P0-I):set_messages 是批量替换,清空浮条计数
         self.clear_new_msg_counter()
-        # 2026-09-14 v1.7.5 PR #9 perf hint:set_messages 走单次 modelReset
-        # 而非 N×append(避免 rowsInserted 触发浮条计数误累加)。model.reset
-        # 接受按 list 顺序存储,而 view 是 newest-first(top=row 0 是最新),
-        # 所以 caller 给 messages 是 date ASC(newest-last)→ model.reset
-        # 时 caller 调 reversed 传入。详细见 _model.reset。
-        if messages:
-            self._model.reset(list(reversed(messages)))
+        # 2026-09-15 v1.7.5 PR #9:单次 reset(new=[] 也能正确清空;model.reset
+        # 已分支处理空列表)。`model.reset` 接受按 list 顺序存储,而 view 是
+        # newest-first(top=row 0 是最新),所以 caller 给 messages 是 date ASC
+        # (newest-last)→ caller 调 reversed 传入。详细见 _model.reset。
+        self._model.reset(list(reversed(messages)) if messages else [])
         # 截断后 apply 现有 filter(set_messages 整批替换,apply 一次省心)
         # 2026-09-14 v1.7.5 PR #8:apply 当前完整 filter state(text + 3 元数据)。
         if (
