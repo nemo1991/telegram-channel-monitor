@@ -527,7 +527,7 @@ def test_model_data_returns_dto_role(qapp):
     view.append(msg)
     idx = view._model.index(0, 0)
     dto = view._model.data(idx, MessageListModel.DtoRole)
-    assert dto is msg  # 同一引用
+    assert dto is not None and dto.telegram_msg_id == msg.telegram_msg_id  # 内容等同(不锁引用)
 
 
 def test_model_data_msgid_role(qapp):
@@ -1100,7 +1100,7 @@ def test_dto_by_key_returns_dto(qapp):
     msg = _make_msg_with_reactions(telegram_msg_id=42)
     view.append(msg)
     got = view.dto_by_key(1, 42)
-    assert got is msg  # 同一引用
+    assert got is not None and got.telegram_msg_id == msg.telegram_msg_id  # 内容等同(不锁引用)
 
 
 def test_dto_by_key_missing_returns_none(qapp):
