@@ -72,7 +72,7 @@ class ChannelUnsubscribed(Event):
 class ChannelTitleChanged(Event):
     """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatTitle` 推送频道改名。
 
-    UI `_ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
+    UI `ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
     """
 
     channel_id: int = 0

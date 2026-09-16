@@ -529,15 +529,15 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
 
 
 # ============================================================
-# _ChannelListCard — 抽出后的 reusable card helper
+# ChannelListCard — 抽出后的 reusable card helper
 # ============================================================
 
 
 def test_channel_list_card_set_items_sorts_and_sets_icons(qapp):
-    """直接测 `_ChannelListCard`:set_items 按 title 排序 + kind icon + count label。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    """直接测 `ChannelListCard`:set_items 按 title 排序 + kind icon + count label。"""
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(
+    card = ChannelListCard(
         title="已加入频道",
         action_label="刷新",
     )
@@ -555,9 +555,9 @@ def test_channel_list_card_set_items_sorts_and_sets_icons(qapp):
 
 def test_channel_list_card_clear_items_hides_data(qapp):
     """clear_items 把 list 清空 + count label 重置。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(title="已监听", action_label="同步")
+    card = ChannelListCard(title="已监听", action_label="同步")
     card.set_items([ChannelDTO(id=1, title="x", kind="channel")], count_template="已监听 · {n}")
     assert card.lst.count() == 1
     card.clear_items(count_template="已监听 · {n}")
@@ -567,9 +567,9 @@ def test_channel_list_card_clear_items_hides_data(qapp):
 
 def test_channel_list_card_add_remove_item(qapp):
     """add_item 追加,remove_by_cid 移除(返回 bool)。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(title="x", action_label="y")
+    card = ChannelListCard(title="x", action_label="y")
     card.add_item(ChannelDTO(id=10, title="c10", kind="channel"))
     card.add_item(ChannelDTO(id=20, title="c20", kind="channel"))
     assert card.lst.count() == 2
@@ -582,9 +582,9 @@ def test_channel_list_card_add_remove_item(qapp):
 
 def test_channel_list_card_apply_filter(qapp):
     """apply_filter 按 title/username 过滤;空 text = 全显。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(title="x", action_label="y")
+    card = ChannelListCard(title="x", action_label="y")
     chs = [
         ChannelDTO(id=1, title="Python Daily", kind="channel", username="pydaily"),
         ChannelDTO(id=2, title="Rust Weekly", kind="channel", username="rustw"),
@@ -615,9 +615,9 @@ def test_channel_list_card_apply_filter(qapp):
 
 def test_channel_list_card_selected_cids_when_no_selection(qapp):
     """默认 SingleSelection + 没选 → selected_cids 返 []。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(title="x", action_label="y")
+    card = ChannelListCard(title="x", action_label="y")
     card.set_items([ChannelDTO(id=1, title="c1", kind="channel")], count_template="{n}")
     assert card.selected_cids() == []
     assert card.all_cids() == [1]
@@ -627,9 +627,9 @@ def test_channel_list_card_extended_selection_mode(qapp):
     """`extended_selection=True` 把 list 切到 ExtendedSelection(用来多选 sync)。"""
     from PySide6.QtWidgets import QAbstractItemView
 
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(
+    card = ChannelListCard(
         title="已监听",
         action_label="同步",
         extended_selection=True,
@@ -639,9 +639,9 @@ def test_channel_list_card_extended_selection_mode(qapp):
 
 def test_channel_list_card_empty_hint_visibility_toggles(qapp):
     """配置了 empty_hint_spec:数据 0 → hint 显示,有数据 → 隐藏。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(
+    card = ChannelListCard(
         title="x",
         action_label="y",
         empty_hint_spec=("💡", "空", "请加数据"),
@@ -657,9 +657,9 @@ def test_channel_list_card_empty_hint_visibility_toggles(qapp):
 
 def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
     """action_clicked / item_double_clicked 信号正常触发。"""
-    from tgmonitor.ui.widgets.channel_widget import _ChannelListCard
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = _ChannelListCard(title="x", action_label="act")
+    card = ChannelListCard(title="x", action_label="act")
     action_calls: list[int] = []
     card.action_clicked.connect(lambda: action_calls.append(1))
     card.btn_action.click()

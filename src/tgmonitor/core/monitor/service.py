@@ -181,7 +181,7 @@ class MonitorService:
         # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
         self.bus.subscribe(ChannelMetadataChanged, self._handle_channel_metadata)
         # 2026-09-03 v1.6.0 PR #Q2:订阅普通 chat 改名 / 改头像事件。直接落库
-        # (channel_id 即 chat_id,无需反查);UI 端 `_ChannelListCard` 也会
+        # (channel_id 即 chat_id,无需反查);UI 端 `ChannelListCard` 也会
         # 订阅同一事件实时刷新卡片。
         self.bus.subscribe(ChannelTitleChanged, self._handle_channel_title_changed)
         self.bus.subscribe(ChannelPhotoChanged, self._handle_channel_photo_changed)
@@ -892,7 +892,7 @@ class MonitorService:
     ) -> None:
         """2026-09-03 v1.6.0 PR #Q2:`updateChatTitle` → 落库 title。
 
-        UI 端 `_ChannelListCard` 同时订阅此事件实时刷卡片;此处只负责
+        UI 端 `ChannelListCard` 同时订阅此事件实时刷卡片;此处只负责
         storage 持久化。不存在 channel 时 idempotent 不抛(TDLib 偶发对
         陈年 chat 推 metadata update,落库时机晚于本 update)。
         """
@@ -925,7 +925,7 @@ class MonitorService:
         - None → 不动字段(等价于其他字段 None 语义;COALESCE 兜底)
 
         三态区分让 TDLib 推送「删头像」与「不动头像」可被观测。
-        UI 端 `_ChannelListCard` 订阅此事件实时刷图标。
+        UI 端 `ChannelListCard` 订阅此事件实时刷图标。
         """
         try:
             if event.local_path is None:

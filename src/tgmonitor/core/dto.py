@@ -33,7 +33,7 @@ class ChannelDTO:
     is_subscribed: bool = False
     last_synced_at: datetime | None = None
     # 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推 TDLib 本地头像文件路径;
-    # None = 头像被删 / 从未设。UI `_ChannelListCard` 据此决定是否走 placeholder。
+    # None = 头像被删 / 从未设。UI `ChannelListCard` 据此决定是否走 placeholder。
     photo_local_key: str | None = None
     # 2026-09-04 v1.6.4:spammer 过滤 UI 用。`is_verified` / `is_scam` /
     # `is_fake` 是 TDLib `Supergroup` 顶层字段(频道群组都有);`has_protected_content`
