@@ -330,8 +330,11 @@ class TdlibTelegramClient(_AiClient):
         self._state_event.set()
         if self._bus is not None:
             try:
-                # 用 fire-and-forget task — 不要 await,避免让 `_updates_loop` 卡住
-                asyncio.create_task(self._safe_publish_state(new_state, detail))
+                # PR 1b:fire-and-forget,任务注册到 `bus._inflight` 给 `flush()` 等。
+                # 直接 create_task + 手动注册 — 不用 helper,避免 MagicMock fake_client 绕开。
+                task = asyncio.create_task(self._safe_publish_state(new_state, detail))
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
             except Exception:  # noqa: BLE001
                 log.exception("scheduling LoginStateChanged failed")
 
@@ -594,7 +597,10 @@ class TdlibTelegramClient(_AiClient):
             new_state = _CONN_STATE_MAP.get(state_type, "unknown")
             log.info("tdlib connection state → %s (%s)", new_state, state_type)
             if self._bus is not None:
-                asyncio.create_task(self._safe_publish_conn_state(new_state))
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                task = asyncio.create_task(self._safe_publish_conn_state(new_state))
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("connection state handling failed")
 
@@ -628,14 +634,16 @@ class TdlibTelegramClient(_AiClient):
                 len(new_reactions),
             )
             if self._bus is not None:
-                asyncio.create_task(
-                    self._safe_publish_interactions(
-                        chat_id,
-                        msg_id,
-                        new_views,
-                        new_reactions,
-                    )
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                coro = self._safe_publish_interactions(
+                    chat_id,
+                    msg_id,
+                    new_views,
+                    new_reactions,
                 )
+                task = asyncio.create_task(coro)
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("updateMessageInteractionInfo handling failed")
 
@@ -685,12 +693,14 @@ class TdlibTelegramClient(_AiClient):
             )
             if self._bus is not None:
                 # 每条 msg_id 单独 publish — UI 订阅端粒度更细。
-                asyncio.create_task(
-                    self._safe_publish_bulk_delete(
-                        int(chat_id),
-                        [int(m) for m in msg_ids],
-                    )
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                coro = self._safe_publish_bulk_delete(
+                    int(chat_id),
+                    [int(m) for m in msg_ids],
                 )
+                task = asyncio.create_task(coro)
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("updateDeleteMessages handling failed")
 
@@ -743,13 +753,15 @@ class TdlibTelegramClient(_AiClient):
                 is_pinned,
             )
             if self._bus is not None:
-                asyncio.create_task(
-                    self._safe_publish_pin_changed(
-                        int(chat_id),
-                        int(msg_id),
-                        bool(is_pinned),
-                    )
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                coro = self._safe_publish_pin_changed(
+                    int(chat_id),
+                    int(msg_id),
+                    bool(is_pinned),
                 )
+                task = asyncio.create_task(coro)
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("updateMessageIsPinned handling failed")
 
@@ -805,15 +817,17 @@ class TdlibTelegramClient(_AiClient):
                 new_has_protected,
             )
             if self._bus is not None:
-                asyncio.create_task(
-                    self._safe_publish_channel_metadata(
-                        channel_id=int(cid),
-                        title=new_title,
-                        username=new_username,
-                        member_count=None,
-                        has_protected_content=new_has_protected,
-                    )
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                coro = self._safe_publish_channel_metadata(
+                    channel_id=int(cid),
+                    title=new_title,
+                    username=new_username,
+                    member_count=None,
+                    has_protected_content=new_has_protected,
                 )
+                task = asyncio.create_task(coro)
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("updateChannel handling failed")
 
@@ -854,16 +868,18 @@ class TdlibTelegramClient(_AiClient):
                 sg_is_fake,
             )
             if self._bus is not None:
-                asyncio.create_task(
-                    self._safe_publish_supergroup_metadata(
-                        supergroup_id=int(sid),
-                        member_count=member_count,
-                        username=username,
-                        is_verified=sg_is_verified,
-                        is_scam=sg_is_scam,
-                        is_fake=sg_is_fake,
-                    )
+                # PR 1b:直接 create_task + 注册到 `bus._inflight` 给测试 `flush()` 等。
+                coro = self._safe_publish_supergroup_metadata(
+                    supergroup_id=int(sid),
+                    member_count=member_count,
+                    username=username,
+                    is_verified=sg_is_verified,
+                    is_scam=sg_is_scam,
+                    is_fake=sg_is_fake,
                 )
+                task = asyncio.create_task(coro)
+                self._bus._inflight.add(task)
+                task.add_done_callback(self._bus._inflight.discard)
         except Exception:  # noqa: BLE001
             log.exception("updateSupergroup handling failed")
 
@@ -889,8 +905,10 @@ class TdlibTelegramClient(_AiClient):
             if self._bus is not None:
                 from tgmonitor.core.events import ChannelTitleChanged
 
-                asyncio.create_task(
-                    self._bus.publish(ChannelTitleChanged(channel_id=chat_id, new_title=title))
+                # PR 1b:`publish_async` 注册 task 到 `_inflight`,测试可 `await bus.flush()`
+                # 等投递完成 — 替代 `await asyncio.sleep(0.05)`。
+                self._bus.publish_async(
+                    ChannelTitleChanged(channel_id=chat_id, new_title=title)
                 )
         except Exception:  # noqa: BLE001
             log.exception("updateChatTitle handling failed chat_id=%s", chat_id)
@@ -918,10 +936,9 @@ class TdlibTelegramClient(_AiClient):
             if self._bus is not None:
                 from tgmonitor.core.events import ChannelPhotoChanged
 
-                asyncio.create_task(
-                    self._bus.publish(
-                        ChannelPhotoChanged(channel_id=chat_id, local_path=local_path)
-                    )
+                # PR 1b:`publish_async` — 测试可用 `bus.flush()` 等投递完成。
+                self._bus.publish_async(
+                    ChannelPhotoChanged(channel_id=chat_id, local_path=local_path)
                 )
         except Exception:  # noqa: BLE001
             log.exception("updateChatPhoto handling failed chat_id=%s", chat_id)

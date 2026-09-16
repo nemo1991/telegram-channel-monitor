@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -83,8 +82,8 @@ async def test_on_chat_title_emits_event(fake_client: MagicMock, bus: EventBus) 
     update = _FakeTdlibObject(chat_id=12345, title="新频道名")
     # handler 签名 (self, client_self, update) — fake_client 同时充当 self 和 client_self
     await TdlibTelegramClient._on_chat_title(fake_client, fake_client, update)
-    # 等 in-flight publish task 完成
-    await asyncio.sleep(0.05)
+    # PR 1b:`bus.publish_async` 注册 task 到 `bus._inflight`,`flush()` 等投递完成。
+    await bus.flush()
     assert len(received) == 1
     assert received[0].channel_id == 12345
     assert received[0].new_title == "新频道名"
@@ -109,7 +108,7 @@ async def test_on_chat_title_invalid_payload_no_event(
     # 缺 chat_id
     update2 = _FakeTdlibObject(title="孤 title")
     await TdlibTelegramClient._on_chat_title(fake_client, fake_client, update2)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert received == []
 
 
@@ -127,7 +126,7 @@ async def test_on_chat_photo_with_path_emits_event(fake_client: MagicMock, bus: 
     photo = {"local": {"path": "/tmp/tdlib/photo_12345.jpg"}}
     update = _FakeTdlibObject(chat_id=12345, photo=photo)
     await TdlibTelegramClient._on_chat_photo(fake_client, fake_client, update)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert len(received) == 1
     assert received[0].channel_id == 12345
     assert received[0].local_path == "/tmp/tdlib/photo_12345.jpg"
@@ -148,7 +147,7 @@ async def test_on_chat_photo_none_emits_event_with_none(
 
     update = _FakeTdlibObject(chat_id=12345, photo=None)
     await TdlibTelegramClient._on_chat_photo(fake_client, fake_client, update)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert len(received) == 1
     assert received[0].channel_id == 12345
     assert received[0].local_path is None
@@ -222,7 +221,7 @@ async def test_on_message_pin_changed_publishes_event(
 
     update = _FakeTdlibObject(chat_id=12345, message_id=99, is_pinned=True)
     await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert len(received) == 1
     assert received[0].channel_id == 12345
     assert received[0].telegram_msg_id == 99
@@ -231,7 +230,7 @@ async def test_on_message_pin_changed_publishes_event(
     # False 路径
     update2 = _FakeTdlibObject(chat_id=12345, message_id=100, is_pinned=False)
     await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update2)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert len(received) == 2
     assert received[1].is_pinned is False
 
@@ -253,13 +252,13 @@ async def test_on_message_pin_changed_missing_fields_silent(
     # 缺 chat_id
     update = _FakeTdlibObject(message_id=1, is_pinned=True)
     await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert received == []
 
     # 缺 is_pinned
     update2 = _FakeTdlibObject(chat_id=100, message_id=1)
     await TdlibTelegramClient._on_message_pin_changed(fake_client, fake_client, update2)
-    await asyncio.sleep(0.05)
+    await bus.flush()
     assert received == []
 
 

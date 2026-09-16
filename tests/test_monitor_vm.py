@@ -36,9 +36,7 @@ async def test_vm_emits_signal_on_message_interactions_changed() -> None:
         reactions=[ReactionDTO(emoji="🔥", count=5)],
     )
     await bus.publish(payload)
-    # 等 in-flight publish task 完成
-    await asyncio.sleep(0.05)
-
+    # PR 1b:`await bus.publish()` 已经 await 所有 subscriber 协程完成 — 旧 `asyncio.sleep(0.05)` 是冗余等待。
     assert len(received) == 1
     assert received[0] is payload
     assert received[0].reactions is not None
@@ -54,7 +52,6 @@ async def test_vm_passes_through_none_reactions() -> None:
 
     payload = MessageInteractionsChanged(channel_id=100, telegram_msg_id=42, views=99)
     await bus.publish(payload)
-    await asyncio.sleep(0.05)
 
     assert len(received) == 1
     assert received[0].views == 99
@@ -85,5 +82,4 @@ async def test_vm_ignores_non_matching_event() -> None:
             )
         )
     )
-    await asyncio.sleep(0.05)
     assert received == []

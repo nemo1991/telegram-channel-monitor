@@ -75,7 +75,7 @@ async def test_set_state_emits_login_state_changed(settings, bus, stub_tdlib_ini
     async with make_client(settings, bus) as client:
         client._set_state("phone_required", detail="first")
         # 等 publish task 跑完
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert client._state == "phone_required"
         assert client._state_detail == "first"
         assert any(e.detail == "first" for e in captured)
@@ -83,12 +83,12 @@ async def test_set_state_emits_login_state_changed(settings, bus, stub_tdlib_ini
         # 同状态 + 同 detail → 不再 publish
         before = len(captured)
         client._set_state("phone_required", detail="first")
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert len(captured) == before
 
         # 状态变 + 新 detail → publish 新 detail(不被旧的 dedup 吞掉)
         client._set_state("phone_required", detail="second")
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert client._state_detail == "second"
         assert any(e.detail == "second" for e in captured)
 
@@ -138,7 +138,7 @@ async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_tdlib_
         await client._code_queue.put("00000")
         await asyncio.wait_for(client._check_authentication_code(), timeout=1.0)
 
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert any(e.source == "code" for e in captured)
         assert client._state == "code_required"
 
@@ -167,7 +167,7 @@ async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_td
 
         await client._password_queue.put("wrongpw")
         await asyncio.wait_for(client._check_authentication_password(), timeout=1.0)
-        await asyncio.sleep(0.05)
+        await bus.flush()
 
         assert any(e.source == "password" for e in captured)
         assert client._state == "password_required"
@@ -291,7 +291,7 @@ async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_
 
     async with make_client(settings, bus) as client:
         await client._publish_auth_error("code", "wrong code")
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert any(e.message == "wrong code" for e in parents)
 
 
@@ -984,7 +984,7 @@ async def test_connection_state_publishes_event(settings, bus, stub_tdlib_init) 
             {"@type": "updateConnectionState", "state": {"@type": "connectionStateReady"}}
         )
         await client._on_connection_state(client, update)
-        await asyncio.sleep(0.05)
+        await bus.flush()
         assert any(e.state == "ready" for e in captured)
 
 

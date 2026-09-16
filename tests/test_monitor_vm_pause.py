@@ -51,9 +51,7 @@ async def test_quit_pause_when_not_paused_calls_pause(vm, app_mock, bus) -> None
     app_mock.is_paused = False
     await bus.publish(QuitRequested(pause=True))
     # 等 in-flight publish task
-    import asyncio
-
-    await asyncio.sleep(0.05)
+    await bus.flush()
 
     app_mock.pause_monitor.assert_awaited_once()
     app_mock.resume_monitor.assert_not_awaited()
@@ -63,9 +61,7 @@ async def test_quit_pause_when_paused_calls_resume(vm, app_mock, bus) -> None:
     """已 paused 时收到 QuitRequested(pause=True) → 调 resume_monitor。"""
     app_mock.is_paused = True
     await bus.publish(QuitRequested(pause=True))
-    import asyncio
-
-    await asyncio.sleep(0.05)
+    await bus.flush()
 
     app_mock.resume_monitor.assert_awaited_once()
     app_mock.pause_monitor.assert_not_awaited()
@@ -76,9 +72,7 @@ async def test_quit_no_pause_emits_qt_signal(vm, app_mock, bus) -> None:
     received: list[None] = []
     vm.quit_requested.connect(lambda: received.append(None))
     await bus.publish(QuitRequested(pause=False))
-    import asyncio
-
-    await asyncio.sleep(0.05)
+    await bus.flush()
 
     assert len(received) == 1
     app_mock.pause_monitor.assert_not_awaited()
@@ -89,15 +83,13 @@ async def test_quit_pause_passes_source_tray(vm, app_mock, bus) -> None:
     """pause / resume 调用都带 source='tray'(从 tray 触发)。"""
     app_mock.is_paused = False
     await bus.publish(QuitRequested(pause=True))
-    import asyncio
-
-    await asyncio.sleep(0.05)
+    await bus.flush()
     app_mock.pause_monitor.assert_awaited_once_with(source="tray")
 
     # 切到 paused 状态再发
     app_mock.is_paused = True
     await bus.publish(QuitRequested(pause=True))
-    await asyncio.sleep(0.05)
+    await bus.flush()
     app_mock.resume_monitor.assert_awaited_once_with(source="tray")
 
 
@@ -106,8 +98,6 @@ async def test_quit_pause_non_quit_event_ignored(vm, app_mock, bus) -> None:
     from tgmonitor.core.events import Event
 
     await bus.publish(Event())
-    import asyncio
-
-    await asyncio.sleep(0.05)
+    await bus.flush()
     app_mock.pause_monitor.assert_not_awaited()
     app_mock.resume_monitor.assert_not_awaited()

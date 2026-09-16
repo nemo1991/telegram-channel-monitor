@@ -118,7 +118,8 @@ def test_close_callback_slow_does_not_hang(qapp, loop_thread):
         # 把自己注册出去,测试结束时 cancel,免得留下 pending Task 警告
         task_holder["t"] = asyncio.current_task()
         try:
-            await asyncio.sleep(30)
+            # closeEvent hard timeout is 10s; sleep > that to exercise abandon path.
+            await asyncio.sleep(15)
         except asyncio.CancelledError:
             pass
 
@@ -187,7 +188,8 @@ def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_th
     async def cb() -> None:
         task_holder["t"] = asyncio.current_task()
         try:
-            await asyncio.sleep(30)
+            # > 10s closeEvent timeout — exercises cancel-after-abandon path.
+            await asyncio.sleep(15)
         except asyncio.CancelledError:
             # closeEvent 已主动 cancel 我们,正常退出
             return
