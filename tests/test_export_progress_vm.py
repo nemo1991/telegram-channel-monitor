@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from tgmonitor.core.dto import ExportResult
 from tgmonitor.core.events import EventBus, ExportDone, ExportProgress
 from tgmonitor.core.monitor.service import MonitorService
@@ -34,7 +32,6 @@ def _make_vm() -> MonitorViewModel:
     return vm
 
 
-@pytest.mark.asyncio
 async def test_export_progress_emits_signal_with_event() -> None:
     """VM._on_export_progress 必须把 ExportProgress 实例透传给 signal。"""
     vm = _make_vm()
@@ -50,7 +47,6 @@ async def test_export_progress_emits_signal_with_event() -> None:
     assert received[0].total is None
 
 
-@pytest.mark.asyncio
 async def test_export_progress_ignores_other_event_types() -> None:
     """VM._on_export_progress 必须 isinstance 检查 — 其他事件不 emit signal。"""
     vm = _make_vm()
@@ -64,7 +60,6 @@ async def test_export_progress_ignores_other_event_types() -> None:
     assert received == []  # 没有 emit
 
 
-@pytest.mark.asyncio
 async def test_export_done_clears_export_task() -> None:
     """ExportDone 触发 vm._on_export_done 后,`_export_task` 必须清空。
 
@@ -87,7 +82,6 @@ async def test_export_done_clears_export_task() -> None:
     assert vm._export_task is None
 
 
-@pytest.mark.asyncio
 async def test_export_done_emits_signal() -> None:
     """ExportDone 成功路径必须 emit (result_dict, None) — 老 UI 依赖此信号。"""
     vm = _make_vm()
@@ -109,7 +103,6 @@ async def test_export_done_emits_signal() -> None:
     assert result_dict["message_count"] == 10
 
 
-@pytest.mark.asyncio
 async def test_export_done_error_emits_signal() -> None:
     """ExportDone 失败路径必须 emit (None, error_str) — UI 弹失败对话框。"""
     vm = _make_vm()
@@ -156,7 +149,6 @@ def test_cancel_current_export_noop_when_no_task() -> None:
     vm.cancel_current_export()  # 不抛
 
 
-@pytest.mark.asyncio
 async def test_export_progress_does_not_clear_task() -> None:
     """ExportProgress 不应清空 _export_task — 那是 ExportDone 的职责。
 

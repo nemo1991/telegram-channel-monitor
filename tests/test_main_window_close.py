@@ -23,15 +23,9 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMainWindow  # noqa: E402
+from PySide6.QtWidgets import QMainWindow  # noqa: E402
 
 from tgmonitor.ui.main_window import MainWindow  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 class _FakeMainWindow(MainWindow):

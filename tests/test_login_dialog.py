@@ -40,12 +40,6 @@ class _LoopThread:
         self.loop.run_forever()
 
 
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 @pytest.fixture
 def qloop() -> asyncio.AbstractEventLoop:
     """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。"""

@@ -321,20 +321,12 @@ async def test_app_login_state_machine(app, client):
 async def test_app_login_without_credentials_fails(tmp_path):
     """未配置凭据时,submit_phone() 应返回 ('error', ...) 而不是崩溃。"""
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.events import ErrorOccurred, EventBus
     from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
-    s = Settings(  # type: ignore[call-arg]
-        # 故意留空
-        api_id=0,
-        api_hash="",
-        phone="",
-        db_backend=DBBackend.JSONL,
-        db_root=tmp_path / "m",
-        objectstore_backend=ObjectStoreBackend.LOCAL,
-        objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
+    s = Settings.for_test(
+        api_id=0, api_hash="", phone="", db_root=tmp_path / "m", objectstore_root=tmp_path / "o"
     )
     bus = EventBus()
     errs: list[ErrorOccurred] = []

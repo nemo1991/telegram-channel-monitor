@@ -69,19 +69,15 @@ async def svc(tmp_path):
     await objects.connect()
 
     bus = EventBus()
-    from tgmonitor.core.config import MediaPolicy, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
-    settings = Settings(  # type: ignore[call-arg]
-        api_id=1,
-        api_hash="x" * 32,
+    settings = Settings.for_test(
         phone="+10000000000",
         session_dir=tmp_path / "session",
         objectstore_root=tmp_path / "media",
         data_root=tmp_path,
-        media_policy=MediaPolicy.METADATA,
     )
-    settings.ensure_dirs()
     return AppService(bus, FakeTelegramClient(), storage, objects, settings)
 
 

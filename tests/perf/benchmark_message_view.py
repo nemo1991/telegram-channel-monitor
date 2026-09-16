@@ -26,7 +26,6 @@ from datetime import UTC, datetime
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-
 from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
 
@@ -102,9 +101,7 @@ def test_format_cached_lookup_throughput(qapp: QApplication) -> None:
         for r in range(model.rowCount()):
             model.data(model.index(r, 0), MessageListModel.FormattedRole)
     elapsed = time.perf_counter() - t0
-    print(
-        f"\n  FormattedRole cached: 1K rows × 100 iter = 100k reads in {elapsed * 1000:7.1f}ms"
-    )
+    print(f"\n  FormattedRole cached: 1K rows × 100 iter = 100k reads in {elapsed * 1000:7.1f}ms")
 
 
 def test_size_hint_cached_lookup_throughput(qapp: QApplication) -> None:
@@ -132,9 +129,7 @@ def test_size_hint_cached_lookup_throughput(qapp: QApplication) -> None:
         for r in range(view.count()):
             delegate.sizeHint(option, view._model.index(r, 0))
     elapsed = time.perf_counter() - t0
-    print(
-        f"\n  sizeHint cached: 1K rows × 100 iter = 100k calls in {elapsed * 1000:7.1f}ms"
-    )
+    print(f"\n  sizeHint cached: 1K rows × 100 iter = 100k calls in {elapsed * 1000:7.1f}ms")
 
 
 # ============================================================

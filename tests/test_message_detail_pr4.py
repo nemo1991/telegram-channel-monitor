@@ -13,17 +13,9 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.core.dto import MessageDTO  # noqa: E402
 from tgmonitor.ui.widgets.message_detail import MessageDetail  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def _make_msg(cid: int = 1, mid: int = 100, text: str = "hello") -> MessageDTO:

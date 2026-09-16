@@ -4,27 +4,23 @@
 - VM 在 `_wire_bus` 订阅了 `MessageInteractionsChanged`
 - 收到事件后 emit `message_interactions_changed` signal(传给 MainWindow)
 - reactions=None / 非 None 两种 payload 都透传(下游 `live_view.refresh_reactions` 自行处理 None)
+
+**PR 1a**:`_FakeApp` 已 promote 到 `tests/fixtures/_fake_app.py`,此处 import 用。
 """
 
 from __future__ import annotations
 
 import asyncio
 
+from tests.fixtures._fake_app import FakeApp
 from tgmonitor.core.dto import ReactionDTO
 from tgmonitor.core.events import EventBus, MessageInteractionsChanged
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
 
-class _FakeApp:
-    """VM 只需要 `bus`;其它 AppService 接口 stub。"""
-
-    def __init__(self, bus: EventBus) -> None:
-        self.bus = bus
-
-
 def _make_vm(bus: EventBus) -> MonitorViewModel:
     loop = asyncio.new_event_loop()
-    return MonitorViewModel(_FakeApp(bus), monitor=None, loop=loop)  # type: ignore[arg-type]
+    return MonitorViewModel(FakeApp(bus), monitor=None, loop=loop)  # type: ignore[arg-type]
 
 
 async def test_vm_emits_signal_on_message_interactions_changed() -> None:

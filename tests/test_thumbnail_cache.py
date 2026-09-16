@@ -182,7 +182,6 @@ def test_cache_key_returns_none_when_no_key() -> None:
 # ---- AppService.load_thumbnail_bytes 三后端 ----
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_returns_none_for_failed(
     app: AppService,
     storage: StorageRepository,
@@ -201,7 +200,6 @@ async def test_load_thumbnail_bytes_returns_none_for_failed(
     assert await app.load_thumbnail_bytes(media) is None
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_local_backend(
     app: AppService,
     storage: StorageRepository,
@@ -224,7 +222,6 @@ async def test_load_thumbnail_bytes_local_backend(
     assert out == png
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_folder_backend(
     app: AppService,
     storage: StorageRepository,
@@ -253,7 +250,6 @@ async def test_load_thumbnail_bytes_folder_backend(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
     app: AppService,
 ) -> None:
@@ -273,7 +269,6 @@ async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_missing_key_returns_none(
     app: AppService,
     storage: StorageRepository,
@@ -290,7 +285,6 @@ async def test_load_thumbnail_bytes_missing_key_returns_none(
     assert out is None
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_uses_thumb_key_first(
     app: AppService,
     storage: StorageRepository,

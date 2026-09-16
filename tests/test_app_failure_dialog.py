@@ -14,14 +14,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from tgmonitor.app import _show_setup_failure_dialog
 
 
-@pytest.fixture
-def qt_app() -> QApplication:
-    """Ensure QApplication exists (offscreen)。"""
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 def test_dialog_runs_and_does_not_raise(
-    qt_app: QApplication,
+    qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """最简版本:mock QMessageBox.exec 替代真弹窗,验证 _show_setup_failure_dialog
@@ -50,7 +44,7 @@ def test_dialog_runs_and_does_not_raise(
 
 
 def test_dialog_handles_exception_with_empty_message(
-    qt_app: QApplication,
+    qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """异常 str() 空时,显示 '(no message)' 而不是空字符串。"""

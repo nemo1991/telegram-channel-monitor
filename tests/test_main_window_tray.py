@@ -23,13 +23,6 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QStatusBar  # noqa: E40
 from tgmonitor.ui.main_window import MainWindow  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """构造一次 QApplication — 多次跑 UI 测试不重复创建。"""
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
-
-
 class _MinimalMainWindow(MainWindow):
     """绕开 MainWindow.__init__ 的重 init — 直接 QMainWindow 构造 +
     手装 closeEvent 所需的最小状态。

@@ -65,11 +65,10 @@ def test_update_env_with_settings(tmp_path: Path):
         "TG_OBJECTSTORE_ROOT=./data/media\n",
         encoding="utf-8",
     )
-    s = Settings(  # type: ignore[call-arg]
+    s = Settings.for_test(
         api_id=42,
         api_hash="new-hash",
         phone="+1234",
-        db_backend=DBBackend.JSONL,
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=Path("./data/sharded"),
         media_policy=MediaPolicy.FULL,

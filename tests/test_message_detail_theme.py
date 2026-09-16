@@ -15,19 +15,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
 from tgmonitor.ui.widgets.form_row import empty_hint
 from tgmonitor.ui.widgets.message_detail import MessageDetail
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def _make_msg() -> MessageDTO:

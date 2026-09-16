@@ -87,7 +87,6 @@ def collected(bus: EventBus) -> list:
 # ============== forward_messages ==============
 
 
-@pytest.mark.asyncio
 async def test_forward_groups_by_cid_and_chunks_100(app: AppService, collected: list) -> None:
     """混合 cid items → client.forward_messages 按 cid group,TDLib 限 100/批。
 
@@ -109,7 +108,6 @@ async def test_forward_groups_by_cid_and_chunks_100(app: AppService, collected: 
     assert sorted(call1.args[2]) == [200, 201]
 
 
-@pytest.mark.asyncio
 async def test_forward_empty_noop(app: AppService, collected: list) -> None:
     """空 items → 返 0,不发任何 BatchProgress / BatchDone。"""
     n = await app.forward_messages([], to_chat_id=99)
@@ -118,7 +116,6 @@ async def test_forward_empty_noop(app: AppService, collected: list) -> None:
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_forward_paused_guard(paused_app: AppService, collected: list) -> None:
     """paused 状态 → 返 0,client 完全不被调,无 events。"""
     n = await paused_app.forward_messages([(1, 10), (1, 11)], to_chat_id=99)
@@ -127,7 +124,6 @@ async def test_forward_paused_guard(paused_app: AppService, collected: list) -> 
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_forward_emits_progress_and_done(app: AppService, collected: list) -> None:
     """forward 1 个 cid 5 条 → BatchProgress×N + BatchDone×1,counts 准确。"""
     items = [(1, i) for i in range(5)]
@@ -148,7 +144,6 @@ async def test_forward_emits_progress_and_done(app: AppService, collected: list)
 # ============== pin_messages ==============
 
 
-@pytest.mark.asyncio
 async def test_pin_groups_by_cid(app: AppService, collected: list) -> None:
     """pin_messages 按 cid group — 1 个 RPC 每个 cid。"""
     items = [(1, 10), (2, 200), (1, 11), (2, 201), (1, 12)]
@@ -161,7 +156,6 @@ async def test_pin_groups_by_cid(app: AppService, collected: list) -> None:
     assert len(call0.args[1]) == 3
 
 
-@pytest.mark.asyncio
 async def test_pin_empty_noop(app: AppService, collected: list) -> None:
     n = await app.pin_messages([])
     assert n == 0
@@ -169,7 +163,6 @@ async def test_pin_empty_noop(app: AppService, collected: list) -> None:
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_pin_paused_guard(paused_app: AppService, collected: list) -> None:
     n = await paused_app.pin_messages([(1, 10)])
     assert n == 0
@@ -177,7 +170,6 @@ async def test_pin_paused_guard(paused_app: AppService, collected: list) -> None
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_pin_emits_progress_and_done(app: AppService, collected: list) -> None:
     items = [(1, i) for i in range(3)]
     await app.pin_messages(items)
@@ -194,21 +186,18 @@ async def test_pin_emits_progress_and_done(app: AppService, collected: list) -> 
 # ============== unpin_messages ==============
 
 
-@pytest.mark.asyncio
 async def test_unpin_empty_noop(app: AppService, collected: list) -> None:
     n = await app.unpin_messages([])
     assert n == 0
     app.client.unpin_messages.assert_not_awaited()  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_unpin_paused_guard(paused_app: AppService, collected: list) -> None:
     n = await paused_app.unpin_messages([(1, 10)])
     assert n == 0
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_unpin_emits_done_with_correct_op(app: AppService, collected: list) -> None:
     """unpin 用 op='unpin' 区分 pin。"""
     await app.unpin_messages([(1, 10), (2, 20)])
@@ -220,7 +209,6 @@ async def test_unpin_emits_done_with_correct_op(app: AppService, collected: list
 # ============== add_reaction ==============
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_per_message_loop(app: AppService, collected: list) -> None:
     """add_reaction 走 per-msg 循环(不是 batch RPC),N 条 → N 次调用。"""
     items = [(1, 10), (1, 11), (2, 200)]
@@ -229,7 +217,6 @@ async def test_add_reaction_per_message_loop(app: AppService, collected: list) -
     assert app.client.add_reaction.await_count == 3  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_passes_is_big_kwarg(app: AppService, collected: list) -> None:
     """add_reaction(items, emoji, is_big=True) → client 收到 is_big=True。"""
     await app.add_reaction([(1, 10)], "❤", is_big=True)
@@ -237,7 +224,6 @@ async def test_add_reaction_passes_is_big_kwarg(app: AppService, collected: list
     assert kwargs["is_big"] is True
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_empty_emoji_noop(app: AppService, collected: list) -> None:
     """空 emoji → 返 0,不调 client。"""
     n = await app.add_reaction([(1, 10)], "")
@@ -245,7 +231,6 @@ async def test_add_reaction_empty_emoji_noop(app: AppService, collected: list) -
     app.client.add_reaction.assert_not_awaited()  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_paused_guard(paused_app: AppService, collected: list) -> None:
     n = await paused_app.add_reaction([(1, 10)], "🔥")
     assert n == 0
@@ -253,7 +238,6 @@ async def test_add_reaction_paused_guard(paused_app: AppService, collected: list
     assert collected == []
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_emits_progress_and_done(app: AppService, collected: list) -> None:
     """add_reaction 3 条 → BatchProgress×3(逐条)+ BatchDone×1。"""
     await app.add_reaction([(1, 10), (1, 11), (2, 20)], "👍")
@@ -268,14 +252,12 @@ async def test_add_reaction_emits_progress_and_done(app: AppService, collected: 
 # ============== remove_reaction ==============
 
 
-@pytest.mark.asyncio
 async def test_remove_reaction_empty_noop(app: AppService, collected: list) -> None:
     n = await app.remove_reaction([], "🔥")
     assert n == 0
     app.client.remove_reaction.assert_not_awaited()  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_remove_reaction_emits_done_op_unreact(app: AppService, collected: list) -> None:
     await app.remove_reaction([(1, 10)], "🔥")
     done = [e for e in collected if isinstance(e, BatchDone)]
@@ -286,7 +268,6 @@ async def test_remove_reaction_emits_done_op_unreact(app: AppService, collected:
 # ============== 异常隔离 ==============
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_exception_isolation(app: AppService, collected: list) -> None:
     """add_reaction 第 2 条抛错 — 第 1 / 第 3 仍执行,success=2,failed=1。
 
@@ -311,7 +292,6 @@ async def test_add_reaction_exception_isolation(app: AppService, collected: list
 # ============== 元数据: set_favorite / set_tags / set_notes ==============
 
 
-@pytest.mark.asyncio
 async def test_set_favorite_writes_storage_and_publishes(app: AppService, collected: list) -> None:
     """set_favorite → 调 storage.set_favorite + get_message + publish MessageEdited。"""
     msg = MessageDTO(id=1, channel_id=1, telegram_msg_id=10, text="hi", is_favorite=True)
@@ -325,7 +305,6 @@ async def test_set_favorite_writes_storage_and_publishes(app: AppService, collec
     assert edited[0].message.is_favorite is True
 
 
-@pytest.mark.asyncio
 async def test_set_favorite_message_missing_no_publish(app: AppService, collected: list) -> None:
     """get_message 返 None → 不 publish MessageEdited(避免 UI 误刷新)。"""
     app._storage.get_message = AsyncMock(return_value=None)  # type: ignore[attr-defined]
@@ -333,7 +312,6 @@ async def test_set_favorite_message_missing_no_publish(app: AppService, collecte
     assert [e for e in collected if isinstance(e, MessageEdited)] == []
 
 
-@pytest.mark.asyncio
 async def test_set_tags_writes_storage_and_publishes(app: AppService, collected: list) -> None:
     msg = MessageDTO(id=1, channel_id=1, telegram_msg_id=10, text="x", tags=["tech", "news"])
     app._storage.get_message = AsyncMock(return_value=msg)  # type: ignore[attr-defined]
@@ -343,7 +321,6 @@ async def test_set_tags_writes_storage_and_publishes(app: AppService, collected:
     assert edited[0].message.tags == ["tech", "news"]
 
 
-@pytest.mark.asyncio
 async def test_set_notes_writes_storage_and_publishes(app: AppService, collected: list) -> None:
     msg = MessageDTO(id=1, channel_id=1, telegram_msg_id=10, text="x", notes="later")
     app._storage.get_message = AsyncMock(return_value=msg)  # type: ignore[attr-defined]
@@ -353,7 +330,6 @@ async def test_set_notes_writes_storage_and_publishes(app: AppService, collected
     assert edited[0].message.notes == "later"
 
 
-@pytest.mark.asyncio
 async def test_list_favorites_delegates_to_storage(
     app: AppService,
 ) -> None:
@@ -364,7 +340,6 @@ async def test_list_favorites_delegates_to_storage(
     assert result is expected
 
 
-@pytest.mark.asyncio
 async def test_list_by_tag_delegates_to_storage(
     app: AppService,
 ) -> None:
@@ -381,7 +356,6 @@ async def test_list_by_tag_delegates_to_storage(
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_cancel_current_batch_sets_event(
     app: AppService,
 ) -> None:
@@ -394,7 +368,6 @@ async def test_cancel_current_batch_sets_event(
     assert app._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_cancel_marks_read_stops_mid_loop(app: AppService, collected: list) -> None:
     """v1.7.3:`mark_messages_read` 取消 — break 后 stop 调 client。"""
     # 3 cid 分组各 1 条。cancel 在 cid 1 RPC 完成后触发 → cid 2 起被 break。
@@ -420,7 +393,6 @@ async def test_cancel_marks_read_stops_mid_loop(app: AppService, collected: list
     assert done[0].error == "cancelled"
 
 
-@pytest.mark.asyncio
 async def test_cancel_pin_stops_mid_loop(app: AppService, collected: list) -> None:
     """v1.7.3:`pin_messages` 取消 — break 后 stop 调 client。"""
     items = [(1, 1), (2, 2), (3, 3)]
@@ -443,7 +415,6 @@ async def test_cancel_pin_stops_mid_loop(app: AppService, collected: list) -> No
     assert done[0].error == "cancelled"
 
 
-@pytest.mark.asyncio
 async def test_cancel_react_stops_mid_loop(app: AppService, collected: list) -> None:
     """v1.7.3:`add_reaction` 取消 — break 后 stop 调 client。"""
     items = [(1, 10), (1, 11), (1, 12), (1, 13)]
@@ -467,7 +438,6 @@ async def test_cancel_react_stops_mid_loop(app: AppService, collected: list) -> 
     assert done[0].error == "cancelled"
 
 
-@pytest.mark.asyncio
 async def test_cancel_after_completion_no_error(app: AppService, collected: list) -> None:
     """v1.7.3:批量全完成后 cancel — 无副作用,BatchDone.error is None。"""
     items = [(1, 1), (1, 2)]
@@ -480,7 +450,6 @@ async def test_cancel_after_completion_no_error(app: AppService, collected: list
     assert done[-1].succeeded == 2
 
 
-@pytest.mark.asyncio
 async def test_multiple_cancel_calls_safe(app: AppService) -> None:
     """v1.7.3:多次 cancel_current_batch 调用安全 — Event 多次 set。"""
     app.cancel_current_batch()
@@ -489,7 +458,6 @@ async def test_multiple_cancel_calls_safe(app: AppService) -> None:
     assert app._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
 async def test_cancel_after_event_cleared_by_next_facade(app: AppService, collected: list) -> None:
     """v1.7.3:facade 开头 `_cancel_event.clear()` — 上次 cancel 不影响下次。"""
     # 第 1 次 facade:cancel after first RPC

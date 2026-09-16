@@ -90,7 +90,6 @@ def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]) -> MessageDTO:
 # ---- list_media ------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_list_media_returns_all_with_no_filter(
     app: AppService,
     storage: StorageRepository,
@@ -105,7 +104,6 @@ async def test_list_media_returns_all_with_no_filter(
     assert keys == {(100, 1, 0), (100, 2, 0)}
 
 
-@pytest.mark.asyncio
 async def test_list_media_filters_by_status_failed(
     app: AppService,
     storage: StorageRepository,
@@ -119,7 +117,6 @@ async def test_list_media_filters_by_status_failed(
     assert rows[0][2].download_status == MediaDownloadStatus.FAILED
 
 
-@pytest.mark.asyncio
 async def test_list_media_filters_by_channel(
     app: AppService,
     storage: StorageRepository,
@@ -133,7 +130,6 @@ async def test_list_media_filters_by_channel(
     assert rows[0][0].channel_id == 100
 
 
-@pytest.mark.asyncio
 async def test_list_media_filters_by_type(
     app: AppService,
     storage: StorageRepository,
@@ -153,7 +149,6 @@ async def test_list_media_filters_by_type(
     assert rows[0][2].type == MediaType.VIDEO
 
 
-@pytest.mark.asyncio
 async def test_list_media_search_by_filename_case_insensitive(
     app: AppService,
     storage: StorageRepository,
@@ -175,7 +170,6 @@ async def test_list_media_search_by_filename_case_insensitive(
 # ---- delete_media ----------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_media_removes_from_message_keeps_bytes_when_referenced(
     app: AppService,
     storage: StorageRepository,
@@ -197,7 +191,6 @@ async def test_delete_media_removes_from_message_keeps_bytes_when_referenced(
     assert await objectstore.exists("media/shared.jpg")
 
 
-@pytest.mark.asyncio
 async def test_delete_media_removes_bytes_when_no_other_reference(
     app: AppService,
     storage: StorageRepository,
@@ -211,7 +204,6 @@ async def test_delete_media_removes_bytes_when_no_other_reference(
     assert not await objectstore.exists("media/only.jpg")
 
 
-@pytest.mark.asyncio
 async def test_delete_media_publishes_media_deleted_event(
     app: AppService,
     storage: StorageRepository,
@@ -232,7 +224,6 @@ async def test_delete_media_publishes_media_deleted_event(
 # ---- retry_media -----------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_retry_failed_resets_to_pending_and_redownloads(
     app: AppService,
     storage: StorageRepository,
@@ -269,7 +260,6 @@ async def test_retry_failed_resets_to_pending_and_redownloads(
     assert m.media[0].download_status == MediaDownloadStatus.DONE
 
 
-@pytest.mark.asyncio
 async def test_retry_skips_non_failed(
     app: AppService,
     storage: StorageRepository,
@@ -286,7 +276,6 @@ async def test_retry_skips_non_failed(
     assert m.media[0].download_status == MediaDownloadStatus.DONE
 
 
-@pytest.mark.asyncio
 async def test_retry_publishes_retried_and_downloaded_events(
     app: AppService,
     storage: StorageRepository,
@@ -316,7 +305,6 @@ async def test_retry_publishes_retried_and_downloaded_events(
 # ---- open_media ------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_open_media_returns_false_for_failed(
     app: AppService,
     storage: StorageRepository,
@@ -328,7 +316,6 @@ async def test_open_media_returns_false_for_failed(
     assert ok is False
 
 
-@pytest.mark.asyncio
 async def test_open_media_returns_false_for_missing_message(
     app: AppService,
 ) -> None:
@@ -337,7 +324,6 @@ async def test_open_media_returns_false_for_missing_message(
     assert ok is False
 
 
-@pytest.mark.asyncio
 async def test_open_media_local_done_returns_bool(
     app: AppService,
     storage: StorageRepository,
@@ -354,7 +340,6 @@ async def test_open_media_local_done_returns_bool(
     assert isinstance(ok, bool)
 
 
-@pytest.mark.asyncio
 async def test_open_media_folder_done_returns_bool(
     app: AppService,
     storage: StorageRepository,
@@ -378,7 +363,6 @@ async def test_open_media_folder_done_returns_bool(
 # ---- reconcile_orphans:测试放 tests/test_orphan_reconcile.py,这里只验事件发布 ----
 
 
-@pytest.mark.asyncio
 async def test_reconcile_orphans_emits_event(
     app: AppService,
     storage: StorageRepository,
@@ -404,7 +388,6 @@ async def test_reconcile_orphans_emits_event(
 # ---- delete_by_channel(2026-08-25 PR #4)------------------------------
 
 
-@pytest.mark.asyncio
 async def test_delete_by_channel_removes_all_messages_in_channel(
     app: AppService,
     storage: StorageRepository,
@@ -427,7 +410,6 @@ async def test_delete_by_channel_removes_all_messages_in_channel(
     assert await storage.get_message(200, 1) is not None
 
 
-@pytest.mark.asyncio
 async def test_delete_by_channel_no_op_when_no_messages(
     app: AppService,
     storage: StorageRepository,
@@ -440,7 +422,6 @@ async def test_delete_by_channel_no_op_when_no_messages(
     assert deleted == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_by_channel_cleans_orphan_bytes(
     app: AppService,
     storage: StorageRepository,
@@ -467,7 +448,6 @@ async def test_delete_by_channel_cleans_orphan_bytes(
     assert await objectstore.exists("media/shared.jpg")
 
 
-@pytest.mark.asyncio
 async def test_delete_by_channel_does_not_touch_other_channels(
     app: AppService,
     storage: StorageRepository,
@@ -569,7 +549,6 @@ def _make_s3_backend(
     return saved, fake
 
 
-@pytest.mark.asyncio
 async def test_open_media_with_result_missing_message_returns_error(
     app: AppService,
 ) -> None:
@@ -579,7 +558,6 @@ async def test_open_media_with_result_missing_message_returns_error(
     assert result.error == "消息或媒体不存在"
 
 
-@pytest.mark.asyncio
 async def test_open_media_with_result_failed_media_returns_error(
     app: AppService,
     storage: StorageRepository,
@@ -591,7 +569,6 @@ async def test_open_media_with_result_failed_media_returns_error(
     assert result.error == "媒体未下载完成"
 
 
-@pytest.mark.asyncio
 async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     app: AppService,
     storage: StorageRepository,
@@ -643,7 +620,6 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     await asyncio.to_thread(tmp_p.unlink)
 
 
-@pytest.mark.asyncio
 async def test_open_media_s3_cleans_tmp_when_open_url_fails(
     app: AppService,
     storage: StorageRepository,
@@ -676,7 +652,6 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
 # ---- list_media 排序 + 分页(2026-08-25 v1.3.0 PR #6)------------------
 
 
-@pytest.mark.asyncio
 async def test_list_media_sort_by_size_desc(
     app: AppService,
     storage: StorageRepository,
@@ -708,7 +683,6 @@ async def test_list_media_sort_by_size_desc(
     assert sizes == [5_000_000, 1024, 512]
 
 
-@pytest.mark.asyncio
 async def test_list_media_sort_default_unchanged_when_omitted(
     app: AppService,
     storage: StorageRepository,
@@ -726,7 +700,6 @@ async def test_list_media_sort_default_unchanged_when_omitted(
     assert len(rows) == 2
 
 
-@pytest.mark.asyncio
 async def test_list_media_offset_pagination(
     app: AppService,
     storage: StorageRepository,
@@ -744,7 +717,6 @@ async def test_list_media_offset_pagination(
     assert len(rows) == 2
 
 
-@pytest.mark.asyncio
 async def test_list_media_count_matches_total_independent_of_pagination(
     app: AppService,
     storage: StorageRepository,
@@ -762,7 +734,6 @@ async def test_list_media_count_matches_total_independent_of_pagination(
 # ---- reveal_in_folder / copy_media_path(2026-08-27 v1.4.0 PR #16)----
 
 
-@pytest.mark.asyncio
 async def test_reveal_in_folder_local_success(
     app: AppService,
     storage: StorageRepository,
@@ -797,7 +768,6 @@ async def test_reveal_in_folder_local_success(
     assert isinstance(platform_arg, str)
 
 
-@pytest.mark.asyncio
 async def test_reveal_in_folder_s3_returns_error(
     app: AppService,
     storage: StorageRepository,
@@ -819,7 +789,6 @@ async def test_reveal_in_folder_s3_returns_error(
     assert "S3" in result.error
 
 
-@pytest.mark.asyncio
 async def test_reveal_in_folder_missing_message_returns_error(
     app: AppService,
 ) -> None:
@@ -829,7 +798,6 @@ async def test_reveal_in_folder_missing_message_returns_error(
     assert result.error == "消息或媒体不存在"
 
 
-@pytest.mark.asyncio
 async def test_reveal_in_folder_pending_media_returns_error(
     app: AppService,
     storage: StorageRepository,
@@ -841,7 +809,6 @@ async def test_reveal_in_folder_pending_media_returns_error(
     assert result.error == "媒体未下载完成"
 
 
-@pytest.mark.asyncio
 async def test_reveal_in_folder_missing_file_returns_error(
     app: AppService,
     storage: StorageRepository,
@@ -857,7 +824,6 @@ async def test_reveal_in_folder_missing_file_returns_error(
     assert result.error is not None and "文件不存在" in result.error
 
 
-@pytest.mark.asyncio
 async def test_copy_media_path_local_returns_absolute_path(
     app: AppService,
     storage: StorageRepository,
@@ -880,7 +846,6 @@ async def test_copy_media_path_local_returns_absolute_path(
     assert Path(result.copied_value).is_absolute()
 
 
-@pytest.mark.asyncio
 async def test_copy_media_path_s3_returns_uri(
     app: AppService,
     storage: StorageRepository,
@@ -902,7 +867,6 @@ async def test_copy_media_path_s3_returns_uri(
     assert result.error is None
 
 
-@pytest.mark.asyncio
 async def test_copy_media_path_missing_message_returns_error(
     app: AppService,
 ) -> None:
@@ -912,7 +876,6 @@ async def test_copy_media_path_missing_message_returns_error(
     assert result.error == "消息或媒体不存在"
 
 
-@pytest.mark.asyncio
 async def test_copy_media_path_pending_media_returns_error(
     app: AppService,
     storage: StorageRepository,

@@ -75,7 +75,7 @@ def test_settings_paused_reads_from_env_file(env_path: Path) -> None:
     """pydantic-settings 自动从 TG_PAUSED=true 解析到 settings.paused。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_API_ID=1\nTG_PAUSED=true\n", encoding="utf-8")
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is True
 
 
@@ -83,7 +83,7 @@ def test_settings_paused_reads_false_from_env_file(env_path: Path) -> None:
     """TG_PAUSED=false 也被 pydantic-settings 正确解析。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_PAUSED=false\n", encoding="utf-8")
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is False
 
 
@@ -253,9 +253,9 @@ def test_update_env_paused_round_trip(tmp_path: Path) -> None:
     env_path.write_text("TG_API_ID=1\n", encoding="utf-8")
 
     update_env_paused(env_path, True)
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is True
 
     update_env_paused(env_path, False)
-    s2 = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s2 = Settings.from_env_file(env_path)
     assert s2.paused is False

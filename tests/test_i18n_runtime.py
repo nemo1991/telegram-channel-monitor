@@ -28,21 +28,17 @@ from tgmonitor.i18n import install_translator
 
 
 @pytest.fixture
-def qapp_no_locale_force(monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    """提供 QApplication 实例但不强制 zh_CN —— 让 i18n 测试自由切语言。
+def qapp_no_locale_force(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> QApplication:
+    """PR 1a:central `qapp` + 旁挂 i18n 测试需要的 env clear + translator reset。
 
-    避开了 `force_zh_cn_locale` autouse fixture(为旧中文断言兜底);新 i18n
-    测试要显式控制 locale。
+    名字仍叫 `qapp_no_locale_force` —— 是「qapp 但不强制 locale」的简写,语义清。
     """
-    # 反 autouse fixture:清空它在 conftest.py 设的 env
     for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
         monkeypatch.delenv(k, raising=False)
-    app = QApplication.instance() or QApplication([])
-    app.be_volatile = True  # type: ignore[attr-defined]
-    # 初始装回 zh_CN(项目默认),测试各自决定是否切
-    install_translator(app, locale="zh_CN")
-    yield app
-    install_translator(app, locale="zh_CN")  # teardown:还原默认
+    qapp.be_volatile = True  # type: ignore[attr-defined]
+    install_translator(qapp, locale="zh_CN")
+    yield qapp
+    install_translator(qapp, locale="zh_CN")  # teardown:还原默认
 
 
 # ---- install_translator 行为 ----

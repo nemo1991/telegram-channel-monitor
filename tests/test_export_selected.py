@@ -14,8 +14,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from tgmonitor.core.dto import (
     ChannelDTO,
     ExportFormat,
@@ -53,7 +51,6 @@ class _StubObjectStore:
         return None
 
 
-@pytest.mark.asyncio
 async def test_run_selected_dispatches_to_run_selected(tmp_path: Path) -> None:
     """ExportRequest.selected_messages 非空 → ExportService 走 _run_selected 分支。"""
     ch1 = ChannelDTO(id=1, title="ch1")
@@ -81,7 +78,6 @@ async def test_run_selected_dispatches_to_run_selected(tmp_path: Path) -> None:
     assert done_events[0].result.message_count == 2
 
 
-@pytest.mark.asyncio
 async def test_run_selected_skips_missing_messages(tmp_path: Path) -> None:
     """选中的 (cid, mid) 在 storage 不存在 → 跳过(可能 UI 删除后立即调用)。"""
     ch1 = ChannelDTO(id=1, title="ch1")
@@ -107,7 +103,6 @@ async def test_run_selected_skips_missing_messages(tmp_path: Path) -> None:
     assert done_events[0].result.message_count == 1  # 只导存在的
 
 
-@pytest.mark.asyncio
 async def test_run_selected_filters_channels_subset(tmp_path: Path) -> None:
     """ch2 没被选中 → 不出现在导出 HTML 里(只列选中消息所在频道)。"""
     ch1 = ChannelDTO(id=1, title="ch1")
@@ -134,7 +129,6 @@ async def test_run_selected_filters_channels_subset(tmp_path: Path) -> None:
     assert "ch2" not in out
 
 
-@pytest.mark.asyncio
 async def test_run_selected_emits_progress_per_5(tmp_path: Path) -> None:
     """7 条选 → 进度事件 written=5、written=7(每 5 条一次 + 末尾一次)。"""
     ch1 = ChannelDTO(id=1, title="ch1")
@@ -161,7 +155,6 @@ async def test_run_selected_emits_progress_per_5(tmp_path: Path) -> None:
     assert any(p.written == 7 and p.total == 7 for p in progresses)
 
 
-@pytest.mark.asyncio
 async def test_run_selected_zip_format(tmp_path: Path) -> None:
     """ZIP 格式走 _run_selected 也要正常 — 验证 object_store 透传。"""
     ch1 = ChannelDTO(id=1, title="ch1")
@@ -193,7 +186,6 @@ async def test_run_selected_zip_format(tmp_path: Path) -> None:
     assert (tmp_path / "selected.zip").exists()
 
 
-@pytest.mark.asyncio
 async def test_run_selected_empty_list_no_crash(tmp_path: Path) -> None:
     """selected_messages 空列表 → 走 _run_selected 但 exporter 收 0 消息。
 
@@ -215,7 +207,6 @@ async def test_run_selected_empty_list_no_crash(tmp_path: Path) -> None:
         pass
 
 
-@pytest.mark.asyncio
 async def test_run_messages_does_not_use_selected_branch(tmp_path: Path) -> None:
     """selected_messages=None → 走 _run_messages 旧路径(不调 get_message)。"""
     # _StubStorage 没实现 list_messages — 走到 _run_selected 路径才会被调

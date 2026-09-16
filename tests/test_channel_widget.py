@@ -26,7 +26,6 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import EventBus
@@ -53,12 +52,6 @@ class _LoopThread:
             self.loop.call_soon_threadsafe(self.loop.stop)
 
 
-@pytest.fixture(scope="session")
-def qapp_16():
-    """确保 QApplication 存在 — offscreen 模式,SVG render 也能跑。"""
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
-
-
 @pytest.fixture
 def qloop_16() -> _LoopThread:
     lt = _LoopThread()
@@ -69,7 +62,7 @@ def qloop_16() -> _LoopThread:
         lt._thread.join(timeout=2)
 
 
-def _build_widget(qapp_16, qloop_16):  # noqa: ANN001 — 测试 helper
+def _build_widget(qapp, qloop_16):  # noqa: ANN001 — 测试 helper
     """造一个 ChannelWidget(无 storage 依赖 — 仅 UI 层测试)。"""
     # 简化版:不接 AppService,直接 mock 一个;ChannelWidget.__init__ 接受
     # (app, loop, parent) — 我们用最小的 MagicMock 替代 app 属性。
@@ -135,7 +128,7 @@ def _channel(
 # ---------------------------------------------------------------------------
 
 
-def test_kind_icon_no_photo_returns_emoji_placeholder(qapp_16) -> None:
+def test_kind_icon_no_photo_returns_emoji_placeholder(qapp) -> None:
     """v1.6.4:`_kind_icon` 无 photo_local_key → 走 emoji placeholder。"""
     from tgmonitor.ui.widgets.channel_widget import _kind_emoji_icon, _kind_icon
 
@@ -147,7 +140,7 @@ def test_kind_icon_no_photo_returns_emoji_placeholder(qapp_16) -> None:
     assert not fallback.isNull()
 
 
-def test_kind_icon_with_photo_uses_thumbnail_cache(qapp_16, tmp_path: Path) -> None:
+def test_kind_icon_with_photo_uses_thumbnail_cache(qapp, tmp_path: Path) -> None:
     """v1.6.4:有 photo_local_key → `ThumbnailCache` LRU 命中。
 
     测试步骤:
@@ -173,7 +166,7 @@ def test_kind_icon_with_photo_uses_thumbnail_cache(qapp_16, tmp_path: Path) -> N
 
 
 def test_kind_icon_photo_load_failure_falls_back_to_emoji(
-    qapp_16,
+    qapp,
     tmp_path: Path,
 ) -> None:
     """v1.6.4:photo_local_key 指向不存在文件 → IO 失败 → 走 emoji 占位。"""
@@ -195,7 +188,7 @@ def test_kind_icon_photo_load_failure_falls_back_to_emoji(
 # ---------------------------------------------------------------------------
 
 
-def test_channel_display_text_no_badges(qapp_16) -> None:
+def test_channel_display_text_no_badges(qapp) -> None:
     """v1.6.4:无 4 字段时 display = `ch.display`,无徽标后缀。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
@@ -207,7 +200,7 @@ def test_channel_display_text_no_badges(qapp_16) -> None:
     assert "⚠" not in text
 
 
-def test_channel_display_text_verified_badge(qapp_16) -> None:
+def test_channel_display_text_verified_badge(qapp) -> None:
     """v1.6.4:`is_verified=True` → display 末尾 `✓`。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
@@ -216,7 +209,7 @@ def test_channel_display_text_verified_badge(qapp_16) -> None:
     assert text.endswith(" ✓")
 
 
-def test_channel_display_text_scam_warning(qapp_16) -> None:
+def test_channel_display_text_scam_warning(qapp) -> None:
     """v1.6.4:`is_scam=True` → display 末尾 `⚠️`。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
@@ -225,7 +218,7 @@ def test_channel_display_text_scam_warning(qapp_16) -> None:
     assert "⚠" in text
 
 
-def test_channel_display_text_fake_warning(qapp_16) -> None:
+def test_channel_display_text_fake_warning(qapp) -> None:
     """v1.6.4:`is_fake=True` → display 末尾 `⚠️`(与 scam 同后缀,不双标)。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
@@ -235,7 +228,7 @@ def test_channel_display_text_fake_warning(qapp_16) -> None:
     assert text.count("⚠") == 1
 
 
-def test_channel_display_text_verified_and_scam(qapp_16) -> None:
+def test_channel_display_text_verified_and_scam(qapp) -> None:
     """v1.6.4:`is_verified` + `is_scam` 同时 → ✓ ⚠️ 都出现。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
@@ -250,9 +243,9 @@ def test_channel_display_text_verified_and_scam(qapp_16) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_title_changed_preserves_verified_badge(qapp_16, qloop_16) -> None:
+def test_apply_title_changed_preserves_verified_badge(qapp, qloop_16) -> None:
     """v1.6.4:title 更新后徽标后缀(✓ / ⚠️)保留。"""
-    widget = _build_widget(qapp_16, qloop_16)
+    widget = _build_widget(qapp, qloop_16)
     # 无 username → display = `#id title`,title 改动会反映到文本上
     ch = _channel(cid=100, title="Old", username=None, is_verified=True)
     widget.set_joined([ch])
@@ -269,7 +262,7 @@ def test_apply_title_changed_preserves_verified_badge(qapp_16, qloop_16) -> None
 
 
 def test_apply_photo_changed_with_path_updates_item_icon(
-    qapp_16,
+    qapp,
     qloop_16,
     tmp_path: Path,
 ) -> None:
@@ -282,7 +275,7 @@ def test_apply_photo_changed_with_path_updates_item_icon(
     from tgmonitor.ui.widgets import channel_widget as cw_mod
 
     cw_mod._channel_thumb_cache = None  # type: ignore[attr-defined]
-    widget = _build_widget(qapp_16, qloop_16)
+    widget = _build_widget(qapp, qloop_16)
     ch = _channel(cid=100, title="X", username="x")
     widget.set_joined([ch])
 
@@ -300,7 +293,7 @@ def test_apply_photo_changed_with_path_updates_item_icon(
 
 
 def test_apply_photo_changed_none_reverts_to_kind_icon(
-    qapp_16,
+    qapp,
     qloop_16,
     tmp_path: Path,
 ) -> None:
@@ -308,7 +301,7 @@ def test_apply_photo_changed_none_reverts_to_kind_icon(
     from tgmonitor.ui.widgets import channel_widget as cw_mod
 
     cw_mod._channel_thumb_cache = None  # type: ignore[attr-defined]
-    widget = _build_widget(qapp_16, qloop_16)
+    widget = _build_widget(qapp, qloop_16)
     png_path = tmp_path / "y.png"
     png_path.write_bytes(_png_1x1())
     # 初始有 photo
@@ -330,7 +323,7 @@ def test_apply_photo_changed_none_reverts_to_kind_icon(
 
 
 def test_set_items_renders_photo_and_badges(
-    qapp_16,
+    qapp,
     qloop_16,
     tmp_path: Path,
 ) -> None:
@@ -341,7 +334,7 @@ def test_set_items_renders_photo_and_badges(
     png_path = tmp_path / "av.png"
     png_path.write_bytes(_png_1x1())
 
-    widget = _build_widget(qapp_16, qloop_16)
+    widget = _build_widget(qapp, qloop_16)
     channels = [
         _channel(cid=1, title="A", username="a", is_verified=True),
         _channel(cid=2, title="B", username="b", is_scam=True),

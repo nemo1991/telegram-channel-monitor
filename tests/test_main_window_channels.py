@@ -22,7 +22,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 # 跟 conftest 同步,避免每次新 test 都 inline import。
 # 这些在 `test_main_window_initial_refresh_state_is_empty` 等都曾 inline,过
@@ -48,12 +47,6 @@ class _LoopThread:
     def _run(self) -> None:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 @pytest.fixture
@@ -107,23 +100,16 @@ def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
 
     from tests.conftest import InMemoryRepository
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -203,23 +189,16 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
     from tests.conftest import InMemoryRepository
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -278,21 +257,15 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
     loop(qloop)上,避免 Python 3.9 下 Event loop 绑定错误
     ("attached to a different loop")。
     """
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.telegram import tdlib_client as tdc
 
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
+    settings = Settings.for_test(
         phone="+8612345",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
-        db_backend=DBBackend.JSONL,
-        objectstore_backend=ObjectStoreBackend.LOCAL,
     )
     bus = EventBus()
     captured = {"called": False}
@@ -356,21 +329,15 @@ def test_wait_for_state_does_not_spin_when_event_already_set(
     """
     import time as _t
 
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.telegram import tdlib_client as tdc
 
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
+    settings = Settings.for_test(
         phone="+8612345",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
-        db_backend=DBBackend.JSONL,
-        objectstore_backend=ObjectStoreBackend.LOCAL,
     )
     bus = EventBus()
 
@@ -430,24 +397,17 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
 
     from tests.conftest import InMemoryRepository
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.main_window import MainWindow
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -481,24 +441,17 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
 def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
     """新用户首启:已加入列表为空 → _empty_joined 应显示(给新用户引导)。"""
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -526,25 +479,18 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
 def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
     """set_joined([...]) 装载数据 → _empty_joined 自动隐藏。"""
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.dto import ChannelDTO
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -737,24 +683,17 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
     import tempfile
 
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.main_window import MainWindow
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -784,24 +723,17 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
     import tempfile
 
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.main_window import MainWindow
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -841,27 +773,20 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
     import tempfile
 
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.dto import SyncOptions
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui import main_window as mw
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
             sync_chat_delay_ms=777,
             sync_page_delay_ms=888,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()
@@ -920,24 +845,17 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
     import tempfile
 
     from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+    from tgmonitor.core.config import Settings
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui import main_window as mw
 
     with tempfile.TemporaryDirectory() as td:
-        settings = Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            api_id=1,
-            api_hash="x" * 32,
+        settings = Settings.for_test(
             phone="+8612345",
             session_dir=Path(td) / "s",
             db_root=Path(td) / "m",
             objectstore_root=Path(td) / "o",
-            media_policy=MediaPolicy.METADATA,
-            db_backend=DBBackend.JSONL,
-            objectstore_backend=ObjectStoreBackend.LOCAL,
         )
-        settings.ensure_dirs()
 
         bus = EventBus()
         client = FakeTelegramClient()

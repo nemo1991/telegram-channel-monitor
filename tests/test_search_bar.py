@@ -14,17 +14,10 @@ from datetime import datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
 from PySide6.QtCore import QDate, QDateTime, QTime  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def _qdt(year: int, month: int, day: int, h: int = 0, m: int = 0) -> QDateTime:

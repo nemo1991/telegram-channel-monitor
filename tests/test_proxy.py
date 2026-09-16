@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+from tgmonitor.core.config import ObjectStoreBackend, Settings
 from tgmonitor.core.settings_store import (
     EditableSettings,
     _validate_proxy_url,
@@ -96,25 +96,24 @@ class TestValidateProxyUrl:
 
 class TestSettingsProxyRoundTrip:
     def test_settings_accepts_proxy(self) -> None:
-        s = Settings(proxy="socks5://u:p@1.2.3.4:1080")  # type: ignore[call-arg]
+        s = Settings.for_test(proxy="socks5://u:p@1.2.3.4:1080")
         assert s.proxy == "socks5://u:p@1.2.3.4:1080"
 
     def test_settings_proxy_default_none(self) -> None:
-        # 用 _env_file=None 避免被本地 .env 影响
-        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        s = Settings.for_test()
         assert s.proxy is None
 
     def test_settings_to_pairs(self) -> None:
-        s = Settings(_env_file=None, proxy="socks5://1.1.1.1:1080")  # type: ignore[call-arg]
+        s = Settings.for_test(proxy="socks5://1.1.1.1:1080")
         pairs = settings_to_pairs(s)
         assert pairs["TG_PROXY"] == "socks5://1.1.1.1:1080"
 
     def test_settings_to_pairs_empty_when_none(self) -> None:
-        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        s = Settings.for_test()
         assert settings_to_pairs(s)["TG_PROXY"] == ""
 
     def test_editable_round_trip(self) -> None:
-        s = Settings(proxy="socks5://abc@host:9050")  # type: ignore[call-arg]
+        s = Settings.for_test(proxy="socks5://abc@host:9050")
         e = EditableSettings.from_settings(s)
         assert e.proxy == "socks5://abc@host:9050"
 
@@ -127,14 +126,11 @@ class TestSettingsProxyRoundTrip:
         """写到 .env 再 parse 出来,proxy 必须还原。"""
         env_path = tmp_path / ".env"
         env_path.write_text("# placeholder\nTG_DATA_ROOT=./data\n", encoding="utf-8")
-        s = Settings(  # type: ignore[call-arg]
+        s = Settings.for_test(
             api_id=12345,
-            api_hash="x" * 32,
             phone="+10000000000",
             proxy="socks5://u:p@127.0.0.1:1080",
-            db_backend=DBBackend.JSONL,
             objectstore_backend=ObjectStoreBackend.FOLDER,
-            media_policy=MediaPolicy.METADATA,
         )
         update_env_with_settings(env_path, s)
         env = parse_env_file(env_path)
@@ -197,13 +193,8 @@ def test_proxy_kwargs_passed_to_construct_via_factory(
         self._captured = kwargs
 
     monkeypatch.setattr(tdc._AiClient, "__init__", _safe_init)
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 16,
-        phone="+100",
-        proxy="socks5://u:p@127.0.0.1:1080",
-        session_dir=tmp_path / "session",
+    s = Settings.for_test(
+        phone="+100", proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session"
     )
     client = build_telegram_client(s, use_fake=False, event_bus=None)
     # 工厂返回真 TdlibTelegramClient(不再 fallback fake)
@@ -243,7 +234,6 @@ def test_aio_event_emit_login_state_changed_via_bus() -> None:
 # 现在改用 request() 显式等响应,失败直接抛 TdlibError,启动流程转可见错误。
 
 
-@pytest.mark.asyncio
 async def test_setup_proxy_sends_addproxy_when_configured(
     tmp_path: Path,
     bus,
@@ -257,13 +247,8 @@ async def test_setup_proxy_sends_addproxy_when_configured(
     """
     from tgmonitor.core.telegram import tdlib_client as tdc
 
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
-        phone="+10000000000",
-        proxy="socks5://u:p@127.0.0.1:1080",
-        session_dir=tmp_path / "session",
+    s = Settings.for_test(
+        phone="+10000000000", proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session"
     )
     client = tdc.TdlibTelegramClient(s, event_bus=bus)
     client._running = True  # request() 会校验 running
@@ -291,7 +276,6 @@ async def test_setup_proxy_sends_addproxy_when_configured(
     assert proxy_type["password"] == "p"
 
 
-@pytest.mark.asyncio
 async def test_setup_proxy_disables_when_no_proxy(
     tmp_path: Path,
     bus,
@@ -304,14 +288,7 @@ async def test_setup_proxy_disables_when_no_proxy(
     """
     from tgmonitor.core.telegram import tdlib_client as tdc
 
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
-        phone="+10000000000",
-        proxy=None,
-        session_dir=tmp_path / "session",
-    )
+    s = Settings.for_test(phone="+10000000000", proxy=None, session_dir=tmp_path / "session")
     client = tdc.TdlibTelegramClient(s, event_bus=bus)
     client._running = True
     captured: list[dict] = []
@@ -325,7 +302,6 @@ async def test_setup_proxy_disables_when_no_proxy(
     assert [q["@type"] for q in captured] == ["disableProxy"]
 
 
-@pytest.mark.asyncio
 async def test_setup_proxy_raises_tdlib_error(
     tmp_path: Path,
     bus,
@@ -334,14 +310,7 @@ async def test_setup_proxy_raises_tdlib_error(
     """addProxy 被 TDLib 拒绝 → 必须抛 TdlibError(启动流程转可见错误)。"""
     from tgmonitor.core.telegram import tdlib_client as tdc
 
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
-        phone="+10000000000",
-        proxy=None,
-        session_dir=tmp_path / "session",
-    )
+    s = Settings.for_test(phone="+10000000000", proxy=None, session_dir=tmp_path / "session")
     client = tdc.TdlibTelegramClient(s, event_bus=bus)
     client._running = True
 

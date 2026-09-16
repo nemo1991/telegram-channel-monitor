@@ -34,12 +34,6 @@ from tgmonitor.core.events import AuthErrorOccurred, ErrorOccurred
 # ============== helpers ==============
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 @pytest.fixture(autouse=True)
 def _patch_qmessagebox(monkeypatch: pytest.MonkeyPatch) -> None:
     """2026-09-14 v1.7.5 PR #6 (P0-K):autouse — 所有 QMessageBox.warning

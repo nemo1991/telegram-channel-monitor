@@ -3,6 +3,8 @@
 `MonitorViewModel` 订阅 `MediaDownloadProgress` 事件 → emit Qt
 `media_download_progress` signal。UI 端 media_manager 接到后刷新
 status label。这里只测 VM 层透传,UI 渲染走 visual_regression。
+
+**PR 1a**:`_FakeApp` 已 promote 到 `tests/fixtures/_fake_app.py`,此处 import 用。
 """
 
 from __future__ import annotations
@@ -10,15 +12,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+from tests.fixtures._fake_app import FakeApp
 from tgmonitor.core.events import EventBus, MediaDownloadProgress
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
-
-
-class _FakeApp:
-    """VM 只需要 `bus` 属性;其它 AppService 接口 stub 掉。"""
-
-    def __init__(self, bus: EventBus) -> None:
-        self.bus = bus
 
 
 def _make_message(channel_id: int = 100, msg_id: int = 42, media_count: int = 1):
@@ -39,7 +35,7 @@ def _make_message(channel_id: int = 100, msg_id: int = 42, media_count: int = 1)
 def _make_vm(bus: EventBus) -> MonitorViewModel:
     """建 VM 但**不**调 start (无 client);只测 _on_media_download_progress。"""
     loop = asyncio.new_event_loop()
-    return MonitorViewModel(_FakeApp(bus), monitor=None, loop=loop)  # type: ignore[arg-type]
+    return MonitorViewModel(FakeApp(bus), monitor=None, loop=loop)  # type: ignore[arg-type]
 
 
 async def test_vm_subscribes_media_download_progress():

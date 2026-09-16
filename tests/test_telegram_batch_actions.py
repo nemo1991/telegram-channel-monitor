@@ -14,14 +14,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 # ============== forward_messages ==============
 
 
-@pytest.mark.asyncio
 async def test_fake_forward_messages_records_log() -> None:
     """调 forward_messages(1, 99, [10, 11]) 后 forwarded_log 含 (1, 99, [10, 11])。
 
@@ -33,7 +30,6 @@ async def test_fake_forward_messages_records_log() -> None:
     assert client.forwarded_log == [(1, 99, [10, 11])]
 
 
-@pytest.mark.asyncio
 async def test_fake_forward_messages_sorts_msg_ids() -> None:
     """传无序 msg_ids — log 里是 sorted()(TDLib forwardMessages 协议约束)。"""
     client = FakeTelegramClient()
@@ -41,7 +37,6 @@ async def test_fake_forward_messages_sorts_msg_ids() -> None:
     assert client.forwarded_log == [(1, 99, [10, 20, 30])]
 
 
-@pytest.mark.asyncio
 async def test_fake_forward_messages_appends_per_call() -> None:
     """多次调 forward_messages → log 累加,模拟 LIVE 多 batch 转发。"""
     client = FakeTelegramClient()
@@ -55,7 +50,6 @@ async def test_fake_forward_messages_appends_per_call() -> None:
     ]
 
 
-@pytest.mark.asyncio
 async def test_fake_forward_messages_empty_noop() -> None:
     """空 msg_ids 早 return — forwarded_log 保持空 list。"""
     client = FakeTelegramClient()
@@ -79,7 +73,6 @@ def test_fake_client_inherits_forward_messages_from_protocol() -> None:
 # ============== pin_messages ==============
 
 
-@pytest.mark.asyncio
 async def test_fake_pin_messages_groups_by_cid() -> None:
     """pin_messages(1, [10, 11]) → pinned_log[1] == [10, 11]。"""
     client = FakeTelegramClient()
@@ -87,7 +80,6 @@ async def test_fake_pin_messages_groups_by_cid() -> None:
     assert client.pinned_log == {1: [10, 11]}
 
 
-@pytest.mark.asyncio
 async def test_fake_pin_messages_appends_per_cid() -> None:
     """同一 cid 多次调 → 累加到同一 list(模拟分批)。"""
     client = FakeTelegramClient()
@@ -97,7 +89,6 @@ async def test_fake_pin_messages_appends_per_cid() -> None:
     assert client.pinned_log == {1: [10, 11, 12], 2: [100]}
 
 
-@pytest.mark.asyncio
 async def test_fake_pin_messages_empty_noop() -> None:
     """空 msg_ids 早 return — pinned_log 保持空。"""
     client = FakeTelegramClient()
@@ -105,7 +96,6 @@ async def test_fake_pin_messages_empty_noop() -> None:
     assert client.pinned_log == {}
 
 
-@pytest.mark.asyncio
 async def test_fake_unpin_messages_groups_by_cid() -> None:
     """unpin_messages 与 pin_messages 同款 — 共享 _pinned_log 累加。"""
     client = FakeTelegramClient()
@@ -134,7 +124,6 @@ def test_fake_client_inherits_unpin_messages_from_protocol() -> None:
 # ============== add_reaction / remove_reaction ==============
 
 
-@pytest.mark.asyncio
 async def test_fake_add_reaction_records_log() -> None:
     """add_reaction(1, 10, '🔥') → reactions_log 含 (1, 10, '🔥', True)。"""
     client = FakeTelegramClient()
@@ -142,7 +131,6 @@ async def test_fake_add_reaction_records_log() -> None:
     assert client.reactions_log == [(1, 10, "🔥", True)]
 
 
-@pytest.mark.asyncio
 async def test_fake_add_reaction_is_big_kwarg() -> None:
     """add_reaction(..., is_big=True) → log 第 4 元 = True(emoji 大表情)。"""
     client = FakeTelegramClient()
@@ -150,7 +138,6 @@ async def test_fake_add_reaction_is_big_kwarg() -> None:
     assert client.reactions_log[-1] == (1, 10, "❤", True)
 
 
-@pytest.mark.asyncio
 async def test_fake_remove_reaction_records_unset() -> None:
     """remove_reaction → log 第 4 元 = False(区分 add vs remove)。"""
     client = FakeTelegramClient()
@@ -162,7 +149,6 @@ async def test_fake_remove_reaction_records_unset() -> None:
     ]
 
 
-@pytest.mark.asyncio
 async def test_fake_reactions_log_appends_per_call() -> None:
     """多次调 add/remove → 累加(模拟多选 emoji 面板连续切换)。"""
     client = FakeTelegramClient()
@@ -194,7 +180,6 @@ def test_fake_client_inherits_remove_reaction_from_protocol() -> None:
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_standard_emoji_dispatches_emoji_type() -> None:
     """v1.7.3:普通 emoji "🔥" → TDLib `reactionTypeEmoji`,非 CustomEmoji。"""
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
@@ -215,7 +200,6 @@ async def test_add_reaction_standard_emoji_dispatches_emoji_type() -> None:
     assert rt == {"@type": "reactionTypeEmoji", "emoji": "🔥"}
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
     """v1.7.3:`custom_emoji_id:<id>` → `reactionTypeCustomEmoji`。"""
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
@@ -239,7 +223,6 @@ async def test_add_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
     }
 
 
-@pytest.mark.asyncio
 async def test_remove_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
     """v1.7.3:remove_reaction 也支持 `custom_emoji_id:` 前缀 dispatch。"""
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
@@ -263,7 +246,6 @@ async def test_remove_reaction_custom_emoji_dispatches_custom_emoji_type() -> No
     }
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_empty_string_is_noop() -> None:
     """v1.7.3:空 `reaction` 直接 return — 防 `[400] REACTION_INVALID`。"""
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi

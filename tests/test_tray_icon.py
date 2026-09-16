@@ -135,7 +135,6 @@ def test_tray_double_click_shows_parent(qt_app: QApplication) -> None:
     assert parent.show_called is True
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_forwards_to_show_message(
     qt_app: QApplication,
 ) -> None:
@@ -154,7 +153,6 @@ async def test_tray_on_notification_forwards_to_show_message(
     assert args[1] == "测试内容"
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_error_uses_critical_icon(
     qt_app: QApplication,
 ) -> None:
@@ -171,7 +169,6 @@ async def test_tray_on_notification_error_uses_critical_icon(
     assert args[2] == QSystemTrayIcon.MessageIcon.Critical
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_noop_when_inactive(
     qt_app: QApplication,
 ) -> None:

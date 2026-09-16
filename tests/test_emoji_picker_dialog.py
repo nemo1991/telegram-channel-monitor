@@ -24,15 +24,6 @@ from tgmonitor.ui.widgets.emoji_picker_dialog import (
 
 
 @pytest.fixture
-def qapp() -> QApplication:
-    """QApplication 实例 — widget 测试需要 event loop 集成。"""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app  # type: ignore[return-value]
-
-
-@pytest.fixture
 def dialog(qapp: QApplication) -> EmojiPickerDialog:
     dlg = EmojiPickerDialog()
     return dlg

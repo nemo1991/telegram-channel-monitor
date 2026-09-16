@@ -15,15 +15,13 @@ import os
 import time
 from datetime import UTC, datetime
 
-import pytest
-
 # offscreen 平台:CI / 无显示器 macOS 也能跑
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRect  # noqa: E402
 from PySide6.QtGui import QBrush  # noqa: E402
 from PySide6.QtTest import QSignalSpy  # noqa: E402
-from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
+from PySide6.QtWidgets import QStyleOptionViewItem  # noqa: E402
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
 from tgmonitor.ui.widgets.message_view import (  # noqa: E402
@@ -31,14 +29,6 @@ from tgmonitor.ui.widgets.message_view import (  # noqa: E402
     MessageListModel,
     MessageView,
 )
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-    # 不主动 quit — session 级共享,留给 pytest 进程退出时清理
-
 
 # ---- shim helpers — 把 model 协议包成测试熟悉的 API ----
 

@@ -22,24 +22,18 @@ import pytest
 # — 不在 test_telegram_lifecycle.py 再 re-export,否则会 shadow conftest 版,
 #   导致 tdlib_json stub 不生效,TdlibTelegramClient 构造触发 native 加载
 #   libtdjson(本机未编译时直接失败)。
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+from tgmonitor.core.config import Settings
 from tgmonitor.core.events import AuthErrorOccurred, EventBus, LoginStateChanged
 from tgmonitor.core.telegram import tdlib_client as tdc
 
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    return Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
+    return Settings.for_test(
         phone="+10000000000",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
-        db_backend=DBBackend.JSONL,
-        objectstore_backend=ObjectStoreBackend.LOCAL,
     )
 
 
@@ -69,7 +63,6 @@ async def make_client(settings, bus):  # type: ignore[no-untyped-def]
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_set_state_emits_login_state_changed(settings, bus, stub_tdlib_init):
     captured: list[LoginStateChanged] = []
 
@@ -100,7 +93,6 @@ async def test_set_state_emits_login_state_changed(settings, bus, stub_tdlib_ini
         assert any(e.detail == "second" for e in captured)
 
 
-@pytest.mark.asyncio
 async def test_set_state_signals_event(settings, bus, stub_tdlib_init):
     """_state_event 必须在状态变化时 set;wait_for 立刻返回。"""
     async with make_client(settings, bus) as client:
@@ -121,7 +113,6 @@ async def test_set_state_signals_event(settings, bus, stub_tdlib_init):
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_tdlib_init):
     """验证码错 → 发 AuthErrorOccurred(source="code", ...),不切换顶层状态。"""
 
@@ -152,7 +143,6 @@ async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_tdlib_
         assert client._state == "code_required"
 
 
-@pytest.mark.asyncio
 async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_tdlib_init):
     """2FA 密码错 → AuthErrorOccurred(source="password")。"""
 
@@ -188,7 +178,6 @@ async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_td
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_tdlib_init):
     """start 超时 + 我们看到 401 → 返回 ('error', '...encryption key...')。
     模拟:start 在 _do_start_inner 上挂住,我们通过 fake error 注入 401,
@@ -213,7 +202,6 @@ async def test_start_timeout_with_401_returns_error_detail(settings, bus, stub_t
         assert "encryption key" in detail
 
 
-@pytest.mark.asyncio
 async def test_start_timeout_no_error_codes_returns_generic(settings, bus, stub_tdlib_init):
     """start 超时但没收到任何 error 码 → 报 'DC 不可达' 类。"""
     async with make_client(settings, bus) as client:
@@ -232,7 +220,6 @@ async def test_start_timeout_no_error_codes_returns_generic(settings, bus, stub_
         assert "encryption key" not in detail
 
 
-@pytest.mark.asyncio
 async def test_settle_loop_waits_when_no_error_codes(settings, bus, stub_tdlib_init):
     """settle 宽限超时但没收到 error codes → 不杀,继续等状态推进。
 
@@ -260,7 +247,6 @@ async def test_settle_loop_waits_when_no_error_codes(settings, bus, stub_tdlib_i
         assert client._state == "ready"
 
 
-@pytest.mark.asyncio
 async def test_settle_loop_fails_fast_when_error_codes_seen(settings, bus, stub_tdlib_init):
     """settle 宽限超时且已收到 error codes(被 TDLib 拒绝)→ 立即转可见错误。"""
     async with make_client(settings, bus) as client:
@@ -291,7 +277,6 @@ async def _noop_preflight():
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_tdlib_init):
     """AuthErrorOccurred 应被 ErrorOccurred 订阅者也接收(以前若有 widget 订阅父类)。"""
     from tgmonitor.core.events import ErrorOccurred
@@ -315,7 +300,6 @@ async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_
 # ============================================================
 
 
-@pytest.mark.asyncio
 async def test_kill_drains_input_queues(settings, bus, stub_tdlib_init):
     async with make_client(settings, bus) as client:
         # _kill_client 走"只有 running 才干活"分支 — 强制打开
@@ -347,7 +331,6 @@ def test_auth_state_map_covers_lifecycle_keys():
     assert expected.issubset(keys)
 
 
-@pytest.mark.asyncio
 async def test_wait_code_action_not_awaited_inline(stub_tdlib_init):
     """回归:WaitCode 的 action 不能 inline await。
 
@@ -379,7 +362,6 @@ async def test_wait_code_action_not_awaited_inline(stub_tdlib_init):
     assert getattr(c, "last_code", None) == "12345"
 
 
-@pytest.mark.asyncio
 async def test_auth_state_error_does_not_kill_updates_loop(stub_tdlib_init):
     """回归:auth-state handler 抛异常时 `_updates_loop` 必须继续派发后续事件。
 
@@ -428,7 +410,6 @@ async def test_auth_state_error_does_not_kill_updates_loop(stub_tdlib_init):
     assert c.handled == [1]
 
 
-@pytest.mark.asyncio
 async def test_updates_loop_crashes_and_restarts(stub_tdlib_init):
     """`_updates_loop` 意外崩溃后自动重启(带 1s 最小重启间隔)。"""
     from tdlib_json import TdlibJsonClient
@@ -479,7 +460,6 @@ def _make_stubbed_client(settings: Settings, bus: EventBus) -> tdc.TdlibTelegram
     return tdc.TdlibTelegramClient(settings, event_bus=bus)
 
 
-@pytest.mark.asyncio
 async def test_resolve_channel_metadata_nested_attribute_access(
     settings, bus, stub_tdlib_init, monkeypatch
 ):
@@ -865,12 +845,8 @@ def test_init_raises_not_configured_when_credentials_missing(
     这是「api_id=0 启动崩 ValidationError」的守卫回归:不碰
     `TdlibJsonClient` 的 parameters 校验,直接给用户可读中文提示。
     """
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=api_id,
-        api_hash=api_hash,
-        phone=phone,
-        session_dir=tmp_path / "session",
+    s = Settings.for_test(
+        api_id=api_id, api_hash=api_hash, phone=phone, session_dir=tmp_path / "session"
     )
     with pytest.raises(tdc.TelegramNotConfiguredError) as ei:
         tdc.TdlibTelegramClient(s, event_bus=bus)
@@ -882,13 +858,7 @@ def test_missing_credentials_lists_all_missing_items(
     stub_tdlib_init,
 ) -> None:
     """三项全缺 → 缺失项列表同时包含 api_id / api_hash / phone。"""
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=0,
-        api_hash="",
-        phone="",
-        session_dir=tmp_path / "session",
-    )
+    s = Settings.for_test(api_id=0, api_hash="", phone="", session_dir=tmp_path / "session")
     missing = tdc._missing_credentials(s)
     assert "TG_API_ID" in missing
     assert "TG_API_HASH" in missing
@@ -908,17 +878,13 @@ def test_factory_returns_placeholder_when_credentials_missing(tmp_path) -> None:
     设置 → 账户 填好凭据。占位 client 不构造真 TdlibTelegramClient,也
     不需要 TDLib stub。
     """
-    s = Settings(  # type: ignore[call-arg]
-        _env_file=None,
+    s = Settings.for_test(
         api_id=0,
         api_hash="",
         phone="",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
-        db_backend=DBBackend.JSONL,
-        objectstore_backend=ObjectStoreBackend.LOCAL,
     )
     from tgmonitor.core.telegram.factory import build_telegram_client
     from tgmonitor.core.telegram.unconfigured import UnconfiguredTelegramClient
@@ -995,7 +961,6 @@ def test_conn_state_map_covers_lifecycle_keys() -> None:
     assert expected.issubset(keys)
 
 
-@pytest.mark.asyncio
 async def test_connection_state_publishes_event(settings, bus, stub_tdlib_init) -> None:
     """updateConnectionState(嵌套 connectionStateReady)→ bus 发 ConnectionStateChanged。
 
@@ -1023,7 +988,6 @@ async def test_connection_state_publishes_event(settings, bus, stub_tdlib_init) 
         assert any(e.state == "ready" for e in captured)
 
 
-@pytest.mark.asyncio
 async def test_do_start_inner_proxy_error_sets_error_state(
     settings,
     bus,

@@ -21,15 +21,14 @@ from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
 
 @pytest.fixture
-def qapp_no_locale_force(monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    """QApplication 不强制 locale — i18n 测试自由切语言。"""
+def qapp_no_locale_force(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> QApplication:
+    """PR 1a:central `qapp` + i18n 测试需要 env clear + translator reset。"""
     for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
         monkeypatch.delenv(k, raising=False)
-    app = QApplication.instance() or QApplication([])
-    app.be_volatile = True  # type: ignore[attr-defined]
-    install_translator(app, locale="zh_CN")
-    yield app
-    install_translator(app, locale="zh_CN")
+    qapp.be_volatile = True  # type: ignore[attr-defined]
+    install_translator(qapp, locale="zh_CN")
+    yield qapp
+    install_translator(qapp, locale="zh_CN")
 
 
 def test_retranslate_ui_exists(qapp_no_locale_force: QApplication) -> None:
