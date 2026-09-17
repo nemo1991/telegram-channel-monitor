@@ -65,13 +65,21 @@ def _msg_safe_for_jsonl(msg) -> bool:
             return False
         if _has_control_char(m.emoji):
             return False
+        if _has_control_char(m.mime_type):
+            return False
+        if _has_control_char(m.download_error):
+            return False
         if m.telegram_file_id and _has_control_char(m.telegram_file_id):
             return False
         if m.object_key and _has_control_char(m.object_key):
             return False
+        if m.thumb_key and _has_control_char(m.thumb_key):
+            return False
     if msg.reactions:
         for r in msg.reactions:
             if _has_control_char(r.emoji):
+                return False
+            if _has_control_char(r.type):
                 return False
     return True
 
