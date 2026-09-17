@@ -50,6 +50,7 @@ pytest_plugins = [
     "tests.fixtures._bus_client",
     "tests.fixtures._monitor_app",
     "tests.fixtures._tdlib_stub",
+    "tests.fixtures._app_service_batch",
 ]
 # 注意:`_in_memory_repository` / `_factories` **不**在 pytest_plugins 里 —
 # 两者都无 `@pytest.fixture`,纯类 / 纯函数;测试代码
