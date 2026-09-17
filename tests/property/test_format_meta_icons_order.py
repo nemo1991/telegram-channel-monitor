@@ -107,8 +107,7 @@ def test_format_meta_icons_segment_order(msg: MessageDTO, expected_segments: lis
         assert idx >= 0, f"segment {seg!r} 缺失(输出 {out!r})"
     # 出现的 idx 单调递增(顺序固定)
     assert indices == sorted(indices), (
-        f"emoji 段顺序错乱:indices={indices}, expected={sorted(indices)}, "
-        f"output={out!r}"
+        f"emoji 段顺序错乱:indices={indices}, expected={sorted(indices)}, output={out!r}"
     )
 
 
@@ -151,8 +150,7 @@ def test_format_meta_icons_invariant_order(is_favorite, tags, notes, is_pinned) 
 
     indices = [_first_index_of(out, seg) for seg in present_segments]
     assert indices == sorted(indices), (
-        f"emoji 段顺序错乱:present={present_segments}, "
-        f"indices={indices}, output={out!r}"
+        f"emoji 段顺序错乱:present={present_segments}, indices={indices}, output={out!r}"
     )
 
 
@@ -193,7 +191,11 @@ def test_format_meta_icons_reactions_appended_after_pin() -> None:
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 def test_format_meta_icons_notes_truncates_at_30(notes: str) -> None:
-    """`notes` > 30 字符截断加 `…`;≤ 30 字符原样保留。"""
+    """`notes` > 30 字符截断加 `…`;≤ 30 字符原样保留。
+
+    invariant 验证:截断 = `len(notes) > 30` ↔ `notes[:30] + '…' in output`。
+    避免误判 `notes == '…'` 的边界(notes 本身含 `…` 字符不算截断)。
+    """
     msg = _make_msg(notes=notes)
     out = _format_meta_icons(msg)
     if not notes:
@@ -202,9 +204,18 @@ def test_format_meta_icons_notes_truncates_at_30(notes: str) -> None:
     # 有 notes → 📝 段必有
     assert "📝" in out
     if len(notes) > 30:
-        # 截断:out 应包含 `…` 在 📝 之后
-        marker_idx = _first_index_of(out, "…")
-        assert marker_idx > 0, f"超 30 字符 notes 应有 `…` 截断,output={out!r}"
+        # 截断:out 应包含 `notes[:30] + '…'`
+        expected_truncated = notes[:30] + "…"
+        assert expected_truncated in out, (
+            f"超 30 字符 notes 应有截断 {expected_truncated!r},output={out!r}"
+        )
     else:
-        # 无截断:不应有 `…`
-        assert "…" not in out, f"≤ 30 字符不应有 `…`,output={out!r}"
+        # 无截断:notes 原样保留(可能 notes 本身含 `…` 字符)
+        assert notes in out, f"≤ 30 字符 notes 应原样保留,output={out!r}"
+        # 关键:output 中 📝 后面的内容**就是** notes(没有再加额外 `…` 截断)
+        notes_idx = _first_index_of(out, notes)
+        notes_after_marker = out[notes_idx + len(notes) :] if notes_idx >= 0 else ""
+        # 不应出现 `…📝…` 这种双 `…` 或截断
+        assert not notes_after_marker.startswith("…"), (
+            f"≤ 30 字符 notes 不应再加截断 `…`,后续段={notes_after_marker!r}, output={out!r}"
+        )

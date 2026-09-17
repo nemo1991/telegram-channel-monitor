@@ -26,9 +26,7 @@ from tgmonitor.core.dto import (
 def timestamps(draw) -> datetime:
     """UTC datetime,1970-2030 范围 — 覆盖历史 + 未来边界。"""
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
-    delta = timedelta(
-        seconds=draw(st.integers(min_value=0, max_value=60 * 60 * 24 * 365 * 60))
-    )
+    delta = timedelta(seconds=draw(st.integers(min_value=0, max_value=60 * 60 * 24 * 365 * 60)))
     return epoch + delta
 
 
@@ -69,7 +67,12 @@ def media_dtos(draw) -> MediaDTO:
         download_status=draw(st.sampled_from(list(MediaDownloadStatus))),
         download_error=draw(st.one_of(st.none(), st.text(max_size=128))),
         emoji=draw(
-            st.one_of(st.none(), st.text(min_size=1, max_size=8).filter(lambda s: any(ord(ch) > 127 for ch in s) or any(ch.isalnum() for ch in s)))
+            st.one_of(
+                st.none(),
+                st.text(min_size=1, max_size=8).filter(
+                    lambda s: any(ord(ch) > 127 for ch in s) or any(ch.isalnum() for ch in s)
+                ),
+            )
         ),
     )
 
@@ -99,10 +102,10 @@ def reaction_dtos(draw) -> ReactionDTO:
 def message_dtos(draw) -> MessageDTO:
     """随机 MessageDTO,允许 text 为空、media list 0-3 条、reactions 0-3 条。
 
-    字段对齐 `tgmonitor.core.dto.MessageDTO`(v1.4.0+ 字段集):
-- `forward_origin` / `via_bot_user_id` / `media_album_id` 用 simple dict
-- `edited` 是字段名(不是 is_edited)
-- `raw` 留 None(避免 hypothesis 造 dict 太大)
+        字段对齐 `tgmonitor.core.dto.MessageDTO`(v1.4.0+ 字段集):
+    - `forward_origin` / `via_bot_user_id` / `media_album_id` 用 simple dict
+    - `edited` 是字段名(不是 is_edited)
+    - `raw` 留 None(避免 hypothesis 造 dict 太大)
     """
     return MessageDTO(
         id=draw(db_pks),
@@ -120,9 +123,7 @@ def message_dtos(draw) -> MessageDTO:
         forward_origin=draw(
             st.one_of(
                 st.none(),
-                st.fixed_dictionaries(
-                    {"@type": st.just("messageOriginUser"), "id": db_pks}
-                ),
+                st.fixed_dictionaries({"@type": st.just("messageOriginUser"), "id": db_pks}),
             )
         ),
         via_bot_user_id=draw(st.one_of(st.none(), telegram_msg_ids)),

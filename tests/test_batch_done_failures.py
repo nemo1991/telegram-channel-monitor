@@ -94,6 +94,7 @@ async def test_batch_done_failures_delete_messages(bus: EventBus) -> None:
 async def test_batch_done_failures_mark_messages_read(bus: EventBus) -> None:
     """`mark_messages_read` 单 cid 失败 → 该 cid 的所有 mid 列入 failures。"""
     svc = _make_app(bus)
+
     # 替换 client.mark_messages_read:cid=100 抛,cid=200 成功
     async def _side_effect(cid: int, msg_ids: list[int]) -> None:
         if cid == 100:

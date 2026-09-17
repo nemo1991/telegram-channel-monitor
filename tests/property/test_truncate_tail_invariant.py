@@ -113,9 +113,7 @@ def test_append_same_key_dedup_does_not_add_row(cid: int, mid: int) -> None:
     for _ in range(3):
         model.append(_make_msg(cid, mid))
 
-    assert model.rowCount() == 1, (
-        f"dedup 应保留 1 行,实测 {model.rowCount()}"
-    )
+    assert model.rowCount() == 1, f"dedup 应保留 1 行,实测 {model.rowCount()}"
     # 索引应为 0(head)
     assert model._index_of.get((cid, mid)) == 0
 
@@ -170,9 +168,7 @@ def test_truncate_tail_clears_format_cache_for_dropped_key() -> None:
 
     # 被截断的 key(0..4)从 cache 删
     for i in range(5):
-        assert (cid, i) not in model._format_cache, (
-            f"被截断的 (cid={cid}, mid={i}) 应从 cache 删"
-        )
+        assert (cid, i) not in model._format_cache, f"被截断的 (cid={cid}, mid={i}) 应从 cache 删"
     # 只剩 0 条(原本只有 5 条被截断,cache 全清;存活行未填 cache)
     assert len(model._format_cache) == 0, (
         f"截断后 _format_cache 应清空,剩 {len(model._format_cache)} 条"

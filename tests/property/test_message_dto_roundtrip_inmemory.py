@@ -108,9 +108,7 @@ async def test_message_dto_reactions_roundtrip(msg) -> None:
         await repo.save_message(msg)
         loaded = await repo.get_message(msg.channel_id, msg.telegram_msg_id)
         assert loaded is not None
-        assert loaded.reactions is None, (
-            "reactions=None 应保留 None,不应被默认 [] 覆盖"
-        )
+        assert loaded.reactions is None, "reactions=None 应保留 None,不应被默认 [] 覆盖"
         return  # type: ignore[return-value]
 
     if not msg.reactions:

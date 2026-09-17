@@ -146,9 +146,7 @@ async def test_handle_channel_title_changed_storage_error_emits_error_event() ->
     errors: list[ErrorOccurred] = []
     bus.subscribe(ErrorOccurred, lambda e: errors.append(e))
 
-    await mon._handle_channel_title_changed(
-        ChannelTitleChanged(channel_id=100, new_title="x")
-    )
+    await mon._handle_channel_title_changed(ChannelTitleChanged(channel_id=100, new_title="x"))
 
     assert len(errors) == 1
     assert errors[0].source == "monitor.channel_title"
@@ -180,22 +178,16 @@ async def test_handle_channel_photo_changed_empty_string_writes_null() -> None:
     """
     mon, bus, storage, _ = _make_monitor_with_mocks()
 
-    await mon._handle_channel_photo_changed(
-        ChannelPhotoChanged(channel_id=100, local_path="")
-    )
+    await mon._handle_channel_photo_changed(ChannelPhotoChanged(channel_id=100, local_path=""))
 
-    storage.update_channel_metadata.assert_awaited_once_with(
-        100, photo_local_key=None
-    )
+    storage.update_channel_metadata.assert_awaited_once_with(100, photo_local_key=None)
 
 
 async def test_handle_channel_photo_changed_none_is_no_op() -> None:
     """photo=None (不动字段)→ 不调 storage update_channel_metadata。"""
     mon, bus, storage, _ = _make_monitor_with_mocks()
 
-    await mon._handle_channel_photo_changed(
-        ChannelPhotoChanged(channel_id=100, local_path=None)
-    )
+    await mon._handle_channel_photo_changed(ChannelPhotoChanged(channel_id=100, local_path=None))
 
     storage.update_channel_metadata.assert_not_awaited()
 

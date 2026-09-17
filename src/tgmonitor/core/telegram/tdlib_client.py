@@ -907,9 +907,7 @@ class TdlibTelegramClient(_AiClient):
 
                 # PR 1b:`publish_async` 注册 task 到 `_inflight`,测试可 `await bus.flush()`
                 # 等投递完成 — 替代 `await asyncio.sleep(0.05)`。
-                self._bus.publish_async(
-                    ChannelTitleChanged(channel_id=chat_id, new_title=title)
-                )
+                self._bus.publish_async(ChannelTitleChanged(channel_id=chat_id, new_title=title))
         except Exception:  # noqa: BLE001
             log.exception("updateChatTitle handling failed chat_id=%s", chat_id)
 

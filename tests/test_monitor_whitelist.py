@@ -92,9 +92,7 @@ def test_update_backends_swaps_storage_objects_settings() -> None:
     new_settings = MagicMock()
 
     # 不传 downloader,内部 if 分支跳过 — 验证 storage/objects/settings 替换
-    asyncio.run(
-        mon.update_backends(new_storage, new_objects, new_settings)
-    )
+    asyncio.run(mon.update_backends(new_storage, new_objects, new_settings))
 
     assert mon.storage is new_storage
     assert mon.objects is new_objects
@@ -125,9 +123,7 @@ def test_update_backends_reloads_whitelist_from_new_storage() -> None:
     new_objects = MagicMock()
     new_settings = MagicMock()
 
-    asyncio.run(
-        mon.update_backends(new_storage, new_objects, new_settings)
-    )
+    asyncio.run(mon.update_backends(new_storage, new_objects, new_settings))
 
     assert mon._whitelist == {100, 200}
     new_storage.list_subscribed_channels.assert_awaited_once()
@@ -145,9 +141,7 @@ def test_update_backends_rebuilds_downloader_when_present() -> None:
     new_objects = MagicMock()
     new_settings = MagicMock()
 
-    asyncio.run(
-        mon.update_backends(new_storage, new_objects, new_settings)
-    )
+    asyncio.run(mon.update_backends(new_storage, new_objects, new_settings))
 
     # 引用换了,新 downloader 是 MediaDownloader 实例
     from tgmonitor.core.monitor.service import MediaDownloader

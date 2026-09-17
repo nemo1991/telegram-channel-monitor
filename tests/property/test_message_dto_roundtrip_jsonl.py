@@ -172,9 +172,7 @@ async def test_message_dto_jsonl_reactions_roundtrip(jsonl_dir: Path, msg) -> No
     )
     # None 应保留 None(plan bug 预警:None → [] 是常见 bug)
     if msg.reactions is None:
-        assert loaded.reactions is None, (
-            f"reactions=None 应保留 None(实际={loaded.reactions!r})"
-        )
+        assert loaded.reactions is None, f"reactions=None 应保留 None(实际={loaded.reactions!r})"
         return  # type: ignore[return-value]
 
     # 有 reactions 的话必须相等
@@ -224,10 +222,6 @@ async def test_jsonl_nel_bug_locked(tmp_path: Path) -> None:
     loaded = await store2.get_message(42, 7)
 
     # **此断言预期失败**,作为 reminder — fix 后会 pass
-    assert loaded is not None, (
-        "BUG 已修:含 NEL 的消息 reload 不再丢行"
-    )
+    assert loaded is not None, "BUG 已修:含 NEL 的消息 reload 不再丢行"
     if loaded is not None:
-        assert loaded.notes == "\x85", (
-            "BUG 已修:NEL 字符 round-trip 不丢字段值"
-        )
+        assert loaded.notes == "\x85", "BUG 已修:NEL 字符 round-trip 不丢字段值"
