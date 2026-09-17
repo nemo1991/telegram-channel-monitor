@@ -401,6 +401,21 @@ class MessageListModel(QAbstractListModel):
             return None
         return self._items[row]
 
+    def row_of_key(self, channel_id: int, telegram_msg_id: int) -> int | None:
+        """2026-09-17 PR 2:按 (cid, mid) 拿当前 row — 不存在返 None。
+
+        测试 / 外部代码用这个查 row,不再穿透 `_index_of` 私有 dict。
+        """
+        return self._index_of.get((channel_id, telegram_msg_id))
+
+    def row_values(self) -> set[int]:
+        """2026-09-17 PR 2:返当前所有 row 的集合 — 测试验「row 是连续 0..N」用。
+
+        `_index_of.values()` 的公开只读别名;不要拿这个 list 来寻址 O(1)
+        (仍走 `row_of_key`)。
+        """
+        return set(self._index_of.values())
+
     # ---- 过滤 / 格式化工具 ----
 
     def _matches(self, m: MessageDTO) -> bool:
@@ -799,6 +814,10 @@ class MessageView(QListView):
         `show_message(dto)` 重建;若不存在返回 None(已被截断 / 不在 LIVE 视图)。
         """
         return self._model.dto_by_key(channel_id, telegram_msg_id)
+
+    def row_of_key(self, channel_id: int, telegram_msg_id: int) -> int | None:
+        """2026-09-17 PR 2:按 (cid, mid) 拿当前 row,不存在返 None。"""
+        return self._model.row_of_key(channel_id, telegram_msg_id)
 
     def count(self) -> int:
         """行数 — 兼容 QListWidget.count()。"""
