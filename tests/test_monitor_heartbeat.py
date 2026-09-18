@@ -15,8 +15,9 @@ import logging
 from datetime import UTC, datetime
 
 from tests.conftest import make_message
+from tests.fixtures._async import wait_for
 from tgmonitor.core.dto import MessageDTO
-from tgmonitor.core.events import MessageInteractionsChanged
+from tgmonitor.core.events import ErrorOccurred, MessageInteractionsChanged
 
 
 async def test_monitor_heartbeat_logs_when_stream_idle(monitor, client, caplog) -> None:
@@ -33,8 +34,6 @@ async def test_monitor_heartbeat_logs_when_stream_idle(monitor, client, caplog) 
         try:
             # 等 2 个周期确保 heartbeat 被记到(wait_for vs 裸 sleep 0.25 — 实测
             # 通常 <50ms 命中)
-            from tests.fixtures._async import wait_for
-
             assert await wait_for(lambda: "heartbeat" in caplog.text.lower(), timeout=1.0), (
                 "heartbeat 没在 1s 内打到日志"
             )
@@ -60,8 +59,6 @@ async def test_monitor_logs_update_received_and_stored(
         try:
             await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="hi"))
             # 等消息落库(走 monitor _handle path)
-            from tests.fixtures._async import wait_for
-
             assert await wait_for(lambda: storage.get_message(100, 1), timeout=2.0), (
                 "message 没在 2s 内落库"
             )
@@ -147,8 +144,6 @@ async def test_monitor_routes_interactions_changed_to_storage(
             )
         )
         # 等 handler 调 _handle_interactions_changed → storage.update_message_interactions
-        from tests.fixtures._async import wait_for
-
         assert await wait_for(lambda: len(update_calls) >= 1, timeout=2.0), (
             "interactions handler 没在 2s 内调 storage"
         )
@@ -176,9 +171,7 @@ async def test_monitor_interactions_handler_swallows_errors(monitor, storage, bu
     async def _on_err(e):
         seen.append(e)
 
-    bus.subscribe(
-        __import__("tgmonitor.core.events", fromlist=["ErrorOccurred"]).ErrorOccurred, _on_err
-    )
+    bus.subscribe(ErrorOccurred, _on_err)
     try:
         await bus.publish(
             MessageInteractionsChanged(
@@ -188,20 +181,12 @@ async def test_monitor_interactions_handler_swallows_errors(monitor, storage, bu
             )
         )
         # 等 handler 处理完(抛异常 → 发 ErrorOccurred 事件)
-        from tests.fixtures._async import wait_for
-
-        from tgmonitor.core.events import ErrorOccurred
-
         assert await wait_for(
             lambda: any(isinstance(e, ErrorOccurred) for e in seen), timeout=2.0
         ), "ErrorOccurred 没在 2s 内发出"
         # 异常被吞,ErrorOccurred 事件发 1 次
-        from tgmonitor.core.events import ErrorOccurred
-
         assert any(isinstance(e, ErrorOccurred) and "simulated" in e.message for e in seen)
     finally:
-        bus.unsubscribe(
-            __import__("tgmonitor.core.events", fromlist=["ErrorOccurred"]).ErrorOccurred, _on_err
-        )
+        bus.unsubscribe(ErrorOccurred, _on_err)
         monitor.storage = original
         await monitor.stop()
