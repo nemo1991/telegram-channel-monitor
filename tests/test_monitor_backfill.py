@@ -130,9 +130,13 @@ async def test_backfill_loop_runs_periodically_and_stops(bus, storage, objectsto
     mon._BACKFILL_INTERVAL = 0.02  # type: ignore[assignment]
     await mon.start()
     try:
-        await asyncio.sleep(0.12)
-        # 首轮全补;后续轮锚点=5,第一条第 5 条 <= 5 → break,不重复
-        assert await storage.count_messages(100) == 5
+        # 等首轮全补(wait_for vs 裸 sleep 0.12 — 实测通常 <30ms 命中)
+        async def _count_eq_5() -> bool:
+            return await storage.count_messages(100) == 5
+
+        assert await wait_for(_count_eq_5, timeout=2.0), (
+            f"首轮 backfill 没在 2s 内补完 5 条,got {await storage.count_messages(100)}"
+        )
     finally:
         await mon.stop()
     count_after_stop = await storage.count_messages(100)

@@ -104,10 +104,16 @@ async def test_full_policy_downloads_media_async(bus, storage, objectstore, sett
     await mon.start()
     try:
         await client.simulate_incoming(msg)
-        # 下载未完成(假 client 睡 0.2s)→ 此刻应已落库且 media 是 DOWNLOADING
-        await asyncio.sleep(0.05)
-        assert len(received) == 1, "MessageReceived 应先行发布"
-        assert received[0].message.media[0].download_status == (MediaDownloadStatus.DOWNLOADING)
+        # 等「消息已落库且 media 仍是 DOWNLOADING」 — 此状态窗持续 0.2s
+        # (SlowClient 下载耗时),wait_for 立即命中,确定性高
+        assert await wait_for(
+            lambda: (
+                len(received) == 1
+                and (s := received[0].message.media[0]).download_status
+                == MediaDownloadStatus.DOWNLOADING
+            ),
+            timeout=1.0,
+        ), "消息没在 1s 内进入 DOWNLOADING 状态"
         stored = await storage.get_message(100, 10)
         assert stored is not None
         assert stored.media[0].download_status == MediaDownloadStatus.DOWNLOADING

@@ -31,8 +31,13 @@ async def test_monitor_heartbeat_logs_when_stream_idle(monitor, client, caplog) 
     with caplog.at_level(logging.INFO, logger="tgmonitor.core.monitor.service"):
         await monitor.start()
         try:
-            # 等 2 个周期确保 heartbeat 被记到
-            await asyncio.sleep(0.25)
+            # 等 2 个周期确保 heartbeat 被记到(wait_for vs 裸 sleep 0.25 — 实测
+            # 通常 <50ms 命中)
+            from tests.fixtures._async import wait_for
+
+            assert await wait_for(lambda: "heartbeat" in caplog.text.lower(), timeout=1.0), (
+                "heartbeat 没在 1s 内打到日志"
+            )
         finally:
             await monitor.stop()
     # 日志里至少 1 次 "heartbeat" 且含 "no updates"
