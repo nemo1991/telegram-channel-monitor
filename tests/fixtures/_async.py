@@ -14,10 +14,10 @@ from typing import Awaitable, Callable, TypeVar
 T = TypeVar("T")
 
 
-async def wait_for(
+async def wait_for[T](
     predicate: Callable[[], T | Awaitable[T]],
     *,
-    timeout: float = 2.0,
+    timeout: float = 2.0,  # noqa: ASYNC109 — predicate polling deadline, not asyncio.wait_for
     step: float = 0.01,
 ) -> T | None:
     """poll `predicate()` 直到返真值或超时。
