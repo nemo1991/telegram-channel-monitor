@@ -19,16 +19,7 @@ from PySide6.QtWidgets import QApplication
 from tgmonitor.i18n import install_translator
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
-
-@pytest.fixture
-def qapp_no_locale_force(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    """PR 1a:central `qapp` + i18n 测试需要 env clear + translator reset。"""
-    for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
-        monkeypatch.delenv(k, raising=False)
-    qapp.be_volatile = True  # type: ignore[attr-defined]
-    install_translator(qapp, locale="zh_CN")
-    yield qapp
-    install_translator(qapp, locale="zh_CN")
+# `qapp_no_locale_force` from tests/conftest.py — 2026-09-18 PR cleanup
 
 
 def test_retranslate_ui_exists(qapp_no_locale_force: QApplication) -> None:

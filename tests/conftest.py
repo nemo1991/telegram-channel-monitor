@@ -81,6 +81,23 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture
+def qapp_no_locale_force(qapp, monkeypatch):
+    """反 `force_zh_cn_locale` autouse + 切到 zh_CN 翻译器 — i18n 测试专用。
+
+    2026-09-18 PR cleanup:从 test_i18n_runtime.py + test_media_manager_i18n.py
+    各 1 份 11 行重复 fixture 集中到 conftest,2 个文件改 import 即可。
+    """
+    from tgmonitor.i18n import install_translator  # noqa: PLC0415
+
+    for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
+        monkeypatch.delenv(k, raising=False)
+    qapp.be_volatile = True  # type: ignore[attr-defined]
+    install_translator(qapp, locale="zh_CN")
+    yield qapp
+    install_translator(qapp, locale="zh_CN")  # teardown:还原默认
+
+
 # ---- legacy marker hook(PR 1a) ---------------------------------------
 
 
