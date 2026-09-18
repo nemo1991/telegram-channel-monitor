@@ -362,10 +362,11 @@ async def test_wait_code_action_not_awaited_inline(stub_tdlib_init):
         timeout=1.0,
     )
     await c.code.put("12345")
-    for _ in range(50):
-        if getattr(c, "last_code", None) == "12345":
-            break
-        await asyncio.sleep(0.02)
+    from tests.fixtures._async import wait_for
+
+    assert await wait_for(lambda: getattr(c, "last_code", None) == "12345", timeout=2.0), (
+        "code 没在 2s 内被消费"
+    )
     assert getattr(c, "last_code", None) == "12345"
 
 
@@ -437,10 +438,11 @@ async def test_updates_loop_crashes_and_restarts(stub_tdlib_init):
     c._schedule_updates_loop()
     try:
         # 崩溃回调 + 重启(首次 delay=0)只需几个事件循环轮次
-        for _ in range(50):
-            if calls["n"] >= 2:
-                break
-            await asyncio.sleep(0.02)
+        from tests.fixtures._async import wait_for
+
+        assert await wait_for(lambda: calls["n"] >= 2, timeout=2.0), (
+            f"崩溃回调 + 重启没在 2s 内跑完 2 轮:got {calls['n']}"
+        )
         assert calls["n"] == 2
         assert c._update_task is not None and c._update_task.done()
         assert c._update_task.exception() is None
