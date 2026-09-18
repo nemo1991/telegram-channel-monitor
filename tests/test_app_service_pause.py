@@ -33,7 +33,7 @@ def _make_app_service(bus, monitor: MagicMock, client: MagicMock) -> AppService:
     """
     storage = MagicMock()
     objects = MagicMock()
-    settings = Settings(api_id=1, api_hash="x" * 32, paused=False)
+    settings = Settings.for_test(paused=False)
     return AppService(
         bus=bus,
         client=client,  # type: ignore[arg-type]
