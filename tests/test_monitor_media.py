@@ -107,11 +107,8 @@ async def test_full_policy_downloads_media_async(bus, storage, objectstore, sett
         # 等「消息已落库且 media 仍是 DOWNLOADING」 — 此状态窗持续 0.2s
         # (SlowClient 下载耗时),wait_for 立即命中,确定性高
         assert await wait_for(
-            lambda: (
-                len(received) == 1
-                and (s := received[0].message.media[0]).download_status
-                == MediaDownloadStatus.DOWNLOADING
-            ),
+            lambda: len(received) == 1
+            and received[0].message.media[0].download_status == MediaDownloadStatus.DOWNLOADING,
             timeout=1.0,
         ), "消息没在 1s 内进入 DOWNLOADING 状态"
         stored = await storage.get_message(100, 10)

@@ -25,7 +25,6 @@ from tgmonitor.core.dto import MessageDTO
 from tgmonitor.core.events import MessageReceived
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
-
 # ============================================================
 # 实时接收 + dedup
 # ============================================================
