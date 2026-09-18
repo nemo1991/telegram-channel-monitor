@@ -18,6 +18,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from tests.conftest import make_message
+from tests.fixtures._async import wait_for
 from tgmonitor.core.config import MediaPolicy
 from tgmonitor.core.dto import (
     MediaDownloadStatus,
@@ -209,8 +210,9 @@ async def test_live_monitor_re_arrival_routes_to_edit_path(monitor, client, bus,
     await monitor.start()
     try:
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v1"))
-        await asyncio.sleep(0.1)
-        assert len(received) == 1
+        assert await wait_for(lambda: len(received) >= 1, timeout=2.0), (
+            "MessageReceived 没在 2s 内 emit"
+        )
         # 第 2 次:同 id,v2 — 应走编辑路径
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v2"))
         await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
@@ -252,7 +254,10 @@ async def test_live_monitor_silent_skip_when_message_in_storage(
     try:
         for i in range(3):
             await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text=f"v{i}"))
-        await asyncio.sleep(0.2)
+        # 等 3 个 update 都处理完(received=1, edited=2)
+        assert await wait_for(lambda: len(received) >= 1 and len(edited) >= 2, timeout=2.0), (
+            f"3 个 update 没在 2s 内处理完:received={len(received)}, edited={len(edited)}"
+        )
         # 仅 1 条 MessageReceived
         assert len(received) == 1
         # 2 条 MessageEdited
@@ -317,7 +322,10 @@ async def test_full_policy_skips_download_when_storage_has_prior(
         downloaded_evt.clear()
         # msg 2:同 file_id → _handle 阶段拷 storage 优先副本 → 不入下载队列
         await client.simulate_incoming(msg2)
-        await asyncio.sleep(0.3)
+        # 等 msg 2 落库(received=2);downloaded 应仍 1(dedup 命中)
+        assert await wait_for(lambda: len(received) >= 2, timeout=2.0), (
+            f"msg 2 没在 2s 内落库,received={len(received)}"
+        )
         # 仅 msg 1 的下载事件
         assert len(downloaded) == 1, "msg 2 应命中 media dedup,不重下"
         # msg 2 落库时 media 已 DONE + object_key
@@ -410,7 +418,9 @@ async def test_live_monitor_emits_message_edited_on_content_change(
     try:
         # 第 1 条:v1
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v1"))
-        await asyncio.sleep(0.2)
+        assert await wait_for(lambda: len(received) >= 1, timeout=2.0), (
+            "v1 MessageReceived 没在 2s 内 emit"
+        )
         assert len(received) == 1
         # 第 2 条:同 id,text v2 — _seen_ids 命中 → 走 _handle_edited
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="v2"))
@@ -464,7 +474,10 @@ async def test_edit_path_overwrites_text_views_forwards_edited_media(
     await monitor.start()
     try:
         await client.simulate_incoming(initial)
-        await asyncio.sleep(0.1)
+        # 等 initial 落库(确保 _seen_ids 已记录)
+        assert await wait_for(lambda: storage.get_message(100, 1), timeout=2.0), (
+            "initial message 没在 2s 内落库"
+        )
         # 同 id,模拟 updateMessageContent — 改 fields
         await client.simulate_incoming(edited_dto)
         await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
@@ -508,7 +521,10 @@ async def test_edit_path_when_storage_empty_saves_as_new(monitor, client, bus, s
         # 手动在 _seen_ids 塞 (100, 1),但 storage 没这条消息
         monitor._seen_ids[(100, 1)] = None
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="edit-on-empty"))
-        await asyncio.sleep(0.2)
+        # 等 _handle_edited 落库并 emit MessageEdited
+        assert await wait_for(lambda: len(edited) >= 1, timeout=2.0), (
+            "MessageEdited 没在 2s 内 emit"
+        )
         # MessageReceived 不发(编辑路径走 MessageEdited)
         assert received == []
         # MessageEdited 发,消息已落库

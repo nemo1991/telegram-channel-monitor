@@ -20,6 +20,7 @@ from typing import AsyncIterator
 import pytest
 
 from tests.conftest import make_message
+from tests.fixtures._async import wait_for
 from tgmonitor.core.dto import MessageDTO
 from tgmonitor.core.events import MessageReceived
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
@@ -43,9 +44,8 @@ async def test_monitor_receives_and_dedupes(monitor, storage, client, bus):
             await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="dup"))
         await client.simulate_incoming(make_message(channel_id=100, msg_id=2, text="new"))
         await client.simulate_incoming(make_message(channel_id=999, msg_id=1, text="ignored"))
-        # 给 monitor 一点点处理时间
-        await asyncio.sleep(0.2)
-        assert await storage.count_messages(100) == 2
+        # 确定性等 monitor 处理完(不用裸 sleep 0.2)
+        assert await wait_for(lambda: storage.count_messages(100), timeout=2.0) == 2
         # 不在白名单的频道不应落库
         assert await storage.count_messages(999) == 0
     finally:
@@ -62,8 +62,10 @@ async def test_message_received_event_published(monitor, client, bus):
     await monitor.start()
     try:
         await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="evt"))
-        await asyncio.sleep(0.2)
-        assert any(getattr(e, "message", None) and e.message.text == "evt" for e in seen)
+        assert await wait_for(
+            lambda: any(getattr(e, "message", None) and e.message.text == "evt" for e in seen),
+            timeout=2.0,
+        ), "MessageReceived 没在 2s 内 emit"
     finally:
         await monitor.stop()
 
@@ -328,9 +330,10 @@ async def test_seen_ids_cache_evicts_when_over_limit(monitor, client, bus) -> No
             await client.simulate_incoming(
                 make_message(channel_id=100, msg_id=mid, text=f"m-{mid}")
             )
-        await asyncio.sleep(0.5)
-        # LRU cap=10000
-        assert len(monitor._seen_ids) == 10000
+        # LRU cap=10000;wait_for 确认 _seen_ids 收敛
+        assert await wait_for(lambda: len(monitor._seen_ids) == 10000, timeout=3.0), (
+            f"_seen_ids 没在 3s 内收敛到 10000,实为 {len(monitor._seen_ids)}"
+        )
         # 最旧的(1-1=0)被踢
         assert (100, 1) not in monitor._seen_ids
         # 最新(10001)还在

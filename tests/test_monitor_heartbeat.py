@@ -54,7 +54,12 @@ async def test_monitor_logs_update_received_and_stored(
         await monitor.start()
         try:
             await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="hi"))
-            await asyncio.sleep(0.1)
+            # 等消息落库(走 monitor _handle path)
+            from tests.fixtures._async import wait_for
+
+            assert await wait_for(lambda: storage.get_message(100, 1), timeout=2.0), (
+                "message 没在 2s 内落库"
+            )
         finally:
             await monitor.stop()
     # DEBUG 日志有 "update received"
@@ -136,7 +141,12 @@ async def test_monitor_routes_interactions_changed_to_storage(
                 views=99,
             )
         )
-        await asyncio.sleep(0.1)
+        # 等 handler 调 _handle_interactions_changed → storage.update_message_interactions
+        from tests.fixtures._async import wait_for
+
+        assert await wait_for(lambda: len(update_calls) >= 1, timeout=2.0), (
+            "interactions handler 没在 2s 内调 storage"
+        )
         # storage 被调 1 次,带正确参数(views=99,reactions=None)
         assert len(update_calls) == 1
         assert update_calls[0][0] == (100, 10)
@@ -172,7 +182,14 @@ async def test_monitor_interactions_handler_swallows_errors(monitor, storage, bu
                 views=1,
             )
         )
-        await asyncio.sleep(0.1)
+        # 等 handler 处理完(抛异常 → 发 ErrorOccurred 事件)
+        from tests.fixtures._async import wait_for
+
+        from tgmonitor.core.events import ErrorOccurred
+
+        assert await wait_for(
+            lambda: any(isinstance(e, ErrorOccurred) for e in seen), timeout=2.0
+        ), "ErrorOccurred 没在 2s 内发出"
         # 异常被吞,ErrorOccurred 事件发 1 次
         from tgmonitor.core.events import ErrorOccurred
 
