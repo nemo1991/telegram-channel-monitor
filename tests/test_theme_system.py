@@ -191,7 +191,7 @@ def test_settings_has_key_theme_default_empty(qt_app: QApplication) -> None:
     """PR #P4:`Settings.key_theme` 字段默认空字符串(不持久化,兼容 v1.5.0)。"""
     from tgmonitor.core.config import Settings
 
-    s = Settings(env_file=None)
+    s = Settings.for_test()
     assert s.key_theme == ""
 
 
@@ -199,7 +199,7 @@ def test_settings_key_theme_round_trip_via_env(qt_app: QApplication) -> None:
     """PR #P4:`Settings.key_theme` 走 pydantic-settings env 加载路径。"""
     from tgmonitor.core.config import Settings
 
-    s = Settings(env_file=None, key_theme="dark")
+    s = Settings.for_test(key_theme="dark")
     assert s.key_theme == "dark"
 
 
@@ -208,7 +208,7 @@ def test_editable_settings_key_theme_round_trip(qt_app: QApplication) -> None:
     from tgmonitor.core.config import Settings
     from tgmonitor.core.settings_store import EditableSettings
 
-    s = Settings(env_file=None, key_theme="light")
+    s = Settings.for_test(key_theme="light")
     e = EditableSettings.from_settings(s)
     assert e.key_theme == "light"
     # to_settings 透传
