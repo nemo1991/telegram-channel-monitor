@@ -26,10 +26,6 @@ from tgmonitor.core.events import MessageReceived
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
-def _noop() -> None:
-    return None
-
-
 # ============================================================
 # 实时接收 + dedup
 # ============================================================
@@ -54,10 +50,7 @@ async def test_monitor_receives_and_dedupes(monitor, storage, client, bus):
 
 async def test_message_received_event_published(monitor, client, bus):
     seen: list = []
-    bus.subscribe(
-        __import__("tgmonitor.core.events", fromlist=["MessageReceived"]).MessageReceived,
-        lambda e: seen.append(e) or _noop(),
-    )
+    bus.subscribe(MessageReceived, lambda e: seen.append(e))
     monitor.set_whitelist([100])
     await monitor.start()
     try:
