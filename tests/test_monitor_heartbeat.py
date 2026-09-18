@@ -87,7 +87,7 @@ async def test_monitor_heartbeat_logs_when_stream_active(monitor, client, bus) -
                 await client.simulate_incoming(
                     make_message(channel_id=100, msg_id=i + 1, text=f"m{i}")
                 )
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0)  # 让 monitor loop tick 处理
         finally:
             await monitor.stop()
     finally:

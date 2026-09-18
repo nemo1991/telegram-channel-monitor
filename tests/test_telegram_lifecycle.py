@@ -229,11 +229,7 @@ async def test_settle_loop_waits_when_no_error_codes(settings, bus, stub_tdlib_i
     """
     async with make_client(settings, bus) as client:
         client._SETTLE_GRACE = 0.05  # type: ignore[assignment]
-        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
-        client.execute = _noop_async  # type: ignore[method-assign]
-        client._setup_proxy = _noop_async  # type: ignore[method-assign]
-        client._setup_options = _noop_async  # type: ignore[method-assign]
-        client.send = _noop_async  # type: ignore[method-assign]
+        _stub_inner_noop(client)
 
         client._set_state("tdlib_parameters")  # 停在瞬态,且不产生任何 error code
         task = asyncio.create_task(client._do_start_inner())
@@ -251,11 +247,7 @@ async def test_settle_loop_fails_fast_when_error_codes_seen(settings, bus, stub_
     """settle 宽限超时且已收到 error codes(被 TDLib 拒绝)→ 立即转可见错误。"""
     async with make_client(settings, bus) as client:
         client._SETTLE_GRACE = 0.05  # type: ignore[assignment]
-        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
-        client.execute = _noop_async  # type: ignore[method-assign]
-        client._setup_proxy = _noop_async  # type: ignore[method-assign]
-        client._setup_options = _noop_async  # type: ignore[method-assign]
-        client.send = _noop_async  # type: ignore[method-assign]
+        _stub_inner_noop(client)
 
         client._set_state("tdlib_parameters")
         client._seen_error_codes.append(400)  # api_id/api_hash 无效被拒
@@ -270,6 +262,21 @@ async def _noop_async(*args, **kwargs):  # noqa: ANN002, ANN003
 
 async def _noop_preflight():
     return True, None
+
+
+def _stub_inner_noop(client, *, stub_proxy: bool = True) -> None:
+    """2026-09-18 PR cleanup:把 settle-loop 测试里 5 行 `type: ignore[method-assign]`
+    stub 抽成 helper — 3 个 settle_loop / proxy 错误测试共享。
+
+    默认 stub 所有内部方法;`stub_proxy=False` 时跳过 `_setup_proxy` 让测试
+    自己注入错误版本(见 `test_do_start_inner_proxy_error_sets_error_state`)。
+    """
+    client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
+    client.execute = _noop_async  # type: ignore[method-assign]
+    if stub_proxy:
+        client._setup_proxy = _noop_async  # type: ignore[method-assign]
+    client._setup_options = _noop_async  # type: ignore[method-assign]
+    client.send = _noop_async  # type: ignore[method-assign]
 
 
 # ============================================================
@@ -999,10 +1006,7 @@ async def test_do_start_inner_proxy_error_sets_error_state(
     用户看到"未连接";现在 UI 应看到「代理设置失败: …」。
     """
     async with make_client(settings, bus) as client:
-        client._schedule_updates_loop = lambda: None  # type: ignore[method-assign]
-        client.execute = _noop_async  # type: ignore[method-assign]
-        client._setup_options = _noop_async  # type: ignore[method-assign]
-        client.send = _noop_async  # type: ignore[method-assign]
+        _stub_inner_noop(client, stub_proxy=False)
 
         async def _bad_proxy() -> None:
             raise tdc.TdlibError(code=400, message="addProxy failed")
