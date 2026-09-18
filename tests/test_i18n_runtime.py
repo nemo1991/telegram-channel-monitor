@@ -263,42 +263,11 @@ def test_no_hardcoded_zhcn_in_built_widgets(
     # 建一个最小 SettingsPage(避开 app / loop / env_path 注入)
     import asyncio
 
-    from tgmonitor.core.config import (
-        DBBackend,
-        MediaPolicy,
-        ObjectStoreBackend,
-    )
-
-    # Mock app.settings(只读必要字段)
+    # Mock app.settings — SettingsPage 只读 lang + key_theme 等几个字段,
+    # 其余由 Settings.for_test 默认值补齐
     class _MockApp:
         def __init__(self) -> None:
-            self.settings = _make_mock_settings()
-
-    def _make_mock_settings() -> Settings:
-        return Settings(
-            api_id=0,
-            api_hash="x" * 32,
-            phone="+8613800000000",
-            session_dir=Path("/tmp/s"),
-            db_backend=DBBackend.JSONL,
-            db_dsn="",
-            db_root=Path("/tmp/m"),
-            objectstore_backend=ObjectStoreBackend.LOCAL,
-            objectstore_root=Path("/tmp/o"),
-            objectstore_endpoint="",
-            objectstore_region="",
-            objectstore_access_key="",
-            objectstore_secret_key="",
-            objectstore_bucket="",
-            media_policy=MediaPolicy.METADATA,
-            media_max_bytes=0,
-            data_root=Path("/tmp"),
-            proxy="",
-            sync_chat_delay_ms=200,
-            sync_page_delay_ms=200,
-            sync_resume_from_saved=False,
-            lang="en_US",
-        )
+            self.settings = Settings.for_test(lang="en_US")
 
     sp = SettingsPage(
         app=_MockApp(),  # type: ignore[arg-type]
