@@ -17,6 +17,7 @@ import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.fixtures._async import wait_for
 from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
@@ -307,11 +308,10 @@ async def test_download_worker_processes_one_message_and_emits_event() -> None:
     worker_task = asyncio.create_task(mon._download_worker())
     await mon._download_queue.put((msg, 0))  # msg + media_idx
 
-    # 等 worker 处理完(save_message 被调一次)
-    for _ in range(50):
-        if storage.save_message.await_count >= 1:
-            break
-        await asyncio.sleep(0.02)
+    # 等 worker 处理完(save_message 被调一次)— wait_for 比 for+sleep 更声明式
+    assert await wait_for(lambda: storage.save_message.await_count >= 1, timeout=2.0), (
+        "download_worker 没在 2s 内调 save_message"
+    )
     # cancel worker 退出
     worker_task.cancel()
     try:
@@ -385,11 +385,10 @@ async def test_download_worker_emits_progress_events() -> None:
     worker_task = asyncio.create_task(mon._download_worker())
     await mon._download_queue.put((msg, 0))
 
-    # 等 worker 跑完
-    for _ in range(50):
-        if len(progress_calls) >= 1:
-            break
-        await asyncio.sleep(0.02)
+    # 等 worker 跑完(emit 第一个 progress callback)
+    assert await wait_for(lambda: len(progress_calls) >= 1, timeout=2.0), (
+        "download_worker 没在 2s 内 emit progress callback"
+    )
     worker_task.cancel()
     try:
         await worker_task
@@ -460,11 +459,13 @@ async def test_download_worker_swallows_download_exception() -> None:
     await mon._download_queue.put((msg, 0))
     await mon._download_queue.put((msg, 0))
 
-    # 等 worker 跑完 2 条
-    for _ in range(100):
-        if call_count["n"] >= 2 and storage.save_message.await_count >= 2:
-            break
-        await asyncio.sleep(0.02)
+    # 等 worker 跑完 2 条(wait_for 比 for+sleep 更声明式)
+    assert await wait_for(
+        lambda: call_count["n"] >= 2 and storage.save_message.await_count >= 2,
+        timeout=2.0,
+    ), (
+        f"download_worker 没在 2s 内跑完 2 条:count={call_count['n']}, saved={storage.save_message.await_count}"
+    )
     worker_task.cancel()
     try:
         await worker_task
