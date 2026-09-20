@@ -24,25 +24,8 @@ from PySide6.QtWidgets import QApplication
 from tgmonitor.core.config import Settings
 from tgmonitor.i18n import install_translator
 
-# ---- fixtures ----
-
-
-@pytest.fixture
-def qapp_no_locale_force(monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    """提供 QApplication 实例但不强制 zh_CN —— 让 i18n 测试自由切语言。
-
-    避开了 `force_zh_cn_locale` autouse fixture(为旧中文断言兜底);新 i18n
-    测试要显式控制 locale。
-    """
-    # 反 autouse fixture:清空它在 conftest.py 设的 env
-    for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
-        monkeypatch.delenv(k, raising=False)
-    app = QApplication.instance() or QApplication([])
-    app.be_volatile = True  # type: ignore[attr-defined]
-    # 初始装回 zh_CN(项目默认),测试各自决定是否切
-    install_translator(app, locale="zh_CN")
-    yield app
-    install_translator(app, locale="zh_CN")  # teardown:还原默认
+# `qapp_no_locale_force` from tests/conftest.py — 2026-09-18 PR cleanup
+# 从 test_i18n_runtime.py + test_media_manager_i18n.py 各 1 份相同 fixture 集中
 
 
 # ---- install_translator 行为 ----
@@ -267,42 +250,11 @@ def test_no_hardcoded_zhcn_in_built_widgets(
     # 建一个最小 SettingsPage(避开 app / loop / env_path 注入)
     import asyncio
 
-    from tgmonitor.core.config import (
-        DBBackend,
-        MediaPolicy,
-        ObjectStoreBackend,
-    )
-
-    # Mock app.settings(只读必要字段)
+    # Mock app.settings — SettingsPage 只读 lang + key_theme 等几个字段,
+    # 其余由 Settings.for_test 默认值补齐
     class _MockApp:
         def __init__(self) -> None:
-            self.settings = _make_mock_settings()
-
-    def _make_mock_settings() -> Settings:
-        return Settings(
-            api_id=0,
-            api_hash="x" * 32,
-            phone="+8613800000000",
-            session_dir=Path("/tmp/s"),
-            db_backend=DBBackend.JSONL,
-            db_dsn="",
-            db_root=Path("/tmp/m"),
-            objectstore_backend=ObjectStoreBackend.LOCAL,
-            objectstore_root=Path("/tmp/o"),
-            objectstore_endpoint="",
-            objectstore_region="",
-            objectstore_access_key="",
-            objectstore_secret_key="",
-            objectstore_bucket="",
-            media_policy=MediaPolicy.METADATA,
-            media_max_bytes=0,
-            data_root=Path("/tmp"),
-            proxy="",
-            sync_chat_delay_ms=200,
-            sync_page_delay_ms=200,
-            sync_resume_from_saved=False,
-            lang="en_US",
-        )
+            self.settings = Settings.for_test(lang="en_US")
 
     sp = SettingsPage(
         app=_MockApp(),  # type: ignore[arg-type]

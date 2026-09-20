@@ -17,19 +17,11 @@ from tgmonitor.ui.widgets.form_row import (
     text_field,
 )
 
-
-@pytest.fixture
-def qt_app() -> QApplication:
-    """取 QApplication.instance() 或新建一个(全局 once,跟其他 UI 测试一致)。
-
-    跑 `QT_QPA_PLATFORM=offscreen` 没真实 GPU/窗口,但 `QWidget` 实例化仍合法。
-    """
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — PR 1a 已提供 session-scope 单例
 
 
 @pytest.fixture
-def form_holders(qt_app: QApplication) -> tuple[QWidget, QFormLayout]:
+def form_holders(qapp: QApplication) -> tuple[QWidget, QFormLayout]:
     """返 (widget, layout) — widget 由 fixture 持有,避免 GC QFormLayout。
 
     pytest fixture return tuple,caller 解构成 widget, layout 都能用。

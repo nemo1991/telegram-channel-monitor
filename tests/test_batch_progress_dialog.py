@@ -32,18 +32,6 @@ class _MockVM(QObject):
 
 
 @pytest.fixture
-def qapp() -> QApplication:
-    """QApplication(非 QCoreApplication)— QDialog 需要 widget 实例。
-
-    conftest 可能已造了 QApplication,这里复用 — 否则新建。
-    """
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app  # type: ignore[return-value]
-
-
-@pytest.fixture
 def vm(qapp: QApplication) -> _MockVM:
     return _MockVM()
 

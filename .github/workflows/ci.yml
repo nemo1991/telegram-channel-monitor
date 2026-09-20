@@ -56,25 +56,22 @@ jobs:
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
+      # 2026-09-20 v1.7.5+ 修:.qm 必须早于 `uv sync` 存在,否则 hatchling
+      # editable build 找不到 force-include 源文件,uv sync 整体失败。
+      # 详见 action 自身注释 + 下方 Install dependencies 注释。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
       # uv sync 一次性装:
       #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
       #   - [project.optional-dependencies] 全部 (postgres/mongo/objectstore)
       #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
       # `-q` 关 progress bar,CI 日志干净
+      #
+      # 2026-09-20 v1.7.5+:依赖上一 step 已编译 .qm,否则 hatchling editable build
+      # 找不到 force-include 源文件失败。
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
-
-      # 2026-09-09 v1.7.x:.qm 是 pyside6-lrelease 从 .ts 编译的产物,被 .gitignore
-      # 排除(本地重生成;CI 拉源码后没有)。test_i18n_runtime.py 会断言 .qm 存在 +
-      # 非空 + 能 QTranslator.load() + 翻译结果正确,缺则 windows/macos 全红。
-      # 在 pytest 之前同步编译到 src/tgmonitor/i18n/,test 期间 QApplication
-      # install_translator() 即读到本地 zh_CN.qm / en_US.qm。
-      # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
-      # 2026-09-09 v1.7.x:windows-latest 默认 pwsh 把 YAML 行续 \ 当字面参数
-      # (Cannot open \);显式切 bash(windows-latest 自带 Git Bash)+ 单行命令。
-      - name: Compile Qt translation files (.ts → .qm)
-        shell: bash
-        run: uv run pyside6-lrelease src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts
 
       # 只加载已安装的 console_scripts entry point,不调用 `main()`。
       # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,
@@ -99,8 +96,15 @@ jobs:
           PYTHONPATH: src
           # 强制 Qt 用 offscreen 后端(无显示器),PySide6 在 CI 必设,否则
           # Linux 上 Qt 会尝试加载 libEGL.so.1 之类系统库;
-          # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳
-          QT_QPA_PLATFORM: offscreen
+          # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳。
+          #
+          # 2026-09-20 修(issue #20):**Windows 例外** —— offscreen 在
+          # windows-latest 下 `QApplication.processEvents()` 会 access violation
+          # (exit 139,中断整个 pytest 进程)。13 个文件 91 处 processEvents 调用
+          # 都受影响,逐个隔离会砍掉大块 Windows 覆盖,故改根因:
+          # offscreen 本就是给 Linux 无头环境的,而 Windows runner 有真实桌面
+          # 会话,直接用 Qt 原生 `windows` 平台插件。
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           QT_LOGGING_RULES: "*.warning=false"
         # 脚本用 bash 语法(set +e / while 重试),Windows runner 默认 pwsh,
         # 显式切 bash(windows-latest 自带 Git Bash)
@@ -122,7 +126,8 @@ jobs:
       - name: Run pytest with coverage
         env:
           PYTHONPATH: src
-          QT_QPA_PLATFORM: offscreen
+          # Windows 用原生插件,理由同上面 Run pytest(issue #20)
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           QT_LOGGING_RULES: "*.warning=false"
         shell: bash
         run: |
@@ -212,6 +217,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
+      # 2026-09-20 v1.7.5+:.qm 必须先编译 — `uv sync` 里的 hatchling editable
+      # build 会读 pyproject.toml force-include 列的 .qm 源文件,缺则
+      # FileNotFoundError 让 Install dependencies 整个红。同 test job。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
       # 装 dev + extras 让 tdlib_json / pydantic / platformdirs / pydantic_settings
       # 全可 import,否则 mypy 报 missing-imports(已被 [tool.mypy.overrides]
       # 屏蔽但 warning 仍多,污染日志)
@@ -266,6 +277,11 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libglib2.0-0t64 libsm6 libice6 libpulse0
+
+      # 2026-09-20 v1.7.5+:.qm 必须先编译(理由同 test / mypy job —
+      # hatchling force-include 读源文件,缺则 uv sync 红)。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
 
       - name: Install dependencies
         # --all-extras 装 asyncpg + motor(extras[postgres,mongo]),--group dev

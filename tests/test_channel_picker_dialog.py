@@ -23,15 +23,6 @@ from tgmonitor.ui.widgets.channel_picker_dialog import ChannelPickerDialog
 
 
 @pytest.fixture
-def qapp() -> QApplication:
-    """QApplication 实例 — widget 测试需要 event loop 集成。"""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app  # type: ignore[return-value]
-
-
-@pytest.fixture
 def channels() -> list[ChannelDTO]:
     return [
         ChannelDTO(id=100, title="Tech News", username="technews"),

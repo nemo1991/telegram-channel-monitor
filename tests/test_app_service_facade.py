@@ -56,7 +56,6 @@ def _find_sub_service(app: AppService, method_name: str):
     )
 
 
-@pytest.mark.asyncio
 async def test_facade_forwards_list_media_to_media_service(app: AppService) -> None:
     """`app.list_media` 必须真调到子 service(模拟),不走 storage 直调。
 
@@ -76,7 +75,6 @@ async def test_facade_forwards_list_media_to_media_service(app: AppService) -> N
     assert result is expected
 
 
-@pytest.mark.asyncio
 async def test_facade_forwards_list_messages_to_subscription_service(app: AppService) -> None:
     """`app.list_messages` 必须真调到子 service(模拟)。"""
     expected = [MagicMock()]
@@ -99,7 +97,6 @@ async def test_facade_forwards_list_messages_to_subscription_service(app: AppSer
     assert result is expected
 
 
-@pytest.mark.asyncio
 async def test_facade_forwards_list_messages_search_kwarg(app: AppService) -> None:
     """PR #B2:`app.list_messages(search="foo")` 把 search 透传给子 service。"""
     expected = [MagicMock()]
@@ -122,7 +119,6 @@ async def test_facade_forwards_list_messages_search_kwarg(app: AppService) -> No
     assert result is expected
 
 
-@pytest.mark.asyncio
 async def test_facade_objects_setter_syncs_to_media_service(app: AppService) -> None:
     """`app.objects = X` 必须同步给 MediaService(否则 reconcile_orphans 等
     仍按旧 backend 分支走)。
@@ -139,7 +135,6 @@ async def test_facade_objects_setter_syncs_to_media_service(app: AppService) -> 
     assert media_svc._objects is new_objects  # noqa: SLF001 — explicit sync contract
 
 
-@pytest.mark.asyncio
 async def test_facade_storage_setter_syncs_to_both_sub_services(app: AppService) -> None:
     """`app.storage = X` 必须同步给 SubscriptionService + MediaService。
 

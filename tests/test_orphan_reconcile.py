@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
@@ -59,7 +57,6 @@ def _msg(channel_id: int, msg_id: int, media: list[MediaDTO]):
 # ---- Local 后端 ------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_local_reconcile_dry_run_does_not_delete(
     app: AppService,
     storage: StorageRepository,
@@ -76,7 +73,6 @@ async def test_local_reconcile_dry_run_does_not_delete(
     assert await objectstore.exists("media/orphan.jpg")
 
 
-@pytest.mark.asyncio
 async def test_local_reconcile_prune_deletes_orphan_bytes(
     app: AppService,
     storage: StorageRepository,
@@ -96,7 +92,6 @@ async def test_local_reconcile_prune_deletes_orphan_bytes(
     assert await objectstore.exists("media/keep.jpg")
 
 
-@pytest.mark.asyncio
 async def test_local_reconcile_keeps_referenced_bytes(
     app: AppService,
     storage: StorageRepository,
@@ -115,7 +110,6 @@ async def test_local_reconcile_keeps_referenced_bytes(
 # ---- Folder 后端 ----------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_folder_reconcile_dry_run_does_not_delete(
     app: AppService,
     storage: StorageRepository,
@@ -141,7 +135,6 @@ async def test_folder_reconcile_dry_run_does_not_delete(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_folder_reconcile_prune_deletes_orphan_bytes(
     app: AppService,
     storage: StorageRepository,
@@ -164,7 +157,6 @@ async def test_folder_reconcile_prune_deletes_orphan_bytes(
 # ---- S3 后端 -------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_s3_reconcile_skips_gracefully(
     app: AppService,
     storage: StorageRepository,
@@ -191,7 +183,6 @@ async def test_s3_reconcile_skips_gracefully(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_s3_reconcile_with_iter_keys(
     app: AppService,
     storage: StorageRepository,

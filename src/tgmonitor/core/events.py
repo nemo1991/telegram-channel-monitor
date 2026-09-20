@@ -72,7 +72,7 @@ class ChannelUnsubscribed(Event):
 class ChannelTitleChanged(Event):
     """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatTitle` 推送频道改名。
 
-    UI `_ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
+    UI `ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
     """
 
     channel_id: int = 0
@@ -433,6 +433,9 @@ class EventBus:
         """空订阅表;按事件类型 + 通配订阅。"""
         self._subs: dict[type[Event], list[Subscriber]] = {}
         self._wild: list[Subscriber] = []  # 订阅所有事件
+        # PR 1b:跟踪 in-flight `publish_async()` task — 测试可 await flush() 等
+        # 所有 spawned publish 完成(production 不需要,直接 publish 走 await)。
+        self._inflight: set[asyncio.Task] = set()
 
     def subscribe(self, event_type: type[T], fn: Subscriber) -> None:
         """订阅指定事件类型;订阅者抛异常被吞 + 日志,不互相影响。"""
@@ -451,11 +454,9 @@ class EventBus:
                 pass
 
     async def publish(self, event: Event) -> None:
-        """广播一个事件:按类型 + MRO 父类匹配订阅者 + 通知所有 wildcard 订阅者。
+        """同步广播一个事件(inline await):按类型 + MRO 父类匹配订阅者 + 通知所有 wildcard 订阅者。
 
-        订阅者抛异常被吞 + 日志,不互相影响。
-
-        # 基类匹配
+        订阅者抛异常被吞 + 日志,不互相影响。返回时所有 subscriber 已跑完。
         """
         subs: list[Subscriber] = []
         for cls in type(event).__mro__:
@@ -472,6 +473,42 @@ class EventBus:
                 await fn(event)
             except Exception:  # noqa: BLE001
                 log.exception("wildcard subscriber raised: %r", fn)
+
+    def publish_async(self, event: Event) -> asyncio.Task:
+        """PR 1b:异步发布 — fire-and-forget task,加入 `_inflight` 跟踪。
+
+        用于 TDLib update handler 等「不能在当前调用栈 await」的场合:
+        - 不阻塞调用者(响应 TDLib 心跳)
+        - 测试可 await `bus.flush()` 等所有 in-flight 跑完
+
+        生产语义与原 `asyncio.create_task(self._bus.publish(event))` 等价;
+        测试里替代 `await asyncio.sleep(0.05)` 这种"等任务结束"的盲等。
+        """
+        task = asyncio.create_task(self.publish(event))
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+        return task
+
+    async def flush(self, *, timeout_secs: float = 1.0) -> None:
+        """PR 1b:等所有 in-flight `publish_async()` 任务完成 — 测试用。
+
+        默认 `timeout_secs=1.0s`,到时记 debug log 不抛。`publish_async` 的
+        done callback 会从 `_inflight` 自动 discard,所以这里只 snapshot 当前 set。
+        参数命名 `timeout_secs` 是绕 ruff ASYNC109(不让 async def 有 `timeout`
+        kwarg)— 内部走 `asyncio.timeout` context manager。
+        """
+        if not self._inflight:
+            return
+        pending = list(self._inflight)
+        try:
+            async with asyncio.timeout(timeout_secs):
+                await asyncio.gather(*pending, return_exceptions=True)
+        except TimeoutError:
+            log.debug(
+                "EventBus.flush timeout after %.2fs; %d task(s) still pending",
+                timeout_secs,
+                len(pending),
+            )
 
     def publish_threadsafe(self, loop: asyncio.AbstractEventLoop, event: Event) -> None:
         """从其它线程安全地发布事件(后台下载任务等用)。"""

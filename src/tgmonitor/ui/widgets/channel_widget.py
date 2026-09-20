@@ -150,7 +150,7 @@ def _channel_display_text(ch: ChannelDTO) -> str:
     return base
 
 
-class _ChannelListCard(QWidget):
+class ChannelListCard(QWidget):
     """频道管理页的双栏之一 — 标题 + action button + list + 底部 hint。
 
     把"已加入"和"已监听"两张卡的同构部件抽出来(原本是 ChannelWidget._build
@@ -352,7 +352,7 @@ class ChannelWidget(QWidget):
     已加入:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
     已监听:`AppService._subscribed` 当前白名单,**双击 = 退订;多选 + 全量同步**
 
-    内部用两张 `_ChannelListCard` 实例(`joined_card` / `subs_card`)
+    内部用两张 `ChannelListCard` 实例(`joined_card` / `subs_card`)
     实际承载 UI,ChannelWidget 自身只负责装配 + 搜索 + EventBus 接线和
     增量子操作。
     """
@@ -368,7 +368,7 @@ class ChannelWidget(QWidget):
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
     ) -> None:
-        """建两张 `_ChannelListCard`(joined / subscribed)+ 接 EventBus + 异步拉频道。"""
+        """建两张 `ChannelListCard`(joined / subscribed)+ 接 EventBus + 异步拉频道。"""
         super().__init__(parent)
         self.app = app
         self.loop = loop
@@ -393,8 +393,8 @@ class ChannelWidget(QWidget):
         self.search_edit.textChanged.connect(self._apply_filter)
         root.addWidget(self.search_edit)
 
-        # 上栏 — 已加入(`_ChannelListCard`,已接入 empty_hint #2-6)
-        self.joined_card = _ChannelListCard(
+        # 上栏 — 已加入(`ChannelListCard`,已接入 empty_hint #2-6)
+        self.joined_card = ChannelListCard(
             title="已加入频道",
             action_label="刷新",
             action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组",
@@ -411,7 +411,7 @@ class ChannelWidget(QWidget):
         root.addWidget(self.joined_card, 3)
 
         # 下栏 — 已监听
-        self.subs_card = _ChannelListCard(
+        self.subs_card = ChannelListCard(
             title="已监听",
             action_label="全量同步…",
             action_tooltip="多选 + 全量拉取元数据 + 历史消息(可调频率防封号)",
@@ -426,7 +426,7 @@ class ChannelWidget(QWidget):
         # ---- 兼容老 attribute 名(测试 + MainWindow 仍走旧 API)----
         # 旧代码依赖 `self.lst_joined` / `lst_subscribed` / `lbl_*_count` /
         # `btn_refresh` / `btn_sync`,把桥接留在 ChannelWidget 层 —
-        # 测试 / 上层代码不再穿透到 card 层,_ChannelListCard 是私有实现细节。
+        # 测试 / 上层代码不再穿透到 card 层,ChannelListCard 是私有实现细节。
         self.lst_joined = self.joined_card.lst
         self.lst_subscribed = self.subs_card.lst
         self.lbl_joined_count = self.joined_card.count_label
@@ -478,7 +478,7 @@ class ChannelWidget(QWidget):
                 self._apply_title_changed(e.channel_id, e.new_title)
             elif isinstance(e, ChannelPhotoChanged):
                 # 2026-09-03 v1.6.0 PR #Q2:实时刷新头像(local 路径可能不可访问,
-                # 由 _ChannelListCard 兜底 placeholder)。
+                # 由 ChannelListCard 兜底 placeholder)。
                 self._apply_photo_changed(e.channel_id, e.local_path)
 
         bus.subscribe(ChannelSubscribed, _on)
@@ -552,7 +552,7 @@ class ChannelWidget(QWidget):
         self.set_joined(chs)
 
     def _on_joined_double_click(self, cid: int) -> None:
-        """`_ChannelListCard.item_double_clicked` 直接给 channel_id。"""
+        """`ChannelListCard.item_double_clicked` 直接给 channel_id。"""
         ch = self._joined.get(cid)
         if ch is None:
             return

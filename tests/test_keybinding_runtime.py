@@ -36,7 +36,7 @@ from tgmonitor.core.settings_store import EditableSettings, settings_to_pairs
 
 def test_settings_keybinding_defaults_empty() -> None:
     """14 个 key_<action> 字段默认空串 — 空 = 走硬编码默认(与 key_theme 一致)。"""
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     for action in DEFAULT_BINDINGS:
         assert getattr(s, f"key_{action}") == "", (
             f"Settings.key_{action} default must be '' (got {getattr(s, f'key_{action}')!r})"
@@ -47,7 +47,7 @@ def test_settings_keybinding_env_override(monkeypatch: pytest.MonkeyPatch) -> No
     """TG_KEY_REFRESH=F5 解析到 Settings.key_refresh(忽略大小写不敏感场景里保留 F5)。"""
     monkeypatch.setenv("TG_KEY_REFRESH", "F5")
     monkeypatch.setenv("TG_KEY_QUIT", "Ctrl+W")
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     assert s.key_refresh == "F5"
     assert s.key_quit == "Ctrl+W"
     # 其它字段保持默认空
@@ -69,7 +69,7 @@ def test_settings_keybinding_count_matches_module_default() -> None:
 
 def test_editable_settings_keybinding_round_trip() -> None:
     """EditableSettings.from_settings / to_settings 透传 14 个字段。"""
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     s.key_refresh = "F5"
     s.key_quit = "Ctrl+W"
     s.key_search = "Ctrl+K"
@@ -94,7 +94,7 @@ def test_editable_settings_keybinding_defaults_empty() -> None:
 
 def test_settings_to_pairs_includes_keybindings() -> None:
     """settings_to_pairs 写出 14 个 TG_KEY_* 项,空串也写(便于 .env 显式标记)。"""
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     pairs = settings_to_pairs(s)
     expected_keys = {f"TG_KEY_{a.upper()}" for a in DEFAULT_BINDINGS}
     actual_keys = {k for k in pairs if k.startswith("TG_KEY_")}
@@ -103,7 +103,7 @@ def test_settings_to_pairs_includes_keybindings() -> None:
 
 def test_settings_to_pairs_emits_set_values() -> None:
     """非空 Settings 字段在 settings_to_pairs 里原样落地。"""
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     s.key_refresh = "F5"
     s.key_show_window = "Ctrl+9"
     pairs = settings_to_pairs(s)
@@ -289,7 +289,7 @@ class _FakeMainWindow(QObject):
         # 模拟 _wire_shortcuts 的初次绑定逻辑(无 settings 时也走默认)
         from tgmonitor.core.config import Settings  # noqa: PLC0415
 
-        s = Settings(env_file=None)  # type: ignore[call-arg]
+        s = Settings.for_test()
         bindings = {name: getattr(s, f"key_{name}", "") for name in DEFAULT_BINDINGS}
         for action, slot_factory in _NOOP_SLOTS.items():
             seq = binding_for(action, bindings.get(action, ""))
@@ -340,7 +340,7 @@ def test_main_window_reload_shortcuts_replaces_qshortcut() -> None:
     assert mw._shortcuts["refresh"].key().toString() == "Ctrl+R"
     old_sc = mw._shortcuts["refresh"]
 
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     s.key_refresh = "F9"
     mw.reload_shortcuts(s)
 
@@ -358,7 +358,7 @@ def test_main_window_reload_shortcuts_updates_tray_action() -> None:
     """
     _ensure_qapp()
     mw = _FakeMainWindow()
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     s.key_show_window = "Ctrl+9"
     s.key_quit = "Ctrl+W"
     mw.reload_shortcuts(s)
@@ -372,7 +372,7 @@ def test_main_window_reload_shortcuts_empty_falls_back_to_default() -> None:
     重建 fake,初次 settings.refresh = "F5",reload 后清空 → 走默认 Ctrl+R。
     """
     _ensure_qapp()
-    s = Settings(env_file=None)  # type: ignore[call-arg]
+    s = Settings.for_test()
     s.key_refresh = "F5"
 
     # 直接调 binding_for / _ACTION_SLOTS 重建 fake

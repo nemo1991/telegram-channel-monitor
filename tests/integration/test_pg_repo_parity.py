@@ -685,27 +685,34 @@ async def test_metadata_schema_migration_preserves_old_rows_pg(
 ) -> None:
     """2026-09-09 v1.7.2:schema 迁移 — 旧行(没 is_favorite/tags/notes)读回默认值。
 
-    模拟「ALTER TABLE 已跑过,数据是迁移前写入」的边界:
-    直接 SQL 插一条没新列的行,然后验证 .get() fallback 兜底。
+    2026-09-20 修:本测试原先显式插 `NULL, NULL, NULL`,但生产 schema 是
+    `ADD COLUMN ... NOT NULL DEFAULT`(schema.sql:67-69) —— 插 NULL 直接被
+    PG 拒(NotNullViolationError)。**线上读不到 NULL**,PG 在 ADD COLUMN 时
+    就把旧行回填成默认值了。
 
-    PG 9.6+ ADD COLUMN IF NOT EXISTS 有非空默认时会回填,故「旧行」要绕过:
-    - 用 SET DEFAULT FALSE 后插的旧行会带默认值 — 测的是 _row_to_message 读路径
-      对 NULL 字段用 .get(..., default) 的兜底,需要显式不依赖 schema default。
+    改为测真实生产路径:走裸 SQL 插一条「不写这三列」的旧行(绕开 repo 的
+    save_message,它总会显式写值),PG 用 DEFAULT 回填 → 读回应是默认值。
+    这才是「迁移前写入的行,迁移后读到什么」的真实答案。
+
+    注:`_row_to_message` 里 `bool(row.get("is_favorite", False))` /
+    `row.get("notes") or ""` 那层 None 兜底属防御性契约,schema 上不可达,
+    本测试不断言它。
     """
+    # 裸 SQL 插 messages 前得先有 channels 行 —— channel_id 有 FK 约束,
+    # 且 pg_repo 是 function-scope(每个 test 重建 schema),999 不存在。
+    await pg_repo.upsert_channel(ChannelDTO(id=999, title="legacy"))
+
     async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
-        # 删 NOT NULL DEFAULT 限制,模拟「迁移前老 schema」 — 显式插 NULL 字段
-        # 实际生产里 schema.sql ALTER 会用 NOT NULL DEFAULT FALSE 兜底,本测试
-        # 焦点是 _row_to_message 读侧对 None 的容错。
+        # 不列 is_favorite / tags / notes → 由 schema DEFAULT 回填
         await conn.execute(
-            "INSERT INTO messages (channel_id, telegram_msg_id, text, date, "
-            "is_favorite, tags, notes) "
-            "VALUES ($1, $2, $3, $4, NULL, NULL, NULL) "
-            "ON CONFLICT (channel_id, telegram_msg_id) DO NOTHING",
+            "INSERT INTO messages (channel_id, telegram_msg_id, text, date) "
+            "VALUES ($1, $2, $3, $4)",
             999,
             1,
             "old row",
             datetime(2026, 9, 1, tzinfo=UTC),
         )
+
     m = await pg_repo.get_message(999, 1)
     assert m is not None
     assert m.is_favorite is False

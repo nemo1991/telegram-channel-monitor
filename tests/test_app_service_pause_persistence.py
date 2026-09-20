@@ -67,7 +67,7 @@ def env_path(tmp_path: Path) -> Path:
 
 def test_settings_paused_default_false() -> None:
     """2026-09-04 v1.6.6:Settings.paused 默认 False — 旧 .env 无 TG_PAUSED → 启动恢复监听。"""
-    s = Settings(api_id=1, api_hash="x" * 32)
+    s = Settings.for_test()
     assert s.paused is False
 
 
@@ -75,7 +75,7 @@ def test_settings_paused_reads_from_env_file(env_path: Path) -> None:
     """pydantic-settings 自动从 TG_PAUSED=true 解析到 settings.paused。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_API_ID=1\nTG_PAUSED=true\n", encoding="utf-8")
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is True
 
 
@@ -83,7 +83,7 @@ def test_settings_paused_reads_false_from_env_file(env_path: Path) -> None:
     """TG_PAUSED=false 也被 pydantic-settings 正确解析。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_PAUSED=false\n", encoding="utf-8")
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is False
 
 
@@ -92,14 +92,14 @@ def test_settings_paused_reads_false_from_env_file(env_path: Path) -> None:
 
 def test_paused_init_from_settings_true() -> None:
     """Settings(paused=True) → AppService.is_paused = True。"""
-    s = Settings(api_id=1, api_hash="x" * 32, paused=True)
+    s = Settings.for_test(paused=True)
     app = _make_app(settings=s)
     assert app.is_paused is True
 
 
 def test_paused_init_from_settings_false() -> None:
     """Settings(paused=False) → AppService.is_paused = False。"""
-    s = Settings(api_id=1, api_hash="x" * 32, paused=False)
+    s = Settings.for_test(paused=False)
     app = _make_app(settings=s)
     assert app.is_paused is False
 
@@ -111,7 +111,7 @@ async def test_bootstrap_returns_ready_when_paused() -> None:
     """2026-09-04 v1.6.6:bootstrap() 在 _is_paused=True 时直接返 ('ready', None),
     不调 client.start()。正常路径由 app.py gate skip,这是 belt-and-suspenders。
     """
-    s = Settings(api_id=1, api_hash="x" * 32, paused=True)
+    s = Settings.for_test(paused=True)
     client = MagicMock(spec=TelegramClient)
     client.start = AsyncMock()
     app = _make_app(settings=s, client=client)
@@ -124,7 +124,7 @@ async def test_bootstrap_returns_ready_when_paused() -> None:
 
 async def test_bootstrap_normal_path_unaffected_when_resumed() -> None:
     """回归测试:_is_paused=False 时 bootstrap() 行为不变,正常调 client.start()。"""
-    s = Settings(api_id=1, api_hash="x" * 32, paused=False)
+    s = Settings.for_test(paused=False)
     client = MagicMock(spec=TelegramClient)
     client.start = AsyncMock(return_value=("ready", None))
     app = _make_app(settings=s, client=client)
@@ -140,7 +140,7 @@ async def test_bootstrap_normal_path_unaffected_when_resumed() -> None:
 
 async def test_pause_monitor_writes_paused_true_to_env(env_path: Path) -> None:
     """pause_monitor() 后 .env 含 TG_PAUSED=true。"""
-    s = Settings(api_id=1, api_hash="x" * 32, paused=False)
+    s = Settings.for_test(paused=False)
     app = _make_app(settings=s, env_path=env_path)
     env_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -154,7 +154,7 @@ async def test_resume_monitor_writes_paused_false_to_env(env_path: Path) -> None
     """precondition: _is_paused=True。resume_monitor() 后 .env 含 TG_PAUSED=false。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_PAUSED=true\n", encoding="utf-8")
-    s = Settings(api_id=1, api_hash="x" * 32, paused=True)
+    s = Settings.for_test(paused=True)
     app = _make_app(settings=s, env_path=env_path)
 
     await app.resume_monitor()
@@ -169,7 +169,7 @@ async def test_resume_monitor_no_env_change_on_start_failure(env_path: Path) -> 
     """
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_PAUSED=true\n", encoding="utf-8")
-    s = Settings(api_id=1, api_hash="x" * 32, paused=True)
+    s = Settings.for_test(paused=True)
     client = MagicMock(spec=TelegramClient)
     client.start = AsyncMock(side_effect=RuntimeError("tdlib boom"))
     app = _make_app(settings=s, env_path=env_path, client=client)
@@ -188,7 +188,7 @@ async def test_pause_monitor_no_env_change_when_already_paused(env_path: Path) -
     """幂等:已 paused 时 pause_monitor() no-op,不写 .env(避免覆盖其他切换)。"""
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("TG_PAUSED=false\n", encoding="utf-8")
-    s = Settings(api_id=1, api_hash="x" * 32, paused=True)
+    s = Settings.for_test(paused=True)
     app = _make_app(settings=s, env_path=env_path)
 
     await app.pause_monitor()  # already paused, no-op
@@ -202,7 +202,7 @@ async def test_pause_monitor_skips_env_write_when_env_path_none() -> None:
     """env_path=None 时(纯测试 AppService 场景)pause/resume 正常 in-memory toggle,
     无 env_path 不写 .env,不抛错。
     """
-    s = Settings(api_id=1, api_hash="x" * 32, paused=False)
+    s = Settings.for_test(paused=False)
     app = _make_app(settings=s, env_path=None)
 
     await app.pause_monitor()
@@ -253,9 +253,9 @@ def test_update_env_paused_round_trip(tmp_path: Path) -> None:
     env_path.write_text("TG_API_ID=1\n", encoding="utf-8")
 
     update_env_paused(env_path, True)
-    s = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s = Settings.from_env_file(env_path)
     assert s.paused is True
 
     update_env_paused(env_path, False)
-    s2 = Settings(_env_file=str(env_path))  # type: ignore[call-arg]
+    s2 = Settings.from_env_file(env_path)
     assert s2.paused is False

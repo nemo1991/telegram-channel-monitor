@@ -13,16 +13,10 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, QPoint
-from PySide6.QtWidgets import QAbstractItemView, QApplication
+from PySide6.QtWidgets import QAbstractItemView
 
 from tgmonitor.core.dto import MessageDTO
 from tgmonitor.ui.widgets.message_view import MessageView
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    """Session-scope QApplication — 与 test_message_view.py 共享。"""
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

@@ -17,19 +17,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from unittest.mock import MagicMock, patch  # noqa: E402
 
-import pytest  # noqa: E402
 from PySide6.QtCore import QObject  # noqa: E402
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon  # noqa: E402
 
 from tgmonitor.core.events import NotificationRequested, QuitRequested  # noqa: E402
 from tgmonitor.ui.widgets.tray_icon import TrayIcon  # noqa: E402
 
-
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    """构造一次 QApplication — 多次跑 UI 测试不重复创建。"""
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
 class _DummyParent(QObject):
@@ -54,7 +48,7 @@ def _make_app_svc() -> MagicMock:
     return app
 
 
-def test_tray_inactive_when_no_system_tray(qt_app: QApplication) -> None:
+def test_tray_inactive_when_no_system_tray(qapp: QApplication) -> None:
     """offscreen QPA 无 system tray → is_active=False(UI 走 fallback)。"""
     parent = _DummyParent()
     app = _make_app_svc()
@@ -66,7 +60,7 @@ def test_tray_inactive_when_no_system_tray(qt_app: QApplication) -> None:
     tray.hide()
 
 
-def test_tray_active_when_system_tray_available(qt_app: QApplication) -> None:
+def test_tray_active_when_system_tray_available(qapp: QApplication) -> None:
     """有 system tray 时 is_active=True + menu 3 项。"""
     parent = _DummyParent()
     app = _make_app_svc()
@@ -80,7 +74,7 @@ def test_tray_active_when_system_tray_available(qt_app: QApplication) -> None:
     assert "退出" in actions
 
 
-def test_tray_show_action_shows_parent(qt_app: QApplication) -> None:
+def test_tray_show_action_shows_parent(qapp: QApplication) -> None:
     """菜单「显示主窗口」→ parent.show() — 不走 quit。"""
     parent = _DummyParent()
     app = _make_app_svc()
@@ -93,7 +87,7 @@ def test_tray_show_action_shows_parent(qt_app: QApplication) -> None:
 
 
 def test_tray_publishes_quit_requested_pause_on_pause(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """菜单「暂停监听」→ bus.publish(QuitRequested(pause=True))。"""
     parent = _DummyParent()
@@ -110,7 +104,7 @@ def test_tray_publishes_quit_requested_pause_on_pause(
 
 
 def test_tray_publishes_quit_requested_no_pause_on_quit(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """菜单「退出」→ bus.publish(QuitRequested(pause=False))。"""
     parent = _DummyParent()
@@ -125,7 +119,7 @@ def test_tray_publishes_quit_requested_no_pause_on_quit(
     assert event.pause is False
 
 
-def test_tray_double_click_shows_parent(qt_app: QApplication) -> None:
+def test_tray_double_click_shows_parent(qapp: QApplication) -> None:
     """双击托盘 → parent.show()(系统级唤起主窗口)。"""
     parent = _DummyParent()
     app = _make_app_svc()
@@ -135,9 +129,8 @@ def test_tray_double_click_shows_parent(qt_app: QApplication) -> None:
     assert parent.show_called is True
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_forwards_to_show_message(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """`on_notification` 把 NotificationRequested 转发到 tray.showMessage。"""
     parent = _DummyParent()
@@ -154,9 +147,8 @@ async def test_tray_on_notification_forwards_to_show_message(
     assert args[1] == "测试内容"
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_error_uses_critical_icon(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """level=error → MessageIcon.Critical(其他 → Information)。"""
     parent = _DummyParent()
@@ -171,9 +163,8 @@ async def test_tray_on_notification_error_uses_critical_icon(
     assert args[2] == QSystemTrayIcon.MessageIcon.Critical
 
 
-@pytest.mark.asyncio
 async def test_tray_on_notification_noop_when_inactive(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """is_active=False(无 system tray)时 on_notification no-op,不抛。"""
     parent = _DummyParent()

@@ -9,12 +9,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
-@pytest.mark.asyncio
 async def test_fake_mark_messages_read_groups_by_cid() -> None:
     """调用 mark_messages_read(1, [10, 11, 12]) 后 read_log[1] == [10, 11, 12]。"""
     client = FakeTelegramClient()
@@ -22,7 +19,6 @@ async def test_fake_mark_messages_read_groups_by_cid() -> None:
     assert client.read_log == {1: [10, 11, 12]}
 
 
-@pytest.mark.asyncio
 async def test_fake_mark_messages_read_appends_per_cid() -> None:
     """同一 cid 多次调用 → 累加到同一 list(模拟 UI 分批标记)。"""
     client = FakeTelegramClient()
@@ -32,7 +28,6 @@ async def test_fake_mark_messages_read_appends_per_cid() -> None:
     assert client.read_log == {1: [10, 11, 12], 2: [100]}
 
 
-@pytest.mark.asyncio
 async def test_fake_mark_messages_read_empty_noop() -> None:
     """空 msg_ids 早 return — read_log 保持空。"""
     client = FakeTelegramClient()
@@ -40,7 +35,6 @@ async def test_fake_mark_messages_read_empty_noop() -> None:
     assert client.read_log == {}
 
 
-@pytest.mark.asyncio
 async def test_fake_read_log_is_property_view() -> None:
     """read_log 暴露 _read_log(测试断言)— 同一 dict 实例,mutate 反映到 client。"""
     client = FakeTelegramClient()

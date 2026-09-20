@@ -28,13 +28,6 @@ from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
 
 @pytest.fixture
-def qapp() -> QCoreApplication:
-    """Qt app 单例 — QObject Signal 需要 event loop 实例。"""
-    app = QCoreApplication.instance() or QCoreApplication([])
-    return app  # type: ignore[return-value]
-
-
-@pytest.fixture
 def vm(qapp: QCoreApplication) -> MonitorViewModel:
     """最小可用的 MonitorViewModel — AppService / MonitorService 用 MagicMock。"""
     bus = EventBus()
@@ -50,7 +43,6 @@ def _drain(qapp: QCoreApplication) -> None:
     qapp.processEvents()
 
 
-@pytest.mark.asyncio
 async def test_bus_batch_progress_triggers_vm_signal(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:
@@ -69,7 +61,6 @@ async def test_bus_batch_progress_triggers_vm_signal(
     assert captured[0].total == 10
 
 
-@pytest.mark.asyncio
 async def test_bus_batch_done_triggers_vm_signal(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:
@@ -87,7 +78,6 @@ async def test_bus_batch_done_triggers_vm_signal(
     assert captured[0].succeeded == 5
 
 
-@pytest.mark.asyncio
 async def test_vm_signal_filters_non_batch_events(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:
@@ -104,7 +94,6 @@ async def test_vm_signal_filters_non_batch_events(
     assert done_captured == []
 
 
-@pytest.mark.asyncio
 async def test_vm_multiple_batch_progress_preserve_order(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:
@@ -122,7 +111,6 @@ async def test_vm_multiple_batch_progress_preserve_order(
     assert all(c.op == "pin" for c in captured)
 
 
-@pytest.mark.asyncio
 async def test_vm_batch_done_carries_error_field(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:

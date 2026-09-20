@@ -8,7 +8,7 @@ import pytest
 
 from tests.conftest import InMemoryRepository, make_message
 from tgmonitor.core.app_service import AppService
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+from tgmonitor.core.config import DBBackend, ObjectStoreBackend, Settings
 from tgmonitor.core.events import EventBus, SettingsChanged
 from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
@@ -18,21 +18,20 @@ from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
 def _settings(tmp: Path, **kw) -> Settings:
+    """复用 Settings.for_test 默认值,只覆盖 backend / root 类字段。
+
+    `tmp` 给 db_root / objectstore_root 等具体路径;`Settings.for_test`
+    默认用 mkdtemp,但这里 caller 已有 tmp_path 想要复用,故保留 `tmp`。
+    """
     base = dict(
-        api_id=1,
-        api_hash="h" * 32,
-        phone="+1",
-        session_dir=tmp / "s",
         db_backend=DBBackend.JSONL,
         db_dsn="",
         db_root=tmp / "m",
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=tmp / "o",
-        media_policy=MediaPolicy.METADATA,
-        data_root=tmp,
     )
     base.update(kw)
-    return Settings(**base)  # type: ignore[arg-type]
+    return Settings.for_test(**base)
 
 
 async def test_reconfigure_storage_jsonl_to_jsonl(tmp_path: Path):

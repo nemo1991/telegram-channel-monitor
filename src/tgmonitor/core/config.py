@@ -170,3 +170,56 @@ class Settings(BaseSettings):
             self.objectstore_root.mkdir(parents=True, exist_ok=True)
         if self.db_backend == DBBackend.JSONL:
             self.db_root.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def for_test(cls, **overrides) -> Settings:
+        """PR 1a:测试用 Settings factory — 消 `# type: ignore[call-arg]` 噪音。
+
+        默认值:
+        - `_env_file=None`(不读 .env)
+        - api_id=1, api_hash="x"*32, phone="+10000000000"
+        - session_dir / data_root / db_root / objectstore_root 用 tempfile.mkdtemp
+        - media_policy=METADATA / db_backend=JSONL / objectstore_backend=LOCAL
+
+        `overrides` 优先级最高。`ensure_dirs()` 已被调用。
+
+        复用 `tests/fixtures/_settings.py::make_test_settings` 的实现,但挂到
+        Settings 类本身上,让测试 import `from tgmonitor.core.config import Settings`
+        就能直接 `Settings.for_test()` — 不用再 import 测试 fixtures。
+        """
+        import tempfile
+
+        base = Path(tempfile.mkdtemp(prefix="tgmon-test-"))
+        defaults: dict = dict(
+            _env_file=None,  # noqa: SLF001 — pydantic private kwarg
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+10000000000",
+            session_dir=base / "session",
+            data_root=base,
+            db_root=base / "messages",
+            objectstore_root=base / "media",
+        )
+        defaults.update(overrides)
+        s = cls(**defaults)
+        s.ensure_dirs()
+        return s
+
+    @classmethod
+    def from_env_file(cls, env_file: Path | str, **overrides) -> Settings:
+        """PR 1a:从指定 .env 文件读配置 — 消 `# type: ignore[call-arg]`。
+
+        等价于 `Settings(_env_file=str(env_file), **overrides)`,但 `_env_file`
+        是 pydantic 私有 kwarg,type-checker 看不到 — 用本 helper 暴露 public 入口。
+        `ensure_dirs()` 已被调用。
+        """
+        defaults: dict = dict(
+            _env_file=str(env_file),  # noqa: SLF001
+            api_id=1,
+            api_hash="x" * 32,
+            phone="+10000000000",
+        )
+        defaults.update(overrides)
+        s = cls(**defaults)
+        s.ensure_dirs()
+        return s

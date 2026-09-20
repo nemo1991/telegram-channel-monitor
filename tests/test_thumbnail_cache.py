@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
 from PySide6.QtCore import QBuffer, QIODevice, QSize
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
@@ -32,10 +31,7 @@ if TYPE_CHECKING:
     from tgmonitor.core.storage.repository import StorageRepository
 
 
-@pytest.fixture
-def qt_app() -> QApplication:
-    """QPixmap / QWidget 需要 QApplication 存在(QT_QPA_PLATFORM=offscreen)。"""
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
 # ---- ThumbnailCache LRU 行为 ----
@@ -56,7 +52,7 @@ def _pixmap_to_bytes(pix: QPixmap, *, fmt: str = "PNG") -> bytes:
     return bytes(buf.data())
 
 
-def test_thumbnail_cache_hit_returns_same_pixmap(qt_app: QApplication) -> None:
+def test_thumbnail_cache_hit_returns_same_pixmap(qapp: QApplication) -> None:
     cache = ThumbnailCache(capacity=4)
     pix = _pix(1)
     cache.put("local", "media/a.jpg", pix)
@@ -64,12 +60,12 @@ def test_thumbnail_cache_hit_returns_same_pixmap(qt_app: QApplication) -> None:
     assert got is pix
 
 
-def test_thumbnail_cache_miss_returns_none(qt_app: QApplication) -> None:
+def test_thumbnail_cache_miss_returns_none(qapp: QApplication) -> None:
     cache = ThumbnailCache()
     assert cache.get("local", "missing") is None
 
 
-def test_thumbnail_cache_lru_evicts_oldest(qt_app: QApplication) -> None:
+def test_thumbnail_cache_lru_evicts_oldest(qapp: QApplication) -> None:
     """capacity=2,put 3 个不同 key → 第一个被 evict。"""
     cache = ThumbnailCache(capacity=2)
     p1, p2, p3 = _pix(1), _pix(2), _pix(3)
@@ -83,7 +79,7 @@ def test_thumbnail_cache_lru_evicts_oldest(qt_app: QApplication) -> None:
     assert cache.get("local", "k3") is p3
 
 
-def test_thumbnail_cache_get_moves_to_end(qt_app: QApplication) -> None:
+def test_thumbnail_cache_get_moves_to_end(qapp: QApplication) -> None:
     """命中即更新 LRU 顺序:访问 k1 后 k1 成最新,再 put k3 → 挤掉 k2。"""
     cache = ThumbnailCache(capacity=2)
     cache.put("local", "k1", _pix(1))
@@ -97,7 +93,7 @@ def test_thumbnail_cache_get_moves_to_end(qt_app: QApplication) -> None:
     assert cache.get("local", "k3") is not None
 
 
-def test_thumbnail_cache_clear(qt_app: QApplication) -> None:
+def test_thumbnail_cache_clear(qapp: QApplication) -> None:
     cache = ThumbnailCache()
     cache.put("local", "k", _pix(1))
     assert len(cache) == 1
@@ -109,15 +105,15 @@ def test_thumbnail_cache_clear(qt_app: QApplication) -> None:
 # ---- render_pixmap ----
 
 
-def test_render_pixmap_empty_bytes_returns_none(qt_app: QApplication) -> None:
+def test_render_pixmap_empty_bytes_returns_none(qapp: QApplication) -> None:
     assert render_pixmap(b"") is None
 
 
-def test_render_pixmap_garbage_returns_none(qt_app: QApplication) -> None:
+def test_render_pixmap_garbage_returns_none(qapp: QApplication) -> None:
     assert render_pixmap(b"\x00\x01\x02\x03 not an image") is None
 
 
-def test_render_pixmap_valid_jpeg_succeeds(qt_app: QApplication) -> None:
+def test_render_pixmap_valid_jpeg_succeeds(qapp: QApplication) -> None:
     """QPixmap → PNG bytes → render_pixmap → 缩小 ≤ 64 的 QPixmap。"""
     src = QPixmap(QSize(8, 8))
     src.fill()  # 黑
@@ -182,7 +178,6 @@ def test_cache_key_returns_none_when_no_key() -> None:
 # ---- AppService.load_thumbnail_bytes 三后端 ----
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_returns_none_for_failed(
     app: AppService,
     storage: StorageRepository,
@@ -201,12 +196,11 @@ async def test_load_thumbnail_bytes_returns_none_for_failed(
     assert await app.load_thumbnail_bytes(media) is None
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_local_backend(
     app: AppService,
     storage: StorageRepository,
     objectstore: ObjectStore,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """Local 后端:写入 PNG bytes,AppService 读出来。"""
     assert isinstance(objectstore, LocalObjectStore)
@@ -224,12 +218,11 @@ async def test_load_thumbnail_bytes_local_backend(
     assert out == png
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_folder_backend(
     app: AppService,
     storage: StorageRepository,
     tmp_path,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """Folder 后端:替换 app.objects 后读 thumbnail bytes。"""
     folder = FolderObjectStore(root=tmp_path / "folder_thumb")
@@ -253,7 +246,6 @@ async def test_load_thumbnail_bytes_folder_backend(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
     app: AppService,
 ) -> None:
@@ -273,7 +265,6 @@ async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
         app.objects = saved  # type: ignore[assignment]
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_missing_key_returns_none(
     app: AppService,
     storage: StorageRepository,
@@ -290,12 +281,11 @@ async def test_load_thumbnail_bytes_missing_key_returns_none(
     assert out is None
 
 
-@pytest.mark.asyncio
 async def test_load_thumbnail_bytes_uses_thumb_key_first(
     app: AppService,
     storage: StorageRepository,
     objectstore: ObjectStore,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """优先 thumb_key;thumb 内容应该 ≠ object 内容(我们故意不同)。"""
     assert isinstance(objectstore, LocalObjectStore)

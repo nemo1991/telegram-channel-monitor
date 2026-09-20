@@ -322,7 +322,9 @@ class MainWindow(QMainWindow):
                     coro,
                     self.loop,
                 )
-                deadline_ms = 10_000
+                # 默认 10s hard timeout;测试可通过 `_close_deadline_ms` 缩小,
+                # 避免 sleep(15) 让 CI 浪费 30s。
+                deadline_ms = getattr(self, "_close_deadline_ms", 10_000)
 
                 if QApplication.platformName() == "offscreen":
                     # 测试 / CI 路径:不 pump,直接阻塞等 future。

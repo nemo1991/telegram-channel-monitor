@@ -19,17 +19,13 @@ from PySide6.QtWidgets import QApplication
 from tgmonitor.i18n import install_translator
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
+# 2026-09-20:此文件曾在 Windows 上 skip —— `w.show()` + `qapp.processEvents()`
+# 在 windows-latest **offscreen** 下 access violation(exit 139,中断整个 pytest)。
+# 后查明根因不是本文件:`processEvents()` 在 Windows + offscreen QPA 下普遍崩
+# (13 个文件 91 处),已在 CI 侧改为 Windows 用 Qt 原生 `windows` 插件修掉
+# (issue #20)。故此处 skip 已删除,覆盖率恢复。
 
-@pytest.fixture
-def qapp_no_locale_force(monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    """QApplication 不强制 locale — i18n 测试自由切语言。"""
-    for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
-        monkeypatch.delenv(k, raising=False)
-    app = QApplication.instance() or QApplication([])
-    app.be_volatile = True  # type: ignore[attr-defined]
-    install_translator(app, locale="zh_CN")
-    yield app
-    install_translator(app, locale="zh_CN")
+# `qapp_no_locale_force` from tests/conftest.py — 2026-09-18 PR cleanup
 
 
 def test_retranslate_ui_exists(qapp_no_locale_force: QApplication) -> None:

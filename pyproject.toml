@@ -102,9 +102,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # 2026-08-31 v1.5.0 PR #A7:`-m 'not integration'` 默认 skip 集成测试 —
 # 显式 `uv run pytest -m integration` 才跑。CI integration job 自动加 marker 覆盖。
+# 2026-09-15 v1.7.5+ PR 1a:`-m 'not integration and not legacy'` 也 skip PR 编号 frozen 文件。
 addopts = "-ra -q -m 'not integration'"
 markers = [
     "integration: requires Docker (testcontainers) or in-process mongomock_motor;off by default",
+    "legacy: PR 编号 frozen regression file (test_*_pr*.py) or perf/;behavior covered by main test files, pass --include-legacy to enable",
 ]
 
 [tool.coverage.run]
@@ -173,4 +175,6 @@ dev = [
     # 本地 + CI 通用,aggregate pipeline 部分支持度参差,仅覆盖基础 CRUD + find_media_by_file_id)。
     "testcontainers[postgresql,mongodb]>=4.8",
     "mongomock_motor>=0.0.21",
+    # 2026-09-17 PR 6:property-based tests for storage round-trips + UI invariants.
+    "hypothesis>=6.100",
 ]

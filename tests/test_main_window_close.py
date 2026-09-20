@@ -23,15 +23,9 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMainWindow  # noqa: E402
+from PySide6.QtWidgets import QMainWindow  # noqa: E402
 
 from tgmonitor.ui.main_window import MainWindow  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 class _FakeMainWindow(MainWindow):
@@ -95,7 +89,7 @@ def test_close_runs_shutdown_callback(qapp, loop_thread):
     calls: list[str] = []
 
     async def cb() -> None:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)  # 让 loop tick 一下,确认是 await 不是 fire-and-forget
         calls.append("ran")
 
     win = _FakeMainWindow(loop_thread.asyncio_loop)
@@ -116,7 +110,11 @@ def test_close_propagates_callback_exception_but_still_quits(qapp, loop_thread):
 
 
 def test_close_callback_slow_does_not_hang(qapp, loop_thread):
-    """shutdown 慢(>10s)时,closeEvent 限时轮询 → 不挂死,记 warning 放行。"""
+    """shutdown 慢(> deadline)时,closeEvent 限时轮询 → 不挂死,记 warning 放行。
+
+    2026-09-18 PR cleanup:把 closeEvent deadline 缩到 0.2s(默认 10s),测试 cb sleep 0.5s
+    即可触发 timeout,不再浪费真实 15s。closeEvent 放弃逻辑同 production。
+    """
     started = time.monotonic()
     task_holder: dict[str, asyncio.Task | None] = {"t": None}
 
@@ -124,27 +122,25 @@ def test_close_callback_slow_does_not_hang(qapp, loop_thread):
         # 把自己注册出去,测试结束时 cancel,免得留下 pending Task 警告
         task_holder["t"] = asyncio.current_task()
         try:
-            await asyncio.sleep(30)
+            # sleep > 注入的 deadline(0.2s)→ 触发 closeEvent timeout 路径
+            await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             pass
 
     try:
         win = _FakeMainWindow(loop_thread.asyncio_loop)
+        win._close_deadline_ms = 200  # 200ms hard timeout,模拟 production 10s 逻辑
         win.set_shutdown_callback(cb)
         win.close()
         elapsed = time.monotonic() - started
-        # closeEvent 上限 10s。cb 永远完不成 → closeEvent 应在 ~10s 后放弃。
-        # macOS arm64 CI 上 Qt processEvents 比较慢(ARM 模拟 x86 进程 + Qt 冷启动),
-        # close() 返回前还有 window destory 一段,所以给到 30s 上限。
-        # 关键是 closeEvent 不应该无限挂死(早于此值)。
-        assert elapsed < 30.0, f"closeEvent 应该限时 ~10s,实跑 {elapsed:.1f}s"
+        # closeEvent 上限 0.2s;cb 永远完不成 → closeEvent 应在 ~0.2s 后放弃。
+        # 给 2s 上限,避免 CI 偶发抖动。
+        assert elapsed < 2.0, f"closeEvent 应该限时 ~0.2s,实跑 {elapsed:.3f}s"
     finally:
-        # cancel 慢任务 — closeEvent 放弃后任务还挂着,不 cancel 会在 fixture
-        # 强 stop loop 时产生 "Task was destroyed but it is pending" 警告
+        # cancel 慢任务 — closeEvent 放弃后任务还挂着
         t = task_holder.get("t")
         if t is not None and not t.done():
             loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
-            # 给 cancel 一点时间传播
             time.sleep(0.1)
 
 
@@ -193,13 +189,15 @@ def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_th
     async def cb() -> None:
         task_holder["t"] = asyncio.current_task()
         try:
-            await asyncio.sleep(30)
+            # > 0.2s 注入的 closeEvent timeout — exercises cancel-after-abandon path
+            await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             # closeEvent 已主动 cancel 我们,正常退出
             return
 
     try:
         win = _FakeMainWindow(loop_thread.asyncio_loop)
+        win._close_deadline_ms = 200
         win.set_shutdown_callback(cb)
         # 启动 cb(挂到后台 loop);在 closeEvent 之前先 cancel 它,模拟
         # loop shutdown / 用户多次 quit 的真实路径:cancel 在 closeEvent 之前

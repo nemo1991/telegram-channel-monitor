@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+from tgmonitor.core.config import Settings
 from tgmonitor.core.events import EventBus, MessageReceived
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.telegram import tdlib_client as tdc
@@ -73,17 +73,11 @@ class _FakeUpdateNewMessage:
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    return Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        api_id=1,
-        api_hash="x" * 32,
+    return Settings.for_test(
         phone="+10000000000",
         session_dir=tmp_path / "session",
         db_root=tmp_path / "m",
         objectstore_root=tmp_path / "o",
-        media_policy=MediaPolicy.METADATA,
-        db_backend=DBBackend.JSONL,
-        objectstore_backend=ObjectStoreBackend.LOCAL,
     )
 
 
@@ -92,7 +86,6 @@ def bus() -> EventBus:
     return EventBus()
 
 
-@pytest.mark.asyncio
 async def test_on_new_message_pushes_to_subscribed_stream(
     settings,
     bus,
@@ -124,7 +117,6 @@ async def test_on_new_message_pushes_to_subscribed_stream(
         client._streams.clear()
 
 
-@pytest.mark.asyncio
 async def test_monitor_service_publishes_message_received(
     settings,
     bus,
@@ -188,7 +180,6 @@ async def test_monitor_service_publishes_message_received(
     monitor._task = None
 
 
-@pytest.mark.asyncio
 async def test_on_new_message_skips_non_whitelisted_channel(
     settings,
     bus,

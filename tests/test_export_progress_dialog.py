@@ -15,12 +15,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from tgmonitor.core.events import ExportProgress  # noqa: E402
 from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog  # noqa: E402
 
-
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    """构造一次 QApplication(模块级)— 多次跑 UI 测试不重复创建。"""
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope,多文件复用单例
 
 
 @pytest.fixture
@@ -33,13 +28,13 @@ def vm() -> MagicMock:
     return MagicMock()
 
 
-def test_dialog_connects_to_vm_on_init(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_connects_to_vm_on_init(qapp: QApplication, vm: MagicMock) -> None:
     """构造时必须 connect vm.export_progress — 否则 UI 永远收不到进度。"""
     ExportProgressDialog(vm)
     vm.export_progress.connect.assert_called_once()
 
 
-def test_dialog_close_disconnects_signal(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_close_disconnects_signal(qapp: QApplication, vm: MagicMock) -> None:
     """用户拖标题栏关闭(X / Alt+F4)→ disconnect signal — 避免 dangling 引用。"""
     dlg = ExportProgressDialog(vm)
     dlg.close()
@@ -47,14 +42,14 @@ def test_dialog_close_disconnects_signal(qt_app: QApplication, vm: MagicMock) ->
     vm.export_progress.disconnect.assert_called()
 
 
-def test_dialog_done_disconnects_signal(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_done_disconnects_signal(qapp: QApplication, vm: MagicMock) -> None:
     """`dlg.accept()` 路径(dialog.done 回调)也必须 disconnect — 防双订阅。"""
     dlg = ExportProgressDialog(vm)
     dlg.done(0)  # QDialog.Accepted = 0
     vm.export_progress.disconnect.assert_called()
 
 
-def test_dialog_progress_handler_accepts_total_none(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_progress_handler_accepts_total_none(qapp: QApplication, vm: MagicMock) -> None:
     """ExportProgress.total=None → QProgressBar 走 indeterminate(max=0)。"""
     dlg = ExportProgressDialog(vm)
     e = ExportProgress(request_id="r1", written=500, total=None)
@@ -64,7 +59,7 @@ def test_dialog_progress_handler_accepts_total_none(qt_app: QApplication, vm: Ma
     assert "500" in dlg.lbl_status.text()
 
 
-def test_dialog_progress_handler_accepts_total_int(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_progress_handler_accepts_total_int(qapp: QApplication, vm: MagicMock) -> None:
     """ExportProgress.total=int → QProgressBar 走确定模式 + 设值 + 状态文字。"""
     dlg = ExportProgressDialog(vm)
     e = ExportProgress(request_id="r1", written=300, total=1000)
@@ -76,7 +71,7 @@ def test_dialog_progress_handler_accepts_total_int(qt_app: QApplication, vm: Mag
     assert "1000" in dlg.lbl_status.text()
 
 
-def test_dialog_cancel_invokes_vm_cancel(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_cancel_invokes_vm_cancel(qapp: QApplication, vm: MagicMock) -> None:
     """取消按钮 → vm.cancel_current_export() — UI 不直 cancel task。"""
     dlg = ExportProgressDialog(vm)
     dlg._on_cancel()
@@ -86,7 +81,7 @@ def test_dialog_cancel_invokes_vm_cancel(qt_app: QApplication, vm: MagicMock) ->
     assert dlg.btn_cancel.isEnabled() is False
 
 
-def test_dialog_cancel_emits_signal(qt_app: QApplication, vm: MagicMock) -> None:
+def test_dialog_cancel_emits_signal(qapp: QApplication, vm: MagicMock) -> None:
     """取消按钮 → cancelled signal emit(供 main_window 做 statusbar 提示)。"""
     dlg = ExportProgressDialog(vm)
     captured: list[object] = []

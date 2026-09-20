@@ -22,15 +22,15 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
+# 2026-09-20:此文件曾在 Windows 上 skip(processEvents 段错误)。后查明根因不在
+# 本文件:`processEvents()` 在 Windows + **offscreen** QPA 下普遍崩,已在 CI 侧
+# 改为 Windows 用 Qt 原生 `windows` 插件修掉(issue #20)。skip 已删除。
+
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
+
 
 @pytest.fixture
-def qt_app() -> QApplication:
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
-
-
-@pytest.fixture
-def widget(qt_app: QApplication) -> MediaManagerWidget:
+def widget(qapp: QApplication) -> MediaManagerWidget:
     w = MediaManagerWidget()
     return w
 
@@ -113,7 +113,7 @@ def test_current_filters_includes_sort_dir_offset(widget: MediaManagerWidget) ->
 
 def test_on_media_loaded_accepts_tuple_payload(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #6:on_media_loaded 接收 `(rows, total)` tuple。"""
     msg = _msg(100, 1, [_done()])
@@ -121,12 +121,12 @@ def test_on_media_loaded_accepts_tuple_payload(
     assert len(widget._rows) == 1
     assert widget._total == 5
     assert widget.lbl_page.text() == "1 / 1"
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
 def test_page_nav_disables_buttons_at_boundaries(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #6:5 条 media + page_size=2 → 3 页;page 1 / 3 翻页按钮状态正确。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(5)]
@@ -150,12 +150,12 @@ def test_page_nav_disables_buttons_at_boundaries(
     # 再 next 不动
     widget._on_page_next()
     assert widget._page == 2
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
 def test_sort_change_resets_page_to_zero(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #6:切 sort / dir combo → 翻回 page=0(filter 变化不应保留旧 page)。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(5)]
@@ -166,27 +166,27 @@ def test_sort_change_resets_page_to_zero(
 
     # 模拟 sort combo 触发 refresh(emit)
     widget.cmb_sort.setCurrentIndex(1)  # SIZE
-    qt_app.processEvents()
+    qapp.processEvents()
     assert widget._page == 0
 
 
 def test_refresh_signal_emitted_on_sort_change(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #6:sort / dir combo 变化 → emit refresh_requested。"""
     emitted: list[int] = []
     widget.refresh_requested.connect(lambda: emitted.append(1))
 
     widget.cmb_sort.setCurrentIndex(1)
-    qt_app.processEvents()
+    qapp.processEvents()
     widget.cmb_dir.setCurrentIndex(1)  # ASC
-    qt_app.processEvents()
+    qapp.processEvents()
 
     assert len(emitted) >= 2
 
 
-def test_page_next_emits_refresh(widget: MediaManagerWidget, qt_app: QApplication) -> None:
+def test_page_next_emits_refresh(widget: MediaManagerWidget, qapp: QApplication) -> None:
     """PR #6:点下一页 → emit refresh(VM 带新 offset 拉数据)。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(5)]
     widget._page_size = 2
@@ -195,21 +195,21 @@ def test_page_next_emits_refresh(widget: MediaManagerWidget, qt_app: QApplicatio
     emitted: list[int] = []
     widget.refresh_requested.connect(lambda: emitted.append(1))
     widget._on_page_next()
-    qt_app.processEvents()
+    qapp.processEvents()
     assert len(emitted) == 1
 
 
-def test_total_zero_disables_page_nav(widget: MediaManagerWidget, qt_app: QApplication) -> None:
+def test_total_zero_disables_page_nav(widget: MediaManagerWidget, qapp: QApplication) -> None:
     """PR #6:total=0 时翻页按钮都禁用(避免空翻页)。"""
     widget.on_media_loaded(([], 0))
     assert not widget.btn_prev.isEnabled()
     assert not widget.btn_next.isEnabled()
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
 def test_total_updates_label_correctly(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #6:`lbl_page` 显示 `current / total_pages`。"""
     rows = [(_msg(100, i, [_done()]), 0, _done()) for i in range(7)]
@@ -220,7 +220,7 @@ def test_total_updates_label_correctly(
     assert widget.lbl_page.text() == "2 / 3"
     widget._on_page_next()
     assert widget.lbl_page.text() == "3 / 3"
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
 # ---- 2026-08-25 v1.3.0 PR #7:Export CSV button -------------------------
@@ -234,7 +234,7 @@ def test_widget_has_export_csv_button(widget: MediaManagerWidget) -> None:
 
 def test_export_csv_emits_path_when_dialog_confirmed(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
     monkeypatch,
 ) -> None:
     """PR #7:点 Export CSV → QFileDialog.getSaveFileName 选路径 → emit
@@ -251,13 +251,13 @@ def test_export_csv_emits_path_when_dialog_confirmed(
     widget.export_csv_requested.connect(lambda p: captured.append(p))
 
     widget._on_export_csv()
-    qt_app.processEvents()
+    qapp.processEvents()
     assert captured == ["/tmp/test-export.csv"]
 
 
 def test_export_csv_does_nothing_when_dialog_cancelled(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
     monkeypatch,
 ) -> None:
     """PR #7:用户 Cancel → 不 emit(空 path)。"""
@@ -272,7 +272,7 @@ def test_export_csv_does_nothing_when_dialog_cancelled(
     widget.export_csv_requested.connect(lambda p: captured.append(p))
 
     widget._on_export_csv()
-    qt_app.processEvents()
+    qapp.processEvents()
     assert captured == []
 
 
@@ -296,12 +296,12 @@ def _row_button(widget: MediaManagerWidget, row: int, label: str) -> QPushButton
 
 def test_reveal_button_emits_signal_with_correct_args(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #16:Reveal 按钮 click → reveal_requested.emit(channel_id, msg_id, media_idx)。"""
     msg = _msg(100, 7, [_done()])
     widget.on_media_loaded(([(msg, 0, _done())], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     captured: list[tuple[int, int, int]] = []
     widget.reveal_requested.connect(
@@ -311,19 +311,19 @@ def test_reveal_button_emits_signal_with_correct_args(
     btn = _row_button(widget, 0, "Reveal")
     assert btn.isEnabled()  # DONE → 可点
     btn.click()
-    qt_app.processEvents()
+    qapp.processEvents()
 
     assert captured == [(100, 7, 0)]
 
 
 def test_copy_button_emits_signal_with_correct_args(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #16:Copy 按钮 click → copy_requested.emit(channel_id, msg_id, media_idx)。"""
     msg = _msg(200, 42, [_done()])
     widget.on_media_loaded(([(msg, 0, _done())], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     captured: list[tuple[int, int, int]] = []
     widget.copy_requested.connect(
@@ -333,14 +333,14 @@ def test_copy_button_emits_signal_with_correct_args(
     btn = _row_button(widget, 0, "Copy")
     assert btn.isEnabled()  # DONE → 可点
     btn.click()
-    qt_app.processEvents()
+    qapp.processEvents()
 
     assert captured == [(200, 42, 0)]
 
 
 def test_reveal_button_disabled_when_not_done(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #16:非 DONE 媒体 → Reveal 按钮 disabled(防误点 → OS 文件管理器失败)。"""
     pending = MediaDTO(
@@ -353,7 +353,7 @@ def test_reveal_button_disabled_when_not_done(
     )
     msg = _msg(100, 1, [pending])
     widget.on_media_loaded(([(msg, 0, pending)], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     btn = _row_button(widget, 0, "Reveal")
     assert not btn.isEnabled()
@@ -361,7 +361,7 @@ def test_reveal_button_disabled_when_not_done(
 
 def test_copy_button_disabled_when_not_done(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #16:非 DONE 媒体 → Copy 按钮 disabled。"""
     pending = MediaDTO(
@@ -374,7 +374,7 @@ def test_copy_button_disabled_when_not_done(
     )
     msg = _msg(100, 1, [pending])
     widget.on_media_loaded(([(msg, 0, pending)], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     btn = _row_button(widget, 0, "Copy")
     assert not btn.isEnabled()
@@ -403,7 +403,7 @@ def _downloading(file_size: int = 1024) -> MediaDTO:
 
 def test_on_download_progress_updates_status_label(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #B3:`MediaDownloadProgress` 事件 → media_manager 按 (channel_id,
     telegram_msg_id, media_idx) 定位行 → 改 status 列文字为「X/Y (Z%)」。
@@ -412,7 +412,7 @@ def test_on_download_progress_updates_status_label(
 
     msg = _msg(100, 42, [_downloading()])
     widget.on_media_loaded(([(msg, 0, _downloading())], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     # 进度事件:已下载 512 / 1024 = 50%
     widget.on_download_progress(
@@ -424,7 +424,7 @@ def test_on_download_progress_updates_status_label(
             total=1024,
         )
     )
-    qt_app.processEvents()
+    qapp.processEvents()
 
     # 行 status label 的 text 应含「/」「50%」(总大小 1024 = 1.0KB)
     lbl = widget._status_labels.get(_row_key(100, 42, 0))
@@ -436,7 +436,7 @@ def test_on_download_progress_updates_status_label(
 
 def test_on_download_progress_unknown_total_fallback(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #B3:`total=None`(file_size 未知)→ status 列 fallback「X/?」,
     没有 %,没崩。"""
@@ -444,7 +444,7 @@ def test_on_download_progress_unknown_total_fallback(
 
     msg = _msg(200, 7, [_downloading()])
     widget.on_media_loaded(([(msg, 0, _downloading())], 1))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     widget.on_download_progress(
         MediaDownloadProgress(
@@ -455,7 +455,7 @@ def test_on_download_progress_unknown_total_fallback(
             total=None,
         )
     )
-    qt_app.processEvents()
+    qapp.processEvents()
 
     lbl = widget._status_labels.get(_row_key(200, 7, 0))
     assert lbl is not None
@@ -466,7 +466,7 @@ def test_on_download_progress_unknown_total_fallback(
 
 def test_on_download_progress_no_matching_row_silent(
     widget: MediaManagerWidget,
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """PR #B3:进度事件 key 不在 `_status_labels`(行被 filter 掉 / reload 中)
     → 静默 skip,不抛 KeyError。"""
@@ -474,7 +474,7 @@ def test_on_download_progress_no_matching_row_silent(
 
     # 渲染空 list
     widget.on_media_loaded(([], 0))
-    qt_app.processEvents()
+    qapp.processEvents()
 
     # 进度事件进,但行不存在 → 静默
     widget.on_download_progress(
@@ -486,7 +486,7 @@ def test_on_download_progress_no_matching_row_silent(
             total=100,
         )
     )
-    qt_app.processEvents()
+    qapp.processEvents()
     # 不崩就过
 
 
@@ -567,7 +567,7 @@ def test_prune_reconcile_done_updates_status_label(
 
 
 def test_batch_retry_emits_filtered_failed_keys(
-    widget: MediaManagerWidget, qt_app: QApplication
+    widget: MediaManagerWidget, qapp: QApplication
 ) -> None:
     """PR #P3:**批量 retry 过滤契约** — 模拟 `_on_batch_retry` 内部
     `[k for k in selected if _row_is_failed(k)]` 模式,验证:喂入混合

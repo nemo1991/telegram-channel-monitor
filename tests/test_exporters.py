@@ -124,12 +124,6 @@ async def test_registry_has_all_six():
 # ---- 2026-08-25 v1.3.0 PR #7:per-media CSV exporter + dispatcher ----------
 
 
-async def test_registry_includes_media_csv():
-    """PR #7:新 MEDIA_CSV 注册到 EXPORTERS。"""
-    available = EXPORTERS.available()
-    assert ExportFormat.MEDIA_CSV in available
-
-
 async def test_media_csv_exporter_snapshot(tmp_path):
     """PR #7:MediaListCsvExporter 写 13 列 + 每条 media 一行,列顺序固定。"""
     import csv as csv_mod
@@ -510,13 +504,6 @@ async def test_html_exporter_skips_oversized_thumb(tmp_path):
 # ---------------------------------------------------------------------------
 # 2026-09-01 v1.5.1 PR #B4:ZIP 导出 — 单元级 + dispatcher + Zip Slip 防御
 # ---------------------------------------------------------------------------
-
-
-async def test_registry_includes_zip():
-    """PR #B4:ZIP 注册到 EXPORTERS,registry 应包含 `ExportFormat.ZIP`。
-    (更广的 6-format 集合断言见 `test_registry_has_all_six`,109 行)"""
-    available = EXPORTERS.available()
-    assert ExportFormat.ZIP in available
 
 
 async def test_zip_basic_skips_failed_media(tmp_path):
