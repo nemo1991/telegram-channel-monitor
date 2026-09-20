@@ -88,66 +88,29 @@ async def _load_one(dir_path: Path, cid: int, mid: int) -> MessageDTO | None:
         HealthCheck.function_scoped_fixture,
     ],
 )
-@pytest.mark.xfail(
-    reason="PR 6 known bug 2026-09-18:含 NEL/garbage 行 inject 后,(cid, mid) 索引有概率返错 DTO(mid != 查询的 mid)。怀疑 ChannelFile.load 跳过坏行后,好行 line offset 算错(或 dedup 取首条而非精确)。follow-up PR 修索引。",
-    strict=True,
-)
 async def test_jsonl_corruption_recovery_loads_valid_rows(
     jsonl_dir: Path, msg_dir: Path, msgs: list[MessageDTO], garbage: list[str]
 ) -> None:
-    """save N 条 + inject M 条 garbage → reload 后好行仍可读。
+    """save N 条 + inject M 条 garbage → reload 后好行仍可读,且读到的是**对的那条**。
 
-    invariant:ChannelFile.load 跳过坏行(JSONDecodeError / KeyError / ValueError),
-    不让整文件 load 失败。后续 get_message(key) 返坏 key 返 None,好 key 返
-    有效 DTO。
+    invariant:ChannelFile.load 跳过坏行(JSONDecodeError),不让整文件 load 失败;
+    后续 get_message(key) 坏 key 返 None,好 key 返**该 key 对应**的 DTO。
+
+    PR 6(2026-09-18)曾以 `xfail(strict=True)` 锁住一个 bug:跳过任何坏行后
+    `index[mid]` 存的是文件行号而非 rows 下标,于是指向**别的消息** ——
+    `get_message` 静默返回错 DTO。2026-09-20 修 `load` 改存 rows 下标。
+
+    注:本测试原先用 `_safe()` 过滤掉含控制字符(Cc,含 NEL)的 msg 来绕开
+    另一个已知 bug;那 bug(`splitlines()` 在 NEL 处断行)也已修,过滤已删 ——
+    现在控制字符也参与 fuzz。
     """
-
-    # 过滤掉含控制字符的 msg(避免 PR 6 已知 bug 干扰)
-    def _safe(m: MessageDTO) -> bool:
-        import unicodedata
-
-        def _has_cc(s: str) -> bool:
-            return any(unicodedata.category(c) == "Cc" for c in s)
-
-        for s in [m.text, m.author or "", m.notes or "", m.media_album_id or ""]:
-            if _has_cc(s):
-                return False
-        for t in m.tags:
-            if _has_cc(t):
-                return False
-        for md in m.media:
-            if md.file_name and _has_cc(md.file_name):
-                return False
-            if md.mime_type and _has_cc(md.mime_type):
-                return False
-            if md.telegram_file_id and _has_cc(md.telegram_file_id):
-                return False
-            if md.object_key and _has_cc(md.object_key):
-                return False
-            if md.thumb_key and _has_cc(md.thumb_key):
-                return False
-            if md.emoji and _has_cc(md.emoji):
-                return False
-            if md.download_error and _has_cc(md.download_error):
-                return False
-        if m.reactions:
-            for r in m.reactions:
-                if _has_cc(r.emoji):
-                    return False
-                if _has_cc(r.type):
-                    return False
-        return True
-
-    safe_msgs = [m for m in msgs if _safe(m)]
-    if len(safe_msgs) < 2:
-        return  # type: ignore[return-value]
 
     # 强制所有 msg 用同一个 channel_id(便于 inject garbage 到单文件) +
     # 唯一 telegram_msg_id(避免 dedup 替换)
-    cid = safe_msgs[0].channel_id
+    cid = msgs[0].channel_id
     used_mids: set[int] = set()
     normalized = []
-    for i, m in enumerate(safe_msgs):
+    for i, m in enumerate(msgs):
         mid = m.telegram_msg_id
         # 冲突:加 offset
         while mid in used_mids:
@@ -263,14 +226,12 @@ async def test_jsonl_dict_missing_required_fields_skipped(msg_dir: Path) -> None
 # ========== PR 6 第二 known bug lock:non-dict JSON ==============
 
 
-@pytest.mark.xfail(
-    reason="PR 6 known bug 2026-09-17:合法 JSON 但非 dict (如 [1,2,3] / 42 / null) 让 ChannelFile.load 抛 AttributeError('list' has no attribute 'get');follow-up PR 改 isinstance(d, dict) 守卫",
-    strict=True,
-)
-async def test_jsonl_non_dict_json_crashes(msg_dir: Path) -> None:
-    """合法 JSON 但非 dict → ChannelFile.load 应跳过(目前抛 AttributeError)。
+async def test_jsonl_non_dict_json_skipped_not_crash(msg_dir: Path) -> None:
+    """合法 JSON 但非 dict → ChannelFile.load 跳过,不崩。
 
-    例:用户手动编辑文件留下 `[1, 2, 3]` 或 `null` → load 崩溃。
+    例:用户手动编辑文件留下 `[1, 2, 3]` 或 `null`。PR 6(2026-09-17)发现当时
+    `d.get(...)` 直接抛 AttributeError 让整个 load 挂掉,以 `xfail(strict=True)`
+    锁住;2026-09-20 加 isinstance 守卫后转正常 regression。
     """
     msg_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     target = msg_dir / "1.jsonl"

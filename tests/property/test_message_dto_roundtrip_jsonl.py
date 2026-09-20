@@ -184,20 +184,20 @@ async def test_message_dto_jsonl_reactions_roundtrip(jsonl_dir: Path, msg) -> No
         assert orig.is_chosen == roundtripped.is_chosen
 
 
-# ============== PR 6 known bug lock ==============
+# ============== NEL / 控制字符 regression(PR 6 发现,2026-09-20 修) ==============
 
 
-@pytest.mark.xfail(
-    reason="PR 6 known bug 2026-09-17:含 NEL (\\x85) 的 str 字段被 ChannelFile.load 静默 skip;follow-up PR 改 strict=False",
-    strict=True,  # 真修了反而 xpass → 测试 fail 提示
-)
 @pytest.mark.asyncio
-async def test_jsonl_nel_bug_locked(tmp_path: Path) -> None:
-    """**PR 6 已发现 bug**(2026-09-17):`\x85` (NEL) 让 JsonlFileStore 静默丢行。
+async def test_jsonl_nel_roundtrips(tmp_path: Path) -> None:
+    """`\x85` (NEL) 等控制字符不再让 JsonlFileStore 静默丢行。
 
-    写一行 notes='\x85' → reload → `get_message` 返 None。预期**此测试失败**,
-    提醒开 follow-up PR 改 `ChannelFile.load` 的 `json.loads(..., strict=False)`
-    或 escape 控制字符。
+    PR 6(2026-09-17)发现:`ChannelFile.load` 用 `str.splitlines()`,而它在
+    NEL(\\x85)/ \\v / \\f / \\u2028 / \\u2029 处也会断行 —— `flush` 走
+    `ensure_ascii=False` 不转义这些字符,于是含它们的行被劈成几段、每段都
+    JSONDecodeError 被 skip,整条消息丢失。当时以 `xfail(strict=True)` 锁住。
+
+    2026-09-20 修:`load` 改 `split("\\n")`(flush 只写 \\n,读也只按 \\n 断),
+    本测试转为正常 regression。
     """
     from datetime import UTC, datetime
 
@@ -221,7 +221,5 @@ async def test_jsonl_nel_bug_locked(tmp_path: Path) -> None:
     await store2.connect()
     loaded = await store2.get_message(42, 7)
 
-    # **此断言预期失败**,作为 reminder — fix 后会 pass
-    assert loaded is not None, "BUG 已修:含 NEL 的消息 reload 不再丢行"
-    if loaded is not None:
-        assert loaded.notes == "\x85", "BUG 已修:NEL 字符 round-trip 不丢字段值"
+    assert loaded is not None, "含 NEL 的消息 reload 后丢了"
+    assert loaded.notes == "\x85", "NEL 字符 round-trip 丢了字段值"
