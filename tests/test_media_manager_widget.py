@@ -8,8 +8,6 @@ QT_QPA_PLATFORM=offscreen 无 GUI 跑;只测 widget 内部逻辑:
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -24,20 +22,9 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
-# 2026-09-20:Windows 全模块 skip —— 与 test_media_manager_i18n.py 同一 pattern:
-# `MediaManagerWidget` 装完数据后调 `qapp.processEvents()` 在 windows-latest
-# offscreen 下 access violation(exit 139)。本文件 22/27 个测试都走这个模式
-# (`_render_list()` = `self.list.clear()` + 重建 item widget,随后 processEvents
-# 可能触到已析构的 item widget)。
-#
-# 段错误中断整个 pytest 进程 ⇒ Windows 上本文件之后的测试全没跑。跟踪 issue #20。
-# 注意:该文件在 2026-09-09(最后一次 CI 全绿)之前就存在,但 main CI 从 09-10 起
-# 一直红(pytest 从未执行),所以这条路径同样**从未在 CI 验证过**,非本 PR 引入。
-# 修好后删掉这个 skipif。
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="Windows offscreen 下 processEvents() 段错误(exit 139),跟踪 issue #20",
-)
+# 2026-09-20:此文件曾在 Windows 上 skip(processEvents 段错误)。后查明根因不在
+# 本文件:`processEvents()` 在 Windows + **offscreen** QPA 下普遍崩,已在 CI 侧
+# 改为 Windows 用 Qt 原生 `windows` 插件修掉(issue #20)。skip 已删除。
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
 

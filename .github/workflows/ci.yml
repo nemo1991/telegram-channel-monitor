@@ -96,8 +96,15 @@ jobs:
           PYTHONPATH: src
           # 强制 Qt 用 offscreen 后端(无显示器),PySide6 在 CI 必设,否则
           # Linux 上 Qt 会尝试加载 libEGL.so.1 之类系统库;
-          # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳
-          QT_QPA_PLATFORM: offscreen
+          # 单元测试里 conftest 已 setdefault,但 ENV 在进程启动前定最稳。
+          #
+          # 2026-09-20 修(issue #20):**Windows 例外** —— offscreen 在
+          # windows-latest 下 `QApplication.processEvents()` 会 access violation
+          # (exit 139,中断整个 pytest 进程)。13 个文件 91 处 processEvents 调用
+          # 都受影响,逐个隔离会砍掉大块 Windows 覆盖,故改根因:
+          # offscreen 本就是给 Linux 无头环境的,而 Windows runner 有真实桌面
+          # 会话,直接用 Qt 原生 `windows` 平台插件。
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           QT_LOGGING_RULES: "*.warning=false"
         # 脚本用 bash 语法(set +e / while 重试),Windows runner 默认 pwsh,
         # 显式切 bash(windows-latest 自带 Git Bash)
@@ -119,7 +126,8 @@ jobs:
       - name: Run pytest with coverage
         env:
           PYTHONPATH: src
-          QT_QPA_PLATFORM: offscreen
+          # Windows 用原生插件,理由同上面 Run pytest(issue #20)
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           QT_LOGGING_RULES: "*.warning=false"
         shell: bash
         run: |
