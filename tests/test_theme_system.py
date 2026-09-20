@@ -22,12 +22,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.ui.theme import Theme, ThemeManager  # noqa: E402
 
-
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    """构造一次 QApplication — 多次跑 UI 测试不重复创建。"""
-    app = QApplication.instance() or QApplication([])
-    return app  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +53,7 @@ def test_theme_enum_has_system() -> None:
     assert Theme.DARK.value == "dark"
 
 
-def test_actual_returns_current_when_not_system(qt_app: QApplication) -> None:
+def test_actual_returns_current_when_not_system(qapp: QApplication) -> None:
     """LIGHT/DARK 态:actual() == current()。"""
     ThemeManager._current = Theme.LIGHT
     assert ThemeManager.actual() == Theme.LIGHT
@@ -74,7 +69,7 @@ def _make_scheme(value: int) -> MagicMock:
 
 
 def test_actual_resolves_to_light_in_system_when_app_light(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """SYSTEM 态 + Qt scheme=Light → actual()=LIGHT。"""
     ThemeManager._current = Theme.SYSTEM
@@ -87,7 +82,7 @@ def test_actual_resolves_to_light_in_system_when_app_light(
 
 
 def test_actual_resolves_to_dark_in_system_when_app_dark(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """SYSTEM 态 + Qt scheme=Dark → actual()=DARK。"""
     ThemeManager._current = Theme.SYSTEM
@@ -99,7 +94,7 @@ def test_actual_resolves_to_dark_in_system_when_app_dark(
         assert ThemeManager.actual() == Theme.DARK
 
 
-def test_accent_uses_actual_when_system(qt_app: QApplication) -> None:
+def test_accent_uses_actual_when_system(qapp: QApplication) -> None:
     """SYSTEM 态 + OS 暗色 → accent 走 DARK 配色。"""
     ThemeManager._current = Theme.SYSTEM
     with patch.object(
@@ -112,7 +107,7 @@ def test_accent_uses_actual_when_system(qt_app: QApplication) -> None:
 
 
 def test_load_qss_system_falls_back_to_dark_qss(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """SYSTEM 态 + OS 暗色 → load_qss(SYSTEM) 实际返 DARK qss。"""
     ThemeManager._current = Theme.SYSTEM
@@ -130,7 +125,7 @@ def test_load_qss_system_falls_back_to_dark_qss(
         assert light_qss != qss
 
 
-def test_toggle_skips_system_in_two_state_cycle(qt_app: QApplication) -> None:
+def test_toggle_skips_system_in_two_state_cycle(qapp: QApplication) -> None:
     """Ctrl+T 快捷键走 LIGHT↔DARK 二选循环,SYSTEM 不在循环里。"""
     ThemeManager._current = Theme.LIGHT
     assert ThemeManager.toggle() == Theme.DARK
@@ -142,7 +137,7 @@ def test_toggle_skips_system_in_two_state_cycle(qt_app: QApplication) -> None:
     assert new == Theme.LIGHT
 
 
-def test_apply_emits_theme_changed_signal(qt_app: QApplication) -> None:
+def test_apply_emits_theme_changed_signal(qapp: QApplication) -> None:
     """`apply()` 每次 emit theme_changed signal(UI 端用来刷新 nav_bar 等)。"""
     ThemeManager._current = Theme.LIGHT
     captured: list[int] = []
@@ -154,7 +149,7 @@ def test_apply_emits_theme_changed_signal(qt_app: QApplication) -> None:
 
 
 def test_apply_with_system_connects_listener_once(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """SYSTEM 态 `apply()` 触发 `_ensure_system_listener` 一次连接。"""
     ThemeManager._current = Theme.LIGHT
@@ -167,7 +162,7 @@ def test_apply_with_system_connects_listener_once(
 
 
 def test_apply_with_light_does_not_connect_listener(
-    qt_app: QApplication,
+    qapp: QApplication,
 ) -> None:
     """LIGHT/DARK 态 `apply()` 不挂 colorSchemeChanged listener(避免无意义重渲)。
 
@@ -187,7 +182,7 @@ def test_apply_with_light_does_not_connect_listener(
 # ============================================================
 
 
-def test_settings_has_key_theme_default_empty(qt_app: QApplication) -> None:
+def test_settings_has_key_theme_default_empty(qapp: QApplication) -> None:
     """PR #P4:`Settings.key_theme` 字段默认空字符串(不持久化,兼容 v1.5.0)。"""
     from tgmonitor.core.config import Settings
 
@@ -195,7 +190,7 @@ def test_settings_has_key_theme_default_empty(qt_app: QApplication) -> None:
     assert s.key_theme == ""
 
 
-def test_settings_key_theme_round_trip_via_env(qt_app: QApplication) -> None:
+def test_settings_key_theme_round_trip_via_env(qapp: QApplication) -> None:
     """PR #P4:`Settings.key_theme` 走 pydantic-settings env 加载路径。"""
     from tgmonitor.core.config import Settings
 
@@ -203,7 +198,7 @@ def test_settings_key_theme_round_trip_via_env(qt_app: QApplication) -> None:
     assert s.key_theme == "dark"
 
 
-def test_editable_settings_key_theme_round_trip(qt_app: QApplication) -> None:
+def test_editable_settings_key_theme_round_trip(qapp: QApplication) -> None:
     """PR #P4:EditableSettings.key_theme 字段 + from_settings / to_settings 透传。"""
     from tgmonitor.core.config import Settings
     from tgmonitor.core.settings_store import EditableSettings
@@ -216,7 +211,7 @@ def test_editable_settings_key_theme_round_trip(qt_app: QApplication) -> None:
     assert s2.key_theme == "light"
 
 
-def test_editable_settings_key_theme_default_empty(qt_app: QApplication) -> None:
+def test_editable_settings_key_theme_default_empty(qapp: QApplication) -> None:
     """PR #P4:EditableSettings 默认 key_theme 空字符串(与 Settings 对齐)。"""
     from tgmonitor.core.settings_store import EditableSettings
 

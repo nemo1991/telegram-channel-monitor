@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
 import pytest_asyncio
 
 from tests.conftest import InMemoryRepository
@@ -204,14 +203,10 @@ async def test_preview_does_not_mutate_storage(svc: AppService):
     assert await svc.storage.count_media_by_channel(100) == media_count_before
 
 
-@pytest.fixture
-def qt_app():
-    from PySide6.QtWidgets import QApplication
-
-    return QApplication.instance() or QApplication([])
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
-def test_dialog_ok_disabled_until_checked(qt_app):
+def test_dialog_ok_disabled_until_checked(qapp):
     """PR #8:dialog OK 按钮默认 disabled,勾 ack 后才 enable。"""
     from PySide6.QtWidgets import QDialogButtonBox
 
@@ -235,10 +230,10 @@ def test_dialog_ok_disabled_until_checked(qt_app):
 
     dlg.chk_ack.setChecked(False)
     assert not ok_btn.isEnabled()
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
-def test_dialog_cancel_returns_rejected(qt_app):
+def test_dialog_cancel_returns_rejected(qapp):
     """PR #8:dialog Cancel → Rejected,Accepted 才走 vm.delete_by_channel。"""
     from PySide6.QtWidgets import QDialog
 
@@ -255,10 +250,10 @@ def test_dialog_cancel_returns_rejected(qt_app):
     dlg = ClearChannelPreviewDialog(pv, "Test")
     dlg.reject()
     assert dlg.result() == QDialog.DialogCode.Rejected
-    qt_app.processEvents()
+    qapp.processEvents()
 
 
-def test_dialog_shows_counts_in_labels(qt_app):
+def test_dialog_shows_counts_in_labels(qapp):
     """PR #8:dialog labels 显示 message_count / media_count / bytes。"""
     from PySide6.QtWidgets import QLabel
 
@@ -279,4 +274,4 @@ def test_dialog_shows_counts_in_labels(qt_app):
     assert "17" in all_text
     assert "5.0MB" in all_text or "5.2MB" in all_text
     assert "My Channel" in all_text
-    qt_app.processEvents()
+    qapp.processEvents()

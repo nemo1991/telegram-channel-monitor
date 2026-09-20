@@ -12,7 +12,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 from tgmonitor.core.events import (
     EventBus,
@@ -21,11 +21,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
-
-@pytest.fixture
-def qt_app() -> QApplication:
-    """Ensure QApplication exists — offscreen mode,SVG render 也能跑。"""
-    return QApplication.instance() or QApplication([])  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
 @pytest.fixture
@@ -48,7 +44,7 @@ def app(bus) -> MagicMock:
 
 
 @pytest.fixture
-def tray(qt_app, bus, parent, app) -> TrayIcon:
+def tray(qapp, bus, parent, app) -> TrayIcon:
     """构造 TrayIcon — `QSystemTrayIcon` 构造返 MagicMock,使 setIcon /
     setToolTip / setContextMenu 调用可断言。`isSystemTrayAvailable` patch
     返 True 走完整路径。
@@ -169,7 +165,7 @@ async def test_pause_resume_cycle_idempotent(tray, bus) -> None:
     assert tray._is_paused is False
 
 
-async def test_paused_event_no_tray_is_silent(qt_app, bus, parent, app) -> None:
+async def test_paused_event_no_tray_is_silent(qapp, bus, parent, app) -> None:
     """无系统托盘(offscreen)时 paused 事件不抛 — 内部 _tray 是 None,no-op。"""
     with patch(
         "tgmonitor.ui.widgets.tray_icon.QSystemTrayIcon.isSystemTrayAvailable",

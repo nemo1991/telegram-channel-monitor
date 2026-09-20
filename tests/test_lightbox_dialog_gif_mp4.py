@@ -65,18 +65,16 @@ def tiny_gif_bytes() -> bytes:
     return _ensure_tiny_gif(path)
 
 
-@pytest.fixture(scope="module")
-def qt_app() -> QApplication:
-    """模块级 QApplication — 多个 LightboxDialog 实例共享。"""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app  # type: ignore[return-value]
+# `qapp` from tests/conftest.py — session-scope QApplication 单例
 
 
 @pytest.fixture(autouse=True)
-def _ensure_qapp(qt_app: QApplication) -> None:
-    """2026-09-04 v1.6.7:QPixmap / QMovie 构造需要 QApplication 先存在。autouse 全 case。"""
+def _ensure_qapp(qapp: QApplication) -> None:
+    """2026-09-04 v1.6.7:QPixmap / QMovie 构造需要 QApplication 先存在。autouse 全 case。
+
+    2026-09-20 PR cleanup:fixture 仍 autouse,但只引一次 `qapp`(conftest 提供
+    session-scope 单例),不再自造 `qt_app` 模块级 fixture。
+    """
     return None
 
 
@@ -110,7 +108,7 @@ def test_media_item_kind_empty_when_all_none() -> None:
 # ---- LightboxDialog.items=... 三态 ----
 
 
-def test_items_kwarg_with_gif_starts_movie(qt_app: QApplication, tiny_gif_bytes: bytes) -> None:
+def test_items_kwarg_with_gif_starts_movie(qapp: QApplication, tiny_gif_bytes: bytes) -> None:
     """items=[MediaItem(animated=...)] → _render_gif → _movie 装上 canvas 并 start()。
 
     验:
@@ -131,7 +129,7 @@ def test_items_kwarg_with_gif_starts_movie(qt_app: QApplication, tiny_gif_bytes:
         dlg.close()
 
 
-def test_items_kwarg_with_pixmap_backcompat(qt_app: QApplication) -> None:
+def test_items_kwarg_with_pixmap_backcompat(qapp: QApplication) -> None:
     """items=[MediaItem(pixmap=...)] → 走 image 路径,canvas 拿到 pixmap。"""
     pix = QPixmap(2, 2)
     pix.fill(Qt.red)
@@ -147,7 +145,7 @@ def test_items_kwarg_with_pixmap_backcompat(qt_app: QApplication) -> None:
         dlg.close()
 
 
-def test_old_pixmaps_kwarg_still_works(qt_app: QApplication) -> None:
+def test_old_pixmaps_kwarg_still_works(qapp: QApplication) -> None:
     """2026-09-04 v1.6.7 向后兼容:老 `pixmaps=` kwarg 走 image 路径,与 v1.5.x 一致。"""
     pix = QPixmap(2, 2)
     pix.fill(Qt.blue)
@@ -240,7 +238,7 @@ class _FakeVideoWidget(QVideoWidget):
 
 
 def test_items_kwarg_with_video_sets_up_player(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """items=[MediaItem(video=...)] → QMediaPlayer 构造 + setSource + play + errorOccurred connect。"""
     # monkeypatch QMediaPlayer / QVideoWidget 在 lightbox_dialog 模块里
@@ -276,7 +274,7 @@ def test_items_kwarg_with_video_sets_up_player(
 
 
 def test_video_fallback_called_on_player_error(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """2026-09-04 v1.6.7:QMediaPlayer 抛 errorOccurred → fallback_fn 被调 + dialog accept。"""
     from tgmonitor.ui.widgets import lightbox_dialog
@@ -302,7 +300,7 @@ def test_video_fallback_called_on_player_error(
 
 
 def test_video_fallback_no_fn_shows_message(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """fallback_fn 为 None → error 后 dialog 不关,显示 '(video unavailable — codec missing)'。"""
     from tgmonitor.ui.widgets import lightbox_dialog
@@ -324,7 +322,7 @@ def test_video_fallback_no_fn_shows_message(
 
 
 def test_close_event_unlinks_staged_video(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """closeEvent unlink _video_tmp_path,不留 garbage。"""
     from tgmonitor.ui.widgets import lightbox_dialog
@@ -347,7 +345,7 @@ def test_close_event_unlinks_staged_video(
 
 
 def test_stop_active_player_clears_movie_and_player(
-    qt_app: QApplication, tiny_gif_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, tiny_gif_bytes: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """_stop_active_player 同时清 QMovie + QMediaPlayer(先 GIF 再 video 切换场景)。"""
     from tgmonitor.ui.widgets import lightbox_dialog
@@ -388,7 +386,7 @@ def test_stop_active_player_clears_movie_and_player(
 
 
 def test_wheel_event_on_video_does_not_zoom(
-    qt_app: QApplication, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """2026-09-04 v1.6.7:video 状态下 wheel 不缩放,透传给 QVideoWidget。"""
     from tgmonitor.ui.widgets import lightbox_dialog
@@ -420,7 +418,7 @@ def test_wheel_event_on_video_does_not_zoom(
     dlg.close()
 
 
-def test_show_lightbox_accepts_items_kwarg(qt_app: QApplication, tiny_gif_bytes: bytes) -> None:
+def test_show_lightbox_accepts_items_kwarg(qapp: QApplication, tiny_gif_bytes: bytes) -> None:
     """show_lightbox(items=...) 便利构造 + showFullScreen。"""
     from tgmonitor.ui.widgets.lightbox_dialog import show_lightbox
 
@@ -458,7 +456,7 @@ def test_lightbox_previewable_types_includes_video() -> None:
 
 
 def test_switching_to_then_from_video_cleans_up(
-    qt_app: QApplication, tiny_gif_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+    qapp: QApplication, tiny_gif_bytes: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """gif → video → gif 切换:video 阶段 stage 的 tmpfile 在 close 时被 unlink。"""
     from tgmonitor.ui.widgets import lightbox_dialog
