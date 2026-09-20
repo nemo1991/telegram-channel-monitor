@@ -5,9 +5,58 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [1.7.5] - 2026-09-15
+## [1.7.5] - 2026-09-20
 
-主题:**UI 全面优化 — 9 PR 拆分(i18n + 主题 + 批量确认 + 详情可拖拽 + LIVE 浮条 + 失败明细 + DRIFT 回归 + 多过滤 toggle + perf)**。
+主题:**UI 全面优化(9 PR)+ 测试体系精简 + CI 修复**。
+
+> 注:1.7.5 的 UI 部分 2026-09-15 已合入 main,但当时 CI 已坏(见下),
+> 直到 2026-09-20 修好 CI 才具备发版条件,故本版一并 tag。日期取实际发版日。
+
+### 测试体系精简(PR #19)
+
+**CI 修复(根因,先修这个)**:
+
+- 3 个 job(test / mypy / integration)全部卡在 `Install dependencies`:
+  `FileNotFoundError: Forced include not found: src/tgmonitor/i18n/en_US.qm`。
+  `.qm` 被 `.gitignore` 排除,而 `[tool.hatch.build.targets.wheel.force-include]`
+  列出它,hatchling editable build 读不到源文件即整体失败。
+  抽 `.github/actions/compile-qt-translations` composite action,3 个 job 都在
+  `uv sync` **之前**编译 `.qm`。
+- **影响**:main 的 CI 自 2026-09-10 起持续红,**pytest 从未真正执行**(最后一次
+  全绿是 2026-09-09)。修好之后测试首次真跑,连续暴露下列一批 main 上早已存在、
+  只是从未被观测的问题。
+
+**顺带修的真 bug(均非本次引入)**:
+
+- **`ChannelFile.load` 3 个 bug**(`core/storage/channel_file.py`,严重):
+  1. **索引错位 → 静默返回错消息** —— 把文件行号存进 `index`,而 `rows` 只装
+     解析成功的行;跳过任意坏行后两者错位,`get_message` 返回**另一条消息**。
+  2. 合法 JSON 但非 dict(`[1,2,3]` / `null`)让整个 `load` 抛 AttributeError。
+  3. `splitlines()` 在 NEL(`\x85`)/ ` ` / ` ` 处断行,而 `flush` 走
+     `ensure_ascii=False` 不转义这些字符 → 一行被劈碎、整条消息静默丢失。
+- **fixture 同名覆盖** —— `_app_service_batch.py` 的 `app` fixture 排在
+  `pytest_plugins` 末尾,静默覆盖了 `_monitor_app.py` 的真 AppService fixture,
+  4 个文件约 96 个测试全红。
+- **`InMemoryRepository._messages` 属性名漂移 5 处** —— 早已重命名为 `messages`,
+  但 `set_favorite` / `set_tags` / `set_notes` / `list_favorites` / `list_by_tag`
+  仍读旧名。
+- **PG 迁移测试插 NULL 撞 NOT NULL** —— 生产 schema 是
+  `ADD COLUMN ... NOT NULL DEFAULT`,原测试断言的「读侧 None 兜底」在 PG 上不可达。
+- **macOS perf 断言在 coverage 下不成立** —— coverage 走 `sys.settrace` 系统性慢
+  ~10x,绝对耗时阈值失效;改为检测到插桩则 skip。
+- **Windows `processEvents()` 段错误** —— `offscreen` QPA 在 windows-latest 下
+  必崩(exit 139,**中断整个 pytest 进程**,13 个文件 91 处调用受影响)。改为
+  Windows 用 Qt 原生 `windows` 平台插件(offscreen 本是给 Linux 无头环境的)。
+
+**测试精简(三轴)**:
+
+- `Settings.for_test()` 工厂普及,消 ~80 行 boilerplate
+- `qapp` fixture 集中到 `conftest.py`,13 个文件的本地副本收敛,消 ~110 行
+- `wait_for` 谓词替 13+ 处裸 `asyncio.sleep` 轮询;新增 `EventBus.flush()` 消
+  fire-and-forget 竞态
+
+**结果**:三平台 pytest + integration 全绿(21 个 job),无隔离、无跳过
+(除既有平台性 skip)。
 
 ### PR #9 — Perf(MessageListModel O(N²) → O(N) + delegate cache)
 
