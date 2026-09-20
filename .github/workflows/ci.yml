@@ -56,25 +56,38 @@ jobs:
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
+      # 2026-09-20 v1.7.5+ 修:.qm 是 pyside6-lrelease 从 .ts 编译的产物,被 .gitignore
+      # 排除(本地重生成;CI 拉源码后没有)。test_i18n_runtime.py 断言 .qm 存在 +
+      # 非空 + QTranslator.load() 成功 + 翻译结果正确,缺则全平台红。
+      #
+      # 必须早于 `Install dependencies` 跑 — pyproject.toml [tool.hatch.build.
+      # targets.wheel.force-include] 列出 .qm 文件,hatchling 的 editable build
+      # 会读源目录找它们,缺则 FileNotFoundError,`uv sync` 整体失败。
+      #
+      # 用 `uvx --from PySide6` 而非 `uv run pyside6-lrelease`:`uv run` 依赖
+      # venv 已建,但 venv 在 `uv sync` 时才建,死锁。`uvx --from PySide6` 临时
+      # 拉 PySide6(~420MB 但 uv 缓存复用)→ 跑 lrelease → 扔 env,无需 PySide6
+      # 在主 venv 里。
+      #
+      # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
+      # windows-latest 默认 pwsh 把 YAML 行续 \ 当字面参数(Cannot open \),
+      # 显式切 bash(windows-latest 自带 Git Bash)+ 单行命令。
+      - name: Compile Qt translation files (.ts → .qm)
+        shell: bash
+        run: |
+          uvx --from PySide6 pyside6-lrelease \
+            src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts
+
       # uv sync 一次性装:
       #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
       #   - [project.optional-dependencies] 全部 (postgres/mongo/objectstore)
       #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
       # `-q` 关 progress bar,CI 日志干净
+      #
+      # 2026-09-20 v1.7.5+:依赖上一 step 已编译 .qm,否则 hatchling editable build
+      # 找不到 force-include 源文件失败。
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
-
-      # 2026-09-09 v1.7.x:.qm 是 pyside6-lrelease 从 .ts 编译的产物,被 .gitignore
-      # 排除(本地重生成;CI 拉源码后没有)。test_i18n_runtime.py 会断言 .qm 存在 +
-      # 非空 + 能 QTranslator.load() + 翻译结果正确,缺则 windows/macos 全红。
-      # 在 pytest 之前同步编译到 src/tgmonitor/i18n/,test 期间 QApplication
-      # install_translator() 即读到本地 zh_CN.qm / en_US.qm。
-      # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
-      # 2026-09-09 v1.7.x:windows-latest 默认 pwsh 把 YAML 行续 \ 当字面参数
-      # (Cannot open \);显式切 bash(windows-latest 自带 Git Bash)+ 单行命令。
-      - name: Compile Qt translation files (.ts → .qm)
-        shell: bash
-        run: uv run pyside6-lrelease src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts
 
       # 只加载已安装的 console_scripts entry point,不调用 `main()`。
       # `tgmonitor --help` 没有 argparse 路径,会实际启动 Qt event loop,
