@@ -71,6 +71,17 @@ jobs:
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /usr/local/bin/appimagetool
 
+      # 2026-09-20:必须早于 uv sync —— pyproject.toml 的
+      # [tool.hatch.build.targets.wheel.force-include] 列了 .qm,hatchling
+      # editable build 读不到源文件就整体失败(.qm 被 .gitignore 排除,CI 拉源码
+      # 后没有)。此前 3 个平台的 build job 全卡在这里,导致 v1.7.5 的
+      # GitHub Release 根本没生成。同 ci.yml 的处理。
+      #
+      # 顺带修一个更早的问题:PyInstaller 打出的包里此前**从来没有 .qm**
+      # (从没编译过),打包版的 i18n 一直是 fallback 原文。现在补上。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
       - name: Install project + PyInstaller (via uv)
         run: |
           # PyInstaller 已在 pyproject.toml dev dep(D1 commit)
@@ -223,6 +234,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake gperf openssl@3
+
+      # 2026-09-20:同 build job —— .qm 必须在 uv sync 之前编译(force-include)
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
 
       - name: Install project (via uv)
         run: |
