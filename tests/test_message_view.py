@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from datetime import UTC, datetime
 
@@ -1266,6 +1267,16 @@ def test_pr8_set_filter_persists_state_after_set_messages(qapp):
 # ============================================================
 
 
+def _under_coverage() -> bool:
+    """当前进程是否被 coverage.py 插桩(`coverage run` / pytest-cov)。
+
+    coverage 走 `sys.settrace`,**每一行**都加钩子 → 被测代码系统性慢 ~10x。
+    绝对耗时断言在这种环境下不成立(CI macOS 实测 10K append 5.03ms > 5ms
+    上限),且这是系统性偏差,取 min / 重试都救不回来 —— 只能跳过。
+    """
+    return sys.gettrace() is not None
+
+
 def test_pr9_append_constant_time_per_call(qapp):
     """PR #9 perf:`append` 单条耗时与已有行数无关 — 1K / 5K / 9.9K 时
     单条 append 都 < 1ms(以前 list.insert(0) + _row_to_key O(N²) 在 10K 时单条
@@ -1273,7 +1284,16 @@ def test_pr9_append_constant_time_per_call(qapp):
 
     deque.appendleft 是 O(1),`_index_of` bump 是 O(N) — 但实测 N=10K 的
     dict-iteration 在 CPython 上远快于 list.insert + sort,稳 < 1ms。
+
+    2026-09-20:coverage 插桩下 skip —— 见 `_under_coverage`。CI 的
+    「Run pytest with coverage」step 只收覆盖率(不设阈值门控),跳过无损失;
+    上面的「Run pytest」无插桩 step 才是真正跑这条断言的。
     """
+    if _under_coverage():
+        import pytest
+
+        pytest.skip("perf 绝对耗时断言在 coverage 插桩下无意义(系统性 ~10x 慢)")
+
     view = MessageView()
 
     # 灌 1000 条 baseline
