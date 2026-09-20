@@ -75,6 +75,7 @@ def qapp():
     - `qapp_no_locale_force`(test_i18n_runtime.py + test_media_manager_i18n.py):
       i18n 测试要切语言,反 `force_zh_cn_locale` autouse fixture。
     - `qapp_16`(test_channel_widget.py):只是命名过时,改用 `qapp`。
+    - `test_visual_regression.py` 自造同名 `qapp`(macOS-only,CI --ignore,保留)。
     """
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
