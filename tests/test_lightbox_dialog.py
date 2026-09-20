@@ -429,9 +429,7 @@ def test_close_button_accepts_dialog(qapp: QApplication, sample_pixmap: QPixmap)
     assert dlg.result() == QDialog.Accepted
 
 
-def test_show_bar_makes_bar_visible_and_opaque(
-    qapp: QApplication, sample_pixmap: QPixmap
-) -> None:
+def test_show_bar_makes_bar_visible_and_opaque(qapp: QApplication, sample_pixmap: QPixmap) -> None:
     """mouseMoveEvent → _show_bar → opacity effect=1.0(visibility 走 parent show 后)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     assert dlg._bar_opacity_effect.opacity() == 0.0

@@ -14,9 +14,7 @@ from tgmonitor.core.app_service import AppService
 from tgmonitor.core.events import BatchDone, BatchProgress
 
 
-async def test_cancel_marks_read_stops_mid_loop(
-    app: AppService, collected: list
-) -> None:
+async def test_cancel_marks_read_stops_mid_loop(batch_app: AppService, collected: list) -> None:
     """v1.7.3:`mark_messages_read` 取消 — break 后 stop 调 client。"""
     # 3 cid 分组各 1 条。cancel 在 cid 1 RPC 完成后触发 → cid 2 起被 break。
     items = [(1, 1), (2, 2), (3, 3)]
@@ -26,10 +24,10 @@ async def test_cancel_marks_read_stops_mid_loop(
         nonlocal call_count
         call_count += 1
         if call_count == 1:  # 第 1 次 RPC 返回后触发 cancel
-            app.cancel_current_batch()
+            batch_app.cancel_current_batch()
 
-    app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
-    result = await app.mark_messages_read(items)
+    batch_app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
+    result = await batch_app.mark_messages_read(items)
     # cid 1 RPC 已发出 → success += 1;cid 2 起 is_set → break
     assert result == 1
     assert call_count == 1
@@ -41,14 +39,12 @@ async def test_cancel_marks_read_stops_mid_loop(
     assert done[0].error == "cancelled"
 
 
-async def test_cancel_after_completion_no_error(
-    app: AppService, collected: list
-) -> None:
+async def test_cancel_after_completion_no_error(batch_app: AppService, collected: list) -> None:
     """v1.7.3:批量全完成后 cancel — 无副作用,BatchDone.error is None。"""
     items = [(1, 1), (1, 2)]
-    await app.mark_messages_read(items)
+    await batch_app.mark_messages_read(items)
     # 已 set 的 event 不影响已完成的 facade;此 facade 内部 clear → 全过完
-    app.cancel_current_batch()
+    batch_app.cancel_current_batch()
     # clear 由下次 facade 进入时做;此处直接看最后一次 BatchDone
     done = [e for e in collected if isinstance(e, BatchDone)]
     assert done[-1].error is None
@@ -56,7 +52,7 @@ async def test_cancel_after_completion_no_error(
 
 
 async def test_cancel_after_event_cleared_by_next_facade(
-    app: AppService, collected: list
+    batch_app: AppService, collected: list
 ) -> None:
     """v1.7.3:facade 开头 `_cancel_event.clear()` — 上次 cancel 不影响下次。"""
     # 第 1 次 facade:cancel after first RPC
@@ -67,10 +63,10 @@ async def test_cancel_after_event_cleared_by_next_facade(
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            app.cancel_current_batch()
+            batch_app.cancel_current_batch()
 
-    app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
-    await app.mark_messages_read(items1)
+    batch_app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
+    await batch_app.mark_messages_read(items1)
     done1 = [e for e in collected if isinstance(e, BatchDone)]
     assert done1[0].error == "cancelled"
     assert done1[0].succeeded == 1
@@ -78,18 +74,18 @@ async def test_cancel_after_event_cleared_by_next_facade(
     # clear collected
     collected.clear()
     # 解除 side_effect → 默认 AsyncMock 不抛
-    app.client.mark_messages_read.side_effect = None  # type: ignore[attr-defined]
+    batch_app.client.mark_messages_read.side_effect = None  # type: ignore[attr-defined]
 
     # 第 2 次 facade 不应被上次的 event 影响(开头 clear)
     items2 = [(1, 100), (1, 101)]
-    await app.mark_messages_read(items2)
+    await batch_app.mark_messages_read(items2)
     done2 = [e for e in collected if isinstance(e, BatchDone)]
     assert done2[0].error is None
     assert done2[0].succeeded == 2
 
 
 async def test_batch_progress_emits_elapsed_and_rate_for_mark_read(
-    bus, app: AppService
+    bus, batch_app: AppService
 ) -> None:
     """v1.7.4:mark_messages_read(per-cid grouping)— rate 也正确。"""
     received: list[BatchProgress] = []
@@ -100,7 +96,7 @@ async def test_batch_progress_emits_elapsed_and_rate_for_mark_read(
     bus.subscribe(BatchProgress, _on)
 
     items = [(1, 1), (1, 2), (2, 3)]
-    await app.mark_messages_read(items)
+    await batch_app.mark_messages_read(items)
     assert len(received) >= 1
     last = received[-1]
     assert last.op == "mark_read"

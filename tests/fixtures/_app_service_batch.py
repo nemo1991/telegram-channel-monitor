@@ -5,6 +5,21 @@
 
 模式:AsyncMock 注入 client / storage / objects(单元测速),EventBus 真订阅
 (验证 emit 序列)。
+
+**fixture 命名约定(2026-09-20 修)**:本模块的 fixture 一律带 `batch_` 前缀
+(`batch_app` / `paused_batch_app`)。
+
+为什么:本模块在 `tests/conftest.py::pytest_plugins` 里**排在最后**,pytest
+对同名 fixture 是「后注册者覆盖」——本模块曾定义裸 `app`,把
+`tests/fixtures/_monitor_app.py` 的真 AppService fixture 全仓覆盖成 AsyncMock
+版,导致 test_media_manager / test_objectstore / test_orphan_reconcile /
+test_thumbnail_cache 4 个文件(用真 storage 的)全红。加前缀根治:
+mock 版与真版不再同名,谁都不会覆盖谁。
+
+`bus` 同理会撞 `_bus_client.py` 的 `bus`(两者实现相同,都返空 EventBus);
+本模块不再重复定义,直接用 `_bus_client.bus`。
+
+**新增 fixture 到本模块前先 grep 全仓**:同名 fixture 会静默覆盖,不报错。
 """
 
 from __future__ import annotations
@@ -21,19 +36,19 @@ from tgmonitor.core.events import (
     MessageEdited,
 )
 
-
-@pytest.fixture
-def bus() -> EventBus:
-    """最小 EventBus — function-scope,每个 test 一个新实例。"""
-    return EventBus()
+# 注:`bus` fixture 不在此定义 — 用 `tests/fixtures/_bus_client.py` 的 `bus`
+# (实现相同:都返空 EventBus)。曾在此重复定义,同名覆盖了那边的;去掉重复。
 
 
 @pytest.fixture
-async def app(bus: EventBus) -> AppService:
+async def batch_app(bus: EventBus) -> AppService:
     """最小可用的 AppService — AsyncMock client / storage / objects。
 
     默认所有 RPC 成功(无 exception,无 side_effect)。
-    `_is_paused = False`(未暂停)— paused 测试用 `paused_app` fixture。
+    `_is_paused = False`(未暂停)— paused 测试用 `paused_batch_app` fixture。
+
+    命名带 `batch_` 前缀:避免覆盖 `_monitor_app.py` 的真 `app` fixture
+    (本模块在 pytest_plugins 末尾,同名会赢)。详见模块 docstring。
     """
     client = AsyncMock()
     client.state = "phone_required"
@@ -48,8 +63,11 @@ async def app(bus: EventBus) -> AppService:
 
 
 @pytest.fixture
-async def paused_app(bus: EventBus) -> AppService:
-    """暂停态 AppService — paused guard 走 short-circuit,不调 client。"""
+async def paused_batch_app(bus: EventBus) -> AppService:
+    """暂停态 AppService — paused guard 走 short-circuit,不调 client。
+
+    命名带 `batch_` 前缀,理由同 `batch_app`。
+    """
     client = AsyncMock()
     client.state = "phone_required"
     storage = AsyncMock()

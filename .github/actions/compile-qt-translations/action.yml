@@ -1,0 +1,32 @@
+name: Compile Qt translations
+description: >
+  从 .ts 编译 .qm 到 src/tgmonitor/i18n/。必须在任何 `uv sync` 之前跑 —
+  pyproject.toml [tool.hatch.build.targets.wheel.force-include] 列出 .qm,
+  hatchling editable build 会读源目录验证存在,缺则 uv sync 整体失败。
+
+# 为什么抽成 composite action:
+# 3 个 job(test / mypy / integration)都要跑 `uv sync`,都要先有 .qm。
+# 2026-09-20 之前这段只写在 test job 里,另外 2 个 job 一加 `uv sync` 就
+# FileNotFoundError(Forced include not found: .../en_US.qm)。抽成一处,
+# 后续只改一份,不会再出现「改了 A 忘了 B」。
+#
+# 前置:调用方必须已经 `actions/checkout`(本 action 不 checkout)。
+
+runs:
+  using: composite
+  steps:
+    - name: Compile .ts → .qm
+      shell: bash
+      run: |
+        # 用 `uvx --from PySide6` 而非 `uv run pyside6-lrelease`:
+        # `uv run` 依赖 .venv 已建,而 .venv 正是 `uv sync` 建的 —— 死锁。
+        # `uvx` 临时拉 PySide6 到独立 env 跑 lrelease 后扔掉,uv 缓存会复用
+        # (~420MB 只在首次下载)。
+        #
+        # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
+        #
+        # windows-latest 默认 shell 是 pwsh,把 YAML 续行 \ 当字面参数
+        # (Cannot open \);composite action 里显式 shell: bash
+        # (windows runner 自带 Git Bash)。
+        uvx --from PySide6 pyside6-lrelease \
+          src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts

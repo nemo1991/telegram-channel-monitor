@@ -56,27 +56,11 @@ jobs:
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
-      # 2026-09-20 v1.7.5+ 修:.qm 是 pyside6-lrelease 从 .ts 编译的产物,被 .gitignore
-      # 排除(本地重生成;CI 拉源码后没有)。test_i18n_runtime.py 断言 .qm 存在 +
-      # 非空 + QTranslator.load() 成功 + 翻译结果正确,缺则全平台红。
-      #
-      # 必须早于 `Install dependencies` 跑 — pyproject.toml [tool.hatch.build.
-      # targets.wheel.force-include] 列出 .qm 文件,hatchling 的 editable build
-      # 会读源目录找它们,缺则 FileNotFoundError,`uv sync` 整体失败。
-      #
-      # 用 `uvx --from PySide6` 而非 `uv run pyside6-lrelease`:`uv run` 依赖
-      # venv 已建,但 venv 在 `uv sync` 时才建,死锁。`uvx --from PySide6` 临时
-      # 拉 PySide6(~420MB 但 uv 缓存复用)→ 跑 lrelease → 扔 env,无需 PySide6
-      # 在主 venv 里。
-      #
-      # 注:lrelease 默认把 .qm 写到 .ts 同目录,无需 -qm 标志(传目录会失败)。
-      # windows-latest 默认 pwsh 把 YAML 行续 \ 当字面参数(Cannot open \),
-      # 显式切 bash(windows-latest 自带 Git Bash)+ 单行命令。
+      # 2026-09-20 v1.7.5+ 修:.qm 必须早于 `uv sync` 存在,否则 hatchling
+      # editable build 找不到 force-include 源文件,uv sync 整体失败。
+      # 详见 action 自身注释 + 下方 Install dependencies 注释。
       - name: Compile Qt translation files (.ts → .qm)
-        shell: bash
-        run: |
-          uvx --from PySide6 pyside6-lrelease \
-            src/tgmonitor/i18n/zh_CN.ts src/tgmonitor/i18n/en_US.ts
+        uses: ./.github/actions/compile-qt-translations
 
       # uv sync 一次性装:
       #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
@@ -225,6 +209,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
+      # 2026-09-20 v1.7.5+:.qm 必须先编译 — `uv sync` 里的 hatchling editable
+      # build 会读 pyproject.toml force-include 列的 .qm 源文件,缺则
+      # FileNotFoundError 让 Install dependencies 整个红。同 test job。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
       # 装 dev + extras 让 tdlib_json / pydantic / platformdirs / pydantic_settings
       # 全可 import,否则 mypy 报 missing-imports(已被 [tool.mypy.overrides]
       # 屏蔽但 warning 仍多,污染日志)
@@ -279,6 +269,11 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libglib2.0-0t64 libsm6 libice6 libpulse0
+
+      # 2026-09-20 v1.7.5+:.qm 必须先编译(理由同 test / mypy job —
+      # hatchling force-include 读源文件,缺则 uv sync 红)。
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
 
       - name: Install dependencies
         # --all-extras 装 asyncpg + motor(extras[postgres,mongo]),--group dev
