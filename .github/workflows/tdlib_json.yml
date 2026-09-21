@@ -137,8 +137,14 @@ jobs:
 
   release:
     name: GitHub Release tdlib-json-client
-    # 只在手动触发时发布(push main 仅编译验证,不自动发 release)
-    if: github.event_name == 'workflow_dispatch'
+    # 触发规则:
+    #   - workflow_dispatch → 总是发布(手动控制:本地 build 好后)
+    #   - push to main(path filter) → 仅在 pyproject 版本相对上次 release 有变化时发布
+    #     (避免每次路径匹配 push 都白跑 release;只有 version bump 才值得发)
+    #   - schedule → 不发布(仅验证编译)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && steps.bump_check.outputs.bumped == 'true')
     needs: build-wheel
     runs-on: ubuntu-latest
     permissions:
@@ -157,6 +163,22 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "==> tag: ${tag}"
+
+      # 检查版本是否相对上次 release 有变化 — 只有 bumped=true 才创建 release
+      - name: Check version bump (push events only)
+        id: bump_check
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "==> Release ${tag} 已存在,跳过(只 build 不 release)"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "==> 新版本 ${tag},准备发布"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create release
         uses: softprops/action-gh-release@v2
