@@ -137,12 +137,16 @@ jobs:
 
   release:
     name: GitHub Release tdlib-json-client
+    # GitHub Actions 限制:job-level `if:` 不能引用 steps.* outputs(step
+    # 输出在 step 跑完后才存在,而 job if 在 step 跑前评估)。
+    # 解法:job 总是跑(只要 build-wheel 成功),把 bump check 放 step 内部,
+    # Create release step 自己判断:已存在 → skip,不存在 → 创建。
     # 触发规则:
-    #   - workflow_dispatch → 总是发布(手动控制:本地 build 好后)
-    #   - push to main(path filter) → 仅在 pyproject 版本相对上次 release 有变化时发布
-    #     (避免每次路径匹配 push 都白跑 release;只有 version bump 才值得发)
-    #   - schedule → 不发布(仅验证编译)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && steps.bump_check.outputs.bumped == 'true')
+    #   - workflow_dispatch → 总是发布(本地 build 好后)
+    #   - push to main(path filter) → 检查 version 变化,只 bump 时发布
+    #   - schedule → 不跑 release(0 min job),但本 job 的 `if` 还允许
+    #     schedule 进入空跑(下载 artifacts 但不创建 release)
+    if: github.event_name != 'schedule'
     needs: build-wheel
     runs-on: ubuntu-latest
     permissions:
@@ -160,10 +164,11 @@ jobs:
           tag="tdlib-json-client/v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "==> tag: ${tag}"
+          echo "==> target tag: ${tag}"
 
-      # 检查版本是否相对上次 release 有变化 — 只有 bumped=true 才创建 release
-      - name: Check version bump (push events only)
+      # 仅在 push 事件下检查 version bump;workflow_dispatch 直接发布。
+      # step-level if 允许引用 step outputs(不像 job if)。
+      - name: Check release exists (push events only)
         id: bump_check
         if: github.event_name == 'push'
         env:
@@ -171,14 +176,18 @@ jobs:
         run: |
           tag="${{ steps.version.outputs.tag }}"
           if gh release view "${tag}" >/dev/null 2>&1; then
-            echo "==> Release ${tag} 已存在,跳过(只 build 不 release)"
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "==> Release ${tag} 已存在,跳过创建(只 build 不 release)"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "==> 新版本 ${tag},准备发布"
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create release
+        # workflow_dispatch → 直接创建
+        # push 且 exists=false → 创建
+        # push 且 exists=true → 跳过整个 step(if false)
+        if: github.event_name == 'workflow_dispatch' || steps.bump_check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
