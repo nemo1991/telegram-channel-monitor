@@ -96,11 +96,19 @@ if (-not (Test-Path $Dest) -or -not (Test-Path $MANIFEST) -or
     Write-Host "==> vcpkg: $VcpkgRoot"
 
     # ---- 2. vcpkg install tdlib(首次编译较久,后续命中产物缓存跳过) ----
-    # GitHub windows-latest runner 内存有限:tdlib Debug 配置用 MSVC 编译
-    # shareddialog.cpp 会 OOM(C1002),且 Debug PDB 超 4GB(LNK1140)。
+    # GitHub windows-latest runner 内存有限(7GB):tdlib Debug 配置用 MSVC
+    # 编译 shareddialog.cpp 会 OOM(C1002),且 Debug PDB 超 4GB(LNK1140)。
     # 只构建 Release,并限制编译并发,压低内存峰值。
+    #
+    # 2026-09-21 进一步修:MAX_CONCURRENCY=2 → 1。理由 — link tdjson.dll
+    # 阶段,cl.exe 跑 Whole Program Optimization(/GL + /LTCG,vcpkg port
+    # 默认开),要把所有 obj + lib 一次性吞进内存做 code generation,峰值
+    # ~5-6GB;并行编译单元(Ninja workers)各自吃 ~1.5GB,2 个并发叠加 + cl
+    # 链接时峰值 = 8GB+,7GB runner 上 cl.exe 报 C1002 'compiler is out of
+    # heap space'。改成 1 后单 worker 串行编译,cl 链接时独占内存。
+    # 代价:总编译时间从 ~1.5h 增到 ~2h(只 link 阶段显著,其余 ~持平)。
     $env:VCPKG_BUILD_TYPE = "release"
-    $env:VCPKG_MAX_CONCURRENCY = "2"
+    $env:VCPKG_MAX_CONCURRENCY = "1"
     Write-Host "==> vcpkg install tdlib:$Triplet (build_type=$env:VCPKG_BUILD_TYPE) ..."
     Write-Host "==> work root: $WorkRoot (tmp=$env:TMP, install=$VcpkgInstallRoot)"
     # 缓存/中间目录全指到 $WorkRoot(D:),避免 C: 盘在链接期爆掉
