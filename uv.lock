@@ -1298,7 +1298,7 @@ wheels = [
 
 [[package]]
 name = "tdlib-json-client"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tdlib_json" }
 
 [[package]]

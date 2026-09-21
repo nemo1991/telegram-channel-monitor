@@ -90,7 +90,13 @@ jobs:
       # —— wheels 发布到 GitHub Release 是长期 storage),避免重复机制。
       - name: Build libtdjson (Linux/macOS)
         if: runner.os != 'Windows'
-        run: bash scripts/build_libtdjson.sh
+        run: |
+          # 2026-09-20 debug:set -x + 不 pipe 到 tail,直接捕获完整输出到 GITHUB_STEP_SUMMARY
+          set -x
+          bash scripts/build_libtdjson.sh 2>&1 | tee /tmp/build.log
+          echo "::group::Full build log"
+          cat /tmp/build.log
+          echo "::endgroup::"
 
       - name: Build libtdjson (Windows)
         if: runner.os == 'Windows'
