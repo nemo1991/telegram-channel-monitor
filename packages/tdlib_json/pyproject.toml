@@ -1,6 +1,10 @@
 [project]
 name = "tdlib-json-client"
-version = "0.1.0"
+# 2026-09-20+ 解耦:bump 到 0.1.1 表示 wheel 由独立 workflow
+# (.github/workflows/tdlib_json.yml) 编译并发布到 GitHub Release
+# `tdlib-json-client/v0.1.1`。后续 TDLib 升版本时 minor bump(0.2.0),
+# 仅 Python binding 改动时 patch bump(0.1.2)。
+version = "0.1.1"
 description = "TDLib JSON 客户端 — 自编译 libtdjson 的 ctypes 绑定,替代已归档的 aiotdlib"
 requires-python = "~=3.13.0"
 license = { text = "MIT" }
@@ -18,3 +22,21 @@ packages = ["src/tdlib_json"]
 # 默认只收集 .py;`tdlib/` 下的 libtdjson 动态库由 scripts/build_libtdjson.sh
 # 产出且被 .gitignore 排除,必须显式 include 才能进 wheel(否则打包丢失)。
 include = ["src/tdlib_json/tdlib/**"]
+# 2026-09-20+ 解耦:wheel 是 platform-specific(每个平台含不同 native lib),
+# 走纯 cp313 wheel 而非 cpython ABI 标记 → 装哪个平台的 wheel 完全靠
+# 文件名 platform tag 区分。`Py_RESTRICT_DEPRECATED` 之类 CPython 标签
+# 也强制 cpython,避免 PyPy / GraalPy 等实现误装。
+#
+# wheel 文件名示例(由 hatchling 自动按 PEP 425 生成):
+#   linux_x86_64  → tdlib_json-0.1.1-cp313-cp313-manylinux_2_17_x86_64.whl
+#   macos arm64   → tdlib_json-0.1.1-cp313-cp313-macosx_11_0_arm64.whl
+#   windows x64   → tdlib_json-0.1.1-cp313-cp313-win_amd64.whl
+# macOS universal2 暂不出(本项目 CI 不产 universal wheel),macOS amd64
+# 与 arm64 各走独立 wheel;需 amd64 用户后续若增加 runner 再补。
+target-version = "py313"
+
+# hatch_build.py 自定义 hook:finalize() 阶段覆盖 build_data["tag"] →
+# 把默认 py3-none-any 换成 platform-specific(python_tag, abi_tag, plat_tag)
+# 三元组。空 table 仅触发自动发现 hatch_build.py 中的 CustomBuildHook 类;
+# 具体平台映射见 hatch_build.py 顶部注释。
+[tool.hatch.build.targets.wheel.hooks.custom]

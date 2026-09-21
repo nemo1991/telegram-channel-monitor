@@ -42,13 +42,13 @@ _SPEC_DIR = Path(SPECPATH)
 #   - icon.py:    `importlib.resources.files("tgmonitor.resources")`
 #   - theme.py:   `importlib.resources.files("tgmonitor.ui.resources")`
 #
-# 为什么不用 collect_data_files:它的 dest 由 find_spec 解析 editable workspace
-# 包决定,跨平台不一致 —— Windows CI 上 `.pth` 展开的 `packages/tdlib_json/src`
-# 在 sys.path,dest 会翻倍嵌套成 `tdlib_json/tdlib_json/tdlib`(v1.0.7 / v1.0.8
-# Windows 产物 dll 两层嵌套、启动崩的根因)。写死源目录与目标目录,三平台
-# 行为完全一致、可预期。
+# tdlib_json 的 native lib 走 collect_data_files(见下方)而不是 _DATA_DIRS:
+#   - 2026-09-20+ 解耦后,libtdjson 不再存在仓库里(wheel 提供)。写死
+#     `packages/tdlib_json/src/tdlib_json/tdlib` 在本地 dev + uv workspace
+#     下能解析,但 CI 装的是预编译 wheel,目录位置在 site-packages 下,
+#     路径会找不到。collect_data_files 走 importlib.metadata 找包数据,
+#     两种安装方式都正确解析。
 _DATA_DIRS = [
-    (_SPEC_DIR / "packages/tdlib_json/src/tdlib_json/tdlib", "tdlib_json/tdlib"),
     (_SPEC_DIR / "src/tgmonitor/resources", "tgmonitor/resources"),
     (_SPEC_DIR / "src/tgmonitor/ui/resources", "tgmonitor/ui/resources"),
     # 2026-09-02 v1.5.3 PR #D3:i18n 翻译文件(.*.qm — pyside6-lrelease 编译产物)
@@ -61,6 +61,15 @@ for src_dir, dest in _DATA_DIRS:
         datas.append((str(src_dir), dest))
     else:
         print(f"[spec] WARNING: 跳过缺失目录 {src_dir}")
+
+# tdlib_json 的 native lib(.so/.dylib/.dll) — 2026-09-20+ 解耦后通过
+# collect_data_files 从已安装包定位,无论来源是 workspace 还是预编译 wheel。
+# collect_data_files 会查 importlib.metadata 找包数据目录,跨平台/跨安装方式
+# 一致。dest 由 hook 解析,运行时 tdjson.py 通过 `Path(__file__).parent /
+# "tdlib"` 找到。
+from PyInstaller.utils.hooks import collect_data_files
+
+datas += collect_data_files("tdlib_json")
 
 # schema.sql 是单文件,不走目录递归;PyInstaller datas 支持 (file, dest_dir),
 # 目标目录必须与 postgres_repo.py 的 `Path(__file__).parent / "schema.sql"` 一致。

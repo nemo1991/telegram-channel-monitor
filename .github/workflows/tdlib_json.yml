@@ -1,0 +1,168 @@
+name: Build tdlib-json-client wheels
+
+# 2026-09-20 v1.7.5+ 解耦:把 libtdjson 编译从主 release workflow 拆出来。
+# 原 build.yml 每次发版要 2h 冷编 Windows vcpkg;TDLib 实际锁定 1.8.46,
+# 一年改 0~2 次。包边界本来就独立(packages/tdlib_json 独立 version),
+# 只是没人把它当独立 artifact 处理。
+#
+# 三种触发:
+#   - push main with paths  → 验证编译仍 OK(wheels 进 artifacts,90 天,
+#                              workflow_dispatch 时再发布)
+#   - workflow_dispatch     → 手动发布:build + GitHub Release
+#   - schedule 每周日 02:00 UTC → 兜底编译,捕获 vcpkg / 系统库升级
+#                              导致的编译破坏(不发布,只验证)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "packages/tdlib_json/**"
+      - ".github/workflows/tdlib_json.yml"
+  workflow_dispatch:
+  schedule:
+    # 每周日 02:00 UTC(vcpkg / 系统库升级一般不会同时段,选冷时段)
+    - cron: "0 2 * * 0"
+
+concurrency:
+  group: tdlib-json-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-wheel:
+    name: wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          # tdlib_json 包依赖极少(零运行时),lock 文件小且少变
+          cache-dependency-glob: "packages/tdlib_json/pyproject.toml"
+
+      # ---- 与 build.yml 同:先装编译 libtdjson 所需的系统依赖 ----
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake gperf libssl-dev zlib1g-dev build-essential
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake gperf openssl@3
+
+      # Windows 上 C: 盘兜底清理(vcpkg 链接期 No space left on device),
+      # 与 build.yml build job 完全相同的清理目标。
+      - name: Free disk space (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $targets = @(
+            "C:\Program Files\dotnet",
+            "C:\Program Files\Microsoft SQL Server",
+            "C:\Program Files (x86)\Microsoft SQL Server",
+            "C:\vcpkg\downloads",
+            "$env:LOCALAPPDATA\Microsoft\vcpkg\archives"
+          )
+          foreach ($p in $targets) {
+            if (Test-Path $p) {
+              Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "removed $p"
+            }
+          }
+
+      # ---- 编译 libtdjson(Linux/macOS 从 td/td 源码,Windows 走 vcpkg)----
+      # build_libtdjson.{sh,ps1} 现有 manifest 跳过逻辑不动;命中产物直接
+      # 跳过编译,未命中则冷编(Linux 5-10min,macOS 5-10min,Windows vcpkg
+      # ~2h —— 但只在 TDLib 升版本或 cache miss 时付一次)。
+      #
+      # 与 build.yml 不同:**不缓存产物目录**(此 workflow 自己就是 cache
+      # —— wheels 发布到 GitHub Release 是长期 storage),避免重复机制。
+      - name: Build libtdjson (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: bash scripts/build_libtdjson.sh
+
+      - name: Build libtdjson (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build_libtdjson.ps1
+
+      # ---- 验证编译产物存在且 ctypes 能加载 ----
+      # build_libtdjson.sh 自身已有 ctypes 验证步骤(无论是否跳过编译);
+      # 这里再显式跑一次确认 wheel 打包路径也对。
+      - name: Verify libtdjson loadable
+        shell: bash
+        run: |
+          # 路径与 tdjson.py _get_bundled_tdjson_lib_path 一致
+          case "$RUNNER_OS" in
+            Linux)   so="linux_amd64.so" ;;
+            macOS)   so="darwin_$(uname -m | tr A-Z a-z).dylib" ;;
+            Windows) so="windows_amd64.dll" ;;
+          esac
+          lib="packages/tdlib_json/src/tdlib_json/tdlib/libtdjson_${so}"
+          test -f "$lib" || { echo "❌ 缺产物: $lib"; exit 1; }
+          ls -lh "$lib"
+          uv run --project packages/tdlib_json python -c "
+          import tdlib_json
+          c = tdlib_json.TdlibJsonClient({'@type':'setLogVerbosityLevel','new_verbosity_level':0})
+          print('OK client_id =', c.tdjson_client.client_id)
+          "
+
+      # ---- 打 wheel:hatchling 把 tdlib/ 整目录 include 进 wheel ----
+      # pyproject.toml [tool.hatch.build.targets.wheel].include 已显式
+      # 列出 tdlib/**,二进制会进 wheel 的 tdlib_json-VERSION.dist-info/../tdlib/。
+      - name: Build wheel
+        run: |
+          cd packages/tdlib_json
+          uv build --wheel --out-dir dist/
+          ls -lh dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: tdlib-json-client-${{ matrix.os }}-${{ runner.arch }}
+          path: packages/tdlib_json/dist/*.whl
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: GitHub Release tdlib-json-client
+    # 只在手动触发时发布(push main 仅编译验证,不自动发 release)
+    if: github.event_name == 'workflow_dispatch'
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          version=$(grep -E '^version = ' packages/tdlib_json/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          tag="tdlib-json-client/v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "==> tag: ${tag}"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.whl
+          fail_on_unmatched_files: true
