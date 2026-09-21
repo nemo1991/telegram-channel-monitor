@@ -129,8 +129,13 @@ fi
 # job 踩过),冒烟验证已通过,没必要再走解释器收尾。必须先 flush:
 # CI 管道是块缓冲,直接 os._exit 会丢掉前面打印的输出。
 # 若中间验证抛异常,会在 os._exit 前以非 0 退出,CI 仍能拦住失败。
+#
+# 2026-09-21 修复:用 `uv run --project packages/tdlib_json` 而不是
+# `uv run`(后者从 cwd=REPO_ROOT 会触发整个 tgmonitor workspace 的
+# sync,要装 PySide6 / aiohttp / sqlalchemy / etc 一大堆,CI 第一次跑要
+# 5-10 分钟且容易 OOM;tdlib_json 自身零运行时依赖,秒过)。
 cd "$REPO_ROOT"
-uv run python -c "
+uv run --project packages/tdlib_json python -c "
 import asyncio
 import os
 import sys
