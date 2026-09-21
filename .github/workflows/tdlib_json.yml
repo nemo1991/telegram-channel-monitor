@@ -142,10 +142,7 @@ jobs:
     #   - push to main(path filter) → 仅在 pyproject 版本相对上次 release 有变化时发布
     #     (避免每次路径匹配 push 都白跑 release;只有 version bump 才值得发)
     #   - schedule → 不发布(仅验证编译)
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'push'
-      && steps.bump_check.outputs.bumped == 'true')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && steps.bump_check.outputs.bumped == 'true')
     needs: build-wheel
     runs-on: ubuntu-latest
     permissions:
