@@ -150,6 +150,12 @@ if (-not (Test-Path $Dest) -or -not (Test-Path $MANIFEST) -or
 # 回调 __log_message_callback 写 stdout,会触发 Fatal Python error
 # (_enter_buffered_busy,Windows 常见)导致非零退出。冒烟测试输出已 flush,
 # 直接 os._exit(0) 跳过解释器 finalize,避免 daemon 线程抢 stdout 锁。
+#
+# 2026-09-21 修复:用 `uv run --project packages/tdlib_json` 而不是
+# `uv run`(后者从 cwd=REPO_ROOT 触发整个 tgmonitor workspace sync,
+# workspace 含 tgmonitor 自身,要 build tgmonitor 的 editable wheel →
+# 踩 src/tgmonitor/i18n/en_US.qm 缺失错,因为 .qm 被 .gitignore 排除,
+# 而 force-include 列出它)。tdlib_json 零运行时依赖,秒过。
 $verify = @'
 import asyncio
 import os
@@ -164,7 +170,7 @@ os._exit(0)
 '@
 Push-Location $RepoRoot
 try {
-    $verify | uv run python -
+    $verify | uv run --project packages/tdlib_json python -
     if ($LASTEXITCODE -ne 0) {
         Write-Error "ctypes 加载验证失败 (exit $LASTEXITCODE)"
         exit $LASTEXITCODE
