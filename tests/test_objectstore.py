@@ -468,6 +468,33 @@ async def test_folder_iter_keys_returns_all(tmp_path):
     assert keys == ["media/1234567.png", "media/abcdef.jpg"]
 
 
+async def test_folder_iter_keys_top_level_key_reconstruction(tmp_path):
+    """v1.8.0 patch(2026-09-22):3-part 布局(顶层 key 无 parent)的反推。
+
+    `_path("xyz.jpg")` 在 shard=2 下展开为 `<root>/xy/z./xyz.jpg`(3-part)。
+    iter_keys 应返 `xyz.jpg`,不是 `xy/z./xyz.jpg`。
+    应用层 `make_key` 始终带 `media/` 前缀 → 4-part 路径 → 旧 4-part 分支
+    恒真 — 但未来 `make_key` 改格式、跨 backend 迁移、或手动 put 顶层 key
+    时会触发该 3-part 路径。reconcile_orphans 拿错误 key 当孤儿删时
+    会留下真正的 `<name>` dangling 在桶里。
+    """
+    s = FolderObjectStore(root=tmp_path)
+    await s.connect()
+    # 顶层 key(无 / 前缀):name "xyz.jpg"(5 chars >= 4)→ 分片 head="xy" tail="z."
+    await s.put("media/xyz.jpg", b"hello")
+    # 直接 put 顶层 key(模拟跨 backend 迁移 / 未来 make_key 不带前缀)
+    await s.put("xyz.jpg", b"top-level")
+
+    # 重建所有
+    all_keys = sorted([k async for k in s.iter_keys()])
+    assert all_keys == ["media/xyz.jpg", "xyz.jpg"]
+
+    # 顶层 key 单测
+    only_top = sorted([k async for k in s.iter_keys(prefix="")])
+    assert "xyz.jpg" in only_top
+    assert "xy/z./xyz.jpg" not in only_top
+
+
 # ---- S3 iter_keys(2026-08-25 PR #2)----
 
 

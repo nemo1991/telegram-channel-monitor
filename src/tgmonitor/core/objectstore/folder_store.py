@@ -180,8 +180,8 @@ class FolderObjectStore(ObjectStore):
                     parts = list(rel_path.parts)
                     if not parts:
                         continue
-                    # 重组:如果文件名带分片目录(head/tail/),合并成完整 key
-                    # 例:`media / ab / cd / abc.jpg` → `media/abc.jpg`
+                    # 重组:把分片布局展开成 `parent/name`。
+                    # 例:`media / ab / cd / abc.jpg` → `media/abc.jpg`。
                     if (
                         shard > 0
                         and len(parts) >= 4
@@ -189,21 +189,25 @@ class FolderObjectStore(ObjectStore):
                             parts[-3] + parts[-2] + "",
                         )
                     ):
-                        # 最后一段文件名以 head + tail 开头 → 重组
-                        # 反向:把 `parent / head / tail / name` → `parent / name`
-                        # 这里 parent 是 parts[:-3]
+                        # 4-part:`<parent>/<head>/<tail>/<name>`,reverse 后是
+                        # `<parent>/<name>`(head + tail 是 name 的前 2*shard 字符,
+                        # 由 `_path` 写入时构造)。
                         parent = parts[:-3]
                         reconstructed = "/".join(parent + [parts[-1]])
-                    elif (
-                        shard > 0
-                        and len(parts) >= 3
-                        and parts[-1].startswith(
-                            parts[-2] + "",
-                        )
-                        and len(parts[-2]) == shard
-                    ):
-                        # 三段式:parent / head / name(分片未生效 — 名字太短不分片)
-                        reconstructed = "/".join(parts)
+                    elif shard > 0 and len(parts) == 3:
+                        # 3-part:顶层 key(原 key 无 parent)分片后是
+                        # `<head>/<tail>/<name>`,reverse 后只有 `<name>`。
+                        # 旧实现的 3-part 分支
+                        # (`parts[-1].startswith(parts[-2]) and len == shard`)
+                        # 永远不命中(`name` 不会以 `tail` 开头,只可能以
+                        # `head` 开头),直接掉到 else 分支返 `<head>/<tail>/<name>`,
+                        # 与原 key 不一致;`reconcile_orphans` 把这个错的 key
+                        # 当孤儿删,留下真正的 `<name>` dangling 在桶里。
+                        # 旧版本 v1.5.0 引入时 `_path` 与 `make_key` 都要求
+                        # key 带 `media/` 前缀,所以 4-part 路径恒真,3-part bug
+                        # 不触发 — 仅在跨 backend 迁移 / 手动 put 顶层 key /
+                        # 未来 `make_key` 改格式时浮出。
+                        reconstructed = parts[-1]
                     else:
                         reconstructed = "/".join(parts)
                     if prefix and not reconstructed.startswith(prefix):
