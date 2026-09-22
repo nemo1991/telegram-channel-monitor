@@ -5,6 +5,92 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.0] - 2026-09-22
+
+主题:**tdlib 编译从主 release workflow 解耦为独立 artifact**。
+
+> **背景**:`libtdjson`(TDLib JSON 接口动态库)Windows vcpkg 冷编一次
+> ~2 小时,Linux / macOS 各 ~10 分钟。TDLib 锁版本 1.8.46(一年改 0~2 次),
+> 包边界本来就独立(`packages/tdlib_json` 独立 version),但 v1.7.5 之前
+> 把它跟 tgmonitor 主体打包混在一起,**每次发版都要付 2h+10min+10min**。
+> 本版把这个编译挪到独立 workflow,产物以**预编译 wheel**形式发布到
+> GitHub Release `tdlib-json-client/v<version>`(永久存储),主 workflow
+> 只负责下载 + install。
+
+### 重大变化
+
+- **新增 `.github/workflows/tdlib_json.yml`** — 三平台编译 `libtdjson` + 打
+  `tdlib-json-client` wheel + 发布到独立 GitHub Release。触发器:
+  - `push main`(path filter: `packages/tdlib_json/**` 或本 workflow)→ 验证编译
+  - `workflow_dispatch` → 手动发布新版本
+  - `schedule`(每周日 02:00 UTC)→ 兜底编译,捕获 vcpkg / 系统库升级导致的
+    编译破坏
+- **`tdlib-json-client` v0.1.0 / v0.1.1 发布** — GitHub Release
+  `tdlib-json-client/v0.1.1` 现含 3 平台 wheel:
+  `linux_x86_64` / `macosx_*_x86_64` / `macosx_*_arm64` / `win_amd64`。
+  永久存储(不受 90 天 artifact retention 影响)。
+- **`build.yml` 不再编译 TDLib** — Linux / macOS 系统依赖列表大幅缩减
+  (`cmake / gperf / libssl-dev / zlib1g-dev` 不再需要,Qt offscreen + AppImage
+  工具链保留)。`warm-cache` job 彻底删除(产物以 GitHub Release 形式长期存储)。
+- **构建时间**:
+  - Windows release job 从 ~2h + 10min 降到 ~15-20min(命中产物缓存)/
+    ~2h(首次 / TDLib 升版)
+  - Linux / macOS release job 各从 ~10min 降到 ~1-2min(wheel 下载 + 安装)
+  - 主 release workflow 总时间从 ~2h+ 降到 ~15-20min(三平台并行)
+
+### CI 修复(围绕解耦落地的几个真 bug)
+
+- **`uv run` 触发 workspace editable 重装**(`build.yml`)— 默认 `uv run`
+  会重新 sync,把 `--no-install-package tdlib-json-client` 排除的空壳
+  装回 editable(无 native lib),后续 `import tdlib_json` 报
+  `FileNotFoundError: libtdjson_linux_amd64.so`。**修**:全 build job
+  的 `uv run` 全部改 `uv run --no-sync`(2 处:`Install tdlib-json-client
+  wheel` + `Run PyInstaller`)。
+- **3 平台 wheel 一起下 → `Requirements contain conflicting URLs`**
+  (`build.yml`)— `gh release download --pattern '*.whl'` 把 3 个平台 wheel
+  全拉到 `wheels/`,`uv pip install wheels/*.whl` 展开为多 URL 互相冲突。
+  **修**:按 `${RUNNER_OS}/${RUNNER_ARCH}` 切 6 种 glob(linux x86_64/aarch64、
+  macos x86_64/arm64、windows x64/arm64)只下当前平台。
+- **Windows step `case` 语法在 pwsh 解析失败**(`build.yml`)— Windows
+  runner 默认 shell 是 pwsh 不认 bash case,只在 step 8 fail:
+  `ParserError: Unexpected token ')' in expression or statement`。
+  **修**:`shell: bash`(windows-latest 自带 Git Bash)。
+- **`build_libtdjson.sh` / `.ps1` 从 repo root 跑 `uv run` 触发 workspace
+  全量 sync** — TGMonitor workspace 含 `tgmonitor` 自身,要 build tgmonitor
+  editable → 踩 `src/tgmonitor/i18n/en_US.qm` 缺失(.qm 被 .gitignore
+  排除)。Linux/macOS 13 分钟、windows 命中 `Forced include not found`。
+  **修**:`uv run --project packages/tdlib_json`(tdlib_json 零运行时依赖,
+  秒过)。
+- **Windows vcpkg link-time OOM `C1002: compiler is out of heap space`**
+  (`scripts/build_libtdjson.ps1`)— link `tdjson.dll` 阶段,cl.exe 跑 WPO
+  (`/GL + /LTCG`,vcpkg port 默认开)把所有 obj + lib 一次性吞进内存做 code
+  generation,峰值 ~5-6GB;并行编译单元(Ninja workers)各自吃 ~1.5GB,
+  `MAX_CONCURRENCY=2` 叠加 + cl 链接时峰值 = 8GB+,7GB runner 报 C1002。
+  **修**:`MAX_CONCURRENCY=2 → 1`(单 worker 串行编译,cl 链接时独占内存)。
+  代价:总编译从 ~1.5h 增到 ~2h(只 link 阶段显著,其余 ~持平),远好于冷 OOM 重跑。
+- **Release job 缺 `actions/checkout@v5`**(`tdlib_json.yml`)— release step
+  `Read version from pyproject.toml` 报 `No such file or directory`,
+  `tag` 变成 `tdlib-json-client/v`(空 version),Release 创建但空。
+  **修**:release job 开头加 `actions/checkout@v5`。
+- **Windows `ls -lh` 在 pwsh 失败**(`tdlib_json.yml` `Build wheel`)— pwsh
+  的 `ls` 是 `Get-ChildItem` 别名,不认 `-lh`。**修**:把 `Build wheel`
+  拆成两个平台条件 step,Linux/macOS 用 bash `ls -lh`,Windows 用 pwsh
+  `Get-ChildItem | Format-Table`。
+
+### 影响与注意事项
+
+- **tdlib 升版流程(变更极罕)**:改 `scripts/build_libtdjson.{sh,ps1}` 顶部
+  的 `TDLIB_VERSION` → workflow_dispatch `tdlib_json.yml` → 新 wheel 自动
+  publish 到 `tdlib-json-client/v<new_version>` → bump
+  `pyproject.toml` 中 `tdlib-json-client>=<new_version>` + `uv lock` → 触发
+  `build.yml` 用新 wheel。
+- **GitHub Release 命名**:本仓库现在有 2 套 Release:
+  - `v*` = tgmonitor 主体(`build.yml` 产出 AppImage / .app.zip / Windows zip)
+  - `tdlib-json-client/v*` = 预编译 libtdjson wheel(`tdlib_json.yml` 产出)
+  前者用 release notes 引后者(同步时升级即可),互不耦合。
+- **首次 tdlib_json.yml 跑**(workflow_dispatch,2026-09-21 已完成):
+  Linux 6 min / macOS 12 min / Windows 2 h(三平台独立 release,无冲突)。
+
 ## [1.7.5] - 2026-09-20
 
 主题:**UI 全面优化(9 PR)+ 测试体系精简 + CI 修复**。
