@@ -325,10 +325,9 @@ async def test_count_refcount_counts_unsubscribed_channel_media(seeded_repo):
     if hasattr(seeded_repo, "set_channel_subscribed"):
         await seeded_repo.set_channel_subscribed(100, False)
         try:
-            assert (
-                await seeded_repo.count_media_by_object_key("media/photo_a.jpg")
-                == 2
-            ), "refcount 必须数退订频道的 media(Jsonl 与 PG/Mongo 对齐)"
+            assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2, (
+                "refcount 必须数退订频道的 media(Jsonl 与 PG/Mongo 对齐)"
+            )
         finally:
             await seeded_repo.set_channel_subscribed(100, True)
 
