@@ -116,9 +116,23 @@ jobs:
           # 从 packages/tdlib_json/pyproject.toml 读 version
           version=$(grep -E '^version = ' packages/tdlib_json/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
           tag="tdlib-json-client/v${version}"
-          echo "==> 拉 wheel: ${tag}"
+          echo "==> 拉 wheel: ${tag} (current runner: ${RUNNER_OS}/${RUNNER_ARCH})"
+          # 2026-09-22 修:按当前 runner 平台过滤,只下当前平台 wheel。
+          # 否则 `*.whl` 会拉全部 3 个平台,Linux runner 同时下到
+          # macosx_*_arm64.whl + linux_x86_64.whl,wheels/*.whl 展开为多个
+          # → uv pip install 报 conflicting URLs(file://...)
+          case "${RUNNER_OS}/${RUNNER_ARCH}" in
+            Linux/X64)    pattern='*linux_x86_64.whl' ;;
+            Linux/ARM64)  pattern='*linux_aarch64.whl' ;;
+            macOS/X64)    pattern='*macosx_*_x86_64.whl' ;;
+            macOS/ARM64)  pattern='*macosx_*_arm64.whl' ;;
+            Windows/X64)  pattern='*win_amd64.whl' ;;
+            Windows/ARM64) pattern='*win_arm64.whl' ;;
+            *) echo "❌ 不支持的 runner 平台: ${RUNNER_OS}/${RUNNER_ARCH}"; exit 1 ;;
+          esac
+          echo "==> pattern: ${pattern}"
           mkdir -p wheels
-          gh release download "${tag}" --dir wheels --pattern '*.whl'
+          gh release download "${tag}" --dir wheels --pattern "${pattern}"
           ls -lh wheels/
 
       - name: Install tdlib-json-client wheel
