@@ -990,10 +990,9 @@ class JsonlFileStore(StorageRepository):
         显式传 `channel_ids` 才过滤的契约一致。`_filter_media_rows` 的
         contract 本就是「`channel_ids` 是 caller 的过滤,None = 不过滤」。
         """
-        if channel_ids is None:
-            ch_ids = [c.id for c in self._channels.values()]
-        else:
-            ch_ids = channel_ids
+        ch_ids = (
+            [c.id for c in self._channels.values()] if channel_ids is None else channel_ids
+        )
         msgs: list[MessageDTO] = []
         for cid in ch_ids:
             cf = await self._file_for(cid)
