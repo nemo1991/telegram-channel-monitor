@@ -307,6 +307,52 @@ async def test_count_refcount_empty_key(seeded_repo):
     assert await seeded_repo.count_media_by_object_key("") == 0
 
 
+async def test_count_refcount_counts_unsubscribed_channel_media(seeded_repo):
+    """v1.8.0 patch:refcount 必须数全部 channel,与订阅状态无关(对齐 PG/Mongo)。
+
+    旧实现 `list_subscribed_channels()` 过滤会让退订频道的 media 被
+    漏数 → 删除同 key 的另一处 media 时误判 refcount=0 → 误删 bytes
+    → 退订频道 message.media 仍引用该 key 的 dangling ref,重新订阅看到
+    空媒体。fix 后 `count_media_by_object_key` 走 `self._channels.values()`
+    全扫,与 Postgres `SELECT count(*) FROM media WHERE object_key=$1` /
+    Mongo `$unwind + $match` 等价。
+    """
+    # baseline:订阅状态下 photo_a.jpg refcount=2(msg1 + msg10,见 seeded_repo)
+    assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2
+    # 退订其中任一频道(msg1/channel 100 + msg10/channel 300 任一),Jsonl 旧实现
+    # 会把 refcount 降到 1(漏数退订频道的引用),与 PG/Mongo 行为分叉。
+    # 注:InMemory 不分订阅,所以不受影响 — 此断言主要盯 Jsonl。
+    if hasattr(seeded_repo, "set_channel_subscribed"):
+        await seeded_repo.set_channel_subscribed(100, False)
+        try:
+            assert (
+                await seeded_repo.count_media_by_object_key("media/photo_a.jpg")
+                == 2
+            ), "refcount 必须数退订频道的 media(Jsonl 与 PG/Mongo 对齐)"
+        finally:
+            await seeded_repo.set_channel_subscribed(100, True)
+
+
+async def test_list_media_includes_unsubscribed_channel_media(seeded_repo):
+    """v1.8.0 patch:`list_media(channel_ids=None)` 必须返回退订频道的 media。
+
+    旧实现 `list_subscribed_channels()` 兜底让退订频道的 media 在
+    Media Manager 里"消失",与 PG/Mongo 行为不一致。fix 后
+    `_filter_media_rows` 走 `self._channels.values()` 全扫。
+    """
+    baseline = await seeded_repo.list_media()
+    assert len(baseline) == 5  # 4 backend 共用 fixture(参 test_list_media_no_filter_returns_all)
+    if hasattr(seeded_repo, "set_channel_subscribed"):
+        # 退订 channel 100(msg1 + msg5 都有 media)
+        await seeded_repo.set_channel_subscribed(100, False)
+        try:
+            rows = await seeded_repo.list_media()
+            # 5 条都还在 — 退订不该让 media 从 Media Manager 消失
+            assert len(rows) == 5
+        finally:
+            await seeded_repo.set_channel_subscribed(100, True)
+
+
 # ---- 2026-08-25 v1.3.0 PR #6:排序 + 分页 + count_media parity ----------
 
 

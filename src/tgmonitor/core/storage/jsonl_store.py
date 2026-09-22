@@ -978,10 +978,22 @@ class JsonlFileStore(StorageRepository):
 
         返回未排序、未分页的 `(msg, idx, med)` 列表 — 排序 / 切片由 caller
         处理(`list_media` 走 sort + slice;`count_media` 只数)。
+
+        v1.8.0 patch(2026-09-22):**不再对 `channel_ids=None` 隐式过滤
+        订阅状态**。旧逻辑 fallback 到 `list_subscribed_channels()`,但
+        Postgres / Mongo 后端的等价实现在 `channel_ids=None` 时不加
+        channel 过滤 — Jsonl 与其它后端行为不一致,导致:
+        - 用户退订某 channel 后,Media Manager 看不到该 channel 的 media
+        - `count_media(channel_ids=None)` 与 `list_media(channel_ids=None)`
+          数字对不上(一个看全部,一个只看订阅)
+        修法:`channel_ids=None` → 扫 `self._channels` 全部值,与 caller
+        显式传 `channel_ids` 才过滤的契约一致。`_filter_media_rows` 的
+        contract 本就是「`channel_ids` 是 caller 的过滤,None = 不过滤」。
         """
-        ch_ids = (
-            channel_ids if channel_ids else [c.id for c in await self.list_subscribed_channels()]
-        )
+        if channel_ids is None:
+            ch_ids = [c.id for c in self._channels.values()]
+        else:
+            ch_ids = channel_ids
         msgs: list[MessageDTO] = []
         for cid in ch_ids:
             cf = await self._file_for(cid)
@@ -1001,10 +1013,28 @@ class JsonlFileStore(StorageRepository):
         return rows
 
     async def count_media_by_object_key(self, object_key: str) -> int:
-        """2026-08-25 PR #3:refcount — 扫订阅 channel jsonl,数同 object_key。"""
-        chs = await self.list_subscribed_channels()
+        """2026-08-25 PR #3:refcount — 扫所有频道 jsonl,数同 object_key。
+
+        v1.8.0 patch(2026-09-22):**不再过滤订阅状态**。旧实现走
+        `list_subscribed_channels()` 只数 `is_subscribed=True` 的频道,
+        但 Postgres / Mongo 后端的等价实现(`SELECT count(*) FROM media
+        WHERE object_key = $1` / `$unwind + $match`)是**全表**扫,与订阅
+        无关 — Jsonl 与其它后端行为不一致。
+
+        实际后果(媒体下载/上传走对象存储的批处理):用户退订某 channel 后,
+        该 channel 的 `message.media[i].object_key` 仍在库中,但
+        `count_media_by_object_key` 把它当返 0;后续任何一处 `delete_media`
+        命中同 key,误判 refcount=0 → `objects.delete(key)` 删 bytes →
+        原 channel 的 message.media 仍引用该 key → 数据丢失 + 重新订阅
+        看到空媒体。`reconcile_orphans` 同样路径,会把"仍被引用"的 bytes
+        误纳为孤儿,prune 时一并删。
+
+        修法:扫 `self._channels` 的**全部**值(订阅 + 退订 + 卸载),与
+        `_filter_media_rows` 用 `channel_ids` 透传的契约一致 — caller
+        显式传 `channel_ids` 才过滤,不传 = 不过滤。
+        """
         n = 0
-        for c in chs:
+        for c in self._channels.values():
             cf = await self._file_for(c.id)
             for row in cf.rows:
                 # `cf.rows` 是 dict;先转 MessageDTO 再扫 media 数组,
