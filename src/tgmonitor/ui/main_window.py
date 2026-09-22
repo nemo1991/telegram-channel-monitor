@@ -286,26 +286,35 @@ class MainWindow(QMainWindow):
         # 最小化到 tray,不退出。File→Quit / tray「退出」菜单走
         # `qt_app.quit()` → `aboutToQuit` → 关闭全部窗口(到这一步时
         # `_truly_quit=True`),这里才走 shutdown。
-        if not self._truly_quit and self._tray is not None and self._tray.is_active:
-            self.hide()
-            if not self._tray_first_close_hint_shown:
-                self._tray_first_close_hint_shown = True
-                # 系统通知(若有 tray)+ 状态栏永久提示
-                self.app.bus.publish_threadsafe(
-                    self.loop,
-                    NotificationRequested(
-                        level="info",
-                        title=self.tr("tgmonitor 已在后台运行"),
-                        body=self.tr("右键托盘图标可恢复窗口或退出应用"),
-                        click_action="show_main",
-                    ),
-                )
-                self.statusBar().showMessage(
-                    self.tr("已在后台运行 · 右键托盘图标或 File 菜单恢复"),
-                    8000,
-                )
-            event.ignore()
-            return
+        if not self._truly_quit:
+            if self._tray is not None and self._tray.is_active:
+                self.hide()
+                if not self._tray_first_close_hint_shown:
+                    self._tray_first_close_hint_shown = True
+                    # 系统通知(若有 tray)+ 状态栏永久提示
+                    self.app.bus.publish_threadsafe(
+                        self.loop,
+                        NotificationRequested(
+                            level="info",
+                            title=self.tr("tgmonitor 已在后台运行"),
+                            body=self.tr("右键托盘图标可恢复窗口或退出应用"),
+                            click_action="show_main",
+                        ),
+                    )
+                    self.statusBar().showMessage(
+                        self.tr("已在后台运行 · 右键托盘图标或 File 菜单恢复"),
+                        8000,
+                    )
+                event.ignore()
+                return
+            # 2026-09-22 v1.8.x:tray 不可用(offscreen / Linux server /
+            # 老 Windows 无 indicator)时 `is_active=False`,之前这条 branch
+            # 跳过 → closeEvent 落到下方 `_shutdown_cb` 路径 → 但
+            # `setQuitOnLastWindowClosed(False)` 让 Qt 不退出 → 进程进入
+            # 「窗口全 hide 但 loop 仍跑」无界面状态,只能任务管理器杀。
+            # 改为 tray 不可用时直接 `_truly_quit=True` 走 shutdown。
+            log.info("closeEvent: tray inactive, falling through to _truly_quit=True → shutdown")
+            self._truly_quit = True
         if self._shutdown_cb is not None:
             try:
                 import concurrent.futures

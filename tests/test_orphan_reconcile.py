@@ -235,3 +235,71 @@ async def test_s3_reconcile_with_iter_keys(
         assert sorted(s3.deleted) == ["media/orphan.jpg", "media/other.png"]
     finally:
         app.objects = saved  # type: ignore[assignment]
+
+
+# ---- 并发重入锁 (2026-09-22) ---------------------------------------------
+
+
+async def test_reconcile_reentrant_skips_with_empty_event(
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
+) -> None:
+    """v1.8.x:启动期 `_startup_reconcile`(app.py:363,2s 后 dry_run=True)与
+    用户启动 < 2s 立刻点 "Prune Orphans"(dry_run=False)重入时,第二次走
+    skip 路径返空事件,不进 iter_keys + delete 并发。
+
+    用 asyncio.Event 模拟「第一次 reconcile 在 iter_keys 中阻塞」,期间发
+    第二次,assert 第二次 0 命中且不抛,EventBus 不重复收到
+    `MediaReconcileFinished`。
+    """
+    import asyncio as _asyncio
+
+    from tgmonitor.core.events import MediaReconcileFinished
+
+    assert isinstance(objectstore, LocalObjectStore)
+    await objectstore.put("media/orphan.jpg", b"orphan", None)
+
+    # 1) 用 monkeypatch 替换 iter_keys 让它第一次 hang 在 event.wait()
+    iter_started = _asyncio.Event()
+    proceed = _asyncio.Event()
+    original_iter = objectstore.iter_keys
+
+    async def hanging_iter_keys(prefix: str = ""):  # noqa: ARG001
+        iter_started.set()
+        await proceed.wait()
+        async for k in original_iter(prefix=prefix):
+            yield k
+
+    objectstore.iter_keys = hanging_iter_keys  # type: ignore[method-assign]
+    # 2) 监听 EventBus 上的 MediaReconcileFinished,断言第二次不发
+    received: list[MediaReconcileFinished] = []
+    app.bus.subscribe(MediaReconcileFinished, lambda e: received.append(e))
+
+    try:
+        # 启动第一次 reconcile(将 hang 在 iter_keys)
+        first = _asyncio.create_task(app.reconcile_orphans(dry_run=True))
+        await iter_started.wait()
+        # 第二次(模拟启动期 _startup_reconcile 与用户立刻 Prune 的重入)
+        evt2 = await app.reconcile_orphans(dry_run=False)
+        # skip 路径返空事件
+        assert evt2.scanned == 0
+        assert evt2.referenced == 0
+        assert evt2.orphans == 0
+        assert evt2.deleted == 0
+        assert evt2.dry_run is False
+
+        # 放行第一次让它跑完
+        proceed.set()
+        evt1 = await first
+        # 第一次正常命中孤儿
+        assert evt1.scanned >= 1
+        assert evt1.orphans >= 1
+        assert evt1.dry_run is True
+
+        # EventBus 收 1 次(第二次 skip 不发)
+        assert len(received) == 1
+        assert received[0].dry_run is True
+    finally:
+        proceed.set()
+        objectstore.iter_keys = original_iter  # type: ignore[method-assign]

@@ -224,3 +224,46 @@ def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_th
         if t is not None and not t.done():
             loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
             time.sleep(0.1)
+
+
+# ---- tray 不可用 → 真退出 (2026-09-22 v1.8.x) --------------------------------
+
+
+class _FakeTrayInactive:
+    """`_tray` 装着但 `is_active=False`(offscreen / Linux server / 老 Windows
+    无 indicator)。production 行为:之前 closeEvent 跳过 minimize-to-tray 但
+    也不走 _truly_quit → 进程 hang。修复后 closeEvent 显式置 `_truly_quit=True`。
+    """
+
+    is_active = False
+
+
+def test_close_with_inactive_tray_falls_through_to_quit(qapp, loop_thread):
+    """v1.8.x:tray inactive + 挂 cb → closeEvent 必须把 `_truly_quit=True`,
+    让下方 _shutdown_cb 路径跑起来(否则 `setQuitOnLastWindowClosed(False)` 让
+    进程进入「窗口全 hide 但 loop 仍跑」无界面状态)。
+    """
+    calls: list[str] = []
+
+    async def cb() -> None:
+        await asyncio.sleep(0)
+        calls.append("ran")
+
+    win = _FakeMainWindow(loop_thread.asyncio_loop)
+    win._tray = _FakeTrayInactive()  # tray 装着但 inactive
+    win.set_shutdown_callback(cb)
+    win.close()
+    assert win._truly_quit is True, "tray inactive 时 closeEvent 应设 _truly_quit=True,实际仍 False"
+    assert calls == ["ran"], f"shutdown 没被调:calls={calls}"
+
+
+def test_close_with_inactive_tray_and_no_callback_just_quits(qapp, loop_thread):
+    """tray inactive + 没挂 cb → closeEvent 不挂死,直接关(沿用 _truly_quit 默认 False
+    但走完下方 if not self._shutdown_cb 的 no-cb 路径)。
+    """
+    win = _FakeMainWindow(loop_thread.asyncio_loop)
+    win._tray = _FakeTrayInactive()
+    win.close()  # 不应抛
+    assert win._truly_quit is True  # 修复行为:即使没 cb,也置 _truly_quit=True
+    # 让 QMainWindow 接受事件
+    assert not win.isVisible() or not win.isVisible()  # 简化断言
