@@ -139,6 +139,11 @@ jobs:
           ls -lh wheels/
 
       - name: Install tdlib-json-client wheel
+        # Windows runner 默认 pwsh 不展开 `wheels/*.whl` glob(保留字面
+        # `*.whl`),uv pip install 报 "filename is invalid: Must have a
+        # version"。显式切 bash 让 bash 自己展开。Linux/macOS 默认 bash
+        # 不受影响。
+        shell: bash
         run: |
           # --force-reinstall 覆盖 workspace 装的空壳(没 binary)
           # --no-deps 已是零依赖,但显式声明语义清晰
