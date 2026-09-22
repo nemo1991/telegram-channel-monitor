@@ -110,6 +110,9 @@ jobs:
       #   windows x64   → win_amd64
       # `gh release download --pattern` 按正则匹配,免去跨平台拼路径。
       - name: Download tdlib-json-client wheel
+        # Windows runner 默认 pwsh 不认 bash case 语句,显式切 bash
+        # (windows-latest 自带 Git Bash)。Linux/macOS 默认 bash 不受影响。
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
