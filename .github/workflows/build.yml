@@ -144,6 +144,12 @@ jobs:
         # version"。显式切 bash 让 bash 自己展开。Linux/macOS 默认 bash
         # 不受影响。
         shell: bash
+        env:
+          # 2026-09-22 修:Windows 默认 stdout 是 cp1252,print('✅ ...')
+          # 的 U+2705 编码失败 — UnicodeEncodeError: 'charmap' codec can't
+          # encode character '✅'。显式 utf-8。Linux/macOS 默认已是
+          # utf-8,无影响。
+          PYTHONIOENCODING: utf-8
         run: |
           # --force-reinstall 覆盖 workspace 装的空壳(没 binary)
           # --no-deps 已是零依赖,但显式声明语义清晰
