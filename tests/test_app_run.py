@@ -106,11 +106,18 @@ def test_setup_is_scheduled_as_future_on_loop(run_body: str) -> None:
 def test_main_window_is_constructed_after_services_ready(run_body: str) -> None:
     """MainWindow 构造必须在 `_bootstrap` + `app.bootstrap` 之后,这样
     UI 不会错过启动期发出来的 LoginStateChanged 事件。
+
+    2026-09-22 v1.8.x:`_bootstrap` 现在接受可选 `settings` / `env_path`,
+    调用形式变 `await _bootstrap(settings=early_settings, env_path=env_path)`
+    (多行)。改为正则匹配整个 call 的起始,不再依赖字符串完全相等。
     """
-    bootstrap_idx = run_body.find("await _bootstrap()")
+    bootstrap_match = re.search(r"await\s+_bootstrap\s*\(", run_body)
+    bootstrap_idx = bootstrap_match.start() if bootstrap_match else -1
     bootstrap_app_idx = run_body.find("await app_svc.bootstrap()")
     main_window_idx = run_body.find("MainWindow(")
-    assert bootstrap_idx >= 0
+    assert bootstrap_idx >= 0, (
+        "未找到 `await _bootstrap(...)` 调用 — 检查 app.run() 是否仍走 _bootstrap 路径"
+    )
     assert bootstrap_app_idx >= 0
     assert main_window_idx >= 0
     assert bootstrap_idx < main_window_idx, (
