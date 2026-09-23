@@ -5,6 +5,97 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.1] - 2026-09-23
+
+主题:**启动 / 关闭流程修复 + CI 收尾**(v1.8.0 之后 11 个 commit)。
+
+> v1.8.0 已经把 tdlib 编译从主 workflow 解耦。本 patch 在那条主线外,
+> 集中修启动 / 关闭路径审计暴露的 6 个真问题(2 BLOCKER / 3 HIGH / 1 MEDIUM)
+> 以及让 CI 跑通所需的一连串修复。所有变更向后兼容,不需要升级干预。
+
+### 启动 / 关闭流程(审计 #5,2026-09-22)
+
+#### BLOCKER
+
+- **Windows 下首次关窗不可恢复**(`ui/main_window.py`)— tray indicator
+  不可用时 closeEvent 既不退出也不 minimize,**只剩窗口全 hide 但 event
+  loop 仍跑**的无界面状态。`closeEvent` 改为显式分流:`tray.is_active` →
+  minimize-to-tray;否则 `_truly_quit=True` 走 shutdown(配合 `app.py`
+  把 `setQuitOnLastWindowClosed(True)` 复位)。
+- **`_startup_reconcile` 任务无人持有**(`app.py:run()`)— `asyncio.sleep(2.0)`
+  后孤儿扫描 task 不挂 `state`,关窗 / `loop.close()` 时被强 cancel,
+  半成品 `MediaReconcileFinished(scanned=0,...)` 污染 UI footer。
+  Task 引用入 `state["startup_reconcile_task"]`,shutdown 阶段
+  `await asyncio.wait_for(task, timeout=3.0)` 等它结束。同时给
+  `MediaService.reconcile_orphans` 加 `asyncio.Lock` 防止与用户手动
+  Prune Orphans 并发(防止双发 EventBus + 双删)。
+
+#### HIGH
+
+- **关闭 helper 用嵌套 QEventLoop 在 Windows 真机偶发 segfault**
+  (`ui/main_window.py:run_shutdown_coro_sync`)— `QMetaObject.invokeMethod(
+  subloop, "quit", QueuedConnection)` + `subloop.exec()` 在 Windows `windows`
+  QPA paint path 撞 native crash。改为**纯 `fut.result(timeout)` 同步等待**,
+  删除 QEventLoop / QMetaObject 未用 import。
+- **`_kill_client` ↔ `stop()` 互递归**(`core/telegram/tdlib_client.py`)—
+  `_kill_client` 调用 `self.stop()`,`stop()` 调用 `self._kill_client()`,
+  CI 把 `_do_start_inner` 推到 `seen_error_codes` 分支时 → `await self._kill_client()`
+  → stop() → `_kill_client()` → RecursionError。加 `_killing` 重入守卫 +
+  `_kill_client` 内联 stream close 逻辑,断环。
+- **`_shutdown_async` 5s 整体超时掩盖泄漏**(`core/app_service.py`)—
+  `wait_for(..., 5.0)` 一刀切,`monitor.stop()` 超时 → `client.close()` 跳过
+  → TDLib thread / storage / objects 全泄漏。改为**分阶段超时**:
+  monitor.stop 2s / client.close 2s / storage & objects close 不超时。
+
+#### MEDIUM
+
+- **`_bootstrap` 单源化 Settings + env_path**(`app.py` + `ui/main_window.py`)—
+  `Settings()` 不再构造两次,`_bootstrap(settings, env_path)` 接受从 `run()`
+  阶段 0 早构造的那一份,避免翻译器装错语言。删除死字段
+  `state["login_state"] / state["login_detail"]`(`state["login_state"]`
+  写完没人读,留着误导)。
+- **`_shutdown_then_quit` 去掉 aboutToQuit 路径**(`app.py`)— Qt
+  `aboutToQuit` handler 同步 `asyncio.ensure_future(...)` 立即返回,
+  qasync 主线程 loop 关掉后 future 被 cancel,shutdown 跑不全。
+  统一只走 `MainWindow.closeEvent`(File→Quit / tray 退出均显式触发)。
+
+### CI 修复(围绕 1.8.1 落地的几个真 bug)
+
+- **`uv run` 触发 workspace editable 重装**(`build.yml`)—
+  默认 `uv run` 会重新 sync,把 `--no-install-package tdlib-json-client`
+  排除的空壳装回 editable(无 native lib),后续 `import tdlib_json` 报
+  `FileNotFoundError: libtdjson_linux_amd64.so`。**修**:全 build job 的
+  `uv run` 全部改 `uv run --no-sync`(2 处:`Install tdlib-json-client
+  wheel` + `Run PyInstaller`)。
+- **3 平台 wheel 一起下 → `Requirements contain conflicting URLs`**
+  (`build.yml`)— `gh release download --pattern '*.whl'` 把 3 个平台 wheel
+  全拉到 `wheels/`,`uv pip install wheels/*.whl` 展开为多 URL 互相冲突。
+  **修**:按 `${RUNNER_OS}/${RUNNER_ARCH}` 切 6 种 glob(linux x86_64/aarch64、
+  macos x86_64/arm64、windows x64/arm64)只下当前平台。
+- **`test_main_window_is_constructed_after_services_ready` 用
+  `str.find("await _bootstrap()")` 精确匹配**(MEDIUM 重构后多行 / kwargs
+  调用形式变化)→ 返回 -1。**修**:改正则
+  `r"await\s+_bootstrap\s*\("`,接受 kwargs / 多行。
+- **Windows 真机 Qt `MediaManagerWidget.show() + qapp.processEvents()`
+  偶发 segfault**(`tests/test_media_manager_i18n.py`)— 与 macOS 26 VM
+  offscreen 同源 race。**修**:5 个测试加 `@pytest.mark.skipif(sys.platform
+  == "win32")`,留待 Qt 上游修。
+- **`from pathlib import Path` 函数内 import 导致 ruff F821**(`app.py`)—
+  移到顶层。
+- **ruff format `jsonl_store.py` 三元 + `test_storage_backends.py`
+  assert** 不符合 — 展平。
+
+### 影响与注意事项
+
+- **本版无需升级干预** — 全部向后兼容,补丁级发版。旧的 `.env` / session /
+  storage 数据完全保留。
+- **v1.8.0 的 tdlib 解耦主线不变**:`tdlib-json-client` wheel 仍来自独立
+  GitHub Release `tdlib-json-client/v0.1.1`,本 patch 不触碰 build.yml
+  的 wheel 安装流程。
+- **Windows 用户**:之前「点 X 后无界面但进程不退出」的场景已修 —
+  升级后点 X 即真退出。Windows 真机 Qt paint race 仍未根除(留给 Qt 上游),
+  受影响的 5 个 i18n 测试已 skip,不影响实际功能。
+
 ## [1.8.0] - 2026-09-22
 
 主题:**tdlib 编译从主 release workflow 解耦为独立 artifact**。
