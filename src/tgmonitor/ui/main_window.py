@@ -41,14 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
 
-from PySide6.QtCore import (
-    QCoreApplication,
-    QEventLoop,
-    QMetaObject,
-    Qt,
-    QTimer,
-    Signal,
-)
+from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -185,22 +178,18 @@ def run_shutdown_coro_sync(
     aboutToQuit handler 也能用同模式做真同步等待(而非 fire-and-forget,
     qasync loop close 时 future 还没跑就被 cancel)。
 
-    offscreen(QApplication.platformName() == "offscreen",即 QT_QPA_PLATFORM=
-    offscreen)— 不 pump Qt 事件,直接 `fut.result(timeout)` 同步等:测试
-    用的 `loop` 是独立后台线程的 asyncio loop,无需 pump 即可推进。CI 上
-    嵌套 QEventLoop 在 macOS 26 arm64 VM 镜像偶发 segfault,此分支天然避开。
+    **2026-09-23 fix**:`subloop.exec()` 在 macOS 26 VM 镜像偶发 segfault
+    (docstring 已承认),Windows 真机平台插件上更稳定触发 — helper 改为
+    永远走 `fut.result(timeout)` 阻塞等,不嵌套 QEventLoop pump。
 
-    生产路径(cocoa / xcb / windows)— 嵌套 `QEventLoop` pump:qasync 主线程
-    loop 与 Qt 同线程,必须 pump 才能推进 shutdown coroutine。两种触发源让
-    `subloop.quit()` 唤醒主线程:
-      - `fut.add_done_callback`:loop 线程里 `QMetaObject.invokeMethod(
-        ..., QueuedConnection)` 跨线程派 quit
-      - 可 stop 的 `QTimer`:hard upper bound,exec 返回后 `stop()` 防
-        pending timeout 在 subloop 被 GC 后触发 use-after-free
+    关键约束:**helper 必须不在主线程 pump**。qasync 主线程 loop 与 Qt
+    同线程,`fut.result()` 会阻塞主线程,不调 processEvents 也能让后台线程
+    的 loop 推进(因为 `run_coroutine_threadsafe` 已经把协程调度到独立
+    loop,后台线程自己 tick;主线程只是等 fut 完成)。这条路径天然避开
+    嵌套 QEventLoop 的所有 native race。
 
-    `subloop_holder` 在 exec 结束后置 None,done_callback 不再碰已拆毁的
-    QEventLoop。任何意外(RuntimeError / CancelledError / Exception)由调用
-    方 try/except 兜底 — 此 helper 不抛(只 log warning)。
+    任何意外(RuntimeError / CancelledError / Exception)由调用方 try/except
+    兜底 — 此 helper 不抛(只 log warning)。
 
     Args:
         loop: shutdown 协程要跑的事件循环(qasync 主线程 loop)。
@@ -221,43 +210,15 @@ def run_shutdown_coro_sync(
         log.warning("loop unavailable during shutdown")
         return
 
-    if QApplication.platformName() == "offscreen":
-        try:
-            fut.result(timeout=deadline_ms / 1000)
-        except concurrent.futures.TimeoutError:
-            log.warning("shutdown timed out after %.1fs; cancelling", deadline_ms / 1000)
-            fut.cancel()
-        except concurrent.futures.CancelledError:
-            log.warning("shutdown coroutine was cancelled")
-        return
-
-    # production 路径:嵌套 QEventLoop pump
-    subloop = QEventLoop()
-    subloop_holder: list[QEventLoop | None] = [subloop]
-
-    def _quit_on_done(_f: concurrent.futures.Future[None]) -> None:
-        sl = subloop_holder[0]
-        if sl is not None:
-            QMetaObject.invokeMethod(sl, "quit", Qt.ConnectionType.QueuedConnection)
-
-    fut.add_done_callback(_quit_on_done)
-    deadline = QTimer()
-    deadline.setSingleShot(True)
-    deadline.timeout.connect(subloop.quit)
-    deadline.start(deadline_ms)
-    subloop.exec()
-    deadline.stop()
-    subloop_holder[0] = None
-    if not fut.done():
+    try:
+        fut.result(timeout=deadline_ms / 1000)
+    except concurrent.futures.TimeoutError:
         log.warning("shutdown timed out after %.1fs; cancelling", deadline_ms / 1000)
         fut.cancel()
-    if fut.done():
-        try:
-            fut.result(timeout=0)
-        except concurrent.futures.CancelledError:
-            log.warning("shutdown coroutine was cancelled (race)")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("shutdown raised: %s: %s", type(exc).__name__, exc)
+    except concurrent.futures.CancelledError:
+        log.warning("shutdown coroutine was cancelled")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("shutdown raised: %s: %s", type(exc).__name__, exc)
 
 
 class MainWindow(QMainWindow):
@@ -350,27 +311,14 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """窗口关闭 — 同步阻塞等 async shutdown(≤10s 超时)再放行。
 
-        按平台选等待策略:
-
-        **offscreen(测试 / CI)** — 不 pump Qt 事件,直接 `fut.result(timeout)`:
-          - macOS 26.x arm64 CI runner(`macos-26-arm64` 20260728 镜像)上,
-            closeEvent 里嵌套 `QEventLoop.exec()` / `processEvents()` 偶发
-            segfault — offscreen QPA 没有真实 run loop,嵌套 Cocoa run loop
-            触发 Qt native race(本地 M2 不触发,是 VM 镜像特有;3/4 CI 跑挂)。
-          - 测试的 `self.loop` 是**独立后台线程**的 asyncio loop,`fut.result(
-            timeout)` 无需 pump 即可推进 → 这条路径零 Qt 事件分发,天然避开
-            native race。
-
-        **真机(cocoa / xcb / windows)** — 嵌套 `QEventLoop` pump:
-          - production 用 `qasync.QEventLoop` 当主线程 loop,closeEvent 与
-            loop 同线程,必须 pump 才能推进 shutdown coroutine。
-          - 两种触发源让 `subloop.quit()` 唤醒主线程:
-            - `fut.add_done_callback`:loop 线程里
-              `QMetaObject.invokeMethod(..., QueuedConnection)` 跨线程派 quit
-            - 可 stop 的 `QTimer`:hard upper bound(exec 返回后 `stop()`,
-              防 pending timeout 在 subloop 被 GC 后触发 use-after-free)
-          - `subloop_holder` 在 exec 结束后置 None,done_callback 不再碰已拆毁
-            的 QEventLoop。
+        2026-09-23 v1.8.x:`run_shutdown_coro_sync` helper 改为永远走
+        `fut.result(timeout)` 阻塞等,不嵌套 QEventLoop pump —
+        macOS 26.x arm64 CI 镜像(`macos-26-arm64` 20260728)嵌套 exec
+        偶发 segfault,Windows 真机平台插件更稳定触发。helper 在
+        qasync 主线程上调用 `run_coroutine_threadsafe`,协程被调度到
+        qasync loop(同线程,但 Qt 不在主线程 pump 它——qasync 自己 tick);
+        主线程只 `fut.result(timeout)` 等,Qt 事件分发暂停但 shutdown
+        协程仍能推进。
 
         任何意外(`RuntimeError` / `BaseException` 含 `CancelledError`)由
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回
