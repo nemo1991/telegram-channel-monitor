@@ -17,6 +17,7 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import Settings
@@ -65,9 +66,20 @@ def _setup_file_logging(level: int) -> None:
         log.exception("failed to enable file logging")
 
 
-async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None]:
+async def _bootstrap(
+    settings: Settings | None = None,
+    env_path: Path | None = None,
+) -> tuple[AppService, MonitorService, Settings, str | None]:
+    """一次性装配 services。
+
+    2026-09-22 v1.8.x:接受可选 `settings` / `env_path`,允许 `run()` 阶段 0
+    早算一份后传入,`_bootstrap` 复用而不是再算一次 — 单源化(Settings 一次,
+    env_path 一次)。`settings=None` / `env_path=None` 时回到默认构造,方便
+    测试(测试 fixture 没 env_path)。
+    """
     t0 = time.monotonic()
-    settings = Settings()
+    if settings is None:
+        settings = Settings()
     # v1.0.1:Settings 的 Path defaults 已经是 platform-native 绝对路径
     # (~/Library/Application Support/tgmonitor/...),不再需要 .resolve()
     # 把相对路径强制绝对 — 之前这步是 cwd-relative 的根因。
@@ -145,11 +157,12 @@ async def _bootstrap() -> tuple[AppService, MonitorService, Settings, str | None
             max_bytes=settings.media_max_bytes,
         ),
     )
-    # 2026-09-04 v1.6.6:pause 持久化要写 .env,env_path 与 _setup_then_show
-    # 末尾传给 MainWindow 的同一份文件(_user_data_dir() / ".env")。
-    from tgmonitor.core.config import _user_data_dir
+    # 2026-09-22 v1.8.x:env_path 单源化 — `run()` 阶段 0 算一次后传入,这里
+    # 不再独立计算,避免与 MainWindow / AppService 三处可能漂移。
+    if env_path is None:
+        from tgmonitor.core.config import _user_data_dir
 
-    env_path = _user_data_dir() / ".env"
+        env_path = _user_data_dir() / ".env"
     app = AppService(
         bus,
         client,
@@ -310,7 +323,10 @@ def run() -> None:
         """
         try:
             t_setup = time.monotonic()
-            app_svc, monitor, settings, objects_error = await _bootstrap()
+            app_svc, monitor, settings, objects_error = await _bootstrap(
+                settings=early_settings,
+                env_path=env_path,
+            )
 
             # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
             # 2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start()(不连 TDLib
@@ -337,8 +353,6 @@ def run() -> None:
                     "[setup] settings.paused=true — skip monitor.start() + "
                     "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
                 )
-                state["login_state"] = "ready"
-                state["login_detail"] = None
             else:
                 t = time.monotonic()
                 await monitor.start()
