@@ -158,3 +158,45 @@ async def test_facade_storage_setter_syncs_to_both_sub_services(app: AppService)
         )
         assert sub_svc is not None, f"未找到 {expected_cls} 子 service"
         assert sub_svc._storage is new_storage  # noqa: SLF001
+
+
+# ---- shutdown 分阶段超时 (2026-09-22 v1.8.x) ----------------------------------
+
+
+async def test_shutdown_client_close_timeout_does_not_block(app: AppService) -> None:
+    """v1.8.x:`shutdown()` 给 `client.close()` 包 2s hard timeout。client 永远
+    hang 不上抛,`shutdown()` 仍能在 ~2.1s 内返回(stage 之后 `storage.close()` /
+    `objects.close()` 仍跑)。
+
+    之前整链共 5s 外层 wait_for,client 一卡整链被强 cancel → TDLib 子进程
+    未 join → 下次启动 401 → nuke_and_rebuild 重建 session → 用户被踢回
+    登录。修复后 client 超时只 log error,继续往下关 storage / objects。
+    """
+    import asyncio as _asyncio
+
+    started = _asyncio.get_event_loop().time()
+
+    # 1) mock client.close() 永久 hang
+    async def hanging_close() -> None:
+        await _asyncio.Event().wait()  # 永远不返回
+
+    app.client.close = hanging_close  # type: ignore[method-assign]
+    # 2) mock storage/objects close,记录被调过
+    storage_close_called = _asyncio.Event()
+    objects_close_called = _asyncio.Event()
+
+    async def fast_storage_close() -> None:
+        storage_close_called.set()
+
+    async def fast_objects_close() -> None:
+        objects_close_called.set()
+
+    app.storage.close = fast_storage_close  # type: ignore[method-assign]
+    app.objects.close = fast_objects_close  # type: ignore[method-assign]
+
+    # 3) shutdown 应在 ~2s 后返回(stage 之后仍走)
+    await app.shutdown()
+    elapsed = _asyncio.get_event_loop().time() - started
+    assert 1.5 < elapsed < 4.0, f"shutdown 应在 2s timeout 后返回,实跑 {elapsed:.2f}s"
+    assert storage_close_called.is_set(), "client timeout 后 storage.close() 仍应被调"
+    assert objects_close_called.is_set(), "client timeout 后 objects.close() 仍应被调"

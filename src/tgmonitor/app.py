@@ -408,33 +408,20 @@ def run() -> None:
     # 退出钩子:任何路径触发 quit(关窗 / SIGINT)→ **先异步清理** → 再真 quit
     # 这样 step 4 的 async 任务在 loop 仍然 alive 时跑完,避开 'Event loop is closed'。
     def _shutdown_then_quit() -> None:
-        # 走到这里说明 aboutToQuit 仍被触发了(非 closeEvent 路径,
-        # 比如 macOS 系统菜单 Quit / SIGTERM)。这时只能尽力:
-        # 派一个 future,设短超时,失败也不抛 — 不阻塞 Qt quit。
-        async def _do_shutdown_then_quit() -> None:
-            try:
-                await asyncio.wait_for(_shutdown_async(), timeout=5.0)
-            except (TimeoutError, Exception):  # noqa: BLE001
-                log.exception("best-effort shutdown failed")
-            finally:
-                qt_app.quit()
+        # 2026-09-22 v1.8.x:之前这里 `asyncio.ensure_future` 调度后立刻返回,
+        # Qt 继续 quit → loop close → future 还没跑就被 cancel → TDLib 子进程
+        # 未 join / storage 连接未关。改为嵌套 subloop 同步等(与
+        # `MainWindow.closeEvent` 同模式),`_shutdown_async` 真跑完才让
+        # `qt_app.quit()` 返回、loop close。
+        #
+        # 该路径覆盖:macOS dock Cmd+Q / SIGINT / SIGTERM — 这些没走
+        # `MainWindow.closeEvent`,只能指望 aboutToQuit;现在也变可靠。
+        # `_shutdown_async` 内每个 stage 自带 timeout(client 2s / monitor 2s,
+        # 见 `AppService.shutdown` + `_shutdown_async`),最坏 ~5s,hard
+        # upper bound 留 8s 缓冲。
+        from tgmonitor.ui.main_window import run_shutdown_coro_sync
 
-        try:
-            fut = asyncio.ensure_future(_do_shutdown_then_quit(), loop=loop)
-        except RuntimeError:
-            # loop 已关(罕见):尽力清理后退出
-            log.warning("loop already closed, skipping async shutdown")
-            qt_app.quit()
-            return
-
-        def _on_done(f: asyncio.Future[None]) -> None:
-            if f.cancelled():
-                return
-            exc = f.exception()
-            if exc is not None:
-                log.exception("shutdown failed: %s", exc)
-
-        fut.add_done_callback(_on_done)
+        run_shutdown_coro_sync(loop, _shutdown_async, deadline_ms=8_000)
 
     qt_app.aboutToQuit.connect(_shutdown_then_quit)
 

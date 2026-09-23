@@ -1196,11 +1196,26 @@ class AppService:
         方法(若被误调)报 union-attr。shutdown 后整个 facade 随 app 销毁,
         GC 时一起回收。子 service 持旧 storage/objects 引用也无害
         (close() 后该引用已不可用,但 facade 已不再有调用入口)。
+
+        2026-09-22 v1.8.x:**分阶段超时** — 之前整条 `_shutdown_async` 共用
+        `app.py:416` 外层 5s wait_for,任何一段 hang(尤其 `client.close()` 走
+        tdlib_json 内部 CFRunLoop,macOS 偶发卡)就会让整链被强 cancel,
+        TDLib 子进程没 join、storage 连接没 close → 下次启动触发 401 →
+        `nuke_and_rebuild` 重建 session → 用户被踢回登录。改为每阶段独立
+        短超时,任一超时只 log 不上抛,继续往下走(原则:尽力清,不卡死)。
+        `monitor.stop()` 内部已有 2s 自带超时(参见 service.py:200-228),
+        这里不再包。
         """
         await self.stop_monitor()
-        # 关 TelegramClient (停 tdlib_json 的 updates_loop + tdjson 子进程)
+        # 关 TelegramClient — tdlib_json 走 CFRunLoop (macOS) / eventfd+IOCP
+        # (Linux/Windows),偶发 hang 给 2s hard timeout,失败仅 log。
         try:
-            await self.client.close()
+            await asyncio.wait_for(self.client.close(), timeout=2.0)
+        except TimeoutError:
+            log.error(
+                "client.close() 超时(2s)— TDLib thread 可能残留,下次启动若 401 "
+                "会走 nuke_and_rebuild 重建 session"
+            )
         except Exception:  # noqa: BLE001
             log.exception("client.close() failed")
         await self.storage.close()
