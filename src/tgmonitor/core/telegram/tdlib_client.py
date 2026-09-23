@@ -1459,32 +1459,49 @@ class TdlibTelegramClient(_AiClient):
     async def _kill_client(self) -> None:
         """完整杀掉内部的 tdlib_json 客户端状态机 — 给 start 超时 / 出错用。
         之后想再启动需要重建整个 Client 实例(由 AppService 负责)。
+
+        2026-09-23 v1.8.x:之前这里 `await self.stop()` → `stop()` 又调
+        `self._kill_client()`(line 1554)— 互相递归。在 CI 镜像上 asyncio
+        cancel 把 seen_error_codes 分支推到这条路径,`RecursionError`
+        抛出覆盖了原本的 `error` 状态设置,UI 永远卡在 transient。
+
+        修法:加 `_killing` 重入 guard,第二次进直接 no-op;并把 stream
+        关闭逻辑也内联进 `_kill_client`(stop() 调的也是这个,语义合一)。
         """
+        if getattr(self, "_killing", False):
+            return
         if not getattr(self, "_running", False):
             return
+        self._killing = True
         try:
-            await self.stop()
-        except Exception:  # noqa: BLE001
-            log.exception("stop() failed")
-        update_task = getattr(self, "_update_task", None)
-        if update_task is not None and not update_task.done():
-            update_task.cancel()
-            try:
-                await update_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-        self._running = False
-        # drain 输入队列 — 避免旧的 code/pwd 留在里面被下个 session 错读
-        while not self._code_queue.empty():
-            try:
-                self._code_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-        while not self._password_queue.empty():
-            try:
-                self._password_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+            # 关闭所有订阅流(下游 monitor 不会收新 update)
+            for s in list(getattr(self, "_streams", [])):
+                try:
+                    await s.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._streams.clear()
+            update_task = getattr(self, "_update_task", None)
+            if update_task is not None and not update_task.done():
+                update_task.cancel()
+                try:
+                    await update_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+            self._running = False
+            # drain 输入队列 — 避免旧的 code/pwd 留在里面被下个 session 错读
+            while not self._code_queue.empty():
+                try:
+                    self._code_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            while not self._password_queue.empty():
+                try:
+                    self._password_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+        finally:
+            self._killing = False
 
     async def nuke_and_rebuild(self, rotate_key: bool = False) -> None:
         """清掉 session db + (可选) 旋转加密 key + 杀掉内部 tdlib_json 客户端。
