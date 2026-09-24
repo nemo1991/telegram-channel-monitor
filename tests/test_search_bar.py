@@ -14,10 +14,21 @@ from datetime import datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import sys
+
+import pytest  # noqa: E402
 from PySide6.QtCore import QDate, QDateTime, QTime  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
+
+# 2026-09-23 v1.8.x:Windows 真机 Qt `windows` QPA 偶发 paint path
+# segfault(同 test_media_manager_i18n.py / test_media_manager_widget.py)。
+# macOS 真机 + CI macos/ubuntu offscreen 全过。整文件 skip。
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows 真机 Qt `windows` QPA paint path 偶发 segfault",
+)
 
 
 def _qdt(year: int, month: int, day: int, h: int = 0, m: int = 0) -> QDateTime:
