@@ -24,9 +24,15 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 
-# 2026-09-20:此文件曾在 Windows 上 skip(processEvents 段错误)。后查明根因不在
-# 本文件:`processEvents()` 在 Windows + **offscreen** QPA 下普遍崩,已在 CI 侧
-# 改为 Windows 用 Qt 原生 `windows` 插件修掉(issue #20)。skip 已删除。
+# 2026-09-23 v1.8.x:Windows CI 用 `QT_QPA_PLATFORM=windows` 避免 issue #20 的
+# offscreen access violation,但 `windows` QPA 下大量 `qapp.processEvents()`
+# 偶发 paint path segfault(27 个 widget 测试基本都受影响)。
+# macOS 真机 + CI macos/ubuntu offscreen 全过,只有 CI Windows 真机 windows
+# 插件偶发。整文件 skip 留给上游 Qt 修。
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows 真机 Qt `windows` QPA paint path 偶发 segfault",
+)
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
 
@@ -113,20 +119,11 @@ def test_current_filters_includes_sort_dir_offset(widget: MediaManagerWidget) ->
     assert f["total"] == 0  # 初始 total=0
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="2026-09-23 Windows 真机 Qt `windows` QPA paint path 偶发 segfault",
-)
 def test_on_media_loaded_accepts_tuple_payload(
     widget: MediaManagerWidget,
     qapp: QApplication,
 ) -> None:
-    """PR #6:on_media_loaded 接收 `(rows, total)` tuple。
-
-    Windows skip:CI 用 `QT_QPA_PLATFORM=windows` 避免 issue #20 的
-    offscreen access violation,但 `windows` QPA 下 `qapp.processEvents()`
-    偶发 paint path segfault。macOS 真机 + CI macos/ubuntu offscreen 全过。
-    """
+    """PR #6:on_media_loaded 接收 `(rows, total)` tuple。"""
     msg = _msg(100, 1, [_done()])
     widget.on_media_loaded(([(msg, 0, _done())], 5))
     assert len(widget._rows) == 1
