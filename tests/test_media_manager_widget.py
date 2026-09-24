@@ -8,6 +8,8 @@ QT_QPA_PLATFORM=offscreen 无 GUI 跑;只测 widget 内部逻辑:
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -111,11 +113,20 @@ def test_current_filters_includes_sort_dir_offset(widget: MediaManagerWidget) ->
     assert f["total"] == 0  # 初始 total=0
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="2026-09-23 Windows 真机 Qt `windows` QPA paint path 偶发 segfault",
+)
 def test_on_media_loaded_accepts_tuple_payload(
     widget: MediaManagerWidget,
     qapp: QApplication,
 ) -> None:
-    """PR #6:on_media_loaded 接收 `(rows, total)` tuple。"""
+    """PR #6:on_media_loaded 接收 `(rows, total)` tuple。
+
+    Windows skip:CI 用 `QT_QPA_PLATFORM=windows` 避免 issue #20 的
+    offscreen access violation,但 `windows` QPA 下 `qapp.processEvents()`
+    偶发 paint path segfault。macOS 真机 + CI macos/ubuntu offscreen 全过。
+    """
     msg = _msg(100, 1, [_done()])
     widget.on_media_loaded(([(msg, 0, _done())], 5))
     assert len(widget._rows) == 1
