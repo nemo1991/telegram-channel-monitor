@@ -700,9 +700,7 @@ def test_file_size_string_zero_normalized_to_none():
     """Photo file.size='0' 经 _file_size 走 _to_int_or_none → None。"""
     file_obj = SimpleNamespace(id=99, size="0")
     sizes = [
-        SimpleNamespace(
-            type_="x", photo=file_obj, width=10, height=10, progressive_sizes=[]
-        ),
+        SimpleNamespace(type_="x", photo=file_obj, width=10, height=10, progressive_sizes=[]),
     ]
     msg = _msg(
         "MessagePhoto",
