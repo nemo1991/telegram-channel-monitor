@@ -82,11 +82,19 @@ class TrayIcon(QObject):
         # 「暂停监听」↔「继续监听」,触发仍 emit QuitRequested(pause=True),
         # 由 MonitorViewModel._on_quit_requested 查 app.is_paused 决定
         # 走 pause 还是 resume。
+        # 2026-09-23 issue #21:Qt slot 内调 `bus.publish(event)` 只是创建一个
+        # 没人 await 的 coroutine 对象 — 立即被 GC,事件永远发不出去,
+        # tray「退出」点完进程不退。改用 `publish_async`(走
+        # `asyncio.create_task`,把 publish 任务挂到当前 loop)。
         self._action_pause = QAction(self.tr("暂停监听"), self._menu)
-        self._action_pause.triggered.connect(lambda: app.bus.publish(QuitRequested(pause=True)))
+        self._action_pause.triggered.connect(
+            lambda: app.bus.publish_async(QuitRequested(pause=True))
+        )
         self._menu.addAction(self._action_pause)
         self._action_quit = QAction(self.tr("退出"), self._menu)
-        self._action_quit.triggered.connect(lambda: app.bus.publish(QuitRequested(pause=False)))
+        self._action_quit.triggered.connect(
+            lambda: app.bus.publish_async(QuitRequested(pause=False))
+        )
         self._menu.addAction(self._action_quit)
         self._tray.setContextMenu(self._menu)
         # 左键双击 = 显示主窗口(单触发在 Linux 不稳)

@@ -41,9 +41,14 @@ class _DummyParent(QObject):
 
 
 def _make_app_svc() -> MagicMock:
-    """构造 mock AppService — bus.publish 用普通 MagicMock(测试只验
-    payload,不真 await;AsyncMock 会留 coroutine warning)。"""
+    """构造 mock AppService — bus.publish_async 用普通 MagicMock(测试只验
+    payload,不真 await;AsyncMock 会留 coroutine warning)。
+
+    2026-09-23 issue #21:TrayIcon 现在走 `publish_async`(fire-and-forget
+    task)而不是 `publish`(会丢 coroutine 的 sync 调用)。
+    """
     app = MagicMock()
+    app.bus.publish_async = MagicMock()
     app.bus.publish = MagicMock()
     return app
 
@@ -83,40 +88,49 @@ def test_tray_show_action_shows_parent(qapp: QApplication) -> None:
     show_action = next(a for a in tray._menu.actions() if a.text() == "显示主窗口")
     show_action.trigger()
     assert parent.show_called is True
-    app.bus.publish.assert_not_called()
+    app.bus.publish_async.assert_not_called()
 
 
 def test_tray_publishes_quit_requested_pause_on_pause(
     qapp: QApplication,
 ) -> None:
-    """菜单「暂停监听」→ bus.publish(QuitRequested(pause=True))。"""
+    """菜单「暂停监听」→ bus.publish_async(QuitRequested(pause=True))。"""
     parent = _DummyParent()
     app = _make_app_svc()
     with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
         tray = TrayIcon(parent, app)
     pause_action = next(a for a in tray._menu.actions() if a.text() == "暂停监听")
     pause_action.trigger()
-    app.bus.publish.assert_called_once()
-    call_args = app.bus.publish.call_args
+    app.bus.publish_async.assert_called_once()
+    call_args = app.bus.publish_async.call_args
     event = call_args.args[0] if call_args.args else call_args.kwargs.get("event")
     assert isinstance(event, QuitRequested)
     assert event.pause is True
+    # regression 2026-09-23 issue #21:不能调 publish(会丢 coroutine)
+    app.bus.publish.assert_not_called()
 
 
 def test_tray_publishes_quit_requested_no_pause_on_quit(
     qapp: QApplication,
 ) -> None:
-    """菜单「退出」→ bus.publish(QuitRequested(pause=False))。"""
+    """菜单「退出」→ bus.publish_async(QuitRequested(pause=False))。
+
+    2026-09-23 issue #21 regression:点 tray「退出」必须真退出,走
+    `publish_async`(挂 task 到当前 loop)而不是 `publish`(sync 调用丢
+    coroutine,quit 信号从未发出)。
+    """
     parent = _DummyParent()
     app = _make_app_svc()
     with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
         tray = TrayIcon(parent, app)
     quit_action = next(a for a in tray._menu.actions() if a.text() == "退出")
     quit_action.trigger()
-    app.bus.publish.assert_called_once()
-    event = app.bus.publish.call_args.args[0]
+    app.bus.publish_async.assert_called_once()
+    event = app.bus.publish_async.call_args.args[0]
     assert isinstance(event, QuitRequested)
     assert event.pause is False
+    # 关键回归点:publish(返回未 await 的 coroutine)必须**没**被调过
+    app.bus.publish.assert_not_called()
 
 
 def test_tray_double_click_shows_parent(qapp: QApplication) -> None:

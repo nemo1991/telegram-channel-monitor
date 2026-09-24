@@ -7,11 +7,12 @@
 
 ## [1.8.2] - 2026-09-24
 
-主题:**TDLib `'0'` str 防御 + 启动期 schema introspect/auto-repair**。
+主题:**TDLib `'0'` str 防御 + 启动期 schema introspect/auto-repair + tray「退出」修复**。
 
 > 修现网 asyncpg `DataError: invalid input for query argument $13: '0'` 报错,
 > 同时启动期引入 introspect/auto-repair 机制,防止同类「DTO 类型不严格」或
-> 「schema 漂移」未来再触发。所有变更向后兼容,不需要升级干预。
+> 「schema 漂移」未来再触发;另修 Windows tray「退出」点完进程不退
+> (issue #21)。所有变更向后兼容,不需要升级干预。
 
 ### 修现网 asyncpg `'0'` 报错(`core/telegram/tdlib_messages.py`)
 
@@ -97,6 +98,24 @@ missing_columns`(`wrong_types` / `extra_columns` 不影响 ok)。
   JSONL(tmp_path) parity。
 - `tests/integration/test_pg_repo_introspect_repair.py`(新)— 7 个真 PG case:
   fresh ok / 缺列 / 类型错 / repair 加列 / 幂等 / 缺表拒绝 / 类型错不动。
+
+### 修 Windows tray「退出」不退(`ui/widgets/tray_icon.py`)
+
+issue #21(2026-09-23):关窗最小化到托盘 → 右键图标选「退出」,进程
+依然存在,只能通过任务管理器强杀。
+
+**根因**:TrayIcon 的「暂停监听」/「退出」Qt slot 触发时调
+`bus.publish(QuitRequested(...))` — `publish` 是 `async` 方法,从同步 Qt
+slot 调用只返回一个没人 await 的 coroutine 对象,立即被 GC,事件永远
+发不出去。对比:
+- File→Quit 直接连 `_quit_app()`,不走 bus ✓
+- File→Pause 用 `publish_threadsafe(self.loop, ...)` ✓
+- TrayPause / TrayQuit 用 `publish(...)` ✗
+
+**修法**:两 tray 动作改 `publish_async(event)`(`asyncio.create_task`
+挂当前 loop,fire-and-forget + `_inflight` 跟踪,与 TDLib update handler
+同语义)。`tests/test_tray_icon.py` 加回归点:断言 `publish` 必须**没**
+被调过。
 
 ## [1.8.1] - 2026-09-23
 
