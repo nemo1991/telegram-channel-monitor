@@ -4,90 +4,110 @@
 <context>
     <name>BatchFailureDetailDialog</name>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="247"/>
         <source>批量操作失败详情</source>
-        <translation type="vanished">Batch Failure Details</translation>
+        <translation>Batch Failure Details</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="254"/>
         <source>共 {n} 条失败:</source>
-        <translation type="vanished">{n} failure(s):</translation>
+        <translation>{n} failure(s):</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="266"/>
         <source>关闭</source>
-        <translation type="vanished">Close</translation>
+        <translation>Close</translation>
     </message>
 </context>
 <context>
     <name>BatchProgressDialog</name>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="85"/>
         <source>准备中…</source>
-        <translation type="vanished">Preparing…</translation>
+        <translation>Preparing…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="95"/>
         <source>查看失败详情</source>
-        <translation type="vanished">View Failure Details</translation>
+        <translation>View Failure Details</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="100"/>
         <source>取消</source>
-        <translation type="vanished">Cancel</translation>
+        <translation>Cancel</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="115"/>
         <source>正在取消…</source>
-        <translation type="vanished">Cancelling…</translation>
+        <translation>Cancelling…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="143"/>
         <source>处理中…</source>
-        <translation type="vanished">Processing…</translation>
+        <translation>Processing…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="150"/>
         <source>已完成 {done} / {total} — {rate:.1f} 条/秒,剩余 {eta:.0f} 秒</source>
-        <translation type="vanished">{done} / {total} done — {rate:.1f} msg/s, ~{eta:.0f}s remaining</translation>
+        <translation>{done} / {total} done — {rate:.1f} msg/s, ~{eta:.0f}s remaining</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="156"/>
         <source>已完成 {done} / {total}</source>
-        <translation type="vanished">Completed {done} / {total}</translation>
+        <translation>Completed {done} / {total}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="170"/>
         <source>操作中断:{err}</source>
-        <translation type="vanished">Operation interrupted: {err}</translation>
+        <translation>Operation interrupted: {err}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="173"/>
         <source>完成 {ok} 条,失败 {fail} 条</source>
-        <translation type="vanished">{ok} succeeded, {fail} failed</translation>
+        <translation>{ok} succeeded, {fail} failed</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/batch_progress_dialog.py" line="176"/>
         <source>完成 {ok} 条</source>
-        <translation type="vanished">{ok} succeeded</translation>
+        <translation>{ok} succeeded</translation>
     </message>
 </context>
 <context>
     <name>ChannelPickerDialog</name>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="40"/>
         <source>选择目标频道…</source>
-        <translation type="vanished">Pick target channel…</translation>
+        <translation>Pick target channel…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="50"/>
         <source>搜索(title / @username):</source>
-        <translation type="vanished">Search (title / @username):</translation>
+        <translation>Search (title / @username):</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="53"/>
         <source>输入关键字过滤…</source>
-        <translation type="vanished">Type to filter…</translation>
+        <translation>Type to filter…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="97"/>
         <source>chat_id: {cid} · {kind}</source>
-        <translation type="vanished">chat_id: {cid} · {kind}</translation>
+        <translation>chat_id: {cid} · {kind}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="107"/>
         <source>(无标题)</source>
-        <translation type="vanished">(no title)</translation>
+        <translation>(no title)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="135"/>
         <source>共 {n} 个频道</source>
-        <translation type="vanished">{n} channels total</translation>
+        <translation>{n} channels total</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/channel_picker_dialog.py" line="138"/>
         <source>显示 {shown} / {total} 个频道</source>
-        <translation type="vanished">Showing {shown} / {total}</translation>
+        <translation>Showing {shown} / {total}</translation>
     </message>
 </context>
 <context>
@@ -141,107 +161,145 @@
 <context>
     <name>EmojiPickerDialog</name>
     <message>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="165"/>
         <source>选择表情回应…</source>
-        <translation type="vanished">Pick reaction emoji…</translation>
+        <translation>Pick reaction emoji…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="179"/>
         <source>━━ {label} ━━</source>
-        <translation type="vanished">━━ {label} ━━</translation>
+        <translation>━━ {label} ━━</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="199"/>
         <source>或手输(custom emoji id 用 `custom_emoji_id:N`):</source>
-        <translation type="vanished">Or type (custom emoji id: `custom_emoji_id:N`):</translation>
+        <translation>Or type (custom emoji id: `custom_emoji_id:N`):</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="202"/>
         <source>例如 🔥 或 custom_emoji_id:123</source>
-        <translation type="vanished">e.g. 🔥 or custom_emoji_id:123</translation>
+        <translation>e.g. 🔥 or custom_emoji_id:123</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/emoji_picker_dialog.py" line="212"/>
         <source>大表情(animate;仅普通 emoji 生效)</source>
-        <translation type="vanished">Big emoji (animate; plain emoji only)</translation>
+        <translation>Big emoji (animate; plain emoji only)</translation>
     </message>
 </context>
 <context>
     <name>ExportDialog</name>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="65"/>
         <source>导出</source>
-        <translation type="vanished">Export</translation>
+        <translation>Export</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="87"/>
         <source>已选 %d 条消息(来自 %d 个频道)</source>
-        <translation type="vanished">%d messages selected (from %d channels)</translation>
+        <translation>%d messages selected (from %d channels)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="94"/>
+        <location filename="../ui/widgets/export_dialog.py" line="99"/>
+        <source>导出范围:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/export_dialog.py" line="97"/>
+        <source>单条消息(#%d)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/export_dialog.py" line="101"/>
         <source>频道:</source>
-        <translation type="vanished">Channel:</translation>
+        <translation>Channel:</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="105"/>
+        <location filename="../ui/widgets/export_dialog.py" line="107"/>
         <source>YYYY-MM-DD(可选)</source>
-        <translation type="vanished">YYYY-MM-DD (optional)</translation>
+        <translation>YYYY-MM-DD (optional)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="114"/>
         <source>时间范围:</source>
-        <translation type="vanished">Date range:</translation>
+        <translation>Date range:</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="117"/>
         <source>格式:</source>
-        <translation type="vanished">Format:</translation>
+        <translation>Format:</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="121"/>
         <source>导出时包含缩略图(HTML / ZIP)</source>
-        <translation type="vanished">Include thumbnails (HTML / ZIP)</translation>
+        <translation>Include thumbnails (HTML / ZIP)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="133"/>
         <source>包含收藏 / 标签 / 备注(★ / 🏷 / 📝)</source>
-        <translation type="vanished">Include favorite / tags / notes (★ / 🏷 / 📝)</translation>
+        <translation>Include favorite / tags / notes (★ / 🏷 / 📝)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_dialog.py" line="140"/>
         <source>输出:</source>
-        <translation type="vanished">Output:</translation>
+        <translation>Output:</translation>
     </message>
 </context>
 <context>
     <name>ExportProgressDialog</name>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="50"/>
         <source>导出中</source>
-        <translation type="vanished">Exporting</translation>
+        <translation>Exporting</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="61"/>
         <source>导出中…</source>
-        <translation type="vanished">Exporting…</translation>
+        <translation>Exporting…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="71"/>
         <source>取消</source>
-        <translation type="vanished">Cancel</translation>
+        <translation>Cancel</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="89"/>
         <source>导出中…已写 {n} 条</source>
-        <translation type="vanished">Exporting… {n} written</translation>
+        <translation>Exporting… {n} written</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="94"/>
         <source>已完成 {done} / {total}</source>
-        <translation type="vanished">Completed {done} / {total}</translation>
+        <translation>Completed {done} / {total}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/export_progress_dialog.py" line="104"/>
         <source>正在取消…</source>
-        <translation type="vanished">Cancelling…</translation>
+        <translation>Cancelling…</translation>
     </message>
 </context>
 <context>
     <name>LightboxDialog</name>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="298"/>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="314"/>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="357"/>
         <source>(image unavailable)</source>
-        <translation type="vanished">(image unavailable)</translation>
+        <translation>(image unavailable)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="420"/>
         <source>(video unavailable — codec missing)</source>
-        <translation type="vanished">(video unavailable — codec missing)</translation>
+        <translation>(video unavailable — codec missing)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="616"/>
         <source>快捷键帮助</source>
-        <translation type="vanished">Keyboard shortcuts</translation>
+        <translation>Keyboard shortcuts</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="619"/>
         <source>Esc          关闭
 ← / →        上一张 / 下一张
 Space        播放 / 暂停(GIF / 视频)
@@ -249,7 +307,7 @@ S            切换幻灯片自动播放
 ? / F1       显示此帮助
 双击         全屏切换
 滚轮         缩放</source>
-        <translation type="obsolete">Esc          Close
+        <translation type="unfinished">Esc          Close
 ← / →        Previous / Next
 Space        Play / Pause (GIF / video)
 S            Toggle slideshow
@@ -258,241 +316,305 @@ Double-click Toggle fullscreen
 Scroll wheel Zoom</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="703"/>
         <source>上一张</source>
-        <translation type="vanished">Previous</translation>
+        <translation>Previous</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="704"/>
         <source>下一张</source>
-        <translation type="vanished">Next</translation>
+        <translation>Next</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="705"/>
         <source>缩小</source>
-        <translation type="vanished">Zoom out</translation>
+        <translation>Zoom out</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="706"/>
         <source>放大</source>
-        <translation type="vanished">Zoom in</translation>
+        <translation>Zoom in</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="707"/>
         <source>旋转 90°</source>
-        <translation type="vanished">Rotate 90°</translation>
+        <translation>Rotate 90°</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="709"/>
         <source>播放/暂停</source>
-        <translation type="vanished">Play/Pause</translation>
+        <translation>Play/Pause</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="711"/>
         <source>幻灯片</source>
-        <translation type="vanished">Slideshow</translation>
+        <translation>Slideshow</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="713"/>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="855"/>
         <source>另存为…</source>
-        <translation type="vanished">Save as…</translation>
+        <translation>Save as…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="714"/>
         <source>关闭</source>
-        <translation type="vanished">Close</translation>
+        <translation>Close</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="857"/>
         <source>媒体文件 (*.{ext});;所有文件 (*)</source>
-        <translation type="vanished">Media files (*.{ext});;All files (*)</translation>
+        <translation>Media files (*.{ext});;All files (*)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="866"/>
         <source>保存失败</source>
-        <translation type="vanished">Save failed</translation>
+        <translation>Save failed</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/lightbox_dialog.py" line="867"/>
         <source>无法写入 {path}: {err}</source>
-        <translation type="vanished">Cannot write {path}: {err}</translation>
+        <translation>Cannot write {path}: {err}</translation>
     </message>
 </context>
 <context>
     <name>LoginDialog</name>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="52"/>
         <source>Telegram 登录</source>
-        <translation type="vanished">Telegram login</translation>
+        <translation>Telegram login</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="93"/>
         <source>Telegram 发到手机的 5 位验证码</source>
-        <translation type="vanished">5-digit verification code sent by Telegram to your phone</translation>
+        <translation>5-digit verification code sent by Telegram to your phone</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="104"/>
+        <location filename="../ui/widgets/login_dialog.py" line="174"/>
         <source>二步验证 2FA 密码</source>
-        <translation type="vanished">Two-step verification 2FA password</translation>
+        <translation>Two-step verification 2FA password</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="124"/>
         <source>邮箱 6 位验证码</source>
-        <translation type="vanished">6-digit email verification code</translation>
+        <translation>6-digit email verification code</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="149"/>
         <source>提交</source>
-        <translation type="vanished">Submit</translation>
+        <translation>Submit</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="170"/>
         <source>Telegram 验证码</source>
-        <translation type="vanished">Telegram verification code</translation>
+        <translation>Telegram verification code</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="179"/>
         <source>输入邮箱地址</source>
-        <translation type="vanished">Enter email address</translation>
+        <translation>Enter email address</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="183"/>
         <source>邮箱验证码</source>
-        <translation type="vanished">Email verification code</translation>
+        <translation>Email verification code</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="187"/>
         <source>注册新账号(需 first_name)</source>
-        <translation type="vanished">Register new account (requires first_name)</translation>
+        <translation>Register new account (requires first_name)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="191"/>
         <source>输入手机号(含 + 国家区号)</source>
-        <translation type="vanished">Enter phone number (with + country prefix)</translation>
+        <translation>Enter phone number (with + country prefix)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="289"/>
         <source>正在提交邮箱…</source>
-        <translation type="vanished">Submitting email…</translation>
+        <translation>Submitting email…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="294"/>
         <source>提交邮箱失败</source>
-        <translation type="vanished">Failed to submit email</translation>
+        <translation>Failed to submit email</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="307"/>
         <source>正在验证邮箱…</source>
-        <translation type="vanished">Verifying email…</translation>
+        <translation>Verifying email…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="312"/>
         <source>提交邮箱验证码失败</source>
-        <translation type="vanished">Failed to submit email verification code</translation>
+        <translation>Failed to submit email verification code</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="323"/>
         <source>first_name 必填</source>
-        <translation type="vanished">first_name is required</translation>
+        <translation>first_name is required</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="326"/>
         <source>正在注册…</source>
-        <translation type="vanished">Registering…</translation>
+        <translation>Registering…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/login_dialog.py" line="331"/>
         <source>注册失败</source>
-        <translation type="vanished">Registration failed</translation>
+        <translation>Registration failed</translation>
     </message>
 </context>
 <context>
     <name>MainWindow</name>
     <message>
+        <location filename="../ui/main_window.py" line="277"/>
+        <location filename="../ui/main_window.py" line="713"/>
+        <location filename="../ui/main_window.py" line="719"/>
         <source>tgmonitor · Telegram 频道监听</source>
-        <translation type="vanished">tgmonitor · Telegram Channel Monitor</translation>
+        <translation>tgmonitor · Telegram Channel Monitor</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="341"/>
         <source>tgmonitor 已在后台运行</source>
-        <translation type="vanished">tgmonitor is running in the background</translation>
+        <translation>tgmonitor is running in the background</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="342"/>
         <source>右键托盘图标可恢复窗口或退出应用</source>
-        <translation type="vanished">Right-click the tray icon to restore the window or quit</translation>
+        <translation>Right-click the tray icon to restore the window or quit</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="347"/>
         <source>已在后台运行 · 右键托盘图标或 File 菜单恢复</source>
-        <translation type="vanished">Running in background · Right-click the tray icon or use the File menu to restore</translation>
+        <translation>Running in background · Right-click the tray icon or use the File menu to restore</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="440"/>
         <source>频道管理</source>
-        <translation type="vanished">Channel Manager</translation>
+        <translation>Channel Manager</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="469"/>
         <source>TG 未连接</source>
-        <translation type="vanished">TG disconnected</translation>
+        <translation>TG disconnected</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="474"/>
         <source>⏸ 暂停监听</source>
-        <translation type="vanished">⏸ Monitoring paused</translation>
+        <translation>⏸ Monitoring paused</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="480"/>
         <source>监听已暂停 — 实时更新与媒体下载已停。tray 菜单点「继续监听」恢复</source>
-        <translation type="vanished">Monitoring paused — live updates and media downloads stopped. Click &quot;Resume Monitoring&quot; in the tray menu to continue</translation>
+        <translation>Monitoring paused — live updates and media downloads stopped. Click &quot;Resume Monitoring&quot; in the tray menu to continue</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="487"/>
         <source>🔔</source>
-        <translation type="vanished">🔔</translation>
+        <translation>🔔</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="489"/>
         <source>查看错误日志</source>
-        <translation type="vanished">View error log</translation>
+        <translation>View error log</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="499"/>
         <source>⚠ 对象存储不可用: {err}</source>
-        <translation type="vanished">⚠ Object store unavailable: {err}</translation>
+        <translation>⚠ Object store unavailable: {err}</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="504"/>
         <source>媒体文件将无法下载 / 保存。请到 设置 → 对象存储 检查配置(S3/MinIO 填 API 地址,勿填控制台地址)后重新保存。</source>
-        <translation type="vanished">Media files cannot be downloaded or saved. Please go to Settings → Object Storage and verify the configuration (for S3/MinIO use the API endpoint, not the console URL), then save again.</translation>
+        <translation>Media files cannot be downloaded or saved. Please go to Settings → Object Storage and verify the configuration (for S3/MinIO use the API endpoint, not the console URL), then save again.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="509"/>
         <source>就绪</source>
-        <translation type="vanished">Ready</translation>
+        <translation>Ready</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="642"/>
         <source>显示主窗口</source>
-        <translation type="vanished">Show main window</translation>
+        <translation>Show main window</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="647"/>
         <source>暂停监听</source>
-        <translation type="vanished">Pause monitoring</translation>
+        <translation>Pause monitoring</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="652"/>
         <source>退出</source>
-        <translation type="vanished">Quit</translation>
+        <translation>Quit</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="843"/>
+        <location filename="../ui/main_window.py" line="872"/>
         <source>已切换到 {kind} 主题</source>
-        <translation type="vanished">Switched to {kind} theme</translation>
+        <translation>Switched to {kind} theme</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="844"/>
+        <location filename="../ui/main_window.py" line="873"/>
         <source>暗色</source>
-        <translation type="vanished">dark</translation>
+        <translation>dark</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="844"/>
+        <location filename="../ui/main_window.py" line="873"/>
         <source>浅色</source>
-        <translation type="vanished">light</translation>
+        <translation>light</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="967"/>
+        <location filename="../ui/main_window.py" line="1010"/>
         <source>删除确认</source>
-        <translation type="vanished">Confirm Delete</translation>
+        <translation>Confirm Delete</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="970"/>
         <source>确定删除选中的 %d 条消息?
 删除后无法撤销。</source>
-        <translation type="vanished">Delete %d selected messages?
+        <translation>Delete %d selected messages?
 This action cannot be undone.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1011"/>
         <source>确定删除这条消息?
 删除后无法撤销。</source>
-        <translation type="vanished">Delete this message?
+        <translation>Delete this message?
 This action cannot be undone.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1028"/>
         <source>已复制 %d 字符</source>
-        <translation type="vanished">Copied %d characters</translation>
+        <translation>Copied %d characters</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1164"/>
         <source>钉选确认</source>
-        <translation type="vanished">Pin confirmation</translation>
+        <translation>Pin confirmation</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1165"/>
         <source>确定钉选选中的 %d 条消息?
 操作不可撤销。</source>
-        <translation type="vanished">Pin the %d selected messages?
+        <translation>Pin the %d selected messages?
 This action cannot be undone.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1195"/>
         <source>回应确认</source>
-        <translation type="vanished">React confirmation</translation>
+        <translation>React confirmation</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1196"/>
         <source>确定对选中的 %d 条消息打 %s 反应?
 操作不可撤销。</source>
-        <translation type="vanished">Send %s reaction to the %d selected messages?
+        <translation>Send %s reaction to the %d selected messages?
 This action cannot be undone.</translation>
     </message>
     <message>
@@ -520,84 +642,104 @@ This action cannot be undone.</translation>
         <translation type="vanished">Enter emoji (e.g. 🔥, 👍, ❤️):</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1223"/>
         <source>设置标签</source>
-        <translation type="vanished">Set tags</translation>
+        <translation>Set tags</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1224"/>
         <source>输入标签(逗号或空格分隔,如 tech, news):</source>
-        <translation type="vanished">Enter tags (comma or space separated, e.g. tech, news):</translation>
+        <translation>Enter tags (comma or space separated, e.g. tech, news):</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1240"/>
         <source>设置备注</source>
-        <translation type="vanished">Set notes</translation>
+        <translation>Set notes</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1241"/>
         <source>为本条消息添加备注(支持多行):</source>
-        <translation type="vanished">Add notes for this message (multi-line):</translation>
+        <translation>Add notes for this message (multi-line):</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1266"/>
         <source>当前消息无文本</source>
-        <translation type="vanished">Current message has no text</translation>
+        <translation>Current message has no text</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1271"/>
         <source>已复制 {n} 字</source>
-        <translation type="vanished">Copied {n} characters</translation>
+        <translation>Copied {n} characters</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1314"/>
         <source>拉取频道列表…</source>
-        <translation type="vanished">Fetching channel list…</translation>
+        <translation>Fetching channel list…</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1319"/>
         <source>导出</source>
-        <translation type="vanished">Export</translation>
+        <translation>Export</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1319"/>
         <source>请先订阅至少一个频道</source>
-        <translation type="vanished">Please subscribe to at least one channel first</translation>
+        <translation>Please subscribe to at least one channel first</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1336"/>
         <source>全量同步</source>
-        <translation type="vanished">Full sync</translation>
+        <translation>Full sync</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1336"/>
         <source>已监听列表为空,先订阅频道</source>
-        <translation type="vanished">Watched list is empty. Subscribe to channels first</translation>
+        <translation>Watched list is empty. Subscribe to channels first</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1490"/>
         <source>🔔 {n}</source>
-        <translation type="vanished">🔔 {n}</translation>
+        <translation>🔔 {n}</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1494"/>
         <source>验证码错误</source>
-        <translation type="vanished">Invalid verification code</translation>
+        <translation>Invalid verification code</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1495"/>
         <source>两步验证密码错误</source>
-        <translation type="vanished">Invalid 2FA password</translation>
+        <translation>Invalid 2FA password</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1496"/>
         <source>手机号错误</source>
-        <translation type="vanished">Invalid phone number</translation>
+        <translation>Invalid phone number</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1497"/>
         <source>Telegram 内部错误</source>
-        <translation type="vanished">Telegram internal error</translation>
+        <translation>Telegram internal error</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1498"/>
         <source>鉴权错误</source>
-        <translation type="vanished">Authentication error</translation>
+        <translation>Authentication error</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1501"/>
         <source>⚠ {kind}</source>
-        <translation type="vanished">⚠ {kind}</translation>
+        <translation>⚠ {kind}</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1504"/>
         <source>详细错误日志可点击状态栏「🔔 {n}」按钮查看。</source>
-        <translation type="vanished">Click the &quot;🔔 {n}&quot; button in the status bar to view the full error log.</translation>
+        <translation>Click the &quot;🔔 {n}&quot; button in the status bar to view the full error log.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1577"/>
         <source>登录状态: {state}</source>
-        <translation type="vanished">Login state: {state}</translation>
+        <translation>Login state: {state}</translation>
     </message>
     <message>
         <source>TG 等待网络</source>
@@ -624,384 +766,529 @@ This action cannot be undone.</translation>
         <translation type="vanished">TG {state}</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1595"/>
         <source>导出失败</source>
-        <translation type="vanished">Export failed</translation>
+        <translation>Export failed</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1599"/>
         <source>导出完成</source>
-        <translation type="vanished">Export complete</translation>
+        <translation>Export complete</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1600"/>
         <source>已写入 {path}
 {n_msg} 条消息,{n_bytes} 字节</source>
-        <translation type="vanished">Written to {path}
+        <translation>Written to {path}
 {n_msg} messages, {n_bytes} bytes</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1631"/>
         <source>已热重载: {what} → {backend}</source>
-        <translation type="vanished">Hot-reloaded: {what} → {backend}</translation>
+        <translation>Hot-reloaded: {what} → {backend}</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1636"/>
         <source>凭据已变更</source>
-        <translation type="vanished">Credentials changed</translation>
+        <translation>Credentials changed</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1637"/>
         <source>Telegram 凭据已变更。
 请重新登录以继续监听。</source>
-        <translation type="vanished">Telegram credentials have changed.
+        <translation>Telegram credentials have changed.
 Please log in again to continue monitoring.</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1908"/>
         <source>Lightbox</source>
-        <translation type="vanished">Lightbox</translation>
+        <translation>Lightbox</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="1908"/>
         <source>图片解码失败。</source>
-        <translation type="vanished">Image decode failed.</translation>
+        <translation>Image decode failed.</translation>
     </message>
 </context>
 <context>
     <name>MediaManagerWidget</name>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="303"/>
         <source>排序键</source>
-        <translation type="vanished">Sort key</translation>
+        <translation>Sort key</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="315"/>
         <source>排序方向</source>
-        <translation type="vanished">Sort direction</translation>
+        <translation>Sort direction</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="255"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="334"/>
         <source>上一页</source>
-        <translation type="vanished">Previous page</translation>
+        <translation>Previous page</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="237"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="282"/>
         <source>全部频道</source>
-        <translation type="vanished">All channels</translation>
+        <translation>All channels</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="238"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="287"/>
         <source>全部类型</source>
-        <translation type="vanished">All types</translation>
+        <translation>All types</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="239"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="294"/>
         <source>全部状态</source>
-        <translation type="vanished">All status</translation>
+        <translation>All status</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="244"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="306"/>
         <source>日期</source>
-        <translation type="vanished">Date</translation>
+        <translation>Date</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="245"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="307"/>
         <source>大小</source>
-        <translation type="vanished">Size</translation>
+        <translation>Size</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="246"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="308"/>
         <source>状态</source>
-        <translation type="vanished">Status</translation>
+        <translation>Status</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="250"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="320"/>
         <source>↓ 降序</source>
-        <translation type="vanished">↓ Desc</translation>
+        <translation>↓ Desc</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="251"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="320"/>
         <source>↑ 升序</source>
-        <translation type="vanished">↑ Asc</translation>
+        <translation>↑ Asc</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="253"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="325"/>
         <source>搜索文件名…</source>
-        <translation type="vanished">Search filename…</translation>
+        <translation>Search filename…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="256"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="346"/>
         <source>下一页</source>
-        <translation type="vanished">Next page</translation>
+        <translation>Next page</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="257"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="351"/>
         <source>🔄 刷新</source>
-        <translation type="vanished">🔄 Refresh</translation>
+        <translation>🔄 Refresh</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="258"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="353"/>
         <source>重新载入媒体列表(F5)</source>
-        <translation type="vanished">Reload media list (F5)</translation>
+        <translation>Reload media list (F5)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="260"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="369"/>
         <source>全选</source>
-        <translation type="obsolete">Select All</translation>
+        <translation type="unfinished">Select All</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="261"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="374"/>
         <source>重试所选</source>
-        <translation type="vanished">Retry Selected</translation>
+        <translation>Retry Selected</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="262"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="380"/>
         <source>删除所选</source>
-        <translation type="vanished">Delete Selected</translation>
+        <translation>Delete Selected</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="263"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="388"/>
         <source>🗑 清空频道</source>
-        <translation type="vanished">🗑 Clear Channel</translation>
+        <translation>🗑 Clear Channel</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="264"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="391"/>
         <source>删除该频道全部消息(不可撤销)</source>
-        <translation type="vanished">Delete ALL messages in the selected channel (irreversible)</translation>
+        <translation>Delete ALL messages in the selected channel (irreversible)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="265"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="399"/>
         <source>📤 导出 CSV</source>
-        <translation type="vanished">📤 Export CSV</translation>
+        <translation>📤 Export CSV</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="266"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="402"/>
         <source>导出当前筛选/排序视图到 CSV(全部页)</source>
-        <translation type="vanished">Export current filter/sort view to CSV (all pages)</translation>
+        <translation>Export current filter/sort view to CSV (all pages)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="267"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="411"/>
         <source>📦 导出 ZIP</source>
-        <translation type="vanished">📦 Export ZIP</translation>
+        <translation>📦 Export ZIP</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="269"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="414"/>
         <source>把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip</source>
-        <translation type="vanished">Pack current filter view&apos;s media bytes + manifest.json into .zip</translation>
+        <translation>Pack current filter view&apos;s media bytes + manifest.json into .zip</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="271"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="429"/>
         <source>🧹 清理孤儿</source>
-        <translation type="vanished">🧹 Prune Orphans</translation>
+        <translation>🧹 Prune Orphans</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="273"/>
+        <location filename="../ui/widgets/media_manager_widget.py" line="420"/>
         <source>含缩略图</source>
-        <translation type="vanished">Include thumbnails</translation>
+        <translation>Include thumbnails</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="423"/>
         <source>打包 ZIP 时,同时拉每条媒体 thumb_key 写入 thumb_&lt;arcname&gt;</source>
-        <translation type="vanished">When packing ZIP, also fetch each media&apos;s thumb_key and write thumb_&lt;arcname&gt;</translation>
+        <translation>When packing ZIP, also fetch each media&apos;s thumb_key and write thumb_&lt;arcname&gt;</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="431"/>
         <source>扫描 ObjectStore vs storage 并删除孤儿 bytes(不可撤销)</source>
-        <translation type="vanished">Scan ObjectStore vs storage and delete orphan bytes (irreversible)</translation>
+        <translation>Scan ObjectStore vs storage and delete orphan bytes (irreversible)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="438"/>
         <source>加载中…</source>
-        <translation type="vanished">Loading…</translation>
+        <translation>Loading…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="638"/>
         <source>扫描 ObjectStore ({backend}) vs storage 并删除孤儿 bytes(不可撤销)</source>
-        <translation type="vanished">Scan ObjectStore ({backend}) vs storage and delete orphan bytes (irreversible)</translation>
+        <translation>Scan ObjectStore ({backend}) vs storage and delete orphan bytes (irreversible)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="683"/>
         <source>{total} 条媒体 · {done} 完成 · {failed} 失败 · 总大小 {size}</source>
-        <translation type="vanished">{total} media · {done} done · {failed} failed · {size} total</translation>
+        <translation>{total} media · {done} done · {failed} failed · {size} total</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="796"/>
         <source>点击查看大图</source>
-        <translation type="vanished">Click to view full image</translation>
+        <translation>Click to view full image</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="839"/>
         <source>错误: {err}</source>
-        <translation type="vanished">Error: {err}</translation>
+        <translation>Error: {err}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="995"/>
         <source>导出 Media Manager 当前视图</source>
-        <translation type="vanished">Export Media Manager current view</translation>
+        <translation>Export Media Manager current view</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="997"/>
         <source>CSV 文件 (*.csv)</source>
-        <translation type="vanished">CSV files (*.csv)</translation>
+        <translation>CSV files (*.csv)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1017"/>
         <source>导出 Media Manager 当前视图为 ZIP</source>
-        <translation type="vanished">Export Media Manager current view as ZIP</translation>
+        <translation>Export Media Manager current view as ZIP</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1019"/>
         <source>ZIP 文件 (*.zip)</source>
-        <translation type="vanished">ZIP files (*.zip)</translation>
+        <translation>ZIP files (*.zip)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/media_manager_widget.py" line="1028"/>
         <source>已清空频道 #{cid}: 删除 {n} 条消息</source>
-        <translation type="vanished">Cleared channel #{cid}: {n} messages removed</translation>
+        <translation>Cleared channel #{cid}: {n} messages removed</translation>
     </message>
 </context>
 <context>
     <name>MessageDetail</name>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="127"/>
         <source>消息详情</source>
-        <translation type="vanished">Message details</translation>
+        <translation>Message details</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="132"/>
         <source>点击左侧任意一条消息
 查看完整内容、媒体附件与原始数据</source>
-        <translation type="vanished">Click any message on the left
+        <translation>Click any message on the left
 to view full content, media attachments and raw data</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="183"/>
         <source>时间</source>
-        <translation type="vanished">Time</translation>
+        <translation>Time</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="185"/>
         <source>作者</source>
-        <translation type="vanished">Author</translation>
+        <translation>Author</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="186"/>
         <source>频道</source>
-        <translation type="vanished">Channel</translation>
+        <translation>Channel</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="188"/>
         <source>浏览</source>
-        <translation type="vanished">Views</translation>
+        <translation>Views</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="190"/>
         <source>转发</source>
-        <translation type="vanished">Forwards</translation>
+        <translation>Forwards</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="192"/>
         <source>回复</source>
-        <translation type="vanished">Reply</translation>
+        <translation>Reply</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="194"/>
         <source>已编辑</source>
-        <translation type="vanished">Edited</translation>
+        <translation>Edited</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="199"/>
         <source>反应</source>
-        <translation type="vanished">Reactions</translation>
+        <translation>Reactions</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="204"/>
         <source>📝 正文</source>
-        <translation type="vanished">📝 Text</translation>
+        <translation>📝 Text</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="215"/>
         <source>📎 媒体 ({len(m.media)})</source>
-        <translation type="vanished">📎 Media ({len(m.media)})</translation>
+        <translation>📎 Media ({len(m.media)})</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="230"/>
         <source>点击查看大图</source>
-        <translation type="vanished">Click to view full image</translation>
+        <translation>Click to view full image</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="238"/>
         <source>🔍 原始 JSON</source>
-        <translation type="vanished">🔍 Raw JSON</translation>
+        <translation>🔍 Raw JSON</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="254"/>
         <source>📤 导出</source>
-        <translation type="vanished">📤 Export</translation>
+        <translation>📤 Export</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="260"/>
         <source>🗑 删除</source>
-        <translation type="vanished">🗑 Delete</translation>
+        <translation>🗑 Delete</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="266"/>
         <source>📋 复制文本</source>
-        <translation type="vanished">📋 Copy Text</translation>
+        <translation>📋 Copy Text</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="273"/>
         <source>关闭详情</source>
-        <translation type="vanished">Close details</translation>
+        <translation>Close details</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="304"/>
         <source>   类型: {med.mime_type}</source>
-        <translation type="vanished">   Type: {med.mime_type}</translation>
+        <translation>   Type: {med.mime_type}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="306"/>
         <source>   文件: {med.file_name}</source>
-        <translation type="vanished">   File: {med.file_name}</translation>
+        <translation>   File: {med.file_name}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="309"/>
         <source>   大小: {size_mb:.2f} MB ({med.file_size:,} 字节)</source>
-        <translation type="vanished">   Size: {size_mb:.2f} MB ({med.file_size:,} bytes)</translation>
+        <translation>   Size: {size_mb:.2f} MB ({med.file_size:,} bytes)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="311"/>
         <source>   尺寸: {med.width} × {med.height}</source>
-        <translation type="vanished">   Dimensions: {med.width} × {med.height}</translation>
+        <translation>   Dimensions: {med.width} × {med.height}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="313"/>
         <source>   时长: {med.duration} 秒</source>
-        <translation type="vanished">   Duration: {med.duration} seconds</translation>
+        <translation>   Duration: {med.duration} seconds</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="316"/>
         <source>   状态: 已下载 ✓</source>
-        <translation type="vanished">   Status: Downloaded ✓</translation>
+        <translation>   Status: Downloaded ✓</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="318"/>
         <source>   状态: 下载中… ⏳</source>
-        <translation type="vanished">   Status: Downloading… ⏳</translation>
+        <translation>   Status: Downloading… ⏳</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="320"/>
         <source>   状态: 下载失败 ❌</source>
-        <translation type="vanished">   Status: Download failed ❌</translation>
+        <translation>   Status: Download failed ❌</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_detail.py" line="322"/>
         <source>   原因: {med.download_error}</source>
-        <translation type="vanished">   Reason: {med.download_error}</translation>
+        <translation>   Reason: {med.download_error}</translation>
     </message>
 </context>
 <context>
     <name>MessageView</name>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="705"/>
+        <source>0 条新消息 ↓</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/message_view.py" line="886"/>
         <source>导出…</source>
-        <translation type="vanished">Export…</translation>
+        <translation>Export…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="892"/>
         <source>删除</source>
-        <translation type="vanished">Delete</translation>
+        <translation>Delete</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="898"/>
         <source>标记已读</source>
-        <translation type="vanished">Mark as Read</translation>
+        <translation>Mark as Read</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="905"/>
+        <source>★ 收藏 / 取消收藏</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/message_view.py" line="919"/>
+        <source>🏷 设置标签…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/message_view.py" line="926"/>
+        <source>📝 设置备注…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/message_view.py" line="969"/>
         <source>%d 条新消息 ↓</source>
-        <translation type="vanished">%d new messages ↓</translation>
+        <translation>%d new messages ↓</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="999"/>
         <source>未订阅频道</source>
-        <translation type="vanished">No subscribed channels</translation>
+        <translation>No subscribed channels</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="1000"/>
         <source>先去「频道」页双击订阅一个频道,
 新消息会实时显示在这里。</source>
-        <translation type="vanished">Go to the Channels page and double-click one to subscribe.
+        <translation>Go to the Channels page and double-click one to subscribe.
 New messages will appear here in real time.</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="1004"/>
         <source>无匹配结果</source>
-        <translation type="vanished">No matches found</translation>
+        <translation>No matches found</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="1004"/>
         <source>试试更换关键词或日期范围。</source>
-        <translation type="vanished">Try different keywords or a wider date range.</translation>
+        <translation>Try different keywords or a wider date range.</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="1007"/>
         <source>暂无消息</source>
-        <translation type="vanished">No messages yet</translation>
+        <translation>No messages yet</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/message_view.py" line="1007"/>
         <source>新消息会实时显示。</source>
-        <translation type="vanished">New messages will appear here in real time.</translation>
+        <translation>New messages will appear here in real time.</translation>
     </message>
 </context>
 <context>
     <name>SearchBar</name>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="87"/>
         <source>搜索消息、频道…</source>
-        <translation type="vanished">Search messages, channels…</translation>
+        <translation>Search messages, channels…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="107"/>
         <source>按日期范围过滤</source>
-        <translation type="vanished">Filter by date range</translation>
+        <translation>Filter by date range</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="120"/>
         <source>搜索范围:已订阅(默认)/ 全部(含已退订频道历史)</source>
-        <translation type="vanished">Search scope: Subscribed (default) / All (including unsubscribed history)</translation>
+        <translation>Search scope: Subscribed (default) / All (including unsubscribed history)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="128"/>
         <source>只看收藏</source>
-        <translation type="vanished">Favorite only</translation>
+        <translation>Favorite only</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="129"/>
         <source>只看有标签</source>
-        <translation type="vanished">Tagged only</translation>
+        <translation>Tagged only</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="130"/>
         <source>只看置顶</source>
-        <translation type="vanished">Pinned only</translation>
+        <translation>Pinned only</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/search_bar.py" line="157"/>
+        <location filename="../ui/widgets/search_bar.py" line="166"/>
         <source>不限</source>
-        <translation type="vanished">Unlimited</translation>
+        <translation>Unlimited</translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="271"/>
+        <source>搜索范围:全部(含已退订频道历史)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../ui/widgets/search_bar.py" line="273"/>
+        <source>搜索范围:已订阅(默认)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -1324,7 +1611,7 @@ New messages will appear here in real time.</translation>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="1150"/>
         <source>🧹 清理中…</source>
-        <translation type="unfinished"></translation>
+        <translation>🧹 Cleaning…</translation>
     </message>
     <message>
         <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
@@ -1541,249 +1828,315 @@ Please verify your database / object storage configuration and that the correspo
 <context>
     <name>SyncOptionsDialog</name>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="54"/>
         <source>全量同步选项</source>
-        <translation type="vanished">Full Sync Options</translation>
+        <translation>Full Sync Options</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="65"/>
         <source>将对 &lt;b&gt;{n}&lt;/b&gt; 个频道执行全量同步。</source>
-        <translation type="vanished">Will perform a full sync on &lt;b&gt;{n}&lt;/b&gt; channels.</translation>
+        <translation>Will perform a full sync on &lt;b&gt;{n}&lt;/b&gt; channels.</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="78"/>
         <source>拉取 / 刷新元数据(title / username / member_count)</source>
-        <translation type="vanished">Fetch / refresh metadata (title / username / member_count)</translation>
+        <translation>Fetch / refresh metadata (title / username / member_count)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="82"/>
         <source>拉取历史消息(getChatHistory)</source>
-        <translation type="vanished">Fetch historical messages (getChatHistory)</translation>
+        <translation>Fetch historical messages (getChatHistory)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="86"/>
         <source>续拉(从 storage 已有最大 msg_id 开始)</source>
-        <translation type="vanished">Resume (continue from max msg_id already in storage)</translation>
+        <translation>Resume (continue from max msg_id already in storage)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="92"/>
         <source>单条 API 间隔:</source>
-        <translation type="vanished">Per-API call delay:</translation>
+        <translation>Per-API call delay:</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="102"/>
         <source>分页间隔(每 100 条):</source>
-        <translation type="vanished">Pagination delay (per 100 messages):</translation>
+        <translation>Pagination delay (per 100 messages):</translation>
     </message>
 </context>
 <context>
     <name>SyncProgressDialog</name>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="158"/>
         <source>全量同步中…</source>
-        <translation type="vanished">Full sync in progress…</translation>
+        <translation>Full sync in progress…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="169"/>
         <source>准备开始…</source>
-        <translation type="vanished">Preparing to start…</translation>
+        <translation>Preparing to start…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="178"/>
         <source>取消</source>
-        <translation type="vanished">Cancel</translation>
+        <translation>Cancel</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="181"/>
         <source>关闭</source>
-        <translation type="vanished">Close</translation>
+        <translation>Close</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="189"/>
         <source>⏳ {title}  — 待开始</source>
-        <translation type="vanished">⏳ {title}  — Pending</translation>
+        <translation>⏳ {title}  — Pending</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="215"/>
         <source>准备同步 {n} 个频道…</source>
-        <translation type="vanished">Preparing to sync {n} channels…</translation>
+        <translation>Preparing to sync {n} channels…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="230"/>
         <source>{n} 条</source>
-        <translation type="vanished">{n} messages</translation>
+        <translation>{n} messages</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="244"/>
         <source>同步已完成</source>
-        <translation type="vanished">Sync completed</translation>
+        <translation>Sync completed</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="252"/>
         <source>(被限流等待 {n}s)</source>
-        <translation type="vanished">(Flood-wait {n}s)</translation>
+        <translation>(Flood-wait {n}s)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="254"/>
         <source>完成:成功 {ok} 失败 {fail} 新增消息 {n} 条 {extra}</source>
-        <translation type="vanished">Done: {ok} succeeded, {fail} failed, {n} new messages {extra}</translation>
+        <translation>Done: {ok} succeeded, {fail} failed, {n} new messages {extra}</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="257"/>
         <source>(已取消)</source>
-        <translation type="vanished">(Cancelled)</translation>
+        <translation>(Cancelled)</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="262"/>
         <source>全量同步完成</source>
-        <translation type="vanished">Full sync complete</translation>
+        <translation>Full sync complete</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/sync_dialog.py" line="266"/>
         <source>已请求取消,等待当前频道完成…</source>
-        <translation type="vanished">Cancellation requested — waiting for current channel to finish…</translation>
+        <translation>Cancellation requested — waiting for current channel to finish…</translation>
     </message>
 </context>
 <context>
     <name>TrayIcon</name>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="74"/>
+        <location filename="../ui/widgets/tray_icon.py" line="167"/>
         <source>tgmonitor · Telegram 频道监听</source>
-        <translation type="vanished">tgmonitor · Telegram Channel Monitor</translation>
+        <translation>tgmonitor · Telegram Channel Monitor</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="77"/>
         <source>显示主窗口</source>
-        <translation type="vanished">Show main window</translation>
+        <translation>Show main window</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="89"/>
+        <location filename="../ui/widgets/tray_icon.py" line="169"/>
         <source>暂停监听</source>
-        <translation type="vanished">Pause monitoring</translation>
+        <translation>Pause monitoring</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="94"/>
         <source>退出</source>
-        <translation type="vanished">Quit</translation>
+        <translation>Quit</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="155"/>
         <source>⏸ tgmonitor · 暂停监听中</source>
-        <translation type="vanished">⏸ tgmonitor · Monitoring paused</translation>
+        <translation>⏸ tgmonitor · Monitoring paused</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/tray_icon.py" line="157"/>
         <source>继续监听</source>
-        <translation type="vanished">Resume monitoring</translation>
+        <translation>Resume monitoring</translation>
     </message>
 </context>
 <context>
     <name>_ErrorLogDialog</name>
     <message>
+        <location filename="../ui/main_window.py" line="2318"/>
         <source>错误日志</source>
-        <translation type="vanished">Error Log</translation>
+        <translation>Error Log</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2324"/>
         <source>最近 {n} 条错误(倒序):</source>
-        <translation type="vanished">Recent {n} error(s) (newest first):</translation>
+        <translation>Recent {n} error(s) (newest first):</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2334"/>
+        <location filename="../ui/main_window.py" line="2360"/>
         <source>(暂无错误)</source>
-        <translation type="vanished">(No errors)</translation>
+        <translation>(No errors)</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2341"/>
         <source>清空日志</source>
-        <translation type="vanished">Clear log</translation>
+        <translation>Clear log</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2345"/>
         <source>关闭</source>
-        <translation type="obsolete">Close</translation>
+        <translation type="unfinished">Close</translation>
     </message>
 </context>
 <context>
     <name>_HeaderBar</name>
     <message>
+        <location filename="../ui/main_window.py" line="2123"/>
         <source>tgmonitor</source>
-        <translation type="vanished">tgmonitor</translation>
+        <translation>tgmonitor</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2133"/>
         <source>⚪</source>
-        <translation type="vanished">⚪</translation>
+        <translation>⚪</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2137"/>
         <source>就绪</source>
-        <translation type="vanished">Ready</translation>
+        <translation>Ready</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2141"/>
+        <location filename="../ui/main_window.py" line="2176"/>
         <source>登录</source>
-        <translation type="vanished">Login</translation>
+        <translation>Login</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2146"/>
         <source>登出</source>
-        <translation type="vanished">Logout</translation>
+        <translation>Logout</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2159"/>
         <source>切换主题(Ctrl+T)</source>
-        <translation type="vanished">Toggle theme (Ctrl+T)</translation>
+        <translation>Toggle theme (Ctrl+T)</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2180"/>
         <source>验证码</source>
-        <translation type="vanished">Verification code</translation>
+        <translation>Verification code</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2184"/>
         <source>2FA 密码</source>
-        <translation type="vanished">2FA password</translation>
+        <translation>2FA password</translation>
     </message>
 </context>
 <context>
     <name>_SelectionToolbar</name>
     <message>
+        <location filename="../ui/main_window.py" line="2224"/>
         <source>已选 0 条</source>
-        <translation type="vanished">0 selected</translation>
+        <translation>0 selected</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2229"/>
+        <location filename="../ui/main_window.py" line="2295"/>
         <source>全选</source>
-        <translation type="vanished">Select All</translation>
+        <translation>Select All</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2234"/>
+        <location filename="../ui/main_window.py" line="2296"/>
         <source>反选</source>
-        <translation type="vanished">Invert</translation>
+        <translation>Invert</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2239"/>
+        <location filename="../ui/main_window.py" line="2297"/>
         <source>清除选择</source>
-        <translation type="vanished">Clear Selection</translation>
+        <translation>Clear Selection</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2247"/>
+        <location filename="../ui/main_window.py" line="2298"/>
         <source>✓ 标记已读</source>
-        <translation type="vanished">✓ Mark as Read</translation>
+        <translation>✓ Mark as Read</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2252"/>
+        <location filename="../ui/main_window.py" line="2299"/>
         <source>📤 导出选中</source>
-        <translation type="vanished">📤 Export Selected</translation>
+        <translation>📤 Export Selected</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2257"/>
+        <location filename="../ui/main_window.py" line="2300"/>
         <source>🗑 删除选中</source>
-        <translation type="vanished">🗑 Delete Selected</translation>
+        <translation>🗑 Delete Selected</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2263"/>
         <source>📤 转发到…</source>
-        <translation type="vanished">📤 Forward to…</translation>
+        <translation>📤 Forward to…</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2268"/>
         <source>📌 钉选</source>
-        <translation type="vanished">📌 Pin</translation>
+        <translation>📌 Pin</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2273"/>
         <source>😀 表情回应…</source>
-        <translation type="vanished">😀 React…</translation>
+        <translation>😀 React…</translation>
     </message>
     <message>
+        <location filename="../ui/main_window.py" line="2283"/>
         <source>已选 %d 条</source>
-        <translation type="vanished">%d selected</translation>
+        <translation>%d selected</translation>
     </message>
 </context>
 <context>
     <name>form_row</name>
     <message>
+        <location filename="../ui/widgets/form_row.py" line="178"/>
         <source>浏览…</source>
-        <translation type="vanished">Browse…</translation>
+        <translation>Browse…</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/form_row.py" line="186"/>
         <source>默认</source>
-        <translation type="vanished">Default</translation>
+        <translation>Default</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/form_row.py" line="192"/>
         <source>恢复为 platform-native 默认目录</source>
-        <translation type="vanished">Restore platform-native default directory</translation>
+        <translation>Restore platform-native default directory</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/form_row.py" line="207"/>
         <source>选择目录</source>
-        <translation type="vanished">Select directory</translation>
+        <translation>Select directory</translation>
     </message>
     <message>
+        <location filename="../ui/widgets/form_row.py" line="220"/>
         <source>选择输出文件</source>
-        <translation type="vanished">Select output file</translation>
+        <translation>Select output file</translation>
     </message>
 </context>
 <context>
     <name>main_window</name>
     <message>
+        <location filename="../ui/main_window.py" line="122"/>
         <source>TG {state}</source>
-        <translation type="obsolete">TG {state}</translation>
+        <translation type="unfinished">TG {state}</translation>
     </message>
 </context>
 </TS>
