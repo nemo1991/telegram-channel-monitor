@@ -74,6 +74,21 @@ class UnconfiguredTelegramClient(TelegramClient):
         """无资源可清,no-op。"""
         return None
 
+    async def optimize_storage(
+        self,
+        *,
+        size: int = -1,
+        ttl: int = -1,
+        count: int = -1,
+        immunity_delay: int = -1,
+    ) -> int:
+        """2026-09-24 v1.8.3:未登录态没 TDLib 实例可调,no-op 返 0。
+
+        实际场景:用户在「未登录」配置阶段就点清理按钮,这里静默返 0;
+        SettingsPage 会从 `_app.client` 拿到这个 stub。
+        """
+        return 0
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """凭据缺失,兜底返 `phone_required`(AuthService 会先拦截)。"""
         return self._state, None

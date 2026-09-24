@@ -5,6 +5,63 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.3] - 2026-09-24
+
+主题:**设置页「📦 TDLib 缓存」组 — 单按钮同时清 files/database 缓存**。
+
+> 用户长期痛点:`%LOCALAPPDATA%\tgmonitor\session\tdlib\` 持续膨胀(
+> `files/` 几百 MB~GB,TDLib 文件分片缓存从不主动清)。原菜单完全没有
+> 入口,只能手动 PowerShell rm。本版本在设置页加一个组:label 实时显示
+> files / database 子目录大小,单按钮触发两动作 — 删 `files/` + 发 TDLib
+> `optimizeStorage` RPC(压 `database/`,session 不丢)。向后兼容,纯增量。
+
+### 新增「📦 TDLib 缓存」组(`ui/widgets/settings_page.py`)
+
+- 左 label:实时显示 `files: X / database: Y`(走 `asyncio.to_thread` + `dir_size`,
+  不阻塞 qasync 主 loop)。
+- 右单按钮:`🧹 清理缓存` — 点击触发 `clean_files()` + `optimize_storage()`。
+- 完成后弹 `QMessageBox.information` 「已释放:files X / optimizeStorage 报告 Y」,
+  自动重新刷新 label。
+- 错误路径(`clean_files` 抛 `OSError`):`QMessageBox.critical` 弹窗,按钮恢复,
+  label 回退到占位「(无法读取)」。
+
+### TDLib client 扩展(`core/telegram/*`)
+
+- `TdlibTelegramClient.clean_files() -> int`(`tdlib_client.py`):只删
+  `tdlib/files/`,**不动 `database/` 和 `.encryption_key`** — session / auth_key
+  不丢,无需重新登录。返回释放字节数。
+- `TdlibTelegramClient.optimize_storage(*, size=-1, ttl=-1, count=-1,
+  immunity_delay=-1) -> int`(`tdlib_client.py`):raw RPC `optimizeStorage`,
+  TDLib 内部立即触发一次 storage 优化(压 database WAL + 清文件引用 + 释放
+  过期 file cache 引用)。RPC 失败 fallback warning 不抛。
+- `TelegramClient` Protocol 加同名抽象(`client.py`);`FakeTelegramClient` /
+  `UnconfiguredTelegramClient` 加对应 stub。
+
+### 共享 FS util(`core/_fs_utils.py`,新)
+
+- `dir_size(path) -> int` — `os.walk` 累加 st_size,单文件 OSError 吞掉。
+- `format_bytes(n) -> str` — 人类可读字节数。从 `clear_channel_preview_dialog`
+  抽出来共享(后续再加 UI 显示大小都走它)。
+
+### i18n
+
+`src/tgmonitor/i18n/zh_CN.ts` + `en_US.ts` 新增 13 条缓存组字符串。运行
+`uvx --from pyside6-essentials pyside6-lupdate` 自动 pick up,再 `lrelease`
+编译 `.qm`。
+
+### 测试
+
+- `tests/test_fs_utils.py`(新)— 16 个 case:`format_bytes` 单位边界 + `dir_size`
+  空目录 / 不存在 / 嵌套 / `OSError` 单文件跳过。
+- `tests/test_settings_cache.py`(新)— 10 个 case:
+  - label 实时显示 files/database 子目录字节
+  - 单按钮同时触发 `clean_files` + `optimize_storage` 各 1 次
+  - 按钮禁用 / 启用时机
+  - `OSError` → `QMessageBox.critical` 弹窗 + 按钮恢复
+  - retranslateUi 保持 enabled / running 状态分支
+- `tests/test_clear_channel_preview.py` — 因 `_format_bytes` 改 import 自
+  `tgmonitor.core._fs_utils`,行为不变,既有 13 个 case 全过。
+
 ## [1.8.2] - 2026-09-24
 
 主题:**TDLib `'0'` str 防御 + 启动期 schema introspect/auto-repair + tray「退出」修复**。

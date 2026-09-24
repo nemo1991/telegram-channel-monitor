@@ -23,18 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tgmonitor.core._fs_utils import format_bytes as _format_bytes
 from tgmonitor.core.dto import DeleteChannelPreview
-
-
-def _format_bytes(n: int) -> str:
-    """人类可读字节数;`n==0` 走「0 B」。"""
-    units = ("B", "KB", "MB", "GB", "TB")
-    size = float(n)
-    i = 0
-    while size >= 1024 and i < len(units) - 1:
-        size /= 1024
-        i += 1
-    return f"{size:.1f}{units[i]}" if i > 0 else f"{int(size)}B"
 
 
 class ClearChannelPreviewDialog(QDialog):

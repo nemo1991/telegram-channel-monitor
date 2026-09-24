@@ -1529,6 +1529,75 @@ class TdlibTelegramClient(_AiClient):
             detail="本地会话已重置,请重新登录",
         )
 
+    async def clean_files(self) -> int:
+        """2026-09-24 v1.8.3:只删 `tdlib/files/`(TDLib 文件分片缓存),
+        不碰 `database/`(里头有 session / auth_key)+ 不碰 `.encryption_key`。
+
+        安全:不需重新登录;重启后 TDLib 按需重新下载分片。
+        返回释放字节数(删前计算;删后 size=0 没意义)。
+
+        app 关闭 / 暂停态都能调(只删 _目录内容,不动 tdlib in-memory state)。
+        """
+        import shutil as _sh
+
+        from tgmonitor.core._fs_utils import dir_size
+
+        td_files = self._settings.session_dir / "tdlib" / "files"
+        if not td_files.exists():
+            return 0
+        freed = await asyncio.to_thread(dir_size, td_files)
+        try:
+            await asyncio.to_thread(_sh.rmtree, td_files)
+            log.warning("cleaned tdlib files cache: freed %d bytes at %s", freed, td_files)
+        except OSError as exc:
+            log.error("clean_files failed: %s", exc)
+            raise
+        return freed
+
+    async def optimize_storage(
+        self,
+        *,
+        size: int = -1,
+        ttl: int = -1,
+        count: int = -1,
+        immunity_delay: int = -1,
+    ) -> int:
+        """2026-09-24 v1.8.3:TDLib `optimizeStorage` RPC。
+
+        立即触发一次 storage 优化(压 database WAL + 清文件引用 + 释放过期
+        file cache 引用)。TDLib 默认 enable_storage_optimizer=True(user
+        account 下也开),但只在空闲期触发;本方法立即拉一次。
+
+        返回值:取 TDLib `storageStatistics.file_size` 的差值作为「释放字节」
+        提示(若返回 dict 不含 file_size,返 0)。
+        """
+        request = {
+            "@type": "optimizeStorage",
+            "size": size,
+            "ttl": ttl,
+            "count": count,
+            "immunity_delay": immunity_delay,
+            "chat_limit": 0,
+            "file_types": [],
+            "chat_ids": [],
+            "exclude_chat_ids": [],
+            "return_deleted_file_statistics": False,
+        }
+        try:
+            result = await self._c.request(request)
+        except Exception as exc:  # noqa: BLE001
+            # TDLib 偶发 400 / network — 不让 UI 弹 critical,降级为 warning
+            log.warning("optimizeStorage RPC failed: %s", exc)
+            return 0
+        freed = 0
+        if isinstance(result, dict):
+            try:
+                freed = int(result.get("file_size", 0))
+            except (TypeError, ValueError):
+                freed = 0
+        log.info("optimizeStorage returned %s (extracted freed=%d)", type(result).__name__, freed)
+        return freed
+
     async def close(self) -> None:
         """app exit 时调 — 内部 tdlib_json 客户端 + 关掉所有订阅流。
 

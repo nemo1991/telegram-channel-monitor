@@ -14,7 +14,9 @@
   7. ⌨ 快捷键      — 2026-09-07 v1.6.9 新增(14 个 action × QKeySequenceEdit)
   8. 🎨 外观       — 主题 3 选(浅色 / 暗色 / 跟随系统)
   9. 🔄 同步参数   — chat_delay / page_delay / resume_from_saved
- 10. 储存按钮栏
+ 10. 📦 TDLib 缓存 — 2026-09-24 v1.8.3 显示 files/database 子目录大小 +
+                    单按钮清理(同时触发文件分片删除 + optimizeStorage)
+ 11. 储存按钮栏
 """
 
 from __future__ import annotations
@@ -79,6 +81,8 @@ class SettingsPage(QWidget):
         self._app = app
         self._loop = loop
         self._env_path = env_path
+        # 2026-09-24 v1.8.3:TDLib 缓存组 — tdlib 子目录绝对路径,refresh / 清理用
+        self._td_dir = app.settings.session_dir / "tdlib"
 
         self._build()
         self._load_from_settings()
@@ -122,6 +126,9 @@ class SettingsPage(QWidget):
         # 不走「保存并应用」(主题是 session 内即时生效,不写 .env)。
         self._build_appearance(form_root)
         self._build_sync(form_root)
+        # 2026-09-24 v1.8.3:📦 TDLib 缓存 — 显示 files/database 子目录实时
+        # 大小 + 单按钮同时触发「删 files + 发 optimizeStorage RPC」。
+        self._build_cache(form_root)
 
         form_root.addStretch(1)
         scroll.setWidget(scroll_content)
@@ -541,6 +548,117 @@ class SettingsPage(QWidget):
         f.addRow("", self.chk_resume)
 
         root.addWidget(g)
+
+    def _build_cache(self, root: QVBoxLayout) -> None:
+        """2026-09-24 v1.8.3:📦 TDLib 缓存 — 实时显示 + 单按钮清理。
+
+        设计:左侧 label 走 off-loop `asyncio.to_thread` 计算 `files/` 与
+        `database/` 子目录大小;右侧单按钮触发两个原子动作:
+          1) 删 `tdlib/files/`(分片缓存,安全 — TDLib 按需重拉)
+          2) 发 TDLib `optimizeStorage` RPC(压 database WAL + 清文件引用)
+        两个动作都失败也不互相牵连 — 各自 try/except,UI 弹窗汇总结果。
+        """
+        g = QGroupBox(self.tr("📦 TDLib 缓存"))
+        f = QFormLayout(g)
+        f.setSpacing(6)
+
+        # 当前占用 label — 初始占位「计算中…」,首次 _refresh 后会被覆盖。
+        self._cache_label = QLabel(self.tr("计算中…"))
+        self._cache_label.setObjectName("cacheSizeLabel")
+        # 让 label 跟兄弟控件宽度自动适应;不强制 wordWrap,空间够。
+        f.addRow(self.tr("当前占用:"), self._cache_label)
+
+        # 按钮 — 同一行右侧
+        self._btn_clear_cache = QPushButton(self.tr("🧹 清理缓存"))
+        self._btn_clear_cache.setObjectName("btnClearCache")
+        self._btn_clear_cache.setToolTip(
+            self.tr(
+                "删除 TDLib 文件分片缓存 + 触发 TDLib optimizeStorage 压缩数据库。"
+                "session/auth_key 不丢,无需重新登录。"
+            )
+        )
+        self._btn_clear_cache.clicked.connect(self._on_clear_cache)
+        f.addRow(self.tr("操作:"), self._btn_clear_cache)
+
+        root.addWidget(g)
+
+        # 首次填充 label(异步)
+        self._refresh_cache_label()
+
+    def _refresh_cache_label(self) -> None:
+        """2026-09-24 v1.8.3:off-loop 计算 files/database 子目录大小,setText。
+
+        走 `asyncio.to_thread` 避免大目录 stat 阻塞 qasync 事件循环。
+        失败时显示「(无法读取)」,不弹窗(用户没主动操作,静默降级)。
+        """
+        td_dir = self._td_dir
+
+        async def _go() -> str:
+            from tgmonitor.core._fs_utils import dir_size, format_bytes
+
+            files = await asyncio.to_thread(dir_size, td_dir / "files")
+            db = await asyncio.to_thread(dir_size, td_dir / "database")
+            return f"files: {format_bytes(files)} / database: {format_bytes(db)}"
+
+        def _done(text: str) -> None:
+            self._cache_label.setText(text)
+
+        run_coro(
+            self._loop,
+            _go(),
+            on_success=_done,
+            on_error=lambda e: self._cache_label.setText(self.tr("(无法读取)")),
+            error_label="cache_size_refresh",
+        )
+
+    def _on_clear_cache(self) -> None:
+        """2026-09-24 v1.8.3:清理缓存按钮 slot,触发两动作 + 弹窗反馈。
+
+        顺序:`clean_files()` 先删分片(快,~10ms),再 `optimize_storage()`
+        压 database(几百 ms~几秒)。任一抛异常都会被 `run_coro` 接住走
+        `on_error` — 弹 QMessageBox.critical,刷新 label 反映真实状态。
+        """
+        self._btn_clear_cache.setEnabled(False)
+        self._cache_label.setText(self.tr("清理中…"))
+
+        client = self._app.client
+
+        async def _go() -> tuple[int, int]:
+            freed_files = await client.clean_files()
+            freed_db = await client.optimize_storage()
+            return freed_files, freed_db
+
+        def _done(result: tuple[int, int]) -> None:
+            from tgmonitor.core._fs_utils import format_bytes
+
+            f, d = result
+            QMessageBox.information(
+                self,
+                self.tr("清理完成"),
+                self.tr("已释放:files {0}(optimizeStorage 报告 {1})").format(
+                    format_bytes(f), format_bytes(d)
+                ),
+            )
+            self._refresh_cache_label()
+            self._btn_clear_cache.setEnabled(True)
+
+        def _fail(exc: BaseException) -> None:
+            log.exception("cache clear failed")
+            QMessageBox.critical(
+                self,
+                self.tr("清理失败"),
+                self.tr("操作未完成:{0}").format(exc),
+            )
+            self._refresh_cache_label()
+            self._btn_clear_cache.setEnabled(True)
+
+        run_coro(
+            self._loop,
+            _go(),
+            on_success=_done,
+            on_error=_fail,
+            error_label="cache_clear",
+        )
 
     # ------ 后端切换显隐 ------
 
@@ -1022,6 +1140,17 @@ class SettingsPage(QWidget):
                 self.btn_test_proxy.setText(self.tr("测试连接"))
             else:
                 self.btn_test_proxy.setText(self.tr("测试中…"))
+
+        # 2026-09-24 v1.8.3:TDLib 缓存按钮文字(可能在 "清理中…" 状态)
+        # label 内容是动态大小,retranslate 时刷新一次。
+        if hasattr(self, "_btn_clear_cache"):
+            if self._btn_clear_cache.isEnabled():
+                self._btn_clear_cache.setText(self.tr("🧹 清理缓存"))
+            else:
+                self._btn_clear_cache.setText(self.tr("🧹 清理中…"))
+        if hasattr(self, "_cache_label"):
+            # 静默刷新:retranslate 后大小仍是真实数字,无需弹窗
+            self._refresh_cache_label()
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt 命名
         """2026-09-07 v1.6.8:LanguageChange → retranslateUi 全文重译。

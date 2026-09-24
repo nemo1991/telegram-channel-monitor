@@ -26,6 +26,26 @@ class TelegramClient(Protocol):
         """清掉 session db(可选旋转加密 key),杀掉内部 TDLib。调用方负责重建。"""
         ...
 
+    async def optimize_storage(
+        self,
+        *,
+        size: int = -1,
+        ttl: int = -1,
+        count: int = -1,
+        immunity_delay: int = -1,
+    ) -> int:
+        """2026-09-24 v1.8.3:TDLib `optimizeStorage` RPC。
+
+        立即触发一次存储优化(压缩 database WAL + 清文件引用 + 释放过期
+        file cache 引用)。不丢 session / auth_key。
+
+        所有参数默认 -1 = 用 TDLib 默认阈值。
+
+        返回值:实现可返 0 / TDLib 报告的释放字节数 / 不关心的负数。
+        UI 不强依赖具体数值,只用于展示。
+        """
+        ...
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """提交手机号 — 进入 `code_required`。返回 (state, detail)。"""
         ...
