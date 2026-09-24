@@ -103,6 +103,47 @@ async def _bootstrap(
     await storage.init_schema()
     log.info("[bootstrap] storage.init_schema() took %.2fs", time.monotonic() - t)
 
+    # 2026-09-23 v1.8.x:schema introspect + 选改 — 在 init_schema 之后跑,
+    # 让 fresh DB 先经 init_schema 建表(introspect 直接 ok);legacy DB 先经
+    # init_schema 跑 ALTER 补齐,introspect 也是 ok;只有 init_schema 失败的
+    # 边缘场景(introspect 才会看到 drift)。
+    t = time.monotonic()
+    report = await storage.introspect_schema()
+    log.info(
+        "[bootstrap] schema introspection took %.2fs | %s",
+        time.monotonic() - t,
+        report.summary(),
+    )
+    if not report.ok:
+        if settings.schema_auto_repair:
+            log.warning(
+                "[bootstrap] schema drift (%s); auto-repair ENABLED — applying",
+                report.summary(),
+            )
+            try:
+                await storage.repair_schema(report)
+                report2 = await storage.introspect_schema()
+                if report2.ok:
+                    log.info(
+                        "[bootstrap] schema repair applied successfully (%s)",
+                        report.summary(),
+                    )
+                else:
+                    log.error(
+                        "[bootstrap] schema repair incomplete: %s; refusing to start",
+                        report2.summary(),
+                    )
+                    raise RuntimeError(f"schema repair incomplete: {report2.summary()}")
+            except Exception:
+                log.exception("[bootstrap] schema repair failed; refusing to start")
+                raise
+        else:
+            log.warning(
+                "[bootstrap] schema drift (%s); auto-repair DISABLED. "
+                "Set TG_SCHEMA_AUTO_REPAIR=true in .env to auto-apply.",
+                report.summary(),
+            )
+
     t = time.monotonic()
     objects = build_object_store(settings)
     objects_error: str | None = None

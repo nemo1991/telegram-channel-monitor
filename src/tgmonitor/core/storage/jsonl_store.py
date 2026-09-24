@@ -38,6 +38,7 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 
 REGISTRY_FILE = "channels.json"
 MESSAGES_DIR = "messages"
@@ -333,6 +334,63 @@ class JsonlFileStore(StorageRepository):
     async def init_schema(self) -> None:
         """文件后端无需显式 schema;connect() 已建好目录。"""
         return None
+
+    # 2026-09-23 v1.8.x:启动 introspect 用的「期望 int 类型」字段列表。
+    # _message_to_dict 顺序与字段名对齐;media 子字段同样进同 schema drift 监测。
+    _INT_MSG_FIELDS: tuple[str, ...] = (
+        "views",
+        "forwards",
+        "reply_to_msg_id",
+        "via_bot_user_id",
+        "media_album_id",
+    )
+    _INT_MEDIA_FIELDS: tuple[str, ...] = (
+        "file_size",
+        "width",
+        "height",
+        "duration",
+    )
+
+    async def introspect_schema(self) -> SchemaReport:
+        """2026-09-23 v1.8.x:JSONL 无显式 schema,扫已加载消息,检测 nullable
+        int 字段是否被存成 str(典型:`'0'` 字符串污染 — 2026-09-23 现网
+        asyncpg `'0'` 报错)。
+
+        只诊断不修:JSONL 是用户可读的 git-friendly 文本,自动改磁盘风险大,
+        repair 只 log warning,污染行清理留给运维脚本(README 段指引)。
+        """
+        from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
+
+        bad: list[ColumnDrift] = []
+        for cf in self._files.values():
+            for r in cf.rows:
+                for f in self._INT_MSG_FIELDS:
+                    v = r.get(f)
+                    if isinstance(v, str):
+                        bad.append(ColumnDrift("messages", f, "int", f"str({v!r})"))
+                for md in r.get("media", []):
+                    for f in self._INT_MEDIA_FIELDS:
+                        v = md.get(f)
+                        if isinstance(v, str):
+                            bad.append(ColumnDrift("media", f, "int", f"str({v!r})"))
+        return SchemaReport(wrong_types=bad)
+
+    async def repair_schema(self, report: SchemaReport) -> None:
+        """2026-09-23 v1.8.x:JSONL repair 只 log warning,不动磁盘。
+
+        内存 dict 视图会被下次 save_message 自然覆盖(写对的 int),
+        旧污染行需要用户手动跑一次性脚本清理(参见 README 段)。
+        """
+        if not report.wrong_types:
+            return
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "jsonl schema drift: %d 个 int 字段被存成 str(典型:媒体相册 ID "
+            "'0' 污染)。已加载内存视图下次写时会自然覆盖,旧污染行需人工跑 "
+            "一次性清理脚本(参见 README 段 'JSONL 字段污染清理')。",
+            len(report.wrong_types),
+        )
 
     async def ping(self) -> bool:
         """轻量探活:仅查 root 目录是否存在。"""

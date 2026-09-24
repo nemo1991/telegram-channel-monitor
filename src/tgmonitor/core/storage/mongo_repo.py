@@ -24,6 +24,7 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.storage.schema_report import SchemaReport
 
 
 def _media_status(value: object | None) -> MediaDownloadStatus:
@@ -242,6 +243,60 @@ class MongoRepository(StorageRepository):
         # 旧 db.media 索引保留(空集合,无害)
         await self.db.media.create_index([("message_id", 1)])
         await self.db.media.create_index([("telegram_file_id", 1)])
+
+    async def introspect_schema(self) -> SchemaReport:
+        """2026-09-23 v1.8.x:Mongo schema-less,只检查期望索引是否齐全。
+
+        缺失唯一索引 `(channel_id, telegram_msg_id)` 时记入
+        `missing_columns`,运维提示(可能是 mongomock 跑出来的无索引集合)。
+        """
+        assert self._db is not None
+        indexes = await self._db.messages.index_information()
+
+        def _index_key_fields(key: object) -> set[str]:
+            """mongomock_motor 把 `key` 返成 `[(field, dir), ...]` 列表,真 motor
+            用 SON / OrderedDict。统一抽字段名集合。
+            """
+            if isinstance(key, dict):
+                return {str(k) for k in key}
+            if isinstance(key, (list, tuple)):
+                return {str(item[0]) for item in key if item}
+            return set()
+
+        have_unique = any(
+            bool(idx.get("unique"))
+            and _index_key_fields(idx["key"]) == {"channel_id", "telegram_msg_id"}
+            for idx in indexes.values()
+        )
+        if not have_unique:
+            return SchemaReport(
+                missing_columns=[("messages", "(channel_id, telegram_msg_id)", "UNIQUE INDEX")]
+            )
+        return SchemaReport()
+
+    async def repair_schema(self, report: SchemaReport) -> None:
+        """2026-09-23 v1.8.x:若 report 指明唯一索引缺失,重建。
+
+        `create_index(..., unique=True)` 在已有重复 `(channel_id, telegram_msg_id)`
+        数据上会抛 `DuplicateKeyError` — wrap 在 try/except,失败 log warning
+        不阻塞启动(运维需要清理数据后手动重建)。
+        """
+        if not report.missing_columns:
+            return
+        if self._db is None:
+            return
+        try:
+            await self._db.messages.create_index(
+                [("channel_id", 1), ("telegram_msg_id", 1)],
+                unique=True,
+                name="uq_channel_msg",
+            )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "mongo repair: recreate unique index failed — %s", exc
+            )
 
     async def ping(self) -> bool:
         """`db.command("ping")` 探活;任何异常返 False。"""

@@ -30,8 +30,29 @@ def _c(ctype: str, **kwargs: Any) -> Any:
 
 
 def _msg(ctype: str, **content_kwargs: Any) -> SimpleNamespace:
-    """造一个完整 Message SimpleNamespace — id=1, chat_id=100, date=0, 全部 content attrs。"""
-    return SimpleNamespace(
+    """造一个完整 Message SimpleNamespace — id=1, chat_id=100, date=0, 全部 content attrs。
+
+    2026-09-23 v1.8.x:接受 message-level kwargs 作为顶层 message 属性覆盖
+    (e.g. `_msg("MessageText", ..., views="0", media_album_id="0")`),
+    默认 None / 0 让 _map_message 走零默认路径。
+    """
+    # 顶层 message 字段(不是 content 内部属性)
+    msg_keys = {
+        "id",
+        "chat_id",
+        "date",
+        "views",
+        "forwards",
+        "edit_date",
+        "author_signature",
+        "reply_to_message_id",
+        "via_bot_user_id",
+        "media_album_id",
+        "is_pinned",
+        "forward_origin",
+    }
+    msg_kwargs = {k: content_kwargs.pop(k) for k in list(content_kwargs) if k in msg_keys}
+    defaults = dict(
         id=1,
         chat_id=100,
         date=0,
@@ -39,6 +60,10 @@ def _msg(ctype: str, **content_kwargs: Any) -> SimpleNamespace:
         forwards=0,
         edit_date=0,
         author_signature=None,
+    )
+    defaults.update(msg_kwargs)
+    return SimpleNamespace(
+        **defaults,
         content=_c(ctype, **content_kwargs),
     )
 
@@ -623,3 +648,65 @@ def test_pr10_interaction_info_full_payload():
     assert views == 100
     assert len(reactions) == 1
     assert reactions[0].emoji == "🎉"
+
+
+# ============================================================
+# 2026-09-23 v1.8.x:TDLib int53 `'0'` str 防御回归测试
+# ============================================================
+
+
+def test_pr9_reply_to_message_id_string_zero_normalized_to_none():
+    """回归:`reply_to_message_id='0'`(TDLib 绑定 str sentinel)
+    必归 None — 不再让 `'0'` 字符串污染 dataclass DTO。
+    """
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.reply_to_message_id = "0"
+    assert _map_message(msg).reply_to_msg_id is None
+
+
+def test_pr9_via_bot_user_id_string_zero_normalized_to_none():
+    """回归:`via_bot_user_id='0'` 必归 None。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.via_bot_user_id = "0"
+    assert _map_message(msg).via_bot_user_id is None
+
+
+def test_pr9_media_album_id_string_zero_normalized_to_none():
+    """回归:`media_album_id='0'` 必归 None — 这是 v1.8.1 现网炸的字段。"""
+    msg = _msg(
+        "MessagePhoto",
+        photo=SimpleNamespace(sizes=[], minithumbnail=None, has_stickers=False),
+        caption=None,
+    )
+    msg.media_album_id = "0"
+    assert _map_message(msg).media_album_id is None
+
+
+def test_views_string_zero_normalized_to_none():
+    """`views='0'` 必归 None(与 int 0 一致语义)。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.views = "0"
+    assert _map_message(msg).views is None
+
+
+def test_views_string_int_preserved():
+    """`'42'` 字符串应被 coerce 为 int 42(不是 None)。"""
+    msg = _msg("MessageText", text=SimpleNamespace(text="x"), caption=None)
+    msg.views = "42"
+    assert _map_message(msg).views == 42
+
+
+def test_file_size_string_zero_normalized_to_none():
+    """Photo file.size='0' 经 _file_size 走 _to_int_or_none → None。"""
+    file_obj = SimpleNamespace(id=99, size="0")
+    sizes = [
+        SimpleNamespace(
+            type_="x", photo=file_obj, width=10, height=10, progressive_sizes=[]
+        ),
+    ]
+    msg = _msg(
+        "MessagePhoto",
+        photo=SimpleNamespace(sizes=sizes, minithumbnail=None, has_stickers=False),
+        caption=None,
+    )
+    assert _map_message(msg).media[0].file_size is None

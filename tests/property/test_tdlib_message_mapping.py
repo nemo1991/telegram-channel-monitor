@@ -111,7 +111,9 @@ def test_map_message_scalar_fields(
     assert dto.id == msg_id
     assert dto.telegram_msg_id == msg_id
     assert dto.channel_id == chat_id
-    assert dto.views == views
+    # 2026-09-23 v1.8.x:`_to_int_or_none` 把 int 0 也归 None(TDLib int53
+    # sentinel);None 透传;正整数原样。
+    assert dto.views is None if views in (None, 0) else dto.views == views
     assert dto.is_pinned == is_pinned
 
 
@@ -261,3 +263,66 @@ def test_map_message_reply_to_nonzero_preserved() -> None:
     msg = _make_msg(reply_to=42)
     dto = _map_message(msg)
     assert dto.reply_to_msg_id == 42
+
+
+# ========== 2026-09-23 v1.8.x:TDLib `'0'` str sentinel 防御 ==========
+
+
+@given(
+    album_id=st.one_of(
+        st.none(),
+        st.integers(min_value=0, max_value=10**12),
+        st.sampled_from(["0", "1", "42", "", "999"]),
+    ),
+    views=st.one_of(
+        st.none(),
+        st.integers(min_value=0, max_value=10**9),
+        st.sampled_from(["0", "42", ""]),
+    ),
+    reply_to=st.one_of(
+        st.none(),
+        st.integers(min_value=0, max_value=10**12),
+        st.sampled_from(["0", "1", ""]),
+    ),
+    via_bot=st.one_of(
+        st.none(),
+        st.integers(min_value=0, max_value=10**12),
+        st.sampled_from(["0", "1", ""]),
+    ),
+)
+@settings(
+    max_examples=200,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+)
+def test_map_message_int53_fields_any_input_safe(
+    album_id: Any, views: Any, reply_to: Any, via_bot: Any
+) -> None:
+    """回归:`_to_int_or_none` 在 int / str / None / sentinel 上都安全。
+
+    关键不变量:输出永远是 `int | None` — 永远不会有 `str` 类型漏到 DTO
+    (那是 v1.8.1 现网 bug)。
+    """
+    from tgmonitor.core.telegram.tdlib_messages import _map_message
+
+    msg = _make_msg(
+        views=views,
+        reply_to=reply_to,
+        via_bot_user_id=via_bot,
+        media_album_id=album_id,
+    )
+    dto = _map_message(msg)
+    for field, raw in (
+        ("views", views),
+        ("reply_to_msg_id", reply_to),
+        ("via_bot_user_id", via_bot),
+        ("media_album_id", album_id),
+    ):
+        out = getattr(dto, field)
+        assert out is None or isinstance(out, int), (
+            f"{field}: input {raw!r} (type {type(raw).__name__}) → "
+            f"output {out!r} (type {type(out).__name__}); must be int | None"
+        )
+        # 0 sentinel 一致归 None
+        if raw in (None, 0, "0", ""):
+            assert out is None, f"{field}: input {raw!r} must normalize to None"

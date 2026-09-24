@@ -26,6 +26,7 @@ from tgmonitor.core.dto import (
     SortDir,
     SortKey,
 )
+from tgmonitor.core.storage.schema_report import SchemaReport
 
 
 class StorageRepository(ABC):
@@ -41,6 +42,33 @@ class StorageRepository(ABC):
     @abstractmethod
     async def init_schema(self) -> None:
         """建表 / 建索引 — 幂等;启动时跑一次,跟 connect 解耦以便测试 mock。"""
+        ...
+
+    @abstractmethod
+    async def introspect_schema(self) -> SchemaReport:
+        """2026-09-23 v1.8.x:启动期 schema 自检 — 比对实际 schema 与
+        `expected_schema.EXPECTED_SCHEMA`,返回 SchemaReport 列出 drift
+        (missing tables / columns / wrong_types / extra columns)。
+
+        各 backend 实现:
+        - Postgres:`information_schema.columns` 查表 + 列类型
+        - Mongo:`list_indexes()` 检查期望唯一索引
+        - JSONL:扫所有消息文件,检测 nullable int 字段是否被存成 str
+        """
+        ...
+
+    @abstractmethod
+    async def repair_schema(self, report: SchemaReport) -> None:
+        """2026-09-23 v1.8.x:基于 SchemaReport 跑幂等修复。
+
+        策略(保守):
+        - missing_columns → `ALTER TABLE ADD COLUMN IF NOT EXISTS`(无锁)
+        - missing_tables → 拒绝(避免 DROP+CREATE 丢数据),让运维手动跑 init_schema
+        - wrong_types → 仅 log,不动(类型 ALTER 重写表对大表 lock-heavy)
+        - extra_columns → 仅 log,不删
+
+        必须幂等:连续跑两次不抛,二次 introspect 后仍 ok=True。
+        """
         ...
 
     @abstractmethod

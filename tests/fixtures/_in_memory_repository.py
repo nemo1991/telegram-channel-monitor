@@ -21,6 +21,7 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.storage.schema_report import SchemaReport
 
 
 class InMemoryRepository(StorageRepository):
@@ -37,6 +38,14 @@ class InMemoryRepository(StorageRepository):
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
     async def init_schema(self) -> None: ...
+
+    # 2026-09-23 v1.8.x:启动期 introspect/auto-repair — InMemory 无 schema
+    # 概念,固定返回 ok=True(跟 Mongo / JSONL 一致)。
+    async def introspect_schema(self) -> SchemaReport:
+        return SchemaReport()
+
+    async def repair_schema(self, report: SchemaReport) -> None:
+        return
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
         self.channels[channel.id] = channel

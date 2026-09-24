@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     # 正在编辑的其它字段)。
     paused: bool = Field(default=False)
 
+    # 2026-09-23 v1.8.x:启动期 schema introspect/auto-repair 开关。
+    # 默认 False(dry-run — drift 出现仅 log,不修);开启后 `ALTER TABLE ADD
+    # COLUMN IF NOT EXISTS`(无锁)会被自动跑,mongo unique 索引会被重建。
+    # missing_tables / wrong_types / extra_columns 永远仅 log(避免 DROP+CREATE
+    # 丢数据 / 类型 ALTER 重写表对大表 lock-heavy)。
+    # .env 字段:TG_SCHEMA_AUTO_REPAIR=true|false。
+    schema_auto_repair: bool = Field(default=False)
+
     # 2026-09-03 v1.5.4 PR #P4:主题持久化(空 = 不持久化,ThemeManager 走 session 内应用)。
     # 填 v1.5.0 PR #A5 的尾巴:settings_page 加 checkbox,勾选时启动从 .env 读
     # 主题并在 ThemeManager.apply 时回写;空字符串 = 与 v1.5.0 行为一致(不持久化)。

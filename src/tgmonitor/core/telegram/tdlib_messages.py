@@ -37,6 +37,29 @@ from tgmonitor.core.dto import (
 log = logging.getLogger(__name__)
 
 
+def _to_int_or_none(v: Any) -> int | None:
+    """TDLib int53 → Optional[int];None / 0 / '0' / '' / unparsable → None。
+
+    Why:TDLib Python 绑定对「absent」int53 字段(`media_album_id` /
+    `via_bot_user_id` / `reply_to_message_id` / `views` / `forwards` /
+    `File.size`)在某些 JSON 解码路径下返回字符串 `'0'`(不是 int `0`)。
+    原写法 `getattr(...) or None` 不触发 — `'0'` 是 truthy(非空字符串),
+    字符串直传到 dataclass DTO,最终 asyncpg 拒收
+    (`DataError: 'str' object cannot be interpreted as an integer`)。
+
+    这是单一转换点,所有 nullable int 字段必走。
+
+    Sentinel:`None` / `0` / `'0'` / `''` → None;可解析字符串 / int → int;
+    不可解析 → None。
+    """
+    if v is None or v == 0 or v == "0" or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_caption(content: Any) -> str:
     """`MessagePhoto.caption` / `MessageVideo.caption` 等的 FormattedText 提取。
 
@@ -92,7 +115,7 @@ def _file_id(file_obj: Any) -> str | None:
 def _file_size(file_obj: Any) -> int | None:
     if file_obj is None:
         return None
-    return getattr(file_obj, "size", None) or None
+    return _to_int_or_none(getattr(file_obj, "size", None))
 
 
 def _thumb_key_from(thumbnail: Any) -> tuple[str | None, str | None]:
@@ -428,17 +451,17 @@ def _map_message(msg: Any) -> MessageDTO:
         author=getattr(msg, "author_signature", None),
         date=datetime.fromtimestamp(date_ts, UTC) if date_ts else datetime.now(UTC),
         text=text_value,
-        views=getattr(msg, "views", None),
-        forwards=getattr(msg, "forwards", None),
+        views=_to_int_or_none(getattr(msg, "views", None)),
+        forwards=_to_int_or_none(getattr(msg, "forwards", None)),
         edited=getattr(msg, "edit_date", 0) > 0,
         media=media_list,
         # 2026-08-27 v1.4.0 PR #9:补 TDLib Message 5 个 v1.3.0 丢弃的字段。
-        reply_to_msg_id=getattr(msg, "reply_to_message_id", None) or None,
+        reply_to_msg_id=_to_int_or_none(getattr(msg, "reply_to_message_id", None)),
         forward_origin=_normalize_forward_origin(
             getattr(msg, "forward_origin", None),
         ),
-        via_bot_user_id=getattr(msg, "via_bot_user_id", None) or None,
-        media_album_id=getattr(msg, "media_album_id", None) or None,
+        via_bot_user_id=_to_int_or_none(getattr(msg, "via_bot_user_id", None)),
+        media_album_id=_to_int_or_none(getattr(msg, "media_album_id", None)),
         is_pinned=bool(getattr(msg, "is_pinned", False)),
     )
 

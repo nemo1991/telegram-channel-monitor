@@ -5,6 +5,99 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.2] - 2026-09-24
+
+主题:**TDLib `'0'` str 防御 + 启动期 schema introspect/auto-repair**。
+
+> 修现网 asyncpg `DataError: invalid input for query argument $13: '0'` 报错,
+> 同时启动期引入 introspect/auto-repair 机制,防止同类「DTO 类型不严格」或
+> 「schema 漂移」未来再触发。所有变更向后兼容,不需要升级干预。
+
+### 修现网 asyncpg `'0'` 报错(`core/telegram/tdlib_messages.py`)
+
+生产环境复现:`MonitorService._handle → save_message` 时 asyncpg 拒收
+`media_album_id='0'`(`$13` 为 str 不可解析为 int),整条消息永久丢失。
+
+**根因**:TDLib Python 绑定对 int53 字段("absent" 用 `0` 占位)在某些
+payload 路径下返回 **字符串 `'0'`**,不是 `int 0`。`tdlib_messages.py`
+原用 `getattr(...) or None` 兜底 — `'0'` truthy(非空字符串)所以 `or None`
+不触发,字符串直进 dataclass DTO,最终 asyncpg 拒收。
+
+- 新增 `_to_int_or_none(v)` helper 集中兜底;`None` / `0` / `'0'` / `''`
+  / 不可解析字符串 → `None`,可解析字符串 / int → `int`。
+- 替换 6 处 unsafe 站点:`file.size` / `views` / `forwards` /
+  `reply_to_msg_id` / `via_bot_user_id` / `media_album_id`。
+- `0` 语义变化:与已有 `reply_to_msg_id` `or None` 一致(TDLib int53 sentinel),
+  helper docstring 明示。
+
+### 启动期 schema introspect + dry-run auto-repair(`core/storage/*`)
+
+#### 单源:`core/storage/expected_schema.py`(新)
+
+`EXPECTED_SCHEMA` dict + `EXPECTED_TABLES` frozenset,4 表全部列;类型字符串
+匹配 `data_type` 大写(`BIGINT` / `INTEGER` / `TEXT` / `BOOLEAN` /
+`TIMESTAMPTZ` / `JSONB`),`BIGSERIAL` 视作 `BIGINT`。
+
+#### `core/storage/schema_report.py`(新)
+
+`SchemaReport` frozen dataclass:`missing_tables` / `missing_columns` /
+`wrong_types` / `extra_columns`。`ok = not missing_tables and not
+missing_columns`(`wrong_types` / `extra_columns` 不影响 ok)。
+
+#### `StorageRepository` ABC 加 2 个抽象(`core/storage/repository.py`)
+
+`introspect_schema()` / `repair_schema(report)`;所有后端必须实现
+(InMemory + Postgres + Mongo + Jsonl)。
+
+#### Postgres(`core/storage/postgres_repo.py`)
+
+- `introspect_schema`:`information_schema.tables` + `information_schema.columns`
+  比对 `EXPECTED_SCHEMA`,数组类型走 `udt_name.lstrip('_')` 统一为元素类型。
+- `repair_schema`:**保守** — `missing_columns` 走 `ALTER TABLE ADD COLUMN IF NOT EXISTS`
+  (幂等无锁);`missing_tables` 抛 `RuntimeError`(避免 DROP+CREATE 丢数据);
+  `wrong_types` / `extra_columns` 仅 log warning(类型 ALTER 重写表对大表 lock-heavy)。
+
+#### Mongo(`core/storage/mongo_repo.py`)
+
+- `introspect_schema`:`index_information()` 检查期望唯一索引 `(channel_id, telegram_msg_id)`
+  齐全;缺失时记入 `missing_columns`(运维提示)。
+- `repair_schema`:`create_index(..., unique=True, name='uq_channel_msg')` 重建;
+  wrap 在 try/except(已有重复数据时 mongomock / 真 Mongo 抛 DuplicateKey)。
+
+#### JSONL(`core/storage/jsonl_store.py`)
+
+- `introspect_schema`:扫所有已加载 message rows,检测 nullable int 字段
+  (`views` / `forwards` / `reply_to_msg_id` / `via_bot_user_id` /
+  `media_album_id` / media 子字段 `file_size` / `width` / `height` /
+  `duration`)是否被存成 str。命中字段写进 `wrong_types`。
+- `repair_schema`:**只 log warning**,不动磁盘(自动改 git-friendly 文本风险大);
+  内存视图下次 `save_message` 自然覆盖正确值,旧污染行需人工跑清理脚本。
+
+#### 配置开关(`core/config.py`)
+
+新增 `schema_auto_repair: bool = False`(.env 字段 `TG_SCHEMA_AUTO_REPAIR`)。
+默认 dry-run — drift 出现仅 log,不修;开启后自动 `ALTER TABLE ADD COLUMN`
+与重建 mongo 唯一索引。
+
+#### 启动钩子(`app.py:_bootstrap`)
+
+`init_schema()` 之后插入 introspect + 按开关决定 repair + 二次 introspect 校验;
+修复不完整抛 `RuntimeError` 拒绝启动(避免半修状态进监听循环)。
+
+### 测试
+
+- `tests/test_tdlib_message_mapping_helpers.py`(新)— 22 个 parametrize 覆盖
+  `_to_int_or_none` 全部 sentinel + 边界(int / str / float / bool)。
+- `tests/test_map_message.py`(扩)— 6 个 string-coverage 测试 + 1 个 regression
+  test 走完整 `_map_message → save_message`(testcontainers) 确认 asyncpg 不再拒。
+- `tests/property/test_tdlib_message_mapping.py`(扩)— Hypothesis 策略加
+  `st.sampled_from(['0', '1', '42', ''])` 覆盖 string int。
+- `tests/test_introspect_repair.py`(新)— 纯单元:`EXPECTED_SCHEMA` + `SchemaReport` 契约。
+- `tests/test_storage_backends_parity_introspect.py`(新)— Mongo(mongomock_motor)+
+  JSONL(tmp_path) parity。
+- `tests/integration/test_pg_repo_introspect_repair.py`(新)— 7 个真 PG case:
+  fresh ok / 缺列 / 类型错 / repair 加列 / 幂等 / 缺表拒绝 / 类型错不动。
+
 ## [1.8.1] - 2026-09-23
 
 主题:**启动 / 关闭流程修复 + CI 收尾**(v1.8.0 之后 11 个 commit)。
@@ -3185,7 +3278,10 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.1...v1.8.2
+[1.8.1]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.7.5...v1.8.0
 [1.2.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.23...v1.1.0
 [1.0.6]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.0.5...v1.0.6

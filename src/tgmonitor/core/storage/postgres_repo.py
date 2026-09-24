@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.storage.schema_report import SchemaReport
+
+log = logging.getLogger(__name__)
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
@@ -194,12 +198,117 @@ class PostgresRepository(StorageRepository):
                 # (pg_trgm GIN 索引需要)。log.warning 不抛 — `LOWER LIKE`
                 # 全表扫仍是合法行为,只是性能降级。生产环境若需要 GIN 加速
                 # 由 README 段引导手动 `CREATE EXTENSION pg_trgm`。
-                import logging
-
-                logging.getLogger(__name__).warning(
+                log.warning(
                     "init_schema 部分失败(可能是 pg_trgm 权限不足,功能仍可用): %s",
                     exc,
                 )
+
+    async def introspect_schema(self) -> SchemaReport:
+        """2026-09-23 v1.8.x:查 `information_schema` 比对 EXPECTED_SCHEMA。
+
+        - 数组列 data_type='ARRAY',udt_name='_text' → 统一为 'TEXT'
+        - BIGSERIAL data_type 是 BIGINT(序列身份隐含),直接比对
+        - 唯一索引 / GIN 不查(init_schema 已建;introspect 只关心列结构)
+
+        Returns:
+            SchemaReport 列出 missing_tables / missing_columns /
+            wrong_types / extra_columns。
+        """
+        from tgmonitor.core.storage.expected_schema import EXPECTED_SCHEMA, EXPECTED_TABLES
+        from tgmonitor.core.storage.schema_report import ColumnDrift
+
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            actual_tables = {
+                r["table_name"]
+                for r in await conn.fetch(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+                )
+            }
+            rows = await conn.fetch(
+                "SELECT table_name, column_name, data_type, udt_name "
+                "FROM information_schema.columns WHERE table_schema='public'"
+            )
+
+        actual_cols: dict[tuple[str, str], str] = {}
+        for r in rows:
+            dtype = r["data_type"].upper()
+            if dtype == "ARRAY":
+                dtype = r["udt_name"].lstrip("_").upper()
+            actual_cols[(r["table_name"], r["column_name"])] = dtype
+
+        missing_tables = sorted(EXPECTED_TABLES - actual_tables)
+        missing_columns: list[tuple[str, str, str]] = []
+        wrong_types: list[ColumnDrift] = []
+        extra_columns: list[tuple[str, str, str]] = []
+
+        for t, cols in EXPECTED_SCHEMA.items():
+            if t in missing_tables:
+                continue
+            for c, expected in cols.items():
+                actual = actual_cols.get((t, c))
+                if actual is None:
+                    missing_columns.append((t, c, expected))
+                elif actual != expected:
+                    wrong_types.append(ColumnDrift(t, c, expected, actual))
+        for (t, c), actual in actual_cols.items():
+            if t in EXPECTED_SCHEMA and c not in EXPECTED_SCHEMA[t]:
+                extra_columns.append((t, c, actual))
+
+        return SchemaReport(
+            missing_tables=missing_tables,
+            missing_columns=missing_columns,
+            wrong_types=wrong_types,
+            extra_columns=extra_columns,
+        )
+
+    async def repair_schema(self, report: SchemaReport) -> None:
+        """2026-09-23 v1.8.x:基于 report 跑幂等修复。
+
+        - `missing_columns` → `ALTER TABLE ADD COLUMN IF NOT EXISTS`(幂等 / 无锁)
+        - `missing_tables` → `raise RuntimeError`(避免 DROP+CREATE 丢数据;
+          运维手动跑 init_schema 即可)
+        - `wrong_types` → 仅 `log.warning`(类型 ALTER 重写表对大表
+          lock-heavy,不动)
+        - `extra_columns` → 仅 `log.info`(诊断信息,可能 legacy schema)
+
+        第二次 `introspect_schema()` 应返 ok=True(idempotent)。
+        """
+        assert self._pool is not None
+        if report.missing_tables:
+            raise RuntimeError(
+                f"schema repair: missing tables {report.missing_tables} — "
+                "manual init_schema() required (auto-repair refuses DROP+CREATE)"
+            )
+        if not report.missing_columns:
+            if report.wrong_types:
+                log.warning(
+                    "schema repair: %d column(s) have wrong types — NOT auto-fixed "
+                    "(manual ALTER COLUMN ... TYPE required)",
+                    len(report.wrong_types),
+                )
+            if report.extra_columns:
+                log.info(
+                    "schema repair: %d extra column(s) — diagnostic only",
+                    len(report.extra_columns),
+                )
+            return
+
+        async with self._pool.acquire() as conn, conn.transaction():
+            for t, c, expected in report.missing_columns:
+                log.warning("schema repair: adding missing column %s.%s (%s)", t, c, expected)
+                await conn.execute(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS "{c}" {expected}')
+        if report.wrong_types:
+            log.warning(
+                "schema repair: %d column(s) have wrong types — NOT auto-fixed "
+                "(manual ALTER COLUMN ... TYPE required)",
+                len(report.wrong_types),
+            )
+        if report.extra_columns:
+            log.info(
+                "schema repair: %d extra column(s) — diagnostic only",
+                len(report.extra_columns),
+            )
 
     async def ping(self) -> bool:
         """SELECT 1 探活;任何异常返 False。"""
