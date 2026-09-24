@@ -100,9 +100,14 @@ async def test_repair_schema_idempotent(pg_repo: PostgresRepository) -> None:
 async def test_repair_schema_refuses_missing_table(
     pg_repo: PostgresRepository,
 ) -> None:
-    """DROP TABLE messages → repair 抛 RuntimeError(避免 DROP+CREATE 丢数据)。"""
+    """DROP TABLE messages → repair 抛 RuntimeError(避免 DROP+CREATE 丢数据)。
+
+    `media.message_id_fkey` 是 messages 的 FK,直接 DROP messages 会被 PG
+    拒(DependentObjectsStillExistError)— CASCADE 把 media 一并干掉,本测试
+    关心的是 messages 表被 drop 后的 repair 行为,不是 FK 级联语义。
+    """
     async with pg_repo._pool.acquire() as conn:  # type: ignore[attr-defined]
-        await conn.execute("DROP TABLE messages")
+        await conn.execute("DROP TABLE messages CASCADE")
 
     report = await pg_repo.introspect_schema()
     assert "messages" in report.missing_tables

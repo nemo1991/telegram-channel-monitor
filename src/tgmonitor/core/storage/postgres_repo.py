@@ -206,9 +206,19 @@ class PostgresRepository(StorageRepository):
     async def introspect_schema(self) -> SchemaReport:
         """2026-09-23 v1.8.x:查 `information_schema` 比对 EXPECTED_SCHEMA。
 
-        - 数组列 data_type='ARRAY',udt_name='_text' → 统一为 'TEXT'
-        - BIGSERIAL data_type 是 BIGINT(序列身份隐含),直接比对
-        - 唯一索引 / GIN 不查(init_schema 已建;introspect 只关心列结构)
+        两侧归一化,使 EXPECTED 用「语义直观」的类型名(`TIMESTAMPTZ` /
+        `BIGSERIAL` / `TEXT[]`)而 PG 返回的 `information_schema.columns.data_type`
+        用「PG 内部」名(`TIMESTAMP WITH TIME ZONE` / `BIGINT` / `ARRAY`)。
+        对齐规则:
+        - actual:`'TIMESTAMP WITH TIME ZONE'` → `'TIMESTAMPTZ'`(PG 内部完整名
+          缩成 SQL 习惯名)
+        - actual:ARRAY 配 udt_name='_text' → `'TEXT'`(剥下划线前缀大写)
+        - expected:`'BIGSERIAL'` → `'BIGINT'`(BIGSERIAL 就是 BIGINT+sequence,
+          information_schema 不暴露序列身份)
+        - expected:`'TEXT[]'` / `'INTEGER[]'` → 元素类型名(与 actual ARRAY
+          归一化对称)
+
+        唯一索引 / GIN 不查(init_schema 已建;introspect 只关心列结构)。
 
         Returns:
             SchemaReport 列出 missing_tables / missing_columns /
@@ -216,6 +226,26 @@ class PostgresRepository(StorageRepository):
         """
         from tgmonitor.core.storage.expected_schema import EXPECTED_SCHEMA, EXPECTED_TABLES
         from tgmonitor.core.storage.schema_report import ColumnDrift
+
+        def _normalize_actual(dtype: str, udt: str) -> str:
+            d = dtype.upper()
+            if d == "TIMESTAMP WITH TIME ZONE":
+                return "TIMESTAMPTZ"
+            if d == "ARRAY":
+                return udt.lstrip("_").upper()
+            return d
+
+        def _normalize_expected(t: str) -> str:
+            # `TEXT[]` / `INTEGER[]` / `BIGINT[]` → 元素类型,与 actual 对称
+            if t.endswith("[]"):
+                return t[:-2]
+            # BIGSERIAL / SERIAL 在 PG 内都是对应整型 + 序列;information_schema
+            # 不暴露序列身份,data_type 就是 bigint / integer。
+            if t == "BIGSERIAL":
+                return "BIGINT"
+            if t == "SERIAL":
+                return "INTEGER"
+            return t
 
         assert self._pool is not None
         async with self._pool.acquire() as conn:
@@ -232,10 +262,9 @@ class PostgresRepository(StorageRepository):
 
         actual_cols: dict[tuple[str, str], str] = {}
         for r in rows:
-            dtype = r["data_type"].upper()
-            if dtype == "ARRAY":
-                dtype = r["udt_name"].lstrip("_").upper()
-            actual_cols[(r["table_name"], r["column_name"])] = dtype
+            actual_cols[(r["table_name"], r["column_name"])] = _normalize_actual(
+                r["data_type"], r["udt_name"]
+            )
 
         missing_tables = sorted(EXPECTED_TABLES - actual_tables)
         missing_columns: list[tuple[str, str, str]] = []
@@ -245,12 +274,13 @@ class PostgresRepository(StorageRepository):
         for t, cols in EXPECTED_SCHEMA.items():
             if t in missing_tables:
                 continue
-            for c, expected in cols.items():
+            for c, expected_raw in cols.items():
                 actual = actual_cols.get((t, c))
+                expected = _normalize_expected(expected_raw)
                 if actual is None:
-                    missing_columns.append((t, c, expected))
+                    missing_columns.append((t, c, expected_raw))
                 elif actual != expected:
-                    wrong_types.append(ColumnDrift(t, c, expected, actual))
+                    wrong_types.append(ColumnDrift(t, c, expected_raw, actual))
         for (t, c), actual in actual_cols.items():
             if t in EXPECTED_SCHEMA and c not in EXPECTED_SCHEMA[t]:
                 extra_columns.append((t, c, actual))
