@@ -21,10 +21,20 @@ from tgmonitor.ui.main_window import MainWindow  # noqa: E402
 
 
 class _FakeWindow:
-    """最小桩:只提供 `_on_conn_state` 需要的 `_conn_label`。"""
+    """最小桩:只提供 `_on_conn_state` 需要的 `_conn_label` + activity label。
+
+    2026-09-25 v1.8.x:_on_conn_state 同时调 `_show_activity`,所以桩也
+    要带 `_activity_label` 和 `_activity_throttle`(否则 AttributeError)。
+    """
 
     def __init__(self) -> None:
         self._conn_label = QLabel("TG 未连接")
+        self._activity_label = QLabel("")
+        self._activity_throttle: dict[str, float] = {}
+
+    # 绑 MainWindow 上的 unbound method,slot 内会调到
+    _show_activity = MainWindow._show_activity
+    _throttle_activity = MainWindow._throttle_activity
 
 
 def test_conn_state_label_default(qapp) -> None:

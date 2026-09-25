@@ -1072,16 +1072,24 @@ class PostgresRepository(StorageRepository):
             search,
         )
         sort_col = _MEDIA_SORT_COLUMN[sort]
+        # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
+        # `media` 表没有该列(JSONL 用 enumerate、Mongo 用 `$unwind
+        # includeArrayIndex`,都运行时生成;PG 的 PR #3 把 media 拆成独立表
+        # 时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY m.id
+        # ORDER BY me.id) - 1` 按 me.id(BIGSERIAL,等价于 save_message 的
+        # INSERT 顺序)在每条 message 内部从 0 起编。与 Jsonl enumerate /
+        # Mongo unwind 顺序三者对齐,UI `(channel_id, telegram_msg_id,
+        # media_idx)` 三元组定位语义不变。
         sql = [
             "SELECT m.*, me.id AS media_id, me.type AS media_type,",
             "       me.mime_type, me.file_name, me.file_size, me.width, me.height,",
             "       me.duration, me.telegram_file_id, me.object_key,",
             "       me.object_backend, me.thumb_key, me.thumb_backend, me.emoji,",
             "       me.download_status AS media_dl_status, me.download_error,",
-            "       me.media_idx",
+            "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx",
             "FROM messages m JOIN media me ON me.message_id = m.id",
             f"WHERE {where_sql}",
-            f"ORDER BY {sort_col} {sort_dir.value.upper()}, m.id DESC, me.media_idx ASC",
+            f"ORDER BY {sort_col} {sort_dir.value.upper()}, m.id DESC, media_idx ASC",
         ]
         if limit:
             sql.append(f"LIMIT ${next_idx} OFFSET ${next_idx + 1}")

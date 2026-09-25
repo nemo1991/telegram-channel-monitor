@@ -21,11 +21,12 @@ from pathlib import Path
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import Settings
-from tgmonitor.core.events import EventBus
+from tgmonitor.core.events import ErrorOccurred, EventBus
 from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
 from tgmonitor.core.objectstore.factory import build_object_store
 from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.telegram.factory import build_telegram_client
+from tgmonitor.ui.main_window import MainWindow
 
 log = logging.getLogger(__name__)
 
@@ -357,7 +358,13 @@ def run() -> None:
     env_path = _user_data_dir() / ".env"
 
     async def _setup_then_show() -> None:
-        """一次性做完:async 装配 → MainWindow 构造 → window.show()。
+        """一次性做完:async 装配 → MainWindow 构造 → window.show() → 后台启动服务。
+
+        2026-09-25 v1.8.x:把 list_subscribed + set_whitelist + monitor.start +
+        app.bootstrap 拆到 `_background_startup` 后台 task,让 win.show() 立即
+        执行 — 避免冷启动 / libtdjson 慢(1-5s,断网可达 10s+)时用户对着空白
+        dock 图标干等。UI 在 win.show() 后立即可见,后台启动各 step 通过
+        `win._show_activity(...)` 在状态栏左侧活动指示器滚动显示。
 
         整个跑在 qasync 的 loop 上,与 Qt 事件交错。这样 loop 始终 running,
         彻底去掉旧 `run_until_complete` + `run_forever` 中间的 paused 窗口。
@@ -369,41 +376,23 @@ def run() -> None:
                 env_path=env_path,
             )
 
-            # 启动 monitor(频道白名单在 monitor 起来前先建好,避免漏掉启动期到达的消息)
-            # 2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start()(不连 TDLib
-            # + 不开 download worker)+ 跳过 app.bootstrap()(不调 client.start())。
-            # client.state 保持 "uninit" 是 explicit:用户已选暂停,TDLib 不该连。
-            # UI(tray icon / status bar / VM)读 app.is_paused=True → 显 ⏸。
-            # 用户点 tray 「恢复监听」走 resume_monitor() 走 client.start() +
-            # monitor.start() 正常流程,LoginStateChanged 此时正常 fire。
-            t = time.monotonic()
-            subscribed = await app_svc.storage.list_subscribed_channels()
-            monitor.set_whitelist(c.id for c in subscribed)
-            log.info(
-                "[setup] loaded %d subscribed channels from storage in %.2fs",
-                len(subscribed),
-                time.monotonic() - t,
-            )
-
             state["app"] = app_svc
             state["monitor"] = monitor
             state["settings"] = settings
 
-            if app_svc.is_paused:
-                log.info(
-                    "[setup] settings.paused=true — skip monitor.start() + "
-                    "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
-                )
-            else:
-                t = time.monotonic()
-                await monitor.start()
-                log.info("[setup] monitor.start() returned in %.2fs", time.monotonic() - t)
-
-                # 启动时自动检测本地 session:有效就直接 ready,无效走 phone_required
-                # 这一步会发 LoginStateChanged → main_window 订阅在它之后,所以事件不丢
-                t = time.monotonic()
-                login_state, login_detail = await app_svc.bootstrap()
-                log.info("[setup] app.bootstrap() done in %.2fs", time.monotonic() - t)
+            # UI 构造 — 现在 services 已构造,事件总线已就位。
+            # 注意:此时 monitor 还没 start() / bootstrap 还没跑,但 UI 读
+            # app.is_paused / monitor.subscribed_ids 都有兜底,header 状态由
+            # LoginStateChanged 驱动(后台 bootstrap 完成后会自动 fire)。
+            win = MainWindow(app_svc, monitor, loop, env_path=env_path, objects_error=objects_error)
+            # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
+            # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
+            # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
+            # "mutex lock failed: Invalid argument" 析构崩溃。
+            win.set_shutdown_callback(_shutdown_async)
+            win.show()
+            state["win"] = win
+            log.info("[setup] win.show() done in %.2fs", time.monotonic() - t_setup)
 
             # 启动 orphan reconcile(2026-08-24):dry_run=True 默认只 log 不删,
             # 给 2 秒延迟让 storage / objectstore 完全 ready 再扫。后续 Prune
@@ -417,18 +406,9 @@ def run() -> None:
 
             asyncio.create_task(_startup_reconcile())
 
-            # UI 构造 — 现在 services 都 ready,事件总线已就位
-            from tgmonitor.ui.main_window import MainWindow
-
-            win = MainWindow(app_svc, monitor, loop, env_path=env_path, objects_error=objects_error)
-            # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
-            # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
-            # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
-            # "mutex lock failed: Invalid argument" 析构崩溃。
-            win.set_shutdown_callback(_shutdown_async)
-            win.show()
-            state["win"] = win
-            log.info("[setup] full _setup_then_show done in %.2fs", time.monotonic() - t_setup)
+            # 后台启动服务(白名单 + monitor + bootstrap)— win 可见之后异步跑,
+            # 不阻塞主窗口出现。activity label 滚动显示当前步骤。
+            asyncio.create_task(_background_startup(app_svc, monitor, win))
         except BaseException as e:  # noqa: BLE001
             # 不能 raise 出 setup_then_show —— 没人在 await 它,异常会被
             # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出
@@ -442,6 +422,71 @@ def run() -> None:
                 qt_app.quit()
             except Exception:  # noqa: BLE001
                 log.exception("qt_app.quit() raised during setup failure")
+
+    async def _background_startup(
+        app_svc: AppService,
+        monitor: MonitorService,
+        win: MainWindow,
+    ) -> None:
+        """win.show() 之后在后台跑的启动步骤:
+
+        1. 加载白名单(list_subscribed + set_whitelist)
+        2. monitor.start()(起 asyncio worker)
+        3. app.bootstrap()(调 libtdjson 启动会话,触发 LoginStateChanged)
+
+        每步通过 `win._show_activity(...)` 更新状态栏左侧活动指示器,出错走
+        ErrorOccurred 事件(bus subscriber 已存在,自动弹窗/计数)。
+
+        2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start + bootstrap。
+        client.state 保持 "uninit",用户点 tray「继续监听」走 resume_monitor。
+        """
+        try:
+            # Step 1: 加载白名单
+            win._show_activity("加载已订阅频道...")
+            t = time.monotonic()
+            subscribed = await app_svc.storage.list_subscribed_channels()
+            monitor.set_whitelist(c.id for c in subscribed)
+            log.info(
+                "[startup-bg] loaded %d subscribed channels from storage in %.2fs",
+                len(subscribed),
+                time.monotonic() - t,
+            )
+
+            if app_svc.is_paused:
+                log.info(
+                    "[startup-bg] settings.paused=true — skip monitor.start() + "
+                    "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
+                )
+                win._show_activity("监听已暂停 — 点 tray「继续监听」启动")
+                return
+
+            # Step 2: 启动 monitor
+            win._show_activity("启动监听服务...")
+            t = time.monotonic()
+            await monitor.start()
+            log.info("[startup-bg] monitor.start() returned in %.2fs", time.monotonic() - t)
+
+            # Step 3: bootstrap libtdjson — 触发 LoginStateChanged,header 自动跟进
+            win._show_activity("连接 Telegram...")
+            t = time.monotonic()
+            login_state, login_detail = await app_svc.bootstrap()
+            log.info(
+                "[startup-bg] app.bootstrap() done in %.2fs state=%s",
+                time.monotonic() - t,
+                login_state,
+            )
+
+            # 稳态:清空活动指示器(后续 LoginStateChanged / 错误事件会再次填充)
+            win._show_activity("")
+        except Exception as exc:
+            log.exception("[startup-bg] failed")
+            try:
+                win._show_activity(f"启动失败: {exc}")
+            except Exception:  # noqa: BLE001
+                pass
+            await app_svc.bus.publish(
+                ErrorOccurred(source="startup", message=str(exc), exception=exc)
+            )
 
     async def _shutdown_async() -> None:
         monitor = state.get("monitor")

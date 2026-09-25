@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
@@ -62,9 +63,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import ChannelDTO, MessageDTO, SyncOptions
+from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MessageDTO, SyncOptions
 from tgmonitor.core.events import (
     AuthErrorOccurred,
+    ChannelSyncDone,
+    ChannelSyncProgress,
     LoginStateChanged,
     MediaDownloaded,
     MessageDeleted,
@@ -463,6 +466,21 @@ class MainWindow(QMainWindow):
         # 状态栏
         self.setStatusBar(QStatusBar())
         self.status_bar = self.statusBar()
+        # 2026-09-25 v1.8.x:左侧活动指示器 — addWidget(stretch=1) 占 LEFT。
+        # 与右侧 addPermanentWidget(conn/pause/bell/objects)职责分离:
+        # RIGHT = 持久状态(连接态/暂停/错误/对象存储);LEFT = 当前活动
+        # (登录/同步/导出/网络事件/错误)。transient showMessage 走中间区
+        # 不冲突。_show_activity(text, *, timeout_ms=None) 是统一入口,
+        # 各 slot(LoginStateChanged / SyncProgress / ExportDone / Error /
+        # MessageReceived 限频 等)都调它。
+        self._activity_label = QLabel("")
+        self._activity_label.setObjectName("statusActivityLabel")
+        self._activity_label.setMinimumWidth(200)
+        self._activity_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        # 节流:同一 key 在 min_interval_ms 内只更新一次,避免 MessageReceived
+        # 等高频事件把 label 刷成流水账。
+        self._activity_throttle: dict[str, float] = {}
+        self.status_bar.addWidget(self._activity_label, 1)
         # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
         # 2026-09-07 v1.6.8:tr() 包裹。后续 _on_conn_state_changed 会重 setText,
         # 也会走 tr()。
@@ -730,6 +748,10 @@ class MainWindow(QMainWindow):
         # 系统通知已由 TrayIcon 发出;此处只走状态栏(覆盖两种环境)
         if self._tray is None or not self._tray.is_active:
             self.statusBar().showMessage(f"{event.title}: {event.body}", 5000)
+        # 活动指示器:无 tray 兜底时也走左侧;有 tray 时左侧仍给提示
+        # (用户若盯着主窗口不切到 tray,也能看到)
+        prefix = "⚠ " if event.level == "error" else ("⚡ " if event.level == "warning" else "")
+        self._show_activity(f"{prefix}{event.title}: {event.body}", timeout_ms=5000)
 
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键 — v1.6.9 重构。
@@ -1285,6 +1307,13 @@ class MainWindow(QMainWindow):
         self._vm.export_done.connect(self._on_export_done)
         self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
+        # 2026-09-25 v1.8.x:同步/导出进度 → 状态栏左侧活动指示器。
+        # 之前 sync_progress / export_progress 只绑 dialog,MainWindow 不感知,
+        # 现在多连一份到 _on_sync_progress / _on_export_progress — 不影响
+        # dialog(dialog 自己接的 signal 仍生效,Qt signal 多订阅互不干扰)。
+        self._vm.sync_progress.connect(self._on_sync_progress)
+        self._vm.sync_done.connect(self._on_sync_done)
+        self._vm.export_progress.connect(self._on_export_progress)
         # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
         # vm.search_messages(...) 完成后 emit `message_search_results(list[MessageDTO])`,
         # MainWindow 接到直接 `set_messages` 替换视图(覆盖原有 LIVE 流)。
@@ -1312,6 +1341,7 @@ class MainWindow(QMainWindow):
 
     def _on_refresh_channels(self) -> None:
         self.status_bar.showMessage(self.tr("拉取频道列表…"), 2000)
+        self._show_activity("拉取频道列表…")
         self._vm.refresh_joined_channels()
 
     def _on_export(self) -> None:
@@ -1466,6 +1496,14 @@ class MainWindow(QMainWindow):
             return
         self.header.update_state(e.state, e.detail)
         self._refresh_state()
+        # 活动指示器:与 _on_login_state VM slot 同语义,这里走 EventBus 路径
+        # (TDLib 走原始 dict 经 EventBus → UI,与 VM 走 Qt signal 双轨)。
+        if e.state in ("ready", "logged_in"):
+            self._show_activity("登录完成", timeout_ms=2000)
+        elif e.state in ("error", "closed"):
+            self._show_activity(f"登录失败: {e.state}", timeout_ms=5000)
+        else:
+            self._show_activity(f"登录中: {e.state}")
 
     async def _on_bus_auth_error(self, e) -> None:
         """2026-09-14 v1.7.5 PR #6 (P0-K):鉴权错误入口。
@@ -1527,6 +1565,42 @@ class MainWindow(QMainWindow):
         self._error_log.clear()
         self._bell_btn.setVisible(False)
 
+    # ======================== 状态栏活动指示器 ========================
+
+    def _show_activity(self, text: str, *, timeout_ms: int | None = None) -> None:
+        """更新左侧活动指示器。
+
+        Args:
+            text: 显示文案;空串 = 清空。
+            timeout_ms: None = 持续显示(长时活动,登录/同步进度等);
+                >0 = ms 后自动清空(短促事件,导出完成 / 设置已更新等)。
+
+        与现有 `status_bar.showMessage(text, ms)` 互补不冲突 — showMessage
+        走中间消息区(瞬时提示),此 label 走左侧 stretch 区(持续活动)。
+        """
+        self._activity_label.setText(text)
+        if timeout_ms is not None and timeout_ms > 0:
+            QTimer.singleShot(timeout_ms, lambda: self._activity_label.setText(""))
+
+    def _throttle_activity(
+        self,
+        key: str,
+        text: str,
+        min_interval_ms: int,
+        timeout_ms: int | None = None,
+    ) -> None:
+        """节流版 _show_activity:同一 key 在 min_interval_ms 内最多更新 1 次。
+
+        用于 MessageReceived 等高频事件,避免 label 被刷成流水账。节流期内
+        直接 return,不更新 label;节流期外更新 + 重置时间戳。
+        """
+        now = time.monotonic() * 1000.0
+        last = self._activity_throttle.get(key, 0.0)
+        if now - last < min_interval_ms:
+            return
+        self._activity_throttle[key] = now
+        self._show_activity(text, timeout_ms=timeout_ms)
+
     # ======================== VM 事件回调 ========================
 
     def _on_message_received(self, m: MessageDTO) -> None:
@@ -1534,6 +1608,15 @@ class MainWindow(QMainWindow):
             {cid: ch.title for cid, ch in self._vm.known_channels.items()}
         )
         self.live_view.append(m)
+        # 活动指示器:限频 1.5s/次,避免大流量刷屏
+        ch_title = self._vm.known_channels.get(m.channel_id)
+        title = ch_title.title if ch_title else f"#{m.channel_id}"
+        self._throttle_activity(
+            "message_received",
+            f"+1 {title}",
+            min_interval_ms=1500,
+            timeout_ms=1200,
+        )
 
     def _on_message_edited(self, m: MessageDTO) -> None:
         """2026-08-24:TDLib updateMessageContent → MessageEdited 事件 → 整条 cell 重渲。
@@ -1572,15 +1655,65 @@ class MainWindow(QMainWindow):
             e.media,
         )
         self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
+        # 活动指示器:成功/失败短促显示文件名;失败用 ⚠ 前缀
+        fname = e.media.file_name or "?"
+        if e.media.download_status == MediaDownloadStatus.DONE:
+            self._show_activity(f"已下载: {fname}", timeout_ms=1500)
+        else:
+            self._show_activity(f"⚠ 下载失败: {fname}", timeout_ms=3000)
 
     def _on_login_state(self, state: str) -> None:
         self.status_bar.showMessage(self.tr("登录状态: {state}").format(state=state), 4000)
+        # 活动指示器:登录是持续过程,登录中显示中间态,登录完成短暂提示后清空。
+        if state in ("ready", "logged_in"):
+            self._show_activity("登录完成", timeout_ms=2000)
+        elif state in ("error", "closed"):
+            self._show_activity(f"登录失败: {state}", timeout_ms=5000)
+        else:
+            # phone_required / code_required / password_required — 等待用户输入
+            self._show_activity(f"登录中: {state}")
 
     def _on_conn_state(self, state: str) -> None:
         # 2026-09-07 v1.6.8:conn state 翻译走 module-level _conn_state_label()
         # 函数(用 QCoreApplication.translate,无需 self.tr())— 这样 test 用
         # _FakeWindow(无 tr()) 也能正确触发翻译表。
         self._conn_label.setText(_conn_state_label(state))
+        # 活动指示器:连接态短促提示,稳态时清空(右侧 conn_label 已是持久指示)
+        if state == "ready":
+            self._show_activity("TG 已连接", timeout_ms=1500)
+        elif state in ("connecting", "updating"):
+            self._show_activity(f"TG 连接中: {state}")
+        elif state == "waiting_for_network":
+            self._show_activity("等待网络…")
+
+    def _on_export_progress(self, progress: object) -> None:
+        """导出进度 → 左侧活动指示器持续显示。dialog 自身的进度条同步显示。"""
+        # progress 可能是 dict 或 dataclass;兼容两种
+        done = getattr(progress, "done", None)
+        total = getattr(progress, "total", None)
+        if done is None and isinstance(progress, dict):
+            done = progress.get("done")
+            total = progress.get("total")
+        if done is not None and total:
+            self._show_activity(f"导出 {done}/{total}")
+
+    def _on_sync_progress(self, e) -> None:
+        """全量同步进度 → 左侧活动指示器持续显示。dialog 自身进度条同步。"""
+        if not isinstance(e, ChannelSyncProgress):
+            return
+        if e.total and e.total > 0:
+            self._show_activity(f"同步 #{e.channel_id}: {e.done}/{e.total} ({e.stage})")
+        else:
+            self._show_activity(f"同步 #{e.channel_id}: {e.stage}")
+
+    def _on_sync_done(self, e) -> None:
+        """全量同步完成 → 短暂显示汇总。"""
+        if not isinstance(e, ChannelSyncDone):
+            return
+        msg = f"同步完成: +{e.new_messages} 条新消息"
+        if e.failures:
+            msg += f" / {len(e.failures)} 失败"
+        self._show_activity(msg, timeout_ms=3000)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         # 2026-08-30 v1.5.0 PR #A3:关闭进度对话框(如有)— dialog 自身
@@ -1593,6 +1726,7 @@ class MainWindow(QMainWindow):
             del self._export_dialog
         if error:
             QMessageBox.critical(self, self.tr("导出失败"), error)
+            self._show_activity(f"⚠ 导出失败: {error}", timeout_ms=5000)
         elif result:
             QMessageBox.information(
                 self,
@@ -1603,10 +1737,13 @@ class MainWindow(QMainWindow):
                     n_bytes=result["bytes_written"],
                 ),
             )
+            self._show_activity(f"导出完成: {result['out_path']}", timeout_ms=4000)
 
     def _on_error(self, msg: str) -> None:
         log.warning("error: %s", msg)
         self.status_bar.showMessage(f"⚠ {msg}", 5000)
+        # 活动指示器同步显示(右侧 conn + 中间 showMessage + 左侧 activity 三处)
+        self._show_activity(f"⚠ {msg}", timeout_ms=5000)
 
     def _on_settings_changed(
         self,
@@ -1630,6 +1767,7 @@ class MainWindow(QMainWindow):
             log.exception("reload_shortcuts failed in _on_settings_changed (non-fatal)")
         msg = self.tr("已热重载: {what} → {backend}").format(what=what, backend=backend_label)
         self.status_bar.showMessage(msg, 5000)
+        self._show_activity(msg, timeout_ms=5000)
         if needs_relogin:
             QMessageBox.information(
                 self,
@@ -1995,6 +2133,8 @@ class MainWindow(QMainWindow):
         if not isinstance(e, MessageDeleted):
             return
         self.live_view.remove_row(e.channel_id, e.telegram_msg_id)
+        # 活动指示器:删除消息短促提示(LIVE 流的删除可能用户没注意到)
+        self._show_activity(f"已删除 #{e.channel_id}/{e.telegram_msg_id}", timeout_ms=2000)
 
     # ======================== 同步请求 ========================
 
