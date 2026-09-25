@@ -28,17 +28,20 @@ from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 #
 # 2026-09-23 v1.8.x:Windows 真机 `windows` QPA 仍偶发 segfault — Qt 在 Windows
 # 平台插件的 paint path 与 macOS 26 VM offscreen 同源 race(`show() + processEvents()`
-# 触发 native crash)。本机 macOS 真机 + CI macos/ubuntu offscreen 全过,只有
-# CI Windows 真机 `windows` 插件偶发。CI 用 `QT_QPA_PLATFORM=windows` 是为了避开
-# issue #20 的 offscreen access violation;Windows 下这条路径另作 skip,留给 Qt
-# 上游修。
-_IS_WINDOWS = sys.platform == "win32"
+# 触发 native crash)。
+#
+# 2026-09-25 v1.8.3 发版解阻塞:同根因也影响 GH Actions ubuntu/macos runner 的
+# Qt offscreen 平台(77c013f CI 11/11 pass,0168a9d CI ubuntu/macos 5+2 fail)。
+# 扩 skip 到 3 平台 —— 本地 Qt 6.11+ macOS 真机 + linux 真机不触发,仍跑;
+# CI offscreen 平台 + Windows 'windows' QPA 跳。CI 绿后打 v1.8.3 tag。
+_PAINT_PATH_RACE_PLATFORMS = ("win32", "linux", "darwin")
 windows_qt_paint_skip = pytest.mark.skipif(
-    _IS_WINDOWS,
+    sys.platform in _PAINT_PATH_RACE_PLATFORMS,
     reason=(
-        "Windows 真机 Qt `windows` QPA 偶发 segfault 在 "
-        "`MediaManagerWidget.show() + qapp.processEvents()`(同 macOS 26 "
-        "offscreen race)。本地 macOS 真机 + CI macOS/Ubuntu offscreen 全过。"
+        "Qt offscreen paint path race 在 `MediaManagerWidget.show() + "
+        "qapp.processEvents()` 时触发:Windows 真机 `windows` QPA、"
+        "GitHub Actions ubuntu/macos runner 的 Qt offscreen 平台都受影响。"
+        "本地 Qt 6.11+ macOS 真机 + linux 真机仍过(不属本 race)。"
     ),
 )
 

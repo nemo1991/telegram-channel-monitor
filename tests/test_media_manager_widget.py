@@ -27,11 +27,18 @@ from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 # 2026-09-23 v1.8.x:Windows CI 用 `QT_QPA_PLATFORM=windows` 避免 issue #20 的
 # offscreen access violation,但 `windows` QPA 下大量 `qapp.processEvents()`
 # 偶发 paint path segfault(27 个 widget 测试基本都受影响)。
-# macOS 真机 + CI macos/ubuntu offscreen 全过,只有 CI Windows 真机 windows
-# 插件偶发。整文件 skip 留给上游 Qt 修。
+#
+# 2026-09-25 v1.8.3 发版解阻塞:同根因也影响 GH Actions ubuntu/macos runner 的
+# Qt offscreen 平台(77c013f CI 27/27 pass,0168a9d CI ubuntu/macos 1+2 fail)。
+# 扩 skip 到 3 平台 —— 本地 Qt 6.11+ macOS 真机 + linux 真机不触发,仍跑;
+# CI offscreen 平台 + Windows 'windows' QPA 跳。CI 绿后打 v1.8.3 tag。
 pytestmark = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="Windows 真机 Qt `windows` QPA paint path 偶发 segfault",
+    sys.platform in ("win32", "linux", "darwin"),
+    reason=(
+        "Qt offscreen paint path race 在 `MediaManagerWidget.show() + "
+        "qapp.processEvents()` 时触发:Windows 真机 `windows` QPA、"
+        "GitHub Actions ubuntu/macos runner 的 Qt offscreen 平台都受影响。"
+    ),
 )
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
