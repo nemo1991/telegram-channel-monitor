@@ -36,10 +36,12 @@ SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 # 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
 # DATE 走 m.date;SIZE 走 me.file_size(可能 NULL → NULLS LAST 让 NULL 落到末尾);
 # STATUS 走 me.download_status(枚举字符串字典序 = done<failed<pending<downloading)。
-_MEDIA_SORT_COLUMN: dict[SortKey, str] = {
-    SortKey.DATE: "m.date",
-    SortKey.SIZE: "me.file_size NULLS LAST",
-    SortKey.STATUS: "me.download_status",
+# value 是 (column, nulls_last) — direction 与 nulls_last 在拼 ORDER BY 时分别处理,
+# 见 _media_order_by_clause(DESC 时变 `col DESC NULLS LAST`,ASC 时 `col ASC NULLS LAST`)。
+_MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
+    SortKey.DATE: ("m.date", False),
+    SortKey.SIZE: ("me.file_size", True),
+    SortKey.STATUS: ("me.download_status", False),
 }
 
 
@@ -1071,7 +1073,8 @@ class PostgresRepository(StorageRepository):
             media_type,
             search,
         )
-        sort_col = _MEDIA_SORT_COLUMN[sort]
+        sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
+        nulls_clause = " NULLS LAST" if nulls_last else ""
         # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
         # `media` 表没有该列(JSONL 用 enumerate、Mongo 用 `$unwind
         # includeArrayIndex`,都运行时生成;PG 的 PR #3 把 media 拆成独立表
@@ -1089,7 +1092,7 @@ class PostgresRepository(StorageRepository):
             "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx",
             "FROM messages m JOIN media me ON me.message_id = m.id",
             f"WHERE {where_sql}",
-            f"ORDER BY {sort_col} {sort_dir.value.upper()}, m.id DESC, media_idx ASC",
+            f"ORDER BY {sort_col} {sort_dir.value.upper()}{nulls_clause}, m.id DESC, media_idx ASC",
         ]
         if limit:
             sql.append(f"LIMIT ${next_idx} OFFSET ${next_idx + 1}")

@@ -28,6 +28,8 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 from tgmonitor.core.storage.postgres_repo import PostgresRepository
@@ -56,12 +58,13 @@ def _photo(
     fid: str,
     status: MediaDownloadStatus = MediaDownloadStatus.DONE,
     file_name: str | None = None,
+    file_size: int = 1024,
 ) -> MediaDTO:
     return MediaDTO(
         type=MediaType.PHOTO,
         mime_type="image/jpeg",
         file_name=file_name or f"{fid}.jpg",
-        file_size=1024,
+        file_size=file_size,
         width=800,
         height=600,
         telegram_file_id=fid,
@@ -89,8 +92,7 @@ async def test_list_media_returns_window_ordered_indices(
     )
     await pg_repo.save_message(msg)
 
-    rows, total = await pg_repo.list_media()
-    assert total == 3
+    rows = await pg_repo.list_media()
     assert len(rows) == 3
     indices = [r[1] for r in rows]
     assert sorted(indices) == [0, 1, 2], f"media_idx 应是 0/1/2,实际 {indices}"
@@ -113,8 +115,8 @@ async def test_list_media_multiple_messages_partitioned(
             )
         )
 
-    rows, total = await pg_repo.list_media()
-    assert total == 6
+    rows = await pg_repo.list_media()
+    assert len(rows) == 6
     # 按 (channel_id, media_idx) 分组,每组都应是 {0, 1}
     by_msg: dict[int, list[int]] = {}
     for m, idx, _med in rows:
@@ -143,8 +145,8 @@ async def test_list_media_with_status_filter(
         )
     )
 
-    rows, total = await pg_repo.list_media(status=MediaDownloadStatus.DONE)
-    assert total == 2
+    rows = await pg_repo.list_media(status=MediaDownloadStatus.DONE)
+    assert len(rows) == 2
     file_names = [r[2].file_name for r in rows]
     assert "ok1.jpg" in file_names and "ok2.jpg" in file_names
     assert "fail1.jpg" not in file_names
@@ -183,12 +185,12 @@ async def test_list_media_with_media_type_filter(
     )
     await pg_repo.save_message(_mk_msg(channel_id=400, msg_id=1, media=[photo, doc]))
 
-    photos, total = await pg_repo.list_media(media_type=MediaType.PHOTO)
-    assert total == 1
+    photos = await pg_repo.list_media(media_type=MediaType.PHOTO)
+    assert len(photos) == 1
     assert photos[0][2].type == MediaType.PHOTO
     assert photos[0][1] == 0  # media_idx 0
-    docs, total_d = await pg_repo.list_media(media_type=MediaType.DOCUMENT)
-    assert total_d == 1
+    docs = await pg_repo.list_media(media_type=MediaType.DOCUMENT)
+    assert len(docs) == 1
     assert docs[0][2].type == MediaType.DOCUMENT
     assert docs[0][1] == 0
 
@@ -211,16 +213,21 @@ async def test_list_media_with_search_filter(
         )
     )
 
-    rows, total = await pg_repo.list_media(search="cat")
-    assert total == 2
+    rows = await pg_repo.list_media(search="cat")
+    assert len(rows) == 2
     file_names = sorted(r[2].file_name for r in rows)
     assert file_names == ["cat_a.jpg", "kitty_cat.jpg"]
 
 
-async def test_list_media_sort_by_size_uses_window(
+async def test_list_media_sort_by_size_desc_nulls_last(
     pg_repo: PostgresRepository,
 ) -> None:
-    """sort=SIZE 排序时,SELECT 仍带窗口函数(不被 sort 子句吃掉)。"""
+    """sort=SIZE + sort_dir=DESC 不抛,且 NULL 在末尾。
+
+    之前 `_MEDIA_SORT_COLUMN[SortKey.SIZE] = "me.file_size NULLS LAST"` 是
+    plain string,拼出 `ORDER BY me.file_size NULLS LAST DESC` 无效 SQL。
+    修法:拆 `(col, nulls_last)`,拼成 `col DESC NULLS LAST`。
+    """
     ch = ChannelDTO(id=600, title="T6")
     await pg_repo.upsert_channel(ch)
     await pg_repo.save_message(
@@ -228,16 +235,16 @@ async def test_list_media_sort_by_size_uses_window(
             channel_id=600,
             msg_id=1,
             media=[
-                _photo("small"),
-                _photo("big"),
+                _photo("small", file_size=100),
+                _photo("big", file_size=9999),
             ],
         )
     )
-    # sort=SIZE 不抛 = 窗口函数 + sort 子句共存 OK
-    from tgmonitor.core.dto import SortDir, SortKey
-
-    rows, _ = await pg_repo.list_media(sort=SortKey.SIZE, sort_dir=SortDir.DESC)
+    rows = await pg_repo.list_media(sort=SortKey.SIZE, sort_dir=SortDir.DESC)
     assert len(rows) == 2
+    # 大的在前
+    assert rows[0][2].file_size == 9999
+    assert rows[1][2].file_size == 100
 
 
 async def test_list_media_consistent_with_jsonl(
@@ -270,8 +277,8 @@ async def test_list_media_consistent_with_jsonl(
     await jsonl.upsert_channel(ch)
     await jsonl.save_message(_mk_msg(700, 1, photos))
 
-    pg_rows, _ = await pg_repo.list_media()
-    jl_rows, _ = await jsonl.list_media()
+    pg_rows = await pg_repo.list_media()
+    jl_rows = await jsonl.list_media()
 
     # 都应返 3 行,media_idx 顺序 [0, 1, 2]
     assert [r[1] for r in pg_rows] == [r[1] for r in jl_rows] == [0, 1, 2]
@@ -291,6 +298,5 @@ async def test_count_media_returns_correct_total(
 
     total = await pg_repo.count_media()
     assert total == 2
-    rows, list_total = await pg_repo.list_media()
-    assert list_total == 2
+    rows = await pg_repo.list_media()
     assert len(rows) == 2

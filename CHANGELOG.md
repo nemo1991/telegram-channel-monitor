@@ -5,6 +5,101 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.4] - 2026-09-26
+
+主题:**修 Postgres Media Manager 空表 bug + 主窗口冷启动不卡 + 状态栏活动指示器**。
+
+> 两条独立用户反馈一次性解决:
+>
+> 1. **Bug — Media Manager 始终空白**。DB 里有媒体记录但 UI 看到空表;过滤器默认
+>    「全部」、点「刷新」无效。Jsonl 后端正常,锁定 Postgres 后端。
+> 2. **体感 — 双击 app 卡在白屏 2-5s**。冷启动 / 断网可达 10s+,期间 dock 图标
+>    无变化,用户以为 app 没起来。状态栏没有任何「正在做什么」的提示。
+
+### 修 PostgresRepository.list_media `media_idx` 列不存在(`core/storage/postgres_repo.py`)
+
+根因:`list_media` SQL 写 `me.media_idx`,但 `media` 表从未声明该列(JSONL 用
+`enumerate`、Mongo 用 `$unwind includeArrayIndex` 运行时生成,从不落库)。
+每次调用 PG 抛 `asyncpg.UndefinedColumnError`,被 `run_coro` 静默吞掉,UI
+看到 0 行 + 状态栏「0 条媒体」。
+
+修法:`media_idx` 改用窗口函数 `ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY
+me.id) - 1` 运行时生成。`me.id` 是 BIGSERIAL,等价于 INSERT 顺序 → 与 Jsonl
+`enumerate` / Mongo `$unwind` 三者对齐,UI 渲染逻辑零修改。
+
+不引入 schema 迁移、不回填、不改 INSERT — 零数据风险。
+
+### 主窗口立即显示 + 状态栏左侧活动指示器(`app.py` + `ui/main_window.py`)
+
+**启动拆分(`src/tgmonitor/app.py`)**
+
+`_setup_then_show` 把 `list_subscribed` + `set_whitelist` + `monitor.start` +
+`app.bootstrap` 拆到新 `_background_startup` 后台 task,`win.show()` 立即执行。
+`_bootstrap`(给 MainWindow 喂 services)仍同步 — UI 需要 app/monitor/
+objects_error 三件套。后台启动每步通过 `win._show_activity(...)` 更新状态栏
+左侧活动指示器:
+
+  - `加载已订阅频道...`(白名单从 storage 拉)
+  - `启动监听服务...`(`monitor.start()` 起 asyncio worker)
+  - `连接 Telegram...`(`app.bootstrap()` 调 libtdjson start)
+  - 稳态:空串清空,后续 LoginStateChanged / 错误事件再次填充
+
+启动即暂停(`app.is_paused=True`)分支保留:跳过 monitor + bootstrap,显示
+「监听已暂停 — 点 tray『继续监听』启动」,client.state 保持 `uninit`。
+
+**状态栏左侧活动指示器(`ui/main_window.py`)**
+
+- 新增 `_activity_label` QLabel,`addWidget(stretch=1)` 占 LEFT,与 RIGHT
+  `addPermanentWidget` 的 conn/pause/bell/objects 职责分离(LEFT = 当前活动,
+  RIGHT = 持久状态)。VS Code / IntelliJ 同款模式。
+- `_show_activity(text, *, timeout_ms=None)` 统一入口:
+  - `timeout_ms=None` 持续显示(长时活动:登录中、同步进度、导出进度)
+  - `timeout_ms>0` 自动清空(短促事件:导出完成、设置已更新、已下载)
+- `_throttle_activity(key, text, min_interval_ms)` 节流 helper:`MessageReceived`
+  等高频事件按 key 维度每 1.5s 最多 1 次,避免 label 被刷成流水账。
+- 现有 VM slot 各加一行 `_show_activity(...)` 调用,不动签名:
+  - `_on_login_state` / `_on_conn_state` / `_on_message_received`(限频)
+  - `_on_media_downloaded` / `_on_export_done` / `_on_export_progress`
+  - `_on_sync_progress` / `_on_sync_done`(新增 wire,VM signal 早就在)
+  - `_on_error` / `_on_settings_changed` / `_on_bus_message_deleted`
+  - `_on_refresh_channels` / `_on_notification_fallback`
+  - `_on_bus_login`(EventBus 路径,与 VM 双轨)
+
+### 测试(`tests/`)
+
+- `tests/test_pg_repo_sql.py`(新)— 165 行,8 个 case。Mock asyncpg `_FakePool`
+  捕获实际执行的 SQL 字符串,断言含 `ROW_NUMBER() OVER (PARTITION BY m.id
+  ORDER BY me.id) - 1 AS media_idx` 且不含 `me.media_idx`。无需 PG,常跑。
+- `tests/integration/test_pg_repo_list_media.py`(新)— 296 行,8 个 case。
+  testcontainers 起真 PG,save 1 message + N media,验证 `media_idx` ∈ {0..N-1}
+  按 INSERT 顺序、status / media_type / search filter 仍生效、与 Jsonl
+  `enumerate` 顺序一致。本地 `uv run pytest -m integration` 跑;CI 不开。
+- `tests/test_app_startup.py`(新)— 249 行,9 个 case。`_extract_function_body`
+  走括号平衡解析源码,断言:
+  - `_background_startup` 函数存在
+  - `_setup_then_show` 调 `asyncio.create_task(_background_startup(...))`
+  - `win.show()` 行号 < `create_task(_background_startup)` 行号
+  - `_setup_then_show` 不直接 `await monitor.start()` / `await app.bootstrap()`
+  - `_background_startup` 顺序:`list_subscribed → set_whitelist → monitor.start → app.bootstrap`
+  - 包含 `is_paused` 分支 + `ErrorOccurred` 兜底 + ≥3 处 `_show_activity` 调用
+- `tests/test_main_window_activity_label.py`(新)— 158 行,10 个 case。
+  `_FakeWindow`(只挂 `_activity_label` + `_activity_throttle`,绑 MainWindow
+  unbound `_show_activity` / `_throttle_activity`)。覆盖:初始空、set text、
+  empty 清空、persistent(无 timeout 不清)、timeout 挂 QTimer 单次、timeout=0
+  不挂 timer、节流首发生效、节流期内重复调用被丢、不同 key 互不干扰、节流过期恢复。
+- `tests/test_main_window_statusbar.py`(改)— `_FakeWindow` 加 `_activity_label`
+  + 绑 `_show_activity`/`_throttle_activity`。`_on_conn_state` 同步调 activity
+  后,桩必须带这些字段(否则 AttributeError)。
+- `tests/test_app_run.py`(改)— `test_main_window_is_constructed_after_services_ready`
+  移除「`MainWindow` 在 `app.bootstrap()` 之后」断言(已 defer 到后台,改由
+  `tests/test_app_startup.py` 锁住新结构)。
+
+### 质量门
+
+- `ruff check` + `ruff format`:✅
+- `mypy src/tgmonitor/app.py src/tgmonitor/ui/main_window.py src/tgmonitor/core/storage/postgres_repo.py`:✅
+- 完整测试 `-x`:**1340 passed, 54 skipped** in 3:15(integration 需 testcontainers)
+
 ## [1.8.3] - 2026-09-24
 
 主题:**设置页「📦 TDLib 缓存」组 — 单按钮同时清 files/database 缓存**。

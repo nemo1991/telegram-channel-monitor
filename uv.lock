@@ -1324,7 +1324,7 @@ mongodb = [
 
 [[package]]
 name = "tgmonitor"
-version = "1.8.3"
+version = "1.8.4"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

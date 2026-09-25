@@ -163,3 +163,52 @@ async def test_list_media_sql_no_limit_when_zero(fake_pool: _FakeAcquire) -> Non
     sql = fake_pool.captured_sql[0]
     assert "LIMIT" not in sql
     assert "OFFSET" not in sql
+
+
+# ---- sort 列 NULLS LAST 修复 ----
+
+
+async def test_list_media_sql_sort_size_desc_nulls_last(
+    fake_pool: _FakeAcquire,
+) -> None:
+    """sort=SIZE + sort_dir=DESC → `me.file_size DESC NULLS LAST`,不是
+    `me.file_size NULLS LAST DESC`(后者 PG 语法错误)。
+
+    回归保护:之前 `_MEDIA_SORT_COLUMN[SortKey.SIZE] = "me.file_size NULLS LAST"`
+    plain string 拼出无效 SQL,Media Manager UI 选「按大小降序」直接挂。
+    """
+    from tgmonitor.core.dto import SortDir, SortKey
+
+    await _repo(fake_pool).list_media(sort=SortKey.SIZE, sort_dir=SortDir.DESC)
+    sql = fake_pool.captured_sql[0]
+    assert "me.file_size DESC NULLS LAST" in sql, (
+        f"sort=SIZE + DESC 应拼出 `me.file_size DESC NULLS LAST`:\n{sql}"
+    )
+    # 反向 — 旧 bug 形态不能出现
+    assert "NULLS LAST DESC" not in sql, (
+        f"PG 语法错误:`NULLS LAST` 是修饰符,必须放在 direction 之后:\n{sql}"
+    )
+
+
+async def test_list_media_sql_sort_size_asc_nulls_last(
+    fake_pool: _FakeAcquire,
+) -> None:
+    """sort=SIZE + sort_dir=ASC → `me.file_size ASC NULLS LAST`。"""
+    from tgmonitor.core.dto import SortDir, SortKey
+
+    await _repo(fake_pool).list_media(sort=SortKey.SIZE, sort_dir=SortDir.ASC)
+    sql = fake_pool.captured_sql[0]
+    assert "me.file_size ASC NULLS LAST" in sql, (
+        f"sort=SIZE + ASC 应拼出 `me.file_size ASC NULLS LAST`:\n{sql}"
+    )
+
+
+async def test_list_media_sql_sort_date_no_nulls_clause(
+    fake_pool: _FakeAcquire,
+) -> None:
+    """sort=DATE / STATUS 都没 NULLS 修饰(列 NOT NULL 或不需要 NULLS LAST)。"""
+    from tgmonitor.core.dto import SortKey
+
+    await _repo(fake_pool).list_media(sort=SortKey.DATE)
+    sql = fake_pool.captured_sql[0]
+    assert "NULLS" not in sql, f"DATE 排序不该有 NULLS 修饰:\n{sql}"
