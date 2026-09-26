@@ -495,7 +495,15 @@ class MediaService:
                 # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
                 # 直接拼 root 会落到错的子目录。
                 abs_path = self._objects._path(med.object_key)  # noqa: SLF001
-                ok = bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(abs_path))))
+                # 2026-09-26 fix(open-media-hang):openUrl 在 macOS 上同步走
+                # `[NSWorkspace openURL:]` AppleEvent → LaunchServices,会卡
+                # 主线程 100ms~数秒;放 worker thread 跑,UI 不冻。
+                ok = bool(
+                    await asyncio.to_thread(
+                        QDesktopServices.openUrl,
+                        QUrl.fromLocalFile(str(abs_path)),
+                    )
+                )
                 return (
                     OpenMediaResult(True)
                     if ok
@@ -503,7 +511,13 @@ class MediaService:
                 )
             if isinstance(self._objects, S3ObjectStore):
                 tmp = await self._stage_s3_to_tmp(med)
-                ok = bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp))))
+                # 同上 — S3 路径 openUrl 也走 worker thread,见上注。
+                ok = bool(
+                    await asyncio.to_thread(
+                        QDesktopServices.openUrl,
+                        QUrl.fromLocalFile(str(tmp)),
+                    )
+                )
                 if not ok:
                     try:
                         tmp.unlink()

@@ -885,3 +885,80 @@ async def test_copy_media_path_pending_media_returns_error(
     result = await app.copy_media_path(100, 1, 0)
     assert result.success is False
     assert result.error == "媒体未下载完成"
+
+
+# ---- 2026-09-26 fix(open-media-hang):回归 — openUrl 必须 off-main-thread ----
+
+
+async def test_open_media_with_result_does_not_block_event_loop(
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """openUrl 模拟 200ms 阻塞,主 loop 必须还能推进其它任务。
+
+    修复前:openUrl 在主 loop 同步跑 → 并行 asyncio.sleep(0.2) 也被卡,
+    总耗时 ≥0.4s(串行),断言失败。
+    修复后:openUrl 走 worker thread → 并行 sleep 同时完成,总耗时 ~0.2s。
+
+    真实 bug 表现是 UI 卡死 — 此测试守住「主 loop 在 openUrl 期间
+    不被独占」这条边界。
+    """
+    import time
+
+    from PySide6.QtGui import QDesktopServices
+
+    def slow_open(_url) -> bool:
+        # 模拟 macOS LaunchServices cold cache 的 200ms 同步阻塞
+        time.sleep(0.2)
+        return True
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", slow_open)
+
+    await objectstore.put("media/photo.jpg", b"jpeg-bytes", None)
+    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
+
+    start = time.monotonic()
+    await asyncio.gather(
+        app.open_media(100, 1, 0),
+        asyncio.sleep(0.2),
+    )
+    elapsed = time.monotonic() - start
+    # 串行会 ~0.4s,真并行 ~0.2s。给一点 CI 抖动余量(±0.05s),仍守得住
+    # 「off-main-thread」这条线;若退化回主线程,这里会 ≥0.38s 失败。
+    assert elapsed < 0.35, f"event loop blocked during openUrl: {elapsed:.2f}s"
+
+
+async def test_open_media_invokes_openurl_off_main_thread(
+    app: AppService,
+    storage: StorageRepository,
+    objectstore: ObjectStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """openUrl 必须在 worker thread 上跑(由 asyncio.to_thread 触发)。
+
+    若退化到主 loop 跑,这里 tids 相等 → 失败。略 fragile(executor 行为
+    依赖 asyncio 实现),但作为 fix 是否生效的直接信号。
+    """
+    import threading
+
+    from PySide6.QtGui import QDesktopServices
+
+    seen: list[int] = []
+
+    def record(_url) -> bool:
+        seen.append(threading.get_ident())
+        return True
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", record)
+    main_tid = threading.get_ident()
+
+    await objectstore.put("media/photo.jpg", b"jpeg", None)
+    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
+    await app.open_media(100, 1, 0)
+
+    assert seen, "openUrl should have been called"
+    assert seen[0] != main_tid, (
+        f"openUrl 仍在主 loop 跑(fix 未生效),main_tid={main_tid} openUrl_tid={seen[0]}"
+    )
