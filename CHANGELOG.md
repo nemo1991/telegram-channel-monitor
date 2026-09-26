@@ -5,6 +5,46 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.6] - 2026-09-26
+
+主题:**修 Media Manager Retry 「点击无反应」+ 状态栏左侧加「正在重试…」提示**。
+
+> 用户反馈:Media Manager 里 FAILED 媒体点「Retry」按钮后,UI 无任何视觉
+> 反馈,体感「点了没反应」。retry 在后台跑完了也不知道 — row 状态要手动按
+> 🔄 刷新才更新。
+
+### 根因(`src/tgmonitor/ui/main_window.py`)
+
+`AppService.retry_media` 发两个事件:`MediaRetried`(开始时)+ `MediaDownloaded`
+(完成时)。之前 MainWindow:
+
+- **没订阅 `vm.media_retried`** — 用户点 Retry 后 row 状态仍 FAILED,
+  状态栏无任何提示,体感「点了没反应」。
+- **`_on_media_downloaded` 只刷 LIVE view / message_detail,不刷 Media Manager
+  widget** — retry 完成后 row 仍停在 PENDING(或旧的字节进度文字),
+  要手动按 🔄 刷新才显示新状态。正常首次下载完成后 widget 同样 stale
+  (row 显示最后一帧「X / Y (100%)」而不是 DONE)。
+
+### 修法
+
+1. `_wire_events` 新增 `self._vm.media_retried.connect(self._on_media_retried)`
+2. 新增 slot `_on_media_retried(e)`:
+   - 状态栏左侧 `正在重试…`(2s 后自动清空)— 视觉反馈
+   - 立刻 `media_manager.refresh_requested.emit()` — row 切 PENDING
+3. `_on_media_downloaded` 末尾追加 `media_manager.refresh_requested.emit()`
+   — 下载完成后 row 切真实 DONE / FAILED。retry / 正常首次下载都受益
+
+VM signal 链(`vm.media_retried` 早已存在,只是无消费者)和 widget 的
+`refresh_requested` Qt signal 都已就位,本次只补 MainWindow 这层桥接,
+zero 数据 schema / API 改动。
+
+### 回归测试(`tests/test_main_window_retry_feedback.py`,7 个)
+
+- `_on_media_retried` 触发 widget refresh + activity 文案含「正在重试」
+- `_on_media_downloaded` 成功 / 失败两条路径都触发 widget refresh +
+  正确 activity 文案(DONE → "已下载: x" / FAILED → "⚠ 下载失败: x")
+- `e.media is None` 时 slot 直接 return,不误刷 widget
+
 ## [1.8.5] - 2026-09-26
 
 主题:**修 Media Manager 「打开」媒体文件 UI 卡死**。
