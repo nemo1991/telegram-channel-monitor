@@ -1298,6 +1298,10 @@ class MainWindow(QMainWindow):
         self._vm.message_received.connect(self._on_message_received)
         self._vm.message_edited.connect(self._on_message_edited)
         self._vm.media_downloaded.connect(self._on_media_downloaded)
+        # 2026-09-26 fix(retry-no-feedback):MediaRetried 事件之前无 UI 订阅,
+        # 用户点 Retry 后 Media Manager 列表不变(状态仍 FAILED),体感是
+        # 「点击无反应」。现在订阅后立刻刷新 widget + 状态栏左侧提示。
+        self._vm.media_retried.connect(self._on_media_retried)
         # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
         # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
         self._vm.media_download_progress.connect(self.media_manager.on_download_progress)
@@ -1661,6 +1665,24 @@ class MainWindow(QMainWindow):
             self._show_activity(f"已下载: {fname}", timeout_ms=1500)
         else:
             self._show_activity(f"⚠ 下载失败: {fname}", timeout_ms=3000)
+        # 2026-09-26 fix(retry-no-feedback):下载结束后刷新 Media Manager
+        # 列表 — retry 路径走 background download_one,完成后 UI 看不到
+        # 新状态;正常首次下载完成后 widget 也只显示进度文字,不显示
+        # DONE,一并刷新列表让 row 显示正确状态。
+        self.media_manager.refresh_requested.emit()
+
+    def _on_media_retried(self, e) -> None:
+        """媒体被触发重下 → 立刻刷新 Media Manager 列表 + 状态栏左侧活动提示。
+
+        之前 AppService.retry_media 只发 MediaRetried + MediaDownloaded 两个
+        事件,Media Manager widget 都没订阅 — 用户点 Retry 后 row 状态不变
+        (仍 FAILED),体感「点击无反应」。现在重试发起立刻 refresh widget,
+        row 变 PENDING,状态栏左侧也提示「正在重试…」,视觉上能感知到点了。
+        """
+        # 状态栏左侧:短促提示。MediaRetried 没带 file_name(MediaDownloaded
+        # 才带),无 storage round-trip 拉名字,文案简洁即可。
+        self._show_activity(self.tr("正在重试…"), timeout_ms=2000)
+        self.media_manager.refresh_requested.emit()
 
     def _on_login_state(self, state: str) -> None:
         self.status_bar.showMessage(self.tr("登录状态: {state}").format(state=state), 4000)
