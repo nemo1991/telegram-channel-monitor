@@ -214,30 +214,42 @@ def _sort_media_rows(
     sort: SortKey,
     sort_dir: SortDir,
 ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-    """2026-08-25 v1.3.0 PR #6:media row 排序 helper(Jsonl / InMemory 共用)。
+    """2026-09-26 fix(parity-tiebreak):与 Postgres / Mongo `list_media` tie-break 对齐。
 
-    - DATE → `msg.date`,同 date 时 tie-breaker 走 `msg.id DESC, idx ASC`
-      与 Postgres / Mongo 默认行为对齐
-    - SIZE → `med.file_size or 0`(None 视为 0,排在末尾)
-    - STATUS → `med.download_status.value`(枚举字符串字典序,
-      `done` < `failed` < `pending` < `downloading`)
+    Postgres / Mongo 的复合 ORDER BY 形如
+      ORDER BY <primary> <dir>, m.id DESC, media_idx ASC
+    即 primary 方向由 `sort_dir` 决定,但 tie-break 方向是**固定的**
+    (msg.id DESC, idx ASC)— 不随 primary 反转。
+
+    Python `sorted` 是稳定排序,所以「先排 tertiary(idx ASC)→ 再排 secondary
+    (msg.id DESC)→ 最后排 primary」就等价于 PG 的复合 ORDER BY:稳定排序
+    保证先排的次序在后续 tie 中被保留,等同 SQL 的多键 ORDER BY。
+
+    反例(2026-09-26 前):原实现 `sorted(rows, key=_key, reverse=is_desc)`
+    把整组方向一并反转,导致 tie-break 也被反转 → Jsonl 1 message + N media
+    返 `[2, 1, 0]`,PG 返 `[0, 1, 2]`,集成测试
+    `test_list_media_consistent_with_jsonl` 失败。
+
+    - DATE → `msg.date`(主方向由 sort_dir 决定)
+    - SIZE → `med.file_size or 0`(None 视为 0)
+    - STATUS → `med.download_status.value`(枚举字符串字典序)
     """
-    reverse = sort_dir == SortDir.DESC
+    is_desc = sort_dir == SortDir.DESC
 
-    def _key(row: tuple[MessageDTO, int, MediaDTO]):
-        msg, idx, med = row
-        if sort == SortKey.DATE:
-            primary = msg.date
-            # tie-breaker:(msg.id DESC, idx ASC)— 与 SQL ORDER BY m.id DESC, idx ASC 对齐
-            return (primary, -int(msg.id), idx)
-        if sort == SortKey.SIZE:
-            return (med.file_size or 0,)
-        if sort == SortKey.STATUS:
-            return (med.download_status.value,)
-        # 默认 DATE
-        return (msg.date, -int(msg.id), idx)
-
-    return sorted(rows, key=_key, reverse=reverse)
+    # 1) tertiary:idx ASC(固定方向)— 保证同 msg 内 media 顺序 = 数组顺序
+    rows = sorted(rows, key=lambda r: r[1])
+    # 2) secondary:msg.id DESC(固定方向)— 跨 msg 时优先新插入的 message
+    rows = sorted(rows, key=lambda r: int(r[0].id), reverse=True)
+    # 3) primary:方向由 sort_dir 决定;tie 落到 secondary / tertiary
+    if sort == SortKey.DATE:
+        rows = sorted(rows, key=lambda r: r[0].date, reverse=is_desc)
+    elif sort == SortKey.SIZE:
+        rows = sorted(rows, key=lambda r: r[2].file_size or 0, reverse=is_desc)
+    elif sort == SortKey.STATUS:
+        rows = sorted(rows, key=lambda r: r[2].download_status.value, reverse=is_desc)
+    else:
+        rows = sorted(rows, key=lambda r: r[0].date, reverse=is_desc)
+    return rows
 
 
 class JsonlFileStore(StorageRepository):

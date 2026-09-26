@@ -284,3 +284,105 @@ async def test_retry_path_finds_no_prior_after_reset(tmp_path: Path):
         )
     )
     assert await store.find_media_by_file_id(fid) is not None
+
+
+# ---- list_media tie-break parity(Jsonl vs PG/Mongo)----
+
+
+async def test_list_media_tie_break_idx_asc_within_message(tmp_path: Path) -> None:
+    """2026-09-26 fix(parity-tiebreak):单 message 含 N media 时,
+    list_media 必须按 media_idx ASC 返回(与 PG / Mongo tie-break 对齐)。
+
+    之前 `_sort_media_rows` 整组 `reverse=True` 把 tie-break 也反转了,
+    导致 1 message + 3 media 返 `[2, 1, 0]` 而 PG 返 `[0, 1, 2]`,
+    集成测试 `test_list_media_consistent_with_jsonl` 失败。
+
+    tie-break 方向是**固定的**(`msg.id DESC, idx ASC`),不随 primary 反转。
+    """
+    from tgmonitor.core.dto import SortDir, SortKey
+
+    store = JsonlFileStore(root=tmp_path)
+    await store.connect()
+    await store.init_schema()
+    await store.upsert_channel(ChannelDTO(id=42, title="T"))
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=42,
+            telegram_msg_id=1,
+            text="hi",
+            date=datetime(2026, 1, 1, tzinfo=UTC),
+            media=[
+                _photo_with_fid("a"),
+                _photo_with_fid("b"),
+                _photo_with_fid("c"),
+            ],
+        )
+    )
+
+    # DATE DESC(默认)—— tie-break 应仍是 idx ASC(不变向)
+    rows = await store.list_media()
+    assert [r[1] for r in rows] == [0, 1, 2], (
+        f"DATE DESC 下 idx 必须 ASC(等效 PG `ORDER BY m.id DESC, media_idx ASC`),"
+        f" 实际 {[r[1] for r in rows]}"
+    )
+
+    # DATE ASC—— 同样 tie-break 仍是 idx ASC(不变向)
+    rows_asc = await store.list_media(sort=SortKey.DATE, sort_dir=SortDir.ASC)
+    assert [r[1] for r in rows_asc] == [0, 1, 2], (
+        f"DATE ASC 下 idx 也必须 ASC:实际 {[r[1] for r in rows_asc]}"
+    )
+
+
+async def test_list_media_tie_break_msg_id_desc_across_messages(tmp_path: Path) -> None:
+    """跨 message 时 secondary tie-break 必须是 `msg.id DESC`(不随 primary 反转)。
+
+    之前 `reverse=True` 把 secondary 也反转,跨 message 时新插入的 message
+    排在前面 — 但 PG 是稳定的(新插入的 message id 较大 → DESC 时在前),
+    反向结果偶然一致。但同 date 多 message 跨方向就分叉了 — 此测试守住
+    这条边界。
+    """
+    from tgmonitor.core.dto import SortDir, SortKey
+
+    store = JsonlFileStore(root=tmp_path)
+    await store.connect()
+    await store.init_schema()
+    await store.upsert_channel(ChannelDTO(id=99, title="T"))
+
+    # 两条 message,同日;save_message 先 m1 后 m2 → m2.id > m1.id
+    same_date = datetime(2026, 6, 1, tzinfo=UTC)
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=99,
+            telegram_msg_id=1,
+            text="m1",
+            date=same_date,
+            media=[_photo_with_fid("m1a")],
+        )
+    )
+    await store.save_message(
+        MessageDTO(
+            id=0,
+            channel_id=99,
+            telegram_msg_id=2,
+            text="m2",
+            date=same_date,
+            media=[_photo_with_fid("m2a"), _photo_with_fid("m2b")],
+        )
+    )
+
+    # DATE DESC(默认):m2 应在前(m2.id 较大,DESC 时在前),内 media_idx ASC
+    rows = await store.list_media()
+    file_ids = [r[2].telegram_file_id for r in rows]
+    assert file_ids == ["m2a", "m2b", "m1a"], (
+        f"DATE DESC 应先 m2(后插入,id 大)再 m1,内部 idx ASC:实际 {file_ids}"
+    )
+
+    # DATE ASC:跨 msg secondary tie-break 仍是 m.id DESC(PG 一致)— 所以 m2 仍在前
+    rows_asc = await store.list_media(sort=SortKey.DATE, sort_dir=SortDir.ASC)
+    file_ids_asc = [r[2].telegram_file_id for r in rows_asc]
+    assert file_ids_asc == ["m2a", "m2b", "m1a"], (
+        f"DATE ASC 下 secondary `m.id DESC` 不变向,仍 m2 先 m1 后,"
+        f" 内部 idx ASC:实际 {file_ids_asc}"
+    )
