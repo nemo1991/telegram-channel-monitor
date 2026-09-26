@@ -383,6 +383,5 @@ async def test_list_media_tie_break_msg_id_desc_across_messages(tmp_path: Path) 
     rows_asc = await store.list_media(sort=SortKey.DATE, sort_dir=SortDir.ASC)
     file_ids_asc = [r[2].telegram_file_id for r in rows_asc]
     assert file_ids_asc == ["m2a", "m2b", "m1a"], (
-        f"DATE ASC 下 secondary `m.id DESC` 不变向,仍 m2 先 m1 后,"
-        f" 内部 idx ASC:实际 {file_ids_asc}"
+        f"DATE ASC 下 secondary `m.id DESC` 不变向,仍 m2 先 m1 后, 内部 idx ASC:实际 {file_ids_asc}"
     )
