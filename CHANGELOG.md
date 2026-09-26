@@ -5,6 +5,46 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.5] - 2026-09-26
+
+主题:**修 Media Manager 「打开」媒体文件 UI 卡死**。
+
+> 用户反馈:Media Manager 点「打开」已下载的媒体文件调系统默认应用时,
+> UI 冻结 100ms ~ 数秒无响应(冷启动后首次点击尤甚),体感是 app 死了。
+
+### 根因(`core/media_service.py:498,506`)
+
+`MediaService.open_media_with_result` 在 async coroutine 里**同步**调
+`QDesktopServices.openUrl(QUrl.fromLocalFile(...))`。qasync 把 Qt 主线程
+和 asyncio loop 共享同一线程;openUrl 在 macOS 上 delegate 到
+`[NSWorkspace openURL:]` 同步 AppleEvent → LaunchServices 守护进程,等
+Finder / Quick Look / Preview 应用响应后才返回。期间 Qt 主线程被锁,paint
+event、timer event、其它 coroutine 全部推进不了 — 用户看到「卡死」。
+Windows 类似(`ShellExecuteExW`),Linux 较轻(`xdg-open` 走 `startDetached`)。
+
+### 修法
+
+两个 `QDesktopServices.openUrl` 调用点(Local/Folder `:498`、S3 `:506`)
+都包 `asyncio.to_thread` 把阻塞调用丢到默认 executor 的 worker thread,
+主线程立即释放。Qt 6.6+ 文档明确 `openUrl` thread-safe;macOS
+`NSWorkspace` 文档化 any-thread-safe。
+
+API 表面零变化(`OpenMediaResult` 签名保留),caller `MonitorViewModel`
+零修改。
+
+代码风格延续项目既有 `asyncio.to_thread` 用法(`media_service.py:563 /
+676 / 682`、`local_store`、`folder_store`、`tdlib_client`、`settings_page`、
+`_fs_utils`、`app_service` 共 16+ 处)。
+
+### 回归测试(`tests/test_media_manager.py`)
+
+- `test_open_media_with_result_does_not_block_event_loop`:monkeypatch
+  openUrl 模拟 200ms 阻塞,与并行 `asyncio.sleep(0.2)` 同时跑,总耗时
+  应 < 0.35s(退化回主线程会 ≥ 0.38s 失败)— 直接守住「off-main-thread」
+  这条行为边界。
+- `test_open_media_invokes_openurl_off_main_thread`:断言
+  `threading.get_ident() != main_tid`,作为 fix 是否生效的直接信号。
+
 ## [1.8.4] - 2026-09-26
 
 主题:**修 Postgres Media Manager 空表 bug + 主窗口冷启动不卡 + 状态栏活动指示器**。
