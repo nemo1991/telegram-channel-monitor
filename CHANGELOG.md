@@ -29,6 +29,23 @@ me.id) - 1` 运行时生成。`me.id` 是 BIGSERIAL,等价于 INSERT 顺序 → 
 
 不引入 schema 迁移、不回填、不改 INSERT — 零数据风险。
 
+**修 Jsonl `list_media` tie-break 方向 bug(配套,`core/storage/jsonl_store.py`)**
+
+集成测试 `test_list_media_consistent_with_jsonl` 暴露:同一份数据 PG 返回
+`media_idx=[0,1,2]`、Jsonl 返回 `[2,1,0]`。根因 `_sort_media_rows` 用
+`sorted(rows, key=_key, reverse=is_desc)` 整组方向反转,把 tie-break
+`(msg.id DESC, idx ASC)` 也反转成 `(msg.id ASC, idx DESC)` — 与 PG / Mongo
+SQL 复合 `ORDER BY` 的固定 tie-break 方向不一致。
+
+后果:Jsonl 后端的 `(channel_id, telegram_msg_id, media_idx)` 三元组定位与
+PG / Mongo 错位,跨后端混用或备份迁移时 UI Media Manager 渲染会乱。
+
+修法:用 Python `sorted` 稳定排序 — 「先排 tertiary(idx ASC)→ 再排
+secondary(msg.id DESC)→ 最后排 primary(方向由 sort_dir 决定)」三段排序等价
+于 SQL 的复合 `ORDER BY`(稳定排序保留先前 tie 的次序)。
+
+回归测试 `tests/test_jsonl_store.py` 新增两条 `tie_break` 测试守住边界。
+
 ### 主窗口立即显示 + 状态栏左侧活动指示器(`app.py` + `ui/main_window.py`)
 
 **启动拆分(`src/tgmonitor/app.py`)**
