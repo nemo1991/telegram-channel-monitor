@@ -130,20 +130,25 @@ def test_bootstrap_wires_media_downloader() -> None:
 
     历史 bug:策略 FULL 时 `_handle` 里 `self.downloader is not None` 恒为假
     → 媒体文件从不落盘、media/ 目录永远为空。这是结构性测试,有人重构
-    `_bootstrap` 忘传 `downloader=` 时立即失败。
+    composition root 忘传 `downloader=` 时立即失败。
+
+    2026-09-27 refactor:composition root 从 `app.py:_bootstrap` 抽到
+    `core.runtime.bootstrap`(CLI / GUI 共享)。结构性断言跟到新位置。
     """
-    source = inspect.getsource(app_module)
+    import tgmonitor.core.runtime as runtime_module
+
+    source = inspect.getsource(runtime_module)
     tree = ast.parse(source)
-    bootstrap = next(
+    bootstrap_fn = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_bootstrap"
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "bootstrap"
     )
-    body = ast.unparse(bootstrap)
+    body = ast.unparse(bootstrap_fn)
     m = re.search(r"MonitorService\s*\([^)]*", body)
-    assert m is not None, "MonitorService() call not found in _bootstrap()"
+    assert m is not None, "MonitorService() call not found in bootstrap()"
     assert "downloader=" in m.group(0), (
-        "MonitorService must receive downloader= in _bootstrap(); without it "
+        "MonitorService must receive downloader= in bootstrap(); without it "
         "FULL media policy silently downloads nothing"
     )
 
@@ -286,22 +291,26 @@ async def test_bootstrap_continues_when_objectstore_connect_fails(
     为满足"保存设置时校验对象存储配置"把 connect() 改成真实校验,但启动
     bootstrap 也调它 → S3 配置有问题的用户直接启动失败弹窗。现在启动降级为
     log.error + 继续;保存设置时的严格校验保留在 app_service 的 reconfigure。
+
+    2026-09-27 refactor:composition root 从 `app.py:_bootstrap` 抽到
+    `core.runtime.bootstrap`;monkeypatch 目标跟到 `runtime` 模块。
     """
+    import tgmonitor.core.runtime as runtime_module
 
     class _BrokenStore:
         async def connect(self) -> None:
             raise ConnectionError("HeadBucket 400")
 
-    monkeypatch.setattr(app_module, "Settings", lambda: settings)
-    monkeypatch.setattr(app_module, "build_storage", lambda s: storage)
-    monkeypatch.setattr(app_module, "build_object_store", lambda s: _BrokenStore())
+    monkeypatch.setattr(runtime_module, "Settings", lambda: settings)
+    monkeypatch.setattr(runtime_module, "build_storage", lambda s: storage)
+    monkeypatch.setattr(runtime_module, "build_object_store", lambda s: _BrokenStore())
     monkeypatch.setattr(
-        app_module,
+        runtime_module,
         "build_telegram_client",
         lambda s, use_fake=False, event_bus=None: client,
     )
 
-    app_svc, monitor, settings_out, objects_error = await app_module._bootstrap()
+    app_svc, monitor, settings_out, objects_error = await runtime_module.bootstrap()
     assert app_svc is not None
     assert monitor is not None
     assert settings_out is settings
