@@ -21,15 +21,23 @@ PYTHONPATH = "src"
 
 
 def _run_subprocess(args: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """子进程跑 CLI 命令,统一加 PYTHONPATH=src。"""
+    """子进程跑 CLI 命令,统一加 PYTHONPATH=src。
+
+    2026-09-28 修 Windows cp1252:`PYTHONIOENCODING=utf-8` 强制 subprocess
+    stdout/stderr 用 UTF-8(Windows 默认 cp1252 编码不了 argparse help 里的
+    中文);父进程读 pipe 也用 UTF-8 + `errors="replace"` 兜底。Mac/Linux 上
+    默认就是 UTF-8,设了无害。
+    """
     env = kwargs.pop("env", None)
-    base_env = {**os.environ, "PYTHONPATH": PYTHONPATH}
+    base_env = {**os.environ, "PYTHONPATH": PYTHONPATH, "PYTHONIOENCODING": "utf-8"}
     if env:
         base_env.update(env)
     return subprocess.run(
         [sys.executable, *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=base_env,
         **kwargs,
     )

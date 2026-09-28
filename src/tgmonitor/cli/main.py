@@ -11,6 +11,24 @@ import asyncio
 import sys
 
 
+def _ensure_utf8_stdio() -> None:
+    """2026-09-28:Windows 默认 cp1252 编码不了 argparse help 里的中文,
+    `parser.print_help()` / `parser.error()` 路径直接抛
+    `UnicodeEncodeError`。这里在 CLI 入口先把 stdout / stderr reconfigure
+    成 UTF-8(`errors="replace"` 兜底,避免极端字符)。Mac / Linux 上 stdout
+    默认 UTF-8,reconfigure 是 no-op。
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                # 某些嵌入式 / 重定向场景 reconfigure 失败 — 不阻塞 CLI 启动
+                pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构造 argparse:顶层 + sync / monitor 子命令。"""
     parser = argparse.ArgumentParser(
@@ -83,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
 
     返回退出码:0 成功 / 1 错误 / 130 SIGINT(沿用 `__main__` 既有约定)。
     """
+    # Windows 中文 locale 下 argparse 打印会因 cp1252 编码炸,先 reconfigure
+    _ensure_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.cmd == "sync":
