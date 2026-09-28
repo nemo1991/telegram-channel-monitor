@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.auth_service import AuthService
-from tgmonitor.core.config import Settings
+from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
     CopyResult,
@@ -372,12 +372,19 @@ class AppService:
         self,
         channel_ids: list[int],
         options: SyncOptions,
+        *,
+        media_policy: MediaPolicy | None = None,
     ) -> SyncResult:
         """全量同步 — UI 进度对话框经此调起。
 
         `options` 用 dataclass,UI 端构造(delay_ms 等覆盖 Settings 默认值)。
+
+        `media_policy`(2026-09-27 接入):非 None 时本轮覆盖 `channel_sync.media_policy`。
+        主要给 CLI `--media-policy` 用,GUI 端不传,仍走 service 默认。
         """
-        return await self.channel_sync.sync_channels(channel_ids, options)
+        return await self.channel_sync.sync_channels(
+            channel_ids, options, media_policy=media_policy
+        )
 
     # ---------- 消息流(实时)— 留 facade 维护 stream 列表 ----------
 

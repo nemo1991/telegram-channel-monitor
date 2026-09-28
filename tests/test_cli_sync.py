@@ -122,8 +122,8 @@ async def test_cli_sync_passes_correct_options(
 
     captured_options: list = []
 
-    async def capture_sync(_channel_ids, options):
-        captured_options.append(options)
+    async def capture_sync(_channel_ids, options, *, media_policy=None):
+        captured_options.append((options, media_policy))
         return SyncResult(per_channel={})
 
     monkeypatch.setattr(app, "sync_channels", capture_sync)
@@ -139,13 +139,15 @@ async def test_cli_sync_passes_correct_options(
     rc = await run_sync(args, app=app, monitor=monitor)
     assert rc == 0
     assert len(captured_options) == 1
-    opts = captured_options[0]
+    opts, policy = captured_options[0]
     assert opts.include_metadata is False  # --no-metadata
     assert opts.resume_from_saved is True  # --resume
     assert opts.chat_delay_ms == 123
     assert opts.page_delay_ms == 456
-    # --media-policy 通过 ChannelSyncService.media_policy 生效(SyncOptions 不含该字段)
-    assert app.channel_sync.media_policy.value == "thumbnail"
+    # --media-policy 经 `sync_channels(media_policy=)` 一次性 override 透传,
+    # service 自身 .media_policy 不被污染
+    assert policy is not None and policy.value == "thumbnail"
+    assert app.channel_sync.media_policy.value == "metadata"  # service 默认未变
 
 
 # ============================================================

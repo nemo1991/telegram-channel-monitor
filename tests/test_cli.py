@@ -68,21 +68,31 @@ def test_cli_monitor_help() -> None:
 
 
 def test_cli_does_not_import_qt_or_qasync() -> None:
-    """CLI 入口子进程断言:导入 cli 模块 + 跑 build_parser 后,PySide6 /
-    qasync / tgmonitor.app / MainWindow 都未加载。
+    """CLI 入口子进程断言:导入 cli 包 + 解析 argv 后,PySide6 / qasync /
+    tgmonitor.app / MainWindow 都未加载。
 
     这是 2026-09-27 refactor 的核心契约 — CLI 不能因为模块顶 import 链
     而被迫加载 GUI 框架(冷启动 ~300ms → 1-3s,headless 环境不能有)。
+
+    2026-09-28 扩展:除了 `cli.main`,也直接 import `cli.sync.run_sync` 与
+    `cli.monitor.run_monitor`(子命令实现)。原来 `tests/test_cli_sync.py`
+    在进程内断言,被 conftest 提前加载的 PySide6 污染失效;改用同一
+    subprocess 模式,完整覆盖 cli 包全部模块。
     """
     code = textwrap.dedent("""
         import sys
 
-        # 子进程要测的对象:导入 build_parser + 解析 argv(不实际跑子命令,
-        # 避免触发 libtdjson 等真实依赖)
+        # 入口 + 三个子命令模块都触发 import(模拟 CLI 启动后所有代码路径)
         from tgmonitor.cli.main import build_parser
+        from tgmonitor.cli.sync import run_sync
+        from tgmonitor.cli.monitor import run_monitor
 
         parser = build_parser()
         parser.parse_args(['sync', '123', '--no-metadata'])
+
+        # 函数引用即触发 — 拿到的是模块本身,如果模块顶 import 了 Qt,
+        # 此刻已经泄漏到 sys.modules
+        del run_sync, run_monitor, build_parser
 
         # 关键断言
         leaked = []

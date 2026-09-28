@@ -99,11 +99,17 @@ class ChannelSyncService:
         self,
         channel_ids: list[int],
         options: SyncOptions,
+        *,
+        media_policy: MediaPolicy | None = None,
     ) -> SyncResult:
         """主入口:对每个被选频道调 `_sync_one_channel`(orchestrator)。
 
         只负责循环控制 + `total_messages_added` 累加 + 顶部取消 + 末尾 done
         事件。具体的元数据 / 历史 / 异常处理都下沉到 helper。
+
+        `media_policy`(2026-09-27 接入):非 None 时**本轮覆盖** service 默认
+        (`self.media_policy` 不变,下次 sync 仍按 .env 设置)。CLI `--media-policy`
+        等场景用,不污染 service 状态。
 
         进度事件(2026-08-24):
           - 顶部发 `init`(载 total 频道数),让进度对话框先显示「准备同步 N 频道」
@@ -113,6 +119,8 @@ class ChannelSyncService:
         self._cancel.clear()
         result = SyncResult(per_channel={})
         t0 = time.monotonic()
+        # 局部有效策略:override 优先,否则用 service 默认
+        effective_policy = media_policy if media_policy is not None else self.media_policy
 
         # 顶部 init 事件(2026-08-24):让 UI 提前显示总频道数,避免空白 N 秒
         if channel_ids:
@@ -128,7 +136,9 @@ class ChannelSyncService:
             if self._cancel.is_set():
                 result.cancelled = True
                 break
-            ch_result, rate_limited_seconds = await self._sync_one_channel(cid, options)
+            ch_result, rate_limited_seconds = await self._sync_one_channel(
+                cid, options, effective_policy
+            )
             # 退订 = 用户取消 — orchestrator 不 break,让 per_channel 记录
             # 全部已尝试的频道;但 result.cancelled 仍 True 让 UI 知道是中断。
             if ch_result.error == "cancelled" and not result.cancelled:
@@ -165,8 +175,14 @@ class ChannelSyncService:
         self,
         cid: int,
         options: SyncOptions,
+        effective_policy: MediaPolicy,
     ) -> tuple[ChannelSyncResult, float | None]:
         """单频道组合:metadata + history,统一处理限流 / 一般异常 / 取消。
+
+        `effective_policy`(2026-09-27):由 `sync_channels()` 解析的本次有效
+        策略 — 可能是 `sync_channels(media_policy=...)` 显式 override,
+        也可能退化到 `self.media_policy`。不在这里读 `self.media_policy`,
+        避免 service 实例状态被外部污染。
 
         返回 `(ChannelSyncResult, rate_limited_seconds)` — 第二个元素仅在
         限流路径上非 None(透传 `retry_after`),让 outer 把整体 rate_limited
@@ -202,7 +218,7 @@ class ChannelSyncService:
                     return ch_result, rate_limited_seconds
 
             if options.include_history:
-                await self._sync_history(cid, options, ch_result)
+                await self._sync_history(cid, options, ch_result, effective_policy)
                 if self._cancel.is_set():
                     ch_result.error = "cancelled"
                     return ch_result, rate_limited_seconds
@@ -273,8 +289,13 @@ class ChannelSyncService:
         cid: int,
         options: SyncOptions,
         ch_result: ChannelSyncResult,
+        effective_policy: MediaPolicy,
     ) -> None:
         """单频道拉历史 — 分页循环 + throttle + 重间隔都在内。
+
+        `effective_policy`(2026-09-27):FULL 时本函数内做媒体下载;非 FULL
+        时仅写元数据,与本函数其他逻辑无关。值由 `_sync_one_channel` 透传,
+        内部不读 `self.media_policy`。
 
         写 `ch_result.messages_added`(每条 +1,不去重) +
         `ch_result.new_messages_added`(只在 existed is None 时 +1)。
@@ -331,7 +352,7 @@ class ChannelSyncService:
                 if (
                     m.media
                     and self.downloader is not None
-                    and self.media_policy == MediaPolicy.FULL
+                    and effective_policy == MediaPolicy.FULL
                 ):
                     needs_resave = False
                     for idx, med in enumerate(m.media):

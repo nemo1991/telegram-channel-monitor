@@ -54,11 +54,6 @@ async def run_sync(
         # 白名单 = CLI 显式指定的 channel_ids
         monitor.set_whitelist(args.channel_ids)
 
-        # CLI `--media-policy` 是 runtime 覆盖:`ChannelSyncService.media_policy`
-        # 构造期从 `Settings.media_policy` 决定,这里改 `self.media_policy`
-        # 让本轮 sync 命中 CLI 选择的策略(Settings 不动,下次启动还按 .env)
-        app.channel_sync.media_policy = MediaPolicy(args.media_policy)
-
         # 进度事件 → stdout
         async def on_progress(e: ChannelSyncProgress) -> None:
             print(
@@ -75,7 +70,13 @@ async def run_sync(
             chat_delay_ms=args.chat_delay_ms,
             page_delay_ms=args.page_delay_ms,
         )
-        result = await app.sync_channels(args.channel_ids, options)
+        # CLI `--media-policy` 走 `sync_channels(media_policy=)` 一次性 override
+        # — 不污染 service 状态,下次启动按 .env 默认
+        result = await app.sync_channels(
+            args.channel_ids,
+            options,
+            media_policy=MediaPolicy(args.media_policy),
+        )
         print(
             f"[sync] done: {result.total_messages_added} messages added "
             f"(cancelled={result.cancelled})",
