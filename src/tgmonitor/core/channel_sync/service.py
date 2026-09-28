@@ -349,11 +349,7 @@ class ChannelSyncService:
                 ch_result.history_ended_at_msg_id = m.telegram_msg_id
                 # 媒体下载(FULL 策略)— 复用 monitor 的 MediaDownloader,
                 # download_one 内部已带 skip-if-stored(2026-08-24)
-                if (
-                    m.media
-                    and self.downloader is not None
-                    and effective_policy == MediaPolicy.FULL
-                ):
+                if m.media and self.downloader is not None and effective_policy == MediaPolicy.FULL:
                     needs_resave = False
                     for idx, med in enumerate(m.media):
                         if med.download_status != MediaDownloadStatus.PENDING:
