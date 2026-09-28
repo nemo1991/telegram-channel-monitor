@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+import sys
 from typing import TYPE_CHECKING
 
 import aioboto3
@@ -904,7 +905,19 @@ async def test_open_media_with_result_does_not_block_event_loop(
 
     真实 bug 表现是 UI 卡死 — 此测试守住「主 loop 在 openUrl 期间
     不被独占」这条边界。
+
+    2026-09-28 v1.9.2:coverage 插桩下 skip —— `coverage` 走 `sys.settrace`
+    把每一行都加钩子,被测代码系统性慢 ~10x,实测 macOS CI 0.352s > 0.35s
+    阈值。和 `test_message_view.py::test_pr9_append_constant_time_per_call`
+    同根因;与 `_under_coverage()` 同模式。CI 的「Run pytest with coverage」
+    step 只收覆盖率(不设阈值门控),跳过无损失;「Run pytest」无插桩 step
+    才是真正跑这条断言的。
     """
+    if sys.gettrace() is not None:
+        import pytest
+
+        pytest.skip("perf 绝对耗时断言在 coverage 插桩下无意义(系统性 ~10x 慢)")
+
     import time
 
     from PySide6.QtGui import QDesktopServices
