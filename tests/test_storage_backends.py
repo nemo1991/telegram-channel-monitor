@@ -285,6 +285,69 @@ async def test_list_media_limit_offset(seeded_repo):
     assert not (keys_a & keys_b)
 
 
+# ---- 2026-09-28 修 Media Manager "All channels" 卡死 ----
+
+
+async def test_list_media_skips_text_only_messages(seeded_repo):
+    """2026-09-28:_filter_media_rows 跳过 `media=[]` 的行(无 media 的纯文本消息)
+    — 既锁住正确性(这些行不应出现在结果),又防止后续误删优化导致全量 DTO
+    构造、把"All channels" 框点回卡死状态。
+
+    seeded_repo 默认 4 条带 media 的消息;额外种 2 条纯文本(无 media),
+    验证 list_media 总数仍是 4,count_media 数字对齐。
+    """
+    # 拿一条既有消息当种子模板,造两条无 media 的"邻居"
+    baseline = await seeded_repo.list_media()
+    n_media = len(baseline)
+
+    # 种 2 条纯文本到不同频道 — 注意 jsonl 后端需要频道已注册
+    if isinstance(seeded_repo, JsonlFileStore):
+        for cid in (100, 200):
+            if (await seeded_repo.get_channel(cid)) is None:
+                await seeded_repo.upsert_channel(
+                    ChannelDTO(id=cid, title=f"#{cid}"),
+                )
+                await seeded_repo.set_channel_subscribed(cid, True)
+
+    text_only_a = make_message(channel_id=100, msg_id=900, media=[])
+    text_only_b = make_message(channel_id=200, msg_id=901, media=[])
+    await seeded_repo.save_message(text_only_a)
+    await seeded_repo.save_message(text_only_b)
+
+    # list_media:数量应仍 = n_media(纯文本行被跳)
+    rows = await seeded_repo.list_media()
+    assert len(rows) == n_media
+    # 不应包含 text_only_a / text_only_b 的 telegram_msg_id
+    msg_ids = {r[0].telegram_msg_id for r in rows}
+    assert 900 not in msg_ids
+    assert 901 not in msg_ids
+
+    # count_media 走同一 helper,数字应一致
+    assert await seeded_repo.count_media() == n_media
+
+
+async def test_count_media_by_object_key_skips_text_only_messages(seeded_repo):
+    """2026-09-28:`count_media_by_object_key` 同样跳过无 media 的行 — 防
+    同样卡顿;且无 media 的 message 不可能贡献 refcount,数字保持正确。
+    """
+    baseline = await seeded_repo.count_media_by_object_key("media/photo_a.jpg")
+    assert baseline == 2  # photo_a.jpg 在 msg1 + msg10
+
+    if isinstance(seeded_repo, JsonlFileStore):
+        for cid in (100, 200):
+            if (await seeded_repo.get_channel(cid)) is None:
+                await seeded_repo.upsert_channel(
+                    ChannelDTO(id=cid, title=f"#{cid}"),
+                )
+                await seeded_repo.set_channel_subscribed(cid, True)
+
+    # 加 5 条纯文本消息 — 不应影响 refcount
+    for cid, mid in ((100, 910), (100, 911), (200, 912), (300, 913), (300, 914)):
+        await seeded_repo.save_message(make_message(channel_id=cid, msg_id=mid, media=[]))
+
+    assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2
+
+
 # ---- count_media_by_object_key parity ----
 
 

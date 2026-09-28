@@ -1065,6 +1065,12 @@ class JsonlFileStore(StorageRepository):
         for cid in ch_ids:
             cf = await self._file_for(cid)
             for row in cf.rows:
+                # 大多数 Telegram 消息是纯文本没有 media;跳过空 media 行
+                # 避免昂贵的 `_dict_to_message()` 构造 — 2026-09-28 Media Manager
+                # "All channels" 框卡死的根因之一:`channel_ids=None` 时遍历全部
+                # 订阅 channel 全量 messages,扫到没 media 的行还在 DTO 反序列化
+                if not row.get("media"):
+                    continue
                 msgs.append(_dict_to_message(row))
         search_lo = search.lower()
         rows: list[tuple[MessageDTO, int, MediaDTO]] = []
@@ -1104,6 +1110,10 @@ class JsonlFileStore(StorageRepository):
         for c in self._channels.values():
             cf = await self._file_for(c.id)
             for row in cf.rows:
+                # 2026-09-28:与 `_filter_media_rows` 一致跳过空 media 行
+                # — 大多数消息是纯文本,DTO 构造对它们是浪费
+                if not row.get("media"):
+                    continue
                 # `cf.rows` 是 dict;先转 MessageDTO 再扫 media 数组,
                 # 与 `list_media` 路径一致。
                 msg = _dict_to_message(row)

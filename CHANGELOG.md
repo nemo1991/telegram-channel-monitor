@@ -5,6 +5,94 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.1] - 2026-09-28
+
+主题:**Media Manager「点击 Delete 无反应」+ 「All channels」框卡死**。
+
+> v1.9.0 发版后两个用户反馈:
+> 1. Media Manager 点单条 Delete / 批量删除所选 — row 不消失、状态栏
+>    无反馈,体感「点了没反应」。也没批量进度。
+> 2. Media Manager 顶部「All channels」框一点 → 程序卡死无响应。
+
+### 修法 1 — Delete 反馈可见性(`src/tgmonitor/ui/main_window.py`)
+
+#### 根因
+
+`vm.media_deleted` Qt signal 之前**无任何 UI 订阅**。`MediaDeleted` 事件
+从 `media_service.delete_media` 经 EventBus → VM `_on_media_deleted` →
+Qt signal 整条链路已就位,但没人接 signal — 用户点 Delete 后 row 留
+在原位、状态栏无任何文案、批量也没「正在删除…」进度。
+
+批量删除靠末尾手动 `_on_media_refresh()` 兜底,但 `vm.delete_media_batch`
+是 fire-and-forget(`run_coro` 调度 `_go()` 后立即返回),refresh 在
+`_go()` 跑完前就发了 → 拿到的 storage 还是旧数据,刷新后 UI 仍是原样。
+
+#### 修法
+
+1. `_wire_events` 新增 `self._vm.media_deleted.connect(self._on_media_deleted)`
+2. 新增 slot `_on_media_deleted(e)`:
+   - `_throttle_activity("media_delete", "已删除 媒体", min_interval_ms=500,
+     timeout_ms=1500)` — 状态栏左侧短促提示,throttle 防批量刷屏
+   - `_media_refresh_debounce.start()` — 100ms `QTimer` debounce,连续 N 条
+     `MediaDeleted` 合并为单次 `media_manager.refresh_requested.emit()`
+3. 新增 `_flush_media_refresh_pending()` 槽(timer.timeout 触发)— 真正发
+   widget refresh
+4. `_on_media_batch_delete` 末尾移除 `_on_media_refresh()` — `run_coro`
+   是异步的,refresh 提前发反而拿到旧数据;真 refresh 由 debounce
+   timer 在 `_go()` 跑完后接续
+
+`_throttle_activity` + `QTimer` 组合对齐项目既有节流范式
+(`_search_debounce` 300ms / `_throttle_activity` min_interval_ms),无新
+机制。
+
+#### 回归测试(`tests/test_main_window_delete_feedback.py`,5 个)
+
+- 单条 delete → debounce 后 emit 1 次 widget refresh + 活动文案「已删除 媒体」
+- 非 `MediaDeleted` 类型(`MessageDeleted` 等)→ slot 直接 return,不抛、不刷
+- 5 条连续 delete → debounce 合并为 1 次 refresh(QTimer 100ms 验证)
+- 100 条连续 delete → activity 走 throttle 不刷屏(只更新 1 次 label)
+
+### 修法 2 — Jsonl 后端 list_media / count_media_by_object_key 全表扫卡死
+(`src/tgmonitor/core/storage/jsonl_store.py`)
+
+#### 根因
+
+`_filter_media_rows` + `count_media_by_object_key` 对 `cf.rows`(单频道
+jsonl 内存行)每条都调 `_dict_to_message(row)` 做 DTO 反序列化 — 即使
+该消息完全没有 media。多数 Telegram 频道 80%+ 消息是纯文本,这些 DTO
+构造是浪费。
+
+「All channels」(`channel_ids=None`) 走 `_filter_media_rows` 时遍历所有
+订阅 channel 的全量 jsonl 行,user 有 N 频道 × M 消息 = 万级浪费,
+且 `media_service.list_media` 内部调 `list_media` + `count_media`
+两次,扫描翻倍 — 触发事件循环长阻塞,UI 冻死。
+
+#### 修法
+
+`_filter_media_rows` 与 `count_media_by_object_key` 在调
+`_dict_to_message(row)` 前先按 `row.get("media")` 是否为空过滤,
+空 media 行直接 skip — 典型 channel 80%+ 文字消息,这一改直接砍掉大头
+开销。`count_media_by_channel` 之前已走 raw dict (`len(row.get("media"))`)
+保持不变。
+
+文档同步:`_filter_media_rows` docstring 注明「`channel_ids=None` 扫
+全部订阅 channel」的契约不变,跳过空 media 行为与契约无冲突。
+
+#### 回归测试(`tests/test_storage_backends.py`,2 个新增)
+
+- `test_list_media_skips_text_only_messages`:种混合行(4 条带 media + 2
+  条纯文本),`list_media` / `count_media` 数字仍是 4,纯文本 msg_id 不
+  出现在结果里(对齐 v1.8.0 退订频道 media 不丢的 patch 路径)
+- `test_count_media_by_object_key_skips_text_only_messages`:加 5 条纯
+  文本,`photo_a.jpg` refcount 仍是 2(纯文本不可能贡献 refcount,数字保持)
+
+两个测试都跑 InMemory + Jsonl 两后端 parametrize,共 4 用例。
+
+### 验证
+
+- 全部测试:1374 passed, 54 skipped, 0 failed
+- (v1.9.0 CI 主测试矩阵正在跑 `36368324233`,确认)
+
 ## [1.9.0] - 2026-09-28
 
 主题:**headless CLI 子命令(`sync` / `monitor`)+ Windows cp1252 中文 help 修复**。

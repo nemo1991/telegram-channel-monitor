@@ -69,6 +69,7 @@ from tgmonitor.core.events import (
     ChannelSyncDone,
     ChannelSyncProgress,
     LoginStateChanged,
+    MediaDeleted,
     MediaDownloaded,
     MessageDeleted,
     MessageInteractionsChanged,
@@ -480,6 +481,16 @@ class MainWindow(QMainWindow):
         # 节流:同一 key 在 min_interval_ms 内只更新一次,避免 MessageReceived
         # 等高频事件把 label 刷成流水账。
         self._activity_throttle: dict[str, float] = {}
+        # 2026-09-28 fix(delete-no-feedback):Media Manager 单条 / 批量删除
+        # 经 vm.media_deleted 触发 widget 刷新 — 用 QTimer debounce 合并:批量
+        # 100 条触发 100 次 MediaDeleted 也只刷一次 widget(连续 delete 中
+        # 每次 restart 100ms,到点才真刷)。
+        from PySide6.QtCore import QTimer
+
+        self._media_refresh_debounce = QTimer(self)
+        self._media_refresh_debounce.setSingleShot(True)
+        self._media_refresh_debounce.setInterval(100)
+        self._media_refresh_debounce.timeout.connect(self._flush_media_refresh_pending)
         self.status_bar.addWidget(self._activity_label, 1)
         # 常驻右侧的 TG 通信状态(addPermanentWidget 不会被 showMessage 临时消息顶掉)
         # 2026-09-07 v1.6.8:tr() 包裹。后续 _on_conn_state_changed 会重 setText,
@@ -1302,6 +1313,10 @@ class MainWindow(QMainWindow):
         # 用户点 Retry 后 Media Manager 列表不变(状态仍 FAILED),体感是
         # 「点击无反应」。现在订阅后立刻刷新 widget + 状态栏左侧提示。
         self._vm.media_retried.connect(self._on_media_retried)
+        # 2026-09-28 fix(delete-no-feedback):之前 vm.media_deleted 没人订阅,
+        # 单条 Delete 走完后 row 不消失、状态栏无提示 — 体感「点击无反应」。
+        # 现在订阅 → 状态栏短促「已删除 媒体」+ 合并刷 widget。
+        self._vm.media_deleted.connect(self._on_media_deleted)
         # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
         # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
         self._vm.media_download_progress.connect(self.media_manager.on_download_progress)
@@ -1684,6 +1699,36 @@ class MainWindow(QMainWindow):
         self._show_activity(self.tr("正在重试…"), timeout_ms=2000)
         self.media_manager.refresh_requested.emit()
 
+    def _on_media_deleted(self, e) -> None:
+        """2026-09-28 fix(delete-no-feedback):Media Manager 媒体被删 → 状态栏短促
+        提示 + 合并刷新 widget。
+
+        之前 `vm.media_deleted` 事件无 UI 订阅,用户点 Delete 后 row 不消失、
+        状态栏无提示 — 体感「点击无反应」。批量删除走 `vm.delete_media_batch`
+        每条都触发 `MediaDeleted`,本 slot 自动覆盖:
+
+        - 节流活动文案(`_throttle_activity("media_delete", …)`):批量 100 条
+          时不会把 status bar 刷成「已删除 媒体 × 100」流水账。
+        - `QTimer.start()` debounce 合并:连续 N 条 delete → 单次 widget
+          refresh(定时器 interval=100ms,每次新 delete 重置计时,到点才真
+          调 `media_manager.refresh_requested.emit()`)。
+        """
+        if not isinstance(e, MediaDeleted):
+            return
+        self._throttle_activity(
+            "media_delete",
+            self.tr("已删除 媒体"),
+            min_interval_ms=500,
+            timeout_ms=1500,
+        )
+        # debounce:start() 在已运行的 timer 上自动重置 interval,批量
+        # 100 条连续 delete 只触发 1 次 widget refresh(最后一次后 100ms)
+        self._media_refresh_debounce.start()
+
+    def _flush_media_refresh_pending(self) -> None:
+        """`_media_refresh_debounce` 到点 — 实际发 widget refresh。"""
+        self.media_manager.refresh_requested.emit()
+
     def _on_login_state(self, state: str) -> None:
         self.status_bar.showMessage(self.tr("登录状态: {state}").format(state=state), 4000)
         # 活动指示器:登录是持续过程,登录中显示中间态,登录完成短暂提示后清空。
@@ -1840,7 +1885,14 @@ class MainWindow(QMainWindow):
         run_coro(self.loop, _go(), error_label="batch_retry_media")
 
     def _on_media_batch_delete(self, keys: list) -> None:
-        """批量 delete — 二次确认 + 调 VM.delete_media_batch。"""
+        """批量 delete — 二次确认 + 调 VM.delete_media_batch。
+
+        2026-09-28 fix(delete-no-feedback):之前末尾强制 `_on_media_refresh()`,
+        但 `vm.delete_media_batch` 是 fire-and-forget(`run_coro` 调度 `_go`
+        后立即返回),refresh 在 `_go` 跑完前就发了 — 拿到的 storage 还是旧
+        数据。删除走完的真实 refresh 由 `_on_media_deleted` 的 100ms debounce
+        timer 接续,本函数只需发请求、不必自己刷。
+        """
         if not keys:
             return
         n = len(keys)
@@ -1856,8 +1908,6 @@ class MainWindow(QMainWindow):
             return
         items = [(k.channel_id, k.telegram_msg_id, k.media_idx) for k in keys]
         self._vm.delete_media_batch(items)
-        # 删除完顺手刷新一次列表
-        self._on_media_refresh()
 
     def _on_media_prune(self) -> None:
         """Media Manager 「Prune Orphans」按钮 — 二次确认 → reconcile(dry_run=False)。
