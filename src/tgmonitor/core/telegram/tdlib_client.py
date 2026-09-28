@@ -1729,9 +1729,26 @@ class TdlibTelegramClient(_AiClient):
         """Delegate → ChannelsApi.join_channel(Protocol 形状保留)。"""
         return await self.channels.join_channel(identifier)
 
-    async def download_file(self, file_id: str) -> bytes | None:
-        """Delegate → ChannelsApi.download_file(Protocol 形状保留)。"""
-        return await self.channels.download_file(file_id)
+    async def download_file(
+        self,
+        file_id: str,
+        *,
+        progress_callback=None,
+    ) -> bytes | None:
+        """Delegate → ChannelsApi.download_file(Protocol 形状保留)。
+
+        `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
+        `await cb(downloaded: int, total: int | None)`;约 0.5s 节流调一次,
+        完成时发终值。`None` = 不上报(老调用方零改动)。
+
+        2026-09-28 v1.9.2:Protocol 加了 `progress_callback` kwarg,但本
+        thin delegate 漏改透传,生产 FULL media policy 路径全部 TypeError
+        (修前测试用 FakeTelegramClient + 不传 kwarg 都没命中,潜伏 v1.5.1 →
+        v1.9.1 共 4 个 minor 版本)。守住:见 `test_telegram_lifecycle.py`
+        中 `test_protocol_method_signatures_match_tdlib_concrete`(通用
+        Protocol 签名漂移 guard)。
+        """
+        return await self.channels.download_file(file_id, progress_callback=progress_callback)
 
     async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:Delegate → ChannelsApi.mark_messages_read。"""

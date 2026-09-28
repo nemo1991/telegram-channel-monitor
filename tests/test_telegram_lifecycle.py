@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 from datetime import UTC, datetime
 
 import pytest
@@ -1017,3 +1018,166 @@ async def test_do_start_inner_proxy_error_sets_error_state(
         await asyncio.wait_for(client._do_start_inner(), timeout=2)
         assert client._state == "error"
         assert "代理设置失败" in client._state_detail
+
+
+# ============================================================
+# Protocol 签名漂移守卫 — 防止 thin delegate 漏改透传
+# ============================================================
+#
+# 2026-09-28 v1.9.2 教训:v1.5.1 PR #B3 给 `download_file` 加
+# `progress_callback` kwarg 时,改了 5 个文件里的 4 个,漏了
+# `TdlibTelegramClient.download_file` 这层 thin delegate(
+# `tdlib_client.py:1732-1734`)。生产 FULL media policy 全部 TypeError。
+#
+# 测试漏过的根因:
+#   - `tests/test_media_downloader.py` 全程用 `FakeTelegramClient` — 不走 thin
+#   - `test_telegram_lifecycle.py::test_placeholder_start_and_channels_safe` 用真
+#     `TdlibTelegramClient` 但**只**调 `download_file("whatever")`(不传 kwarg),
+#     所以 TypeError 不触发
+#
+# 本段两个测试一起守:
+#   1. 聚焦回归 — `download_file(file_id, progress_callback=cb)` 透传
+#   2. 通用 guard — Protocol 所有方法签名必须被 concrete 实现兼容
+#      (防未来任何其它 thin delegate 漂)
+
+
+async def test_tdlib_client_download_file_forwards_progress_callback(
+    settings, bus, stub_tdlib_init
+) -> None:
+    """2026-09-28 v1.9.2 回归:`download_file` thin delegate 必须透传
+    `progress_callback` kwarg 到 `ChannelsApi.download_file`,否则生产
+    FULL media policy 全部 TypeError。
+    """
+    client = _make_stubbed_client(settings, bus)
+
+    captured: list[tuple[str, object]] = []
+
+    async def fake_channels_download_file(file_id, *, progress_callback=None):
+        captured.append((file_id, progress_callback))
+        return b""
+
+    client.channels.download_file = fake_channels_download_file  # type: ignore[method-assign]
+
+    async def cb(downloaded: int, total: int | None) -> None:
+        pass
+
+    # 1) 老调用方:不传 progress_callback — 必须仍能调,默认 None
+    out = await client.download_file("fid-A")
+    assert out == b""
+    assert captured == [("fid-A", None)]
+
+    # 2) 新调用方:传 progress_callback — 必须透传到 channels
+    await client.download_file("fid-B", progress_callback=cb)
+    assert captured == [("fid-A", None), ("fid-B", cb)]
+
+    # 3) Protocol 调用约定:`progress_callback=None` 也算合法传参
+    await client.download_file("fid-C", progress_callback=None)
+    assert captured == [("fid-A", None), ("fid-B", cb), ("fid-C", None)]
+
+
+def test_protocol_method_signatures_match_tdlib_concrete() -> None:
+    """2026-09-28 v1.9.2 防漂 guard:`TelegramClient` Protocol 每个 public
+    方法(含 property getter)在 `TdlibTelegramClient` 上必须存在,且
+    参数名 / kind(POSTKY_ONLY / KEYWORD_ONLY / POSITIONAL_OR_KEYWORD)
+    至少**包含** Protocol 声明的子集(允许 concrete 加新 kwarg,但不能少)。
+
+    静默漏改场景(本测试会捕获):
+      - Protocol 加 `*, new_kwarg=None` → concrete thin delegate 漏透传
+      - Protocol 把位置参数改成 keyword-only → concrete 没跟上
+      - Protocol 加新方法 → concrete 完全没实现
+
+    注:Protocol 是 `@runtime_checkable` — `isinstance(prod_client, TelegramClient)`
+    只检查属性存在,不管签名,挡不住此类漂移。本测试用 `inspect.signature`
+    做参数级 diff。
+    """
+    from tgmonitor.core.telegram.client import TelegramClient
+
+    proto = TelegramClient
+
+    drift: list[str] = []
+
+    for name in dir(proto):
+        if name.startswith("_"):
+            continue
+        attr = inspect.getattr_static(proto, name)
+        if not callable(attr) and not isinstance(attr, property):
+            continue
+        # Protocol 上的 method → 用 function 形式取 signature;property → 用 fget
+        if isinstance(attr, property):
+            if attr.fget is None:
+                continue
+            proto_sig = inspect.signature(attr.fget)
+        else:
+            proto_sig = inspect.signature(attr)
+        try:
+            concrete = getattr(tdc.TdlibTelegramClient, name)
+        except AttributeError:
+            drift.append(f"{name}: missing on TdlibTelegramClient")
+            continue
+        if isinstance(concrete, property):
+            if concrete.fget is None:
+                continue
+            concrete_sig = inspect.signature(concrete.fget)
+        else:
+            if not callable(concrete):
+                drift.append(f"{name}: not callable on TdlibTelegramClient")
+                continue
+            concrete_sig = inspect.signature(concrete)
+        # 比对:Protocol 声明的每个非-self 参数必须在 concrete 中存在,
+        # 且 concrete 的 kind 必须**接受** Protocol 允许的所有调用形式。
+        # 例:Protocol 是 KEYWORD_ONLY → concrete 必须能以 kwarg 形式被调
+        # (KEYWORD_ONLY / POSITIONAL_OR_KEYWORD 都行);Protocol 是
+        # POSITIONAL_OR_KEYWORD → concrete 也必须是 POSITIONAL_OR_KEYWORD
+        # (KEYWORD_ONLY 会拒掉 kwarg 形式 → 协议违约)。
+        for pname, pp in proto_sig.parameters.items():
+            if pname == "self":
+                continue
+            cp = concrete_sig.parameters.get(pname)
+            if cp is None:
+                drift.append(
+                    f"{name}.{pname}: Protocol 声明存在,concrete 缺失(漏改 thin delegate?)"
+                )
+                continue
+            if not _accepts(pp.kind, cp.kind):
+                drift.append(
+                    f"{name}.{pname}: Protocol={pp.kind.name},"
+                    f" concrete={cp.kind.name} — concrete 比协议更严,会拒掉"
+                    f" Protocol 允许的调用形式"
+                )
+    assert not drift, "Protocol 签名漂移:\n  " + "\n  ".join(drift)
+
+
+def _accepts(
+    proto_kind: inspect.Parameter.kind,
+    concrete_kind: inspect.Parameter.kind,
+) -> bool:
+    """concrete 的 kind 是否接受 Protocol kind 允许的所有调用形式?
+
+    关键合约:Protocol 说"你可以这么调",concrete 就不能拒。
+    反向(concrete 提供 Protocol 没承诺的额外形式)不算违约。
+
+    兼容矩阵:
+      Protocol VAR_KEYWORD     → concrete 任意(代表 **kwargs 兜底)
+      Protocol VAR_POSITIONAL  → concrete VAR_POSITIONAL/POSITIONAL_ONLY/POSITIONAL_OR_KEYWORD
+      Protocol POSITIONAL_ONLY → concrete POSITIONAL_ONLY(只能按位置)
+      Protocol POSITIONAL_OR_KEYWORD → concrete POSITIONAL_OR_KEYWORD(必须能按 kwarg 调)
+      Protocol KEYWORD_ONLY    → concrete KEYWORD_ONLY / POSITIONAL_OR_KEYWORD(必须能按 kwarg 调)
+    """
+    if proto_kind == inspect.Parameter.VAR_KEYWORD:
+        return True
+    if proto_kind == inspect.Parameter.VAR_POSITIONAL:
+        return concrete_kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    if proto_kind == inspect.Parameter.POSITIONAL_ONLY:
+        return concrete_kind == inspect.Parameter.POSITIONAL_ONLY
+    if proto_kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+        return concrete_kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+    if proto_kind == inspect.Parameter.KEYWORD_ONLY:
+        return concrete_kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    return False

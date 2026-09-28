@@ -169,6 +169,40 @@ UI 弹错误框。
 吐原始 `updateAuthorizationState` / `updateNewMessage` 事件流 —— 这些是
 `core/telegram/tdlib_client.py` 订阅的源头,改它之前先确认这里的事件字段确实有变化。
 
+### 修改 Protocol 签名 — 必做 checklist
+
+`core/telegram/client.py` 的 `TelegramClient` Protocol 是 4 套实现的契约:
+
+- `core/telegram/tdlib_client.py` `TdlibTelegramClient`(生产,子模块 delegate 到 `ChannelsApi`)
+- `core/telegram/fake_client.py` `FakeTelegramClient`(测试)
+- `core/telegram/unconfigured.py` `UnconfiguredTelegramClient`(占位)
+- `fake_client.py` 内部多处 stub
+
+加 / 改 Protocol 任意方法的签名(参数 / kwarg / 返回类型),**必须**同步更新
+**所有**实现,否则生产 `MediaDownloader` 等真路径会撞 `TypeError`(生产
+TypeError 在 thin delegate 层最易漏改 — 见 v1.5.1 PR #B3 → v1.9.2)。
+
+测试侧已布防:
+- `tests/test_telegram_lifecycle.py::test_protocol_method_signatures_match_tdlib_concrete`
+  用 `inspect.signature` 比对 Protocol 与 `TdlibTelegramClient` 的全部 public
+  方法,concrete 比 Protocol 更严(拒绝 Protocol 允许的调用形式)即 fail。
+  CI 必跑,漏改走不进去。
+
+PR 模板在「改了哪些文件」一栏,只要触及 `core/telegram/client.py` Protocol,
+就**至少**要在以下 4 个文件里各改一处:
+
+1. `core/telegram/client.py` Protocol
+2. `core/telegram/tdlib_client.py`(尤其 thin delegate — 检查 1732 行附近)
+3. `core/telegram/fake_client.py`
+4. `core/telegram/unconfigured.py`
+
+签名漂移自检命令(本地):
+
+```bash
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest \
+  tests/test_telegram_lifecycle.py::test_protocol_method_signatures_match_tdlib_concrete -v
+```
+
 ---
 
 ## 🪟 Windows 原生编译

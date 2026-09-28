@@ -5,6 +5,57 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.2] - 2026-09-28
+
+主题:**TdlibTelegramClient.download_file thin delegate 签名漂移 — FULL media policy 同步全部 TypeError**。
+
+> v1.9.1 发版后 3 小时用户报告:`tgmonitor sync --media-policy full`
+> 第一个频道第一条媒体就崩,日志:
+> `TypeError: TdlibTelegramClient.download_file() got an unexpected keyword argument 'progress_callback'`
+
+### 根因
+
+v1.5.1 PR #B3「Media Manager 下载进度反馈」(commit `3f20fb7`)给
+`download_file` 加了 `progress_callback` kwarg,改了 5 个里的 4 个:
+
+| 文件 | 是否改 |
+|---|---|
+| `core/telegram/client.py` Protocol | ✅ |
+| `core/telegram/tdlib_channels.py` `ChannelsApi.download_file` | ✅ |
+| `core/telegram/fake_client.py` `FakeTelegramClient.download_file` | ✅ |
+| `core/telegram/unconfigured.py` `UnconfiguredTelegramClient.download_file` | ✅ |
+| **`core/telegram/tdlib_client.py` `TdlibTelegramClient.download_file` thin delegate** | ❌ |
+
+`MediaDownloader.download_one`(`core/monitor/service.py:1134`)无条件
+`self.client.download_file(fid, progress_callback=progress_callback)` —
+任何生产路径走 `MediaDownloader` 都撞 TypeError。潜伏 v1.5.1 → v1.9.1
+共 4 个 minor 版本。
+
+### 测试为什么没守住
+
+- `tests/test_media_downloader.py` 全程用 `FakeTelegramClient`(签名已更新),
+  不走 thin delegate
+- `test_telegram_lifecycle.py::test_placeholder_start_and_channels_safe` 用真
+  `TdlibTelegramClient`,但**只**调 `download_file("whatever")`(不传 kwarg),
+  没命中 TypeError 路径
+
+### 修法
+
+1. **`core/telegram/tdlib_client.py:1732-1734`** — thin delegate 透传
+   `progress_callback`,签名与 Protocol 对齐
+2. **`tests/test_telegram_lifecycle.py`** — 加 2 个测试:
+   - `test_tdlib_client_download_file_forwards_progress_callback`:聚焦回归,
+     mock `channels.download_file` 后断言 kwarg 真被透传
+   - `test_protocol_method_signatures_match_tdlib_concrete`:通用
+     Protocol 签名漂移 guard,用 `inspect.signature` 走 Protocol 全部
+     public 方法,断言 concrete 实现的 `kind` **接受** Protocol 允许的
+     所有调用形式。`_accepts(proto_kind, concrete_kind)` 反映「Protocol
+     承诺的调用形式 concrete 不能拒」 — 这正是本次 bug 的真正违约方向。
+
+   注:Protocol 是 `@runtime_checkable`,但 `isinstance(prod, TelegramClient)`
+   只检查属性存在,不管签名。本 guard 用 `inspect.signature` 做参数级 diff,
+   守住未来所有 thin delegate 漂移(包括其它方法)。
+
 ## [1.9.1] - 2026-09-28
 
 主题:**Media Manager「点击 Delete 无反应」+ 「All channels」框卡死**。
