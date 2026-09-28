@@ -5,6 +5,107 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.0] - 2026-09-28
+
+主题:**headless CLI 子命令(`sync` / `monitor`)+ Windows cp1252 中文 help 修复**。
+
+> 用户需求:在没有 GUI 的环境(headless server / 容器 / cron)也想跑监听
+> 与全量同步,且与未来脚本化操作(批量管理、CI、debug)留口子。本次把
+> composition root 公开、抽 CLI 子包,GUI 行为零变化 — 默认 `tgmonitor`
+> 仍是桌面应用,`sync` / `monitor` 走裸 asyncio 子命令。
+
+### 改动(`src/tgmonitor/core/runtime.py`,新文件)
+
+`app.py:_bootstrap` + `_shutdown_async` 抽出为公开 `bootstrap()` / `shutdown()`,
+CLI / GUI 共用同一份装配。
+
+- **CLI / GUI 共享 composition root**:Settings → EventBus → Storage
+  → ObjectStore → TelegramClient → MonitorService → AppService 顺序不变。
+- **`core/runtime.py` 边界守则**:模块顶**不**import PySide6 / qasync /
+  `tgmonitor.ui.*`,`bootstrap()` 内部仍 lazy import `build_telegram_client` 等。
+- 返回 `(app, monitor, settings, objects_error_or_None)`,GUI 仍用 `objects_error`
+  主窗口红字提示,CLI 忽略该字段。
+
+### 改动(`src/tgmonitor/app.py`)
+
+- 模块顶删除 `from tgmonitor.ui.main_window import MainWindow` — 改为 `run()`
+  函数体内 lazy import。CLI 模式永不触发该 import。
+- `_bootstrap` / `_shutdown_async` 改成从 `core.runtime` 导入的别名,所有
+  现有调用点零改动。
+
+### 改动(`src/tgmonitor/cli/`,新包)
+
+```
+src/tgmonitor/cli/
+├── __init__.py        # 包标识
+├── main.py            # argparse + argv 路由 + Windows UTF-8 reconfigure
+├── sync.py            # async run_sync(args, *, app=None, monitor=None)
+└── monitor.py         # async run_monitor(args, *, app=None, monitor=None)
+```
+
+- **DI 入参**:`run_sync(args, *, app=None, monitor=None)` 与
+  `run_monitor(...)` 都接受预构 `AppService` / `MonitorService` 注入;
+  测试用 fakes,生产路径 `None` → 自动 `bootstrap()`。
+- **`sync` 子命令**:`tgmonitor sync <channel_ids>… [--no-metadata]
+  [--no-history] [--resume] [--media-policy=metadata|thumbnail|full]
+  [--chat-delay-ms=N] [--page-delay-ms=N]`,全量同步完成后退出。
+- **`monitor` 子命令**:`tgmonitor monitor [--no-resume]`,前台监听,
+  SIGINT / SIGTERM 干净退出(`loop.add_signal_handler` 模式)。
+- **鉴权失败处理**:`bootstrap state != "ready"` → 退出码 1 + stderr 提示
+  「请先在 GUI 完成登录」,CLI 不引入交互式 phone/code 流程。
+
+### 改动(`src/tgmonitor/__main__.py`)
+
+argv 分流:无参数 / `gui` / `--help` → `app.run()`(GUI,既有);
+`sync` / `monitor` → `cli.main()`(CLI 子命令)。CLI 路径**不**import
+`tgmonitor.app`,从而保证 PySide6/qasync 不被加载。
+
+### 改动(`src/tgmonitor/core/channel_sync/service.py` + `app_service.py`)
+
+`ChannelSyncService.sync_channels` + `AppService.sync_channels` 加
+`media_policy: MediaPolicy | None = None` kwarg — 非 None 时**本轮覆盖**
+service 默认(`self.media_policy` 不变,下次 sync 仍按 .env 设置)。CLI
+`--media-policy` 一次性 override 走该路径,不靠 `service.media_policy =`
+属性赋值这种 leaky hack。
+
+`effective_policy` 在 `_sync_one_channel` / `_sync_history` 透传,内部不再
+读 `self.media_policy`。
+
+### 修复(`src/tgmonitor/cli/main.py`,Windows 中文 locale)
+
+argparse help 含中文(`前台启动监听服务` / `强制启动 monitor` 等),Windows
+默认 cp1252 编码不了 → `parser.print_help()` / `parser.error()` 路径直接
+抛 `UnicodeEncodeError`。
+
+`_ensure_utf8_stdio()` 在 CLI 入口先把 stdout / stderr `reconfigure(encoding="utf-8")`
+(`errors="replace"` 兜底);Mac / Linux 上 stdout 默认 UTF-8,reconfigure 是 no-op。
+
+### 测试(`tests/test_cli.py` + `tests/test_cli_sync.py`,13 个)
+
+- **`tests/test_cli.py`**(7):`--help` / `sync --help` / `monitor --help`
+  退出码 0;subprocess 断言 CLI 路径**永不** import PySide6 / qasync /
+  `tgmonitor.app` / `MainWindow`(覆盖 cli.main + cli.sync.run_sync +
+  cli.monitor.run_monitor 三模块入口);`__main__` argv 分流边界(sync → cli;
+  无参数 → gui);`core.runtime.bootstrap` / `shutdown` 可独立 import。
+- **`tests/test_cli_sync.py`**(4):CLI sync 路径在 fakes 上跑通 + 发
+  `ChannelSyncProgress done` 事件;bootstrap `state != ready` 时退出码 1
+  + 不调 `sync_channels`;`--no-metadata` / `--resume` / `--chat-delay-ms`
+  / `--page-delay-ms` / `--media-policy` 透传校验 + service 默认不被污染
+  (`app.channel_sync.media_policy.value == "metadata"`)。
+- **`tests/test_cli_monitor.py`**(2):bootstrap `state != ready` 时退出码 1
+  + 不调 `monitor.start`。
+
+测试用 subprocess 隔离(子进程断言 `PySide6` 未出现在 `sys.modules`),
+绕开 conftest 提前加载 PySide6 的污染;`_run_subprocess` 加 `PYTHONIOENCODING=utf-8`
++ `encoding="utf-8"` + `errors="replace"` 防 Windows cp1252 影响父进程读 pipe。
+
+### 验证
+
+- `PYTHONPATH=src uv run python -m tgmonitor --help` / `sync --help` / `monitor --help`
+  冷启动无 PySide6 加载(冷启动 ~0.3s)
+- 全部测试:1365 passed, 54 skipped, 0 failed
+- CI 三平台全绿(ubuntu + macOS + windows × Python 3.13)
+
 ## [1.8.6] - 2026-09-26
 
 主题:**修 Media Manager Retry 「点击无反应」+ 状态栏左侧加「正在重试…」提示**。
