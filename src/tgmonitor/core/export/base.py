@@ -14,6 +14,7 @@ from tgmonitor.core.dto import ChannelDTO, ExportFormat, MessageDTO
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 
 class Exporter(ABC):
@@ -31,12 +32,19 @@ class Exporter(ABC):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,  # 2026-09-10 v1.7.3:CSV / Markdown / HTML / MEDIA_CSV 控元数据列
+        storage: StorageRepository | None = None,  # 2026-09-29:thumb 走独立表,读时需要 storage.get_thumbnail
     ) -> int:
         """写出到 out_path,返回写入字节数。
 
         `include_metadata=True` 时导出 `is_favorite` / `tags` / `notes`(JSON / ZIP
         永远含,asdict 透明);False 时只走原始字段。默认 True 保持 v1.7.2
         视觉行为对 ★ / 🏷 / 📝 敏感的用户不踩坑。
+
+        `storage`(2026-09-29):缩略图独立表后,`include_thumbnails=True` 时需要
+        用 `storage.get_thumbnail(channel_id, msg_id, media_idx)` 拿 thumb 行
+        (而不是从 `media.thumb_key` 读);None 时 thumb 视图保持老风格 — 仅 ZIP
+        / HTML 受影响。Service 层 `ExportService._run_messages` 在
+        `include_thumbnails=True` 时总会传 storage。
         """
         ...
 

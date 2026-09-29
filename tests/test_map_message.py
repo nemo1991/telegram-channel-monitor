@@ -141,8 +141,10 @@ def test_message_video():
     assert m.mime_type == "video/mp4"
     assert m.telegram_file_id == "42"
     assert m.file_size == 9999
-    assert m.thumb_key == "media/33.thumb"
-    assert m.thumb_backend == "local"
+    # 2026-09-29:thumb_key / thumb_backend 已删;新 thumb 表通过
+    # thumbnail_telegram_file_id 关联到 TG 端 Thumbnail.file.id(供
+    # MediaDownloader 按需下载)。这里断言它被填了。
+    assert m.thumbnail_telegram_file_id == "33"
 
 
 def test_message_animation():
@@ -176,7 +178,8 @@ def test_message_audio():
     assert m.type == MediaType.AUDIO
     assert m.duration == 180
     assert m.mime_type == "audio/mp3"
-    assert m.thumb_key == "media/99.thumb"
+    # 2026-09-29:thumb_key 删 → thumbnail_telegram_file_id 关联
+    assert m.thumbnail_telegram_file_id == "99"
     assert dto.text == "track name"
 
 
@@ -192,7 +195,8 @@ def test_message_voice_note():
     assert m.type == MediaType.VOICE
     assert m.duration == 30
     assert m.mime_type == "audio/ogg"
-    assert m.thumb_key is None  # voice 没缩略图
+    # 2026-09-29:voice 没缩略图 → thumbnail_telegram_file_id 也是 None
+    assert m.thumbnail_telegram_file_id is None
 
 
 def test_message_video_note_square_dims():
@@ -225,7 +229,8 @@ def test_message_document_with_caption():
     assert m.type == MediaType.DOCUMENT
     assert m.mime_type == "application/pdf"
     assert m.file_name == "paper.pdf"
-    assert m.thumb_key == "media/88.thumb"
+    # 2026-09-29:thumb_key 删 → thumbnail_telegram_file_id 关联
+    assert m.thumbnail_telegram_file_id == "88"
     assert dto.text == "abstract"
 
 
@@ -243,7 +248,8 @@ def test_message_sticker_emoji():
     assert m.type == MediaType.STICKER
     assert m.emoji == "😀"
     assert m.width == 512
-    assert m.thumb_key == "media/22.thumb"
+    # 2026-09-29:thumb_key 删 → thumbnail_telegram_file_id 关联
+    assert m.thumbnail_telegram_file_id == "22"
     assert dto.text == ""  # sticker 无 caption
 
 
@@ -353,8 +359,10 @@ async def test_sticker_emoji_roundtrip_jsonl(tmp_path):
                 file_size=4096,
                 width=512,
                 height=512,
-                thumb_key="media/sticker.webp.thumb",
-                thumb_backend="local",
+                # 2026-09-29:thumb_key / thumb_backend 已删 — thumb 现在走独立
+                # thumbnails 表 + thumb/ prefix 存,DTO 只留
+                # thumbnail_telegram_file_id 关联。
+                thumbnail_telegram_file_id="22",
                 emoji="😀",
             )
         ],

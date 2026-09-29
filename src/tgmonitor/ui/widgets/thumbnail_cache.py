@@ -25,7 +25,7 @@ from typing import Final
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, ThumbnailDTO
 
 # 缓存容量上限;LRU 超过此值弹最旧。200 条 ≈ 8MB 内存(64×64 RGBA),
 # 进程单实例 UI,值得。
@@ -66,20 +66,28 @@ class ThumbnailCache:
         return len(self._cache)
 
 
-def cache_key_for(media: MediaDTO) -> tuple[str, str] | None:
+def cache_key_for(media: MediaDTO | ThumbnailDTO) -> tuple[str, str] | None:
     """媒体对象 → cache key;不可显示(None / 非 DONE / 无 key)返 None。
 
-    优先 `thumb_key`(TG 端小缩略图,通常 90×90 JPEG,下载快);
-    没 thumb 则用 `object_key`(原图,大但至少能显示)。
+    2026-09-29:签名兼容 `MediaDTO | ThumbnailDTO`(双形态):
+    - ThumbnailDTO 走独立 `thumb/<sha256>.<ext>` prefix,优先用之
+      (TG 端小缩略图,通常 90×90 JPEG,下载快)
+    - MediaDTO 无 thumb 时 fallback 到 `object_key`(原图,大但能显示)
 
     只接受 DONE 状态 — PENDING/FAILED/DOWNLOADING 时 bytes 还没落地,无图可
     显示;widget 走 emoji fallback 更合适,避免误命中脏数据。
     """
     if media.download_status != MediaDownloadStatus.DONE:
         return None
+    if isinstance(media, ThumbnailDTO):
+        if not media.object_backend or not media.object_key:
+            return None
+        return (media.object_backend, media.object_key)
+    # MediaDTO 路径
+    assert isinstance(media, MediaDTO)
     if not media.object_backend:
         return None
-    key = media.thumb_key or media.object_key
+    key = media.object_key
     if not key:
         return None
     return (media.object_backend, key)

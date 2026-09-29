@@ -67,8 +67,10 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "telegram_file_id": "TEXT",
         "object_key": "TEXT",
         "object_backend": "TEXT",
-        "thumb_key": "TEXT",
-        "thumb_backend": "TEXT",
+        # 2026-09-29:thumb_key / thumb_backend 字段 schema 保留(不读不写,
+        # 留给未来清理周期);thumbnail_telegram_file_id 是 MediaDownloader
+        # 用它按需下载缩略图用。
+        "thumbnail_telegram_file_id": "TEXT",
         "emoji": "TEXT",
         "download_status": "TEXT",
         "download_error": "TEXT",
@@ -76,6 +78,25 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
     "meta": {
         "key": "TEXT",
         "value": "TEXT",
+    },
+    # 2026-09-29:缩略图独立表 — 关联键 `(channel_id, telegram_msg_id,
+    # media_idx)` 三元组;FK 走 messages 表 UNIQUE (channel_id,
+    # telegram_msg_id)。新代码一律走此表;`media.thumb_key/thumb_backend`
+    # 字段保留但已废弃。
+    "thumbnails": {
+        "channel_id": "BIGINT",
+        "telegram_msg_id": "BIGINT",
+        "media_idx": "INTEGER",
+        "object_key": "TEXT",
+        "object_backend": "TEXT",
+        "mime_type": "TEXT",
+        "file_size": "BIGINT",
+        "width": "INTEGER",
+        "height": "INTEGER",
+        "sha256": "TEXT",
+        "download_status": "TEXT",
+        "download_error": "TEXT",
+        "telegram_thumb_file_id": "TEXT",
     },
 }
 

@@ -25,6 +25,7 @@ from tgmonitor.core.dto import (
     MessageDTO,
     SortDir,
     SortKey,
+    ThumbnailDTO,
 )
 from tgmonitor.core.storage.schema_report import SchemaReport
 
@@ -302,6 +303,72 @@ class StorageRepository(ABC):
         用途:`ClearChannelPreview.media_count`。比 `list_media(
         channel_ids=[id]) + len()` 更便宜,4 后端各自走 SQL/aggregate count
         而非把 row 拉回内存。
+        """
+        ...
+
+    # ---- 缩略图(2026-09-29 独立存储) ----
+    # 关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组 — 与父
+    # `MessageDTO.media[media_idx]` 1:1。三后端各自存:PG `thumbnails`
+    # 表,JSONL `thumbnails.jsonl` 文件,Mongo `thumbnails` collection。
+    # ObjectStore 端 key 走独立顶层 prefix `thumb/<sha256>.<ext>`,跟
+    # `media/<sha256>.<ext>` 平行。
+
+    @abstractmethod
+    async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
+        """upsert thumb 行(以三 key 为主键)。
+
+        `download_status` / `download_error` / `object_key` 等任意字段更新都
+        通过本方法;幂等 — 多次调以最新一次为准。media 行不动。
+        """
+        ...
+
+    @abstractmethod
+    async def get_thumbnail(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> ThumbnailDTO | None:
+        """单条 thumb;不存在返 None(不抛)。
+
+        与 `find_media_by_file_id` 对齐:`get_*` 找不到返 None 不抛。
+        """
+        ...
+
+    @abstractmethod
+    async def delete_thumbnail(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> None:
+        """删 thumb 行;不存在不抛(idempotent)。
+
+        调用方:PG `delete_message` 走 FK CASCADE 自动调(JSONL / Mongo 没
+        FK 概念,各自在 `delete_message` 内手工调本方法级联)。
+        """
+        ...
+
+    @abstractmethod
+    async def list_thumbnails_for_message(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+    ) -> list[ThumbnailDTO]:
+        """一条消息的全部 thumb(2026-09-29)— 通常 0 或 1 条。
+
+        HTML / ZIP exporter 用:列消息的所有 thumb,跟 media 循环对齐。空 list
+        表示该消息没 thumb(voice_note / 无 thumbnail 的 media type)。
+        """
+        ...
+
+    @abstractmethod
+    async def count_thumbnails_by_object_key(self, object_key: str) -> int:
+        """同 `object_key` 引用次数(2026-09-29)— `reconcile_orphans` refcount 用。
+
+        应用层:`reconcile_orphans` 把 ObjectStore key 减去 referenced 集合,
+        剩下的才是真孤儿(没 thumb 或 storage 引用)。语义跟
+        `count_media_by_object_key` 平行。
         """
         ...
 

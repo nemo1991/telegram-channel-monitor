@@ -35,6 +35,7 @@ from tgmonitor.core.dto import (
     MessageDTO,
     SortDir,
     SortKey,
+    ThumbnailDTO,
 )
 from tgmonitor.core.storage.channel_file import ChannelFile
 from tgmonitor.core.storage.repository import StorageRepository
@@ -43,6 +44,9 @@ from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 REGISTRY_FILE = "channels.json"
 MESSAGES_DIR = "messages"
 META_FILE = "meta.json"
+# 2026-09-29:缩略图独立存储(独立表/独立 jsonl 文件);key 命名 `thumb/<sha256>.<ext>`,
+# 关联键 (channel_id, telegram_msg_id, media_idx) 三元组。
+THUMBNAILS_FILE = "thumbnails.jsonl"
 
 
 def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
@@ -82,8 +86,10 @@ def _message_to_dict(m: MessageDTO) -> dict[str, Any]:
                 "telegram_file_id": med.telegram_file_id,
                 "object_key": med.object_key,
                 "object_backend": med.object_backend,
-                "thumb_key": med.thumb_key,
-                "thumb_backend": med.thumb_backend,
+                # 2026-09-29:删 thumb_key / thumb_backend(死字段,改独立
+                # `thumbnails.jsonl` 关联);留 thumbnail_telegram_file_id —
+                # MediaDownloader 用它按需下载缩略图。
+                "thumbnail_telegram_file_id": med.thumbnail_telegram_file_id,
                 "emoji": med.emoji,
                 "download_status": med.download_status.value,
                 "download_error": med.download_error,
@@ -119,11 +125,13 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
                     telegram_file_id=md.get("telegram_file_id"),
                     object_key=md.get("object_key"),
                     object_backend=md.get("object_backend"),
-                    thumb_key=md.get("thumb_key"),
-                    thumb_backend=md.get("thumb_backend"),
+                    # 2026-09-29:thumb_key / thumb_backend 已死;老 jsonl
+                    # 残留字段 `.get` 默认 None 即可。thumbnail_telegram_file_id
+                    # 老 jsonl 无 → 默认 None(MediaDownloader 跳过)。
                     emoji=md.get("emoji"),
                     download_status=dl_status,
                     download_error=md.get("download_error"),
+                    thumbnail_telegram_file_id=md.get("thumbnail_telegram_file_id"),
                 )
             )
         except (KeyError, ValueError):
@@ -158,6 +166,50 @@ def _dict_to_message(d: dict[str, Any]) -> MessageDTO:
         is_favorite=bool(d.get("is_favorite", False)),
         tags=list(d.get("tags") or []),
         notes=d.get("notes") or "",
+    )
+
+
+def _thumb_to_dict(t: ThumbnailDTO) -> dict[str, Any]:
+    """2026-09-29:thumbnail 行 dict 化(对应 `thumbnails.jsonl` 一行)。"""
+    return {
+        "channel_id": t.channel_id,
+        "telegram_msg_id": t.telegram_msg_id,
+        "media_idx": t.media_idx,
+        "object_key": t.object_key,
+        "object_backend": t.object_backend,
+        "file_size": t.file_size,
+        "mime_type": t.mime_type,
+        "width": t.width,
+        "height": t.height,
+        "sha256": t.sha256,
+        "download_status": t.download_status.value,
+        "download_error": t.download_error,
+        "telegram_thumb_file_id": t.telegram_thumb_file_id,
+    }
+
+
+def _dict_to_thumb(d: dict[str, Any]) -> ThumbnailDTO:
+    """2026-09-29:thumbnail 行 → DTO,损坏行 KeyError / ValueError 上抛由
+    caller 决定 skip 还是 fail(目前 caller 直接 skip — 详见 connect())。
+    """
+    try:
+        dl_status = MediaDownloadStatus(str(d.get("download_status", "pending")))
+    except ValueError:
+        dl_status = MediaDownloadStatus.PENDING
+    return ThumbnailDTO(
+        channel_id=int(d["channel_id"]),
+        telegram_msg_id=int(d["telegram_msg_id"]),
+        media_idx=int(d["media_idx"]),
+        object_key=d.get("object_key"),
+        object_backend=d.get("object_backend"),
+        file_size=d.get("file_size"),
+        mime_type=d.get("mime_type"),
+        width=d.get("width"),
+        height=d.get("height"),
+        sha256=d.get("sha256"),
+        download_status=dl_status,
+        download_error=d.get("download_error"),
+        telegram_thumb_file_id=d.get("telegram_thumb_file_id"),
     )
 
 
@@ -263,6 +315,7 @@ class JsonlFileStore(StorageRepository):
         self._msg_dir = self._root / MESSAGES_DIR
         self._registry = self._root / REGISTRY_FILE
         self._meta_path = self._root / META_FILE
+        self._thumb_path = self._root / THUMBNAILS_FILE
         self._channels: dict[int, ChannelDTO] = {}
         self._files: dict[int, ChannelFile] = {}
         # 跨 save/delete 串行化(同频道并发安全,跨频道亦有序)
@@ -274,6 +327,11 @@ class JsonlFileStore(StorageRepository):
         # telegram_file_id -> MediaDTO(已 DONE 且 object_key 非 None)— 用于
         # find_media_by_file_id 跨频道去重。ChannelFile 加载时一次性构建。
         self._media_by_fid: dict[str, MediaDTO] = {}
+        # 2026-09-29:缩略图独立存储 — (channel_id, telegram_msg_id, media_idx)
+        # 三元组 → ThumbnailDTO。connect() 时一次性从 thumbnails.jsonl 加载,
+        # close() 时 flush 回去。O(1) 查 / 删,list_thumbnails_for_message 也
+        # 是 O(N) 但每条消息内 thumb 数 ≤ media 数,实际几乎都是 1。
+        self._thumbs: dict[tuple[int, int, int], ThumbnailDTO] = {}
 
     # ---- 生命周期 ----
 
@@ -332,9 +390,24 @@ class JsonlFileStore(StorageRepository):
                         download_status=MediaDownloadStatus.DONE,
                     )
             self._files[cid] = cf
+        # 2026-09-29:加载独立 thumbnails.jsonl(损坏行 skip,不抛)。
+        if self._thumb_path.exists():
+            for line in self._thumb_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    t = _dict_to_thumb(d)
+                    self._thumbs[(t.channel_id, t.telegram_msg_id, t.media_idx)] = t
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    continue
 
     async def close(self) -> None:
-        """逐个 flush 内存里的 ChannelFile(单个 flush 失败吞掉不挡 close)。"""
+        """逐个 flush 内存里的 ChannelFile(单个 flush 失败吞掉不挡 close)。
+
+        2026-09-29:同时 flush `thumbnails.jsonl`(独立 thumbnail 表)。
+        """
         # flush 所有文件
         for cf in self._files.values():
             try:
@@ -342,6 +415,11 @@ class JsonlFileStore(StorageRepository):
             except Exception:  # noqa: BLE001
                 pass
         self._files.clear()
+        # flush thumbnails(失败也吞掉,不当 close)
+        try:
+            self._flush_thumbnails()
+        except Exception:  # noqa: BLE001
+            pass
 
     async def init_schema(self) -> None:
         """文件后端无需显式 schema;connect() 已建好目录。"""
@@ -747,6 +825,9 @@ class JsonlFileStore(StorageRepository):
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;不存在不抛。2026-08-24:同步清理 `_media_by_fid` 索引 —
         若该 message 含 fid,删后 storage 无引用,索引条目该清。
+
+        2026-09-29:同时清理 `thumbnails.jsonl` 中该消息的所有 thumb 行(按
+        `(channel_id, telegram_msg_id, *)` 配对)。flush 一次 thumbnails。
         """
         async with self._write_lock:
             old_msg = await self.get_message(channel_id, telegram_msg_id)
@@ -764,12 +845,18 @@ class JsonlFileStore(StorageRepository):
                         self._media_by_fid.pop(fid, None)
                     else:
                         self._media_by_fid[fid] = best
+            # 2026-09-29:同步清掉该消息的所有 thumb(按 channel_id + msg_id)
+            purged = self._purge_thumbs_for_msg(channel_id, telegram_msg_id)
+            if purged:
+                self._flush_thumbnails()
 
     async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """2026-09-08 v1.7.0:批量删单频道 N 条消息。
 
         一次拿旧 messages(并发 `get_message`),flush 一次,`_media_by_fid`
         在循环外统一收敛 — 比 N 次 delete_message 节省 N-1 次 flush + lock。
+
+        2026-09-29:同时清掉 N 条消息的全部 thumb(flush 一次)。
         """
         if not msg_ids:
             return
@@ -798,6 +885,13 @@ class JsonlFileStore(StorageRepository):
                     self._media_by_fid.pop(fid, None)
                 else:
                     self._media_by_fid[fid] = best
+            # 2026-09-29:批量清 thumb — 一次 flush。
+            thumbs_purged = False
+            for mid in msg_ids:
+                if self._purge_thumbs_for_msg(channel_id, mid):
+                    thumbs_purged = True
+            if thumbs_purged:
+                self._flush_thumbnails()
 
     async def update_message_interactions(
         self,
@@ -1130,3 +1224,68 @@ class JsonlFileStore(StorageRepository):
         """
         cf = await self._file_for(channel_id)
         return sum(len(row.get("media", [])) for row in cf.rows)
+
+    # ---- 缩略图(2026-09-29 独立存储) ----
+
+    def _flush_thumbnails(self) -> None:
+        """把内存 `_thumbs` 全量重写到 `thumbnails.jsonl`(原子 .part + rename)。
+
+        与 ChannelFile.flush 同策略 — 单文件失败吞掉(close() 容错)。
+        """
+        tmp = self._thumb_path.with_suffix(".jsonl.part")
+        with tmp.open("w", encoding="utf-8") as f:
+            for t in self._thumbs.values():
+                f.write(json.dumps(_thumb_to_dict(t), ensure_ascii=False, default=str))
+                f.write("\n")
+        tmp.replace(self._thumb_path)
+
+    def _purge_thumbs_for_msg(self, channel_id: int, telegram_msg_id: int) -> bool:
+        """清掉一个 (channel_id, telegram_msg_id) 名下所有 thumb;返是否有删。"""
+        to_del = [
+            key
+            for key in self._thumbs
+            if key[0] == channel_id and key[1] == telegram_msg_id
+        ]
+        for k in to_del:
+            del self._thumbs[k]
+        return bool(to_del)
+
+    async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
+        """upsert thumb(以 channel_id+msg_id+media_idx 三元组为主键)。"""
+        async with self._write_lock:
+            self._thumbs[(thumb.channel_id, thumb.telegram_msg_id, thumb.media_idx)] = thumb
+            self._flush_thumbnails()
+
+    async def get_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> ThumbnailDTO | None:
+        """单条 thumb;不存在返 None。"""
+        return self._thumbs.get((channel_id, telegram_msg_id, media_idx))
+
+    async def delete_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> None:
+        """不存在不抛(idempotent)。"""
+        async with self._write_lock:
+            if self._thumbs.pop((channel_id, telegram_msg_id, media_idx), None) is not None:
+                self._flush_thumbnails()
+
+    async def list_thumbnails_for_message(
+        self, channel_id: int, telegram_msg_id: int
+    ) -> list[ThumbnailDTO]:
+        """一条消息的所有 thumb(通常 1 个)。O(N) 但 thumb 总数极少。"""
+        result: list[ThumbnailDTO] = []
+        for (cid, mid, _idx), t in self._thumbs.items():
+            if cid == channel_id and mid == telegram_msg_id:
+                result.append(t)
+        # 按 media_idx 升序,与 PG / Mongo 复合键自然顺序一致
+        result.sort(key=lambda t: t.media_idx)
+        return result
+
+    async def count_thumbnails_by_object_key(self, object_key: str) -> int:
+        """orphan reconcile 用:被 storage 引用的 thumb key 计数(>0 = 不该删)。"""
+        n = 0
+        for t in self._thumbs.values():
+            if t.object_key == object_key:
+                n += 1
+        return n

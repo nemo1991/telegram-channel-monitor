@@ -21,7 +21,7 @@ import time
 from typing import Iterable
 
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ThumbnailDTO
 from tgmonitor.core.events import (
     ChannelMetadataChanged,
     ChannelPhotoChanged,
@@ -609,6 +609,10 @@ class MonitorService:
                     msg.telegram_msg_id,
                     e,
                 )
+            # 2026-09-29:缩略图独立下载 — main 下完后再下 thumb 并落
+            # thumbnails 表。主图 FAILED 也下 thumb(成功优先,UI 缩略图可
+            # 显示让用户看到「文件丢了但缩略图在」的提示)。
+            await self._maybe_download_thumb(msg, idx, med)
             await self.bus.publish(
                 MediaDownloaded(
                     channel_id=msg.channel_id,
@@ -617,6 +621,41 @@ class MonitorService:
                 )
             )
             self._download_queue.task_done()
+
+    async def _maybe_download_thumb(
+        self, msg: MessageDTO, idx: int, med: MediaDTO
+    ) -> None:
+        """2026-09-29:缩略图独立下载辅助。无 thumbnail_telegram_file_id 跳过;
+        download_thumb 失败仅 log 不影响主流程。
+        """
+        if not med.thumbnail_telegram_file_id:
+            return
+        try:
+            thumb = await self.downloader.download_thumb(
+                msg_pk=(msg.channel_id, msg.telegram_msg_id),
+                media=med,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "download thumb failed: channel=%s msg_id=%s idx=%d",
+                msg.channel_id,
+                msg.telegram_msg_id,
+                idx,
+            )
+            return
+        if thumb is None:
+            return
+        # 覆盖 media_idx — download_thumb 不知情,落库前必填。
+        thumb = dataclasses.replace(thumb, media_idx=idx)
+        try:
+            await self.storage.save_thumbnail(thumb)
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "save_thumbnail failed: channel=%s msg_id=%s idx=%d",
+                msg.channel_id,
+                msg.telegram_msg_id,
+                idx,
+            )
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息 + 清孤儿 bytes + 发 MessageDeleted 事件。
@@ -986,9 +1025,9 @@ class MonitorService:
     # InMemory/Jsonl 走顺序扫(与旧实现等价)。
 
     async def _maybe_store_thumb(self, med: MediaDTO) -> None:
-        """若 media 已带 thumb_key(由 TdlibClient 预先下载),什么都不做;
-        否则若策略允许,什么都不做(留给后台 Downloader)。
-        此方法只是给未来扩展点:当 media 携带缩略图 bytes 字段时,可在此入 ObjectStore。
+        """2026-09-29:删(改 MediaDownloader.download_thumb 入独立 thumb/ + 缩略图表)。
+        旧版本是空 hook(thumb bytes 永远没真下);新 thumbnail 由 MediaDownloader
+        在 `_download_worker` 同步下 — 见 download_thumb。
         """
         return None
 
@@ -1039,6 +1078,12 @@ class MediaDownloader:
         ]
         ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
         return f"media/{h}.{ext}{suffix}"
+
+    @staticmethod
+    def make_thumb_key(thumb_fid: str, ext: str = "jpg") -> str:
+        """2026-09-29:缩略图内容寻址 key `thumb/<sha256[:16]>.<ext>`(跟原图命名对称)。"""
+        h = hashlib.sha256(thumb_fid.encode()).hexdigest()[:16]
+        return f"thumb/{h}.{ext}"
 
     async def download_one(
         self,
@@ -1155,4 +1200,80 @@ class MediaDownloader:
             object_key=key,
             object_backend=self.objects.backend_name,
             file_size=len(data),
+        )
+
+    async def download_thumb(
+        self,
+        msg_pk: tuple[int, int],
+        media: MediaDTO,
+    ) -> ThumbnailDTO | None:
+        """2026-09-29:缩略图独立下载 — 入 ObjectStore `thumb/<sha256>.<ext>`
+        prefix + 返 ThumbnailDTO 让 caller 落 `thumbnails` 表。
+
+        - 入参 `msg_pk = (channel_id, telegram_msg_id)` — 关联键三元组前两条;
+          `media_idx` 来自 caller(同消息内 media 索引)
+        - 行为:`client.download_file(thumb_fid)` → `objects.put(thumb_key)` →
+          返回 ThumbnailDTO(DONE);失败 → 返回 FAILED 状态的 ThumbnailDTO
+        - 无 `media.thumbnail_telegram_file_id` → 返 None(caller 不落库)
+
+        与 `download_one` 契约一致:不抛。`msg_pk` 仅日志用。
+        """
+        if not media.thumbnail_telegram_file_id:
+            return None
+
+        def failed(reason: str) -> ThumbnailDTO:
+            log.warning(
+                "skip thumb msg_pk=%s/%s %s: %s",
+                msg_pk[0],
+                msg_pk[1],
+                media.file_name or media.telegram_file_id or media.type.value,
+                reason,
+            )
+            return ThumbnailDTO(
+                channel_id=msg_pk[0],
+                telegram_msg_id=msg_pk[1],
+                media_idx=-1,  # caller 必须在外部覆盖;此处仅兜底
+                telegram_thumb_file_id=media.thumbnail_telegram_file_id,
+                download_status=MediaDownloadStatus.FAILED,
+                download_error=reason,
+            )
+
+        try:
+            data = await self.client.download_file(media.thumbnail_telegram_file_id)
+        except Exception as e:  # noqa: BLE001
+            return failed(f"下载缩略图异常: {e}")
+        if data is None:
+            return failed("下载缩略图超时或未返回数据")
+        # 单文件上限继承 main 的 200MB — thumbs 通常 <10KB,几乎不触发;但
+        # 防御恶意/异常大文件把桶占满。
+        if self.max_bytes and len(data) > self.max_bytes:
+            return failed(f"缩略图 {len(data):,} 字节超过单文件上限")
+        # 2026-09-29:内容寻址 thumb key(跟 main key 命名对称),`make_thumb_key`
+        # 复用 main 的 sha16 ext 规则。
+        ext = (
+            (media.mime_type or "").split("/")[-1] if media.mime_type else "jpg"
+        )
+        # mime 不可信(/jpeg/.jpg/没值),与 history 兼容默认 .jpg
+        if ext not in ("jpg", "jpeg", "png", "webp"):
+            ext = "jpg"
+        thumb_key = self.make_thumb_key(media.thumbnail_telegram_file_id, ext)
+        meta = ObjectMeta(
+            content_type=media.mime_type or "image/jpeg",
+            size=len(data),
+        )
+        try:
+            await self.objects.put(thumb_key, data, meta)
+        except Exception as e:  # noqa: BLE001
+            return failed(f"对象存储写入缩略图失败: {e}")
+        return ThumbnailDTO(
+            channel_id=msg_pk[0],
+            telegram_msg_id=msg_pk[1],
+            media_idx=-1,  # caller 覆盖
+            object_key=thumb_key,
+            object_backend=self.objects.backend_name,
+            file_size=len(data),
+            mime_type=meta.content_type,
+            sha256=hashlib.sha256(data).hexdigest(),
+            download_status=MediaDownloadStatus.DONE,
+            telegram_thumb_file_id=media.thumbnail_telegram_file_id,
         )

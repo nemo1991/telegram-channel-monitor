@@ -274,8 +274,10 @@ def test_append_with_media_dto_does_not_crash(qapp):
                 file_size=1234,
                 width=800,
                 height=600,
-                thumb_key="media/abc.thumb",
-                thumb_backend="local",
+                # 2026-09-29:thumb_key / thumb_backend 已删;thumb 由独立
+                # thumbnails 表 + thumb/ prefix 存 — 与 MessageView 渲染无
+                # 直接关系,这里只造 thumb_file_id 占位。
+                thumbnail_telegram_file_id="33",
             )
         ],
     )

@@ -305,6 +305,10 @@ class MonitorViewModel(QObject):
         if not isinstance(e, ChannelUnsubscribed):
             return
         self.monitor.remove_from_whitelist(e.channel_id)
+        # 2026-09-29:Media Manager combo 走 storage 真理,unsub 后立即
+        # 从 known_channels 清掉 — 下次 channels_changed → set_known_channels
+        # 不再显示这个频道。不必等下次 refresh_subscribed_channels 同步。
+        self.known_channels.pop(e.channel_id, None)
         self.channels_changed.emit()
 
     async def _on_export_done(self, e: Event) -> None:
@@ -561,7 +565,14 @@ class MonitorViewModel(QObject):
 
             if not isinstance(media, MediaDTO):
                 return None
-            return await self.app.load_thumbnail_bytes(media)
+            # 2026-09-29:缩略图独立存储 — 必须传 (channel_id, msg_id,
+            # media_idx) 三元组定位独立 thumbnails 表的 thumb 行。
+            return await self.app.load_thumbnail_bytes(
+                media,
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media_idx=media_idx,
+            )
 
         run_coro(
             self.loop,
@@ -584,31 +595,38 @@ class MonitorViewModel(QObject):
     # ---- UI 主动调用 ----
 
     def bootstrap_ui(self) -> None:
-        """MainWindow 构造后调一次:拉一次 joined 列表 + 通知 UI 刷新下栏。
+        """MainWindow 构造后调一次:拉一次 subscribed 列表 + 通知 UI 刷新下栏。
 
         为什么需要:
         - bootstrap() 同步了 `_subscribed` 到内存,但 VM 不知道。
-        - VM 的 `known_channels` 只在 `refresh_joined_channels` 或
+        - VM 的 `known_channels` 只在 `refresh_subscribed_channels` 或
           `ChannelSubscribed` 事件后才填充,启动时为空 → `_refresh_state`
           算 `subscribed` 时筛不出任何行 → 下栏一直空。
-        - 这里的 refresh_joined_channels 同时也补了已知频道的元数据(title /
-          username),下栏才能显示频道名而不是 "频道 -1001xxx"。
+        - 这里的 refresh_subscribed_channels 同时也补了已知频道的元数据
+          (title / username),下栏才能显示频道名而不是 "频道 -1001xxx"。
 
         已监听的 id 列表(monitor._whitelist)在 app._setup_async 里已经
         从 storage 读回并 set,这里只负责把 DTO 拉回来填 known_channels,
         然后 emit channels_changed 让 UI 算交集并刷新。
         """
-        self.refresh_joined_channels()
+        self.refresh_subscribed_channels()
 
-    def refresh_joined_channels(self) -> None:
-        """后台拉已加入频道列表 → 填 known_channels → emit channels_changed。
+    def refresh_subscribed_channels(self) -> None:
+        """后台从 storage 拉已订阅频道 → 填 known_channels → emit channels_changed。
 
-        # 走 `list_joined_channels` 是 best-effort UX 路径(不持久化),
-        # 跟 `MonitorService._whitelist` 是两件事 — 后者是真理。
+        2026-09-29:从 `list_joined_channels`(TDLib getChats,实时但跟真理漂移)
+        改为 `list_subscribed_channels`(storage 落库数据,跟
+        `MonitorService._whitelist` 的真理对齐)。
+
+        旧设计问题:用户 join 了 1000 个频道但只白名单 5 个时,Media Manager
+        「全部频道」下拉会出现 1000 项噪音;用户实际只关心自己订阅的。
+        新设计:跟 monitor 白名单完全一致 —— 已订阅 → 显示;退订 → 不显示
+        (即时,ChannelUnsubscribed 事件里同步 del);启动 → 从 storage 立刻
+        拉回(不等 TDLib state)。
         """
 
         async def _go() -> None:
-            chs = await self.app.list_joined_channels()
+            chs = await self.app.list_subscribed_channels()
             for ch in chs:
                 self.known_channels[ch.id] = ch
             self.channels_changed.emit()

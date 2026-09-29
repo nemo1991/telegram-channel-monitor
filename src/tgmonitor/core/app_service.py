@@ -1082,9 +1082,23 @@ class AppService:
                 )
             )
 
-    async def load_thumbnail_bytes(self, media: MediaDTO) -> bytes | None:
-        """转发 MediaService.load_thumbnail_bytes。"""
-        return await self._media.load_thumbnail_bytes(media)
+    async def load_thumbnail_bytes(
+        self,
+        media: MediaDTO,
+        *,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> bytes | None:
+        """2026-09-29:转发 MediaService.load_thumbnail_bytes — 多带 msg_pk 三元组
+        (channel_id + msg_id + media_idx) 定位独立 thumbnails 表的 thumb 行。
+        """
+        return await self._media.load_thumbnail_bytes(
+            media,
+            channel_id=channel_id,
+            telegram_msg_id=telegram_msg_id,
+            media_idx=media_idx,
+        )
 
     async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
         """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览转发 — 读原图 bytes。"""

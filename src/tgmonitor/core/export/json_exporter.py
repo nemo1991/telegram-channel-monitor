@@ -12,6 +12,7 @@ from tgmonitor.core.export.base import Exporter, exporter
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 
 @exporter(ExportFormat.JSON)
@@ -32,6 +33,7 @@ class JsonExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,
+        storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用(JSON 不用,签名对齐)
     ) -> int:
         """写 JSON → 返回字节数。
 

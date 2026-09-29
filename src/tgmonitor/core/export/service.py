@@ -133,6 +133,7 @@ class ExportService:
                 object_store=object_store_arg,
                 include_thumbnails=request.include_thumbnails,
                 include_metadata=request.include_metadata,  # 2026-09-10 v1.7.3
+                storage=self._storage if request.include_thumbnails else None,  # 2026-09-29
             )
             result = ExportResult(
                 out_path=str(out_path),
@@ -241,6 +242,7 @@ class ExportService:
                 object_store=object_store_arg,
                 include_thumbnails=request.include_thumbnails,
                 include_metadata=request.include_metadata,  # 2026-09-10 v1.7.3
+                storage=self._storage if request.include_thumbnails else None,  # 2026-09-29
             )
             result = ExportResult(
                 out_path=str(out_path),

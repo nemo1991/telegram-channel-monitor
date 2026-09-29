@@ -103,6 +103,10 @@ ALTER TABLE media ADD COLUMN IF NOT EXISTS emoji TEXT;
 -- 下载状态列(异步下载队列写入;旧库无此列,IF NOT EXISTS 幂等)。
 ALTER TABLE media ADD COLUMN IF NOT EXISTS download_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE media ADD COLUMN IF NOT EXISTS download_error TEXT;
+-- 2026-09-29:TG 端 Thumbnail.file.id(独立于原图 file.id)— MediaDownloader
+-- 用它按需下载缩略图入独立 thumbnails 表 + thumb/ prefix。旧库无,NULL 兜底
+-- 表示「该 media 没缩略图或 TG 端 file.id 已丢」。
+ALTER TABLE media ADD COLUMN IF NOT EXISTS thumbnail_telegram_file_id TEXT;
 -- 历史数据迁移:已有 object_key 的行视为已下载(done);其余保持 pending,
 -- 切到 FULL 策略后 backfill 会对 pending 媒体重新触发下载。
 UPDATE media SET download_status = 'done'
@@ -127,3 +131,41 @@ CREATE TABLE IF NOT EXISTS meta (
     key     TEXT PRIMARY KEY,
     value   TEXT
 );
+
+-- 2026-09-29:缩略图独立表(原 `media.thumb_key` / `media.thumb_backend` 列
+-- 已死:写死 `"local"` 且从未真下载;读路径用 `media.object_backend` 读
+-- `media.thumb_key` 解耦)。新方案:
+--   - ObjectStore 端:`thumb/<sha256>.<ext>` 独立顶层 prefix
+--   - Storage 端:`thumbnails` 表,关联键 `(channel_id, telegram_msg_id,
+--     media_idx)` 三元组,跟父 `MessageDTO.media[media_idx]` 1:1
+--   - FK 走 messages 表的 UNIQUE (channel_id, telegram_msg_id),消息删
+--     时级联删除 thumb(CASCADE 应用层在 delete_message 内手工调 +
+--     PG ON DELETE CASCADE 兜底)
+CREATE TABLE IF NOT EXISTS thumbnails (
+    channel_id               BIGINT  NOT NULL,
+    telegram_msg_id          BIGINT  NOT NULL,
+    media_idx                INTEGER NOT NULL,
+    object_key               TEXT,
+    object_backend           TEXT,
+    mime_type                TEXT,
+    file_size                BIGINT,
+    width                    INTEGER,
+    height                   INTEGER,
+    sha256                   TEXT,
+    download_status          TEXT    NOT NULL DEFAULT 'pending',
+    download_error           TEXT,
+    telegram_thumb_file_id   TEXT,
+    PRIMARY KEY (channel_id, telegram_msg_id, media_idx),
+    FOREIGN KEY (channel_id, telegram_msg_id)
+        REFERENCES messages (channel_id, telegram_msg_id) ON DELETE CASCADE
+);
+
+-- 旧库兼容:`media.thumb_key` / `media.thumb_backend` 列保留(不读不写,
+-- 写 NULL)—— 给未来清理周期。新代码一律走 `thumbnails` 表。
+ALTER TABLE media ADD COLUMN IF NOT EXISTS thumb_key    TEXT;
+ALTER TABLE media ADD COLUMN IF NOT EXISTS thumb_backend TEXT;
+
+-- reconcile_orphans 用:已被 thumb 表引用的 object_key 不算孤儿,
+-- 部分索引缩小体积(只索引已下载成功的行)。
+CREATE INDEX IF NOT EXISTS idx_thumbnails_object_key
+    ON thumbnails (object_key) WHERE object_key IS NOT NULL;

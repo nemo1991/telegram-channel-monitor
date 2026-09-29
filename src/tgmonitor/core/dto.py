@@ -106,7 +106,14 @@ class MediaDTO:
     """一条消息附带的媒体。
 
     二进制存于 ObjectStore,DB 只存 `object_key` + `backend` 引用。
-    缩略图同样入 ObjectStore(`thumb_key` / `thumb_backend`)。
+    缩略图独立存于 ObjectStore `thumb/` 顶层 prefix + storage `thumbnails`
+    子表 / 子 collection / 子 jsonl,通过 `thumbnail_telegram_file_id` 按需重
+    下;**不在 MediaDTO 上平铺 thumb 字段**(2026-09-29 拆分 — 旧
+    `thumb_key` / `thumb_backend` 写死 `"local"` 且从未真下载,留作死引用
+    误导读路径)。
+
+    关联:MediaDTO 在父 `MessageDTO.media[]` 的索引决定它对应 `ThumbnailDTO`
+    的 `(channel_id, telegram_msg_id, media_idx)` 三元组中的 `media_idx`。
     """
 
     # 类型 & 元数据
@@ -120,14 +127,14 @@ class MediaDTO:
 
     # Telegram 侧标识
     telegram_file_id: str | None = None  # TDLib remote file_id,用于按需重下
+    # TG 端 `Thumbnail.file.id`(无缩略图时 None)。MediaDownloader 用它调
+    # `client.download_file` 把缩略图入 ObjectStore `thumb/` prefix + 落
+    # `thumbnails` 表;跟原图的 `telegram_file_id` 独立,各自有自己的按需重下。
+    thumbnail_telegram_file_id: str | None = None
 
     # ObjectStore 引用(原文件)
     object_key: str | None = None
     object_backend: str | None = None  # 'local' | 's3'
-
-    # ObjectStore 引用(缩略图)
-    thumb_key: str | None = None
-    thumb_backend: str | None = None
 
     # 下载状态(异步下载队列写入;持久化到各仓储)
     download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
@@ -135,6 +142,41 @@ class MediaDTO:
 
     # Sticker 专属 — 关联的 emoji 字符(如 "😀");其它 type 始终 None
     emoji: str | None = None
+
+
+@dataclass
+class ThumbnailDTO:
+    """媒体缩略图 — 独立存储,与 media 1:1 关联。
+
+    关联键:`(channel_id, telegram_msg_id, media_idx)` 三元组,与父消息
+    `MessageDTO.media[media_idx]` 一一对应。存 ObjectStore 用独立 prefix
+    `thumb/<sha256>.<ext>`,跟 `media/<sha256>.<ext>` 顶层平行。
+
+    跟 MediaDTO 的区别:MediaDTO 是「媒体文件本体」,ThumbnailDTO 是
+    「该媒体的缩略图」,生命周期独立(主图 DONE 但 thumb FAILED 是合法
+    状态)。文件大小 / sha256 / mime 各算。
+
+    跨边界:UI / VM / Exporter 只传 ThumbnailDTO,不传 ORM 行 / TDLib 原生。
+    持久化:三后端(POSTGRES / MONGO / JSONL)各自存,关联键保证 1:1。
+    """
+
+    channel_id: int
+    telegram_msg_id: int
+    media_idx: int  # MessageDTO.media[] 索引;>=0
+    # ObjectStore 引用
+    object_key: str | None = None  # 形如 "thumb/<sha256[:16]>.<ext>"
+    object_backend: str | None = None  # 'local' | 'folder' | 's3'
+    # 媒体元数据
+    mime_type: str | None = None
+    file_size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    sha256: str | None = None
+    # 下载状态
+    download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
+    download_error: str | None = None
+    # TG 端缩略图 file.id(按需重下用)
+    telegram_thumb_file_id: str | None = None
 
 
 # ---------- 消息 ----------

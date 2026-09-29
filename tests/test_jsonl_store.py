@@ -55,8 +55,9 @@ async def test_message_with_media_roundtrip(tmp_path: Path):
                 height=600,
                 object_key="media/abc.jpg",
                 object_backend="local",
-                thumb_key="media/abc.thumb",
-                thumb_backend="local",
+                # 2026-09-29:thumb_key / thumb_backend 已删 — 改用
+                # thumbnail_telegram_file_id(MediaDownloader 按需下载缩略图用)。
+                thumbnail_telegram_file_id="33",
             )
         ],
     )

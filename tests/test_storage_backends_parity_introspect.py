@@ -108,8 +108,9 @@ async def test_introspect_jsonl_detects_str_pollution(jsonl_repo: JsonlFileStore
                     "telegram_file_id": "f1",
                     "object_key": None,
                     "object_backend": None,
-                    "thumb_key": None,
-                    "thumb_backend": None,
+                    # 2026-09-29:thumb_key / thumb_backend 已删;留
+                    # thumbnail_telegram_file_id 字段(新)。
+                    "thumbnail_telegram_file_id": None,
                     "emoji": None,
                     "download_status": "pending",
                     "download_error": None,

@@ -359,14 +359,25 @@ class MediaService:
 
     # ---------- 打开 / 预览 ----------
 
-    async def load_thumbnail_bytes(self, media: MediaDTO) -> bytes | None:
+    async def load_thumbnail_bytes(
+        self,
+        media: MediaDTO,
+        *,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> bytes | None:
         """读 media 的缩略图 bytes — UI 渲染缩略图用(2026-08-25 PR #1)。
 
-        优先 `thumb_key`(TG 端小缩略图,通常 90×90 JPEG);缺失则用
-        `object_key` 原图(decoder 仍能 render)。仅 DONE + 有 objectstore 时
-        才读;任何异常返 None 让 UI 保持 emoji 占位。
+        2026-09-29:缩略图独立存储 — 从 `thumbnails` 表拿 thumb DTO(关联键
+        `channel_id + msg_id + media_idx` 三元组);原图 `object_key` 仅作
+        fallback(thumb 表找不到 / FAILED / DNE 时)。
 
-        设计取舍(2026-08-25 PR #1 E1):
+        退化仅在主图已 DONE 时走;PENDING/FAILED 早返 None 让 UI 走 emoji 占位。
+        `channel_id` 必须由 caller 提供(MediaDTO 自身不持 channel_id,保持
+        跨边界薄)。
+
+        设计取舍:
         - 全量读 bytes 不流式 — 缩略图一般 ≤ 50KB,本地 FS / S3 都是单次
           GET;流式 (open_read iterator) 在这里收益小于代码复杂度。
         - 不调 LRU 缓存(进程内 UI 层做,service 层不持 Qt 状态)。
@@ -377,31 +388,40 @@ class MediaService:
             return None
         if self._objects is None:
             return None
-        backend = media.object_backend
-        if not backend:
+        # 2026-09-29:从独立 thumbnails 表拿 thumb;找不到 → fallback 到主图。
+        thumb = await self._storage.get_thumbnail(channel_id, telegram_msg_id, media_idx)
+        if thumb is not None:
+            if thumb.download_status != MediaDownloadStatus.DONE:
+                return None
+            if not thumb.object_key or not thumb.object_backend:
+                return None
+            return await self._read_objectstore_bytes(thumb.object_backend, thumb.object_key)
+        # fallback:没 thumb 行 → 尝试主图(老数据兼容,新代码永远有 thumb 表行)
+        if not media.object_backend or not media.object_key:
             return None
-        # thumb 优先,缺则用原图
-        key = media.thumb_key or media.object_key
-        if not key:
-            return None
+        return await self._read_objectstore_bytes(media.object_backend, media.object_key)
+
+    async def _read_objectstore_bytes(
+        self, backend: str, key: str
+    ) -> bytes | None:
+        """从 ObjectStore 读全量 bytes;任何异常返 None。日志 DEBUG 而非
+        WARNING — thumb 读 miss 是合法状态(thumb FAILED/DNE 时不再 read),
+        NOT org-conf(2026-09-29 之前 WARNING 噪音让 Media Manager 每次重画
+        都刷日志)。
+        """
         try:
             stream = await self._objects.open_read(key)
-            try:
-                data = stream.read()
-            finally:
-                try:
-                    stream.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            return data
-        except Exception:  # noqa: BLE001 — KeyError / S3 ClientError / 任何错
-            log.warning(
-                "load_thumbnail_bytes failed: backend=%s key=%s",
-                backend,
-                key,
-                exc_info=True,
-            )
+        except Exception:  # noqa: BLE001
+            log.debug("load_thumbnail_bytes miss: backend=%s key=%s", backend, key)
             return None
+        try:
+            data = stream.read()
+        finally:
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return data
 
     async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
         """读 media **原图** bytes — Lightbox 全屏预览用(2026-08-31 v1.5.0 PR #A8)。
@@ -731,7 +751,12 @@ class MediaService:
             referenced_keys: set[str] = set()
             if self._objects is not None and hasattr(self._objects, "iter_keys"):
                 try:
+                    # 2026-09-29:缩略图独立存储 — 同时扫 `media/` + `thumb/`
+                    # 两个 prefix。原图走 media/,缩略图走 thumb/(顶层平行
+                    # 关系)。任何孤儿都会出现在 scraped - referenced_keys。
                     async for k in self._objects.iter_keys(prefix="media/"):
+                        scanned_keys.add(k)
+                    async for k in self._objects.iter_keys(prefix="thumb/"):
                         scanned_keys.add(k)
                 except (NotImplementedError, RuntimeError) as e:
                     # 2026-08-25 PR #2:加 RuntimeError(S3 未连接会 raise "未连接")
@@ -746,10 +771,19 @@ class MediaService:
                     [c.id for c in chs],
                     limit=100_000,
                 )
+                # 2026-09-29:同时收集原图 + 缩略图引用;thumb 走独立
+                # `thumbnails` 表,需逐 message 调 `list_thumbnails_for_message`
+                # 拉 thumb DTO(media_idx 索引保证与父 media 一一对应)。
                 for m in msgs:
                     for med in m.media:
                         if med.object_key and med.download_status == MediaDownloadStatus.DONE:
                             referenced_keys.add(med.object_key)
+                    thumbs = await self._storage.list_thumbnails_for_message(
+                        m.channel_id, m.telegram_msg_id
+                    )
+                    for t in thumbs:
+                        if t.object_key and t.download_status == MediaDownloadStatus.DONE:
+                            referenced_keys.add(t.object_key)
             orphans = scanned_keys - referenced_keys
             deleted = 0
             if not dry_run and self._objects is not None and orphans:

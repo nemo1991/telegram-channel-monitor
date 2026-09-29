@@ -24,6 +24,7 @@ from tgmonitor.core.export.guards import MAX_THUMB_DATA_URI_BYTES
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 log = logging.getLogger(__name__)
 
@@ -123,6 +124,7 @@ class HtmlExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,
+        storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用
     ) -> int:
         """渲染 HTML;按 channel_id 分组 → 模板渲染 → 写文件 → 返回字节数。
 
@@ -134,24 +136,28 @@ class HtmlExporter(Exporter):
         for m in messages:
             grouped[m.channel_id].append(m)
 
-        if include_thumbnails and object_store is not None:
+        if include_thumbnails and object_store is not None and storage is not None:
             for m in messages:
-                for med in m.media:
-                    if med.thumb_key:
+                for idx, med in enumerate(m.media):
+                    # 2026-09-29:thumb 走独立 thumbnails 表,从 storage.get_thumbnail 拿
+                    thumb = await storage.get_thumbnail(
+                        m.channel_id, m.telegram_msg_id, idx
+                    )
+                    if thumb and thumb.object_key:
                         try:
-                            blob = await object_store.get(med.thumb_key)
+                            blob = await object_store.get(thumb.object_key)
                             # 2026-08-27 v1.4.0 PR #17:thumb > 256KB 不内嵌,
                             # 改占位文(thumb_data_uri 留 None → 模板走 <span>)。
                             # 经验阈值,过大 base64 会冻死浏览器渲染。
                             if len(blob) > MAX_THUMB_DATA_URI_BYTES:
                                 log.info(
                                     "thumb too large, skip inline: key=%s size=%d > %d",
-                                    med.thumb_key,
+                                    thumb.object_key,
                                     len(blob),
                                     MAX_THUMB_DATA_URI_BYTES,
                                 )
                                 continue
-                            mime = _guess_thumb_mime(med.thumb_key, med.mime_type)
+                            mime = _guess_thumb_mime(thumb.object_key, med.mime_type)
                             med.thumb_data_uri = (  # type: ignore[attr-defined]
                                 f"data:{mime};base64,{base64.b64encode(blob).decode()}"
                             )

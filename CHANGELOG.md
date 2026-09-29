@@ -5,6 +5,80 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.10.0] - 2026-09-29
+
+主题:**缩略图独立存储 — ObjectStore `thumb/` prefix + 独立表 `thumbnails`,与 `media/` 顶层平行,关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组**。
+
+### 背景
+
+v1.9.2 之前,缩略图走 `media.thumb_key` + `media.thumb_backend` 两个
+内嵌字段 — 实际从未真正下载过(`_maybe_store_thumb` 是空 hook),
+S3 后端用户每次刷新 Media Manager 都会触发 `NoSuchKey` WARNING:
+
+```
+load_thumbnail_bytes failed: backend=s3 key=media/21588.thumb
+```
+
+### 主要变更
+
+- **新 `ThumbnailDTO`**(`core/dto.py`):跨边界传输缩略图,与 `MediaDTO`
+  顶层平行;独立 `download_status` / `download_error` / `sha256` /
+  `telegram_thumb_file_id`,主图 DONE 与 thumb FAILED 互不干扰
+- **`MediaDTO.thumb_key` / `thumb_backend` 删除**:替换为
+  `thumbnail_telegram_file_id`(TG 端 `Thumbnail.file.id`,
+  `MediaDownloader` 用它按需下载);旧字段已废弃,但 PG 仍保留 column
+  留给未来清理周期
+- **ObjectStore key 重命名**:`thumb/<sha256>.<ext>`(内容寻址,跟
+  `media/<sha256>.<ext>` 对称);`MediaDownloader.download_thumb` 单独
+  下载分支,bytes 入 `thumb/` prefix;thumb FAILED 不冒到主图
+- **独立 `thumbnails` 表/collection/jsonl**:`(channel_id,
+  telegram_msg_id, media_idx)` 三元组主键;PG 额外
+  `FOREIGN KEY ... ON DELETE CASCADE`,Jsonl/Mongo 应用级级联;
+  `idx_thumbnails_object_key` 部分索引给 `reconcile_orphans` 用
+- **`MediaService.load_thumbnail_bytes` 改走 storage 表 →
+  ObjectStore;`NoSuchKey` 改 DEBUG 日志**;signature 需
+  `channel_id` + `telegram_msg_id` + `media_idx` 三参数
+- **`reconcile_orphans` 扫两个 prefix**(`media/` + `thumb/`),
+  同时引用 union 防误删
+- **HTML / ZIP 导出走 storage 表**:`storage.get_thumbnail(channel_id,
+  msg_id, idx)` 取代 `media.thumb_key`,JSON/CSV/Markdown 同签名
+
+### Storage 契约变更(breaking for in-process callers)
+
+- `StorageRepository` ABC 新增 5 方法:`save_thumbnail` /
+  `get_thumbnail` / `delete_thumbnail` /
+  `list_thumbnails_for_message` /
+  `count_thumbnails_by_object_key`
+- `MediaDTO` 删了 2 个字段;`ThumbnailDTO` 替代
+- `MediaDownloader.download_thumb` 新签名 `(msg_pk: tuple[int, int],
+  media: MediaDTO) -> ThumbnailDTO | None`
+- `AppService.load_thumbnail_bytes` 改签名:
+  `(media, *, telegram_msg_id: int, media_idx: int)`
+
+### 修复
+
+- **S3 NoSuchKey WARNING 消除**:Media Manager 缩略图列刷新不再重复
+  打日志,thumb 真下载完成后走正常路径
+
+### 迁移注意
+
+- 旧 `media/<fid>.thumb` 命名的 ObjectStore 残留文件成为孤儿,
+  `reconcile_orphans` 会在下次启动时扫到并尝试清理(走 dry_run 预览)
+- PG `media.thumb_key` / `media.thumb_backend` 列保留,本版本不读不写
+- PG `thumbnails` 表启动期 `introspect_schema` 自动 `CREATE TABLE IF NOT EXISTS`
+- Jsonl 自动新建 `thumbnails.jsonl`,启动即生效
+
+### 测试
+
+- 新增 `tests/test_thumbnail_repo_parity.py`(7 用例 × 3 后端 = 21,
+  InMemory/Jsonl/Mongo):save roundtrip / upsert / missing / delete
+  idempotent / list 排序 / count by object_key / delete 级联
+- 新增 `tests/test_thumbnail_downloader.py`(6 用例):下载成功 / 缺
+  `thumbnail_telegram_file_id` 跳过 / download 失败 FAILED 不影响
+  主图 / content-addressed key / 落 `thumbnails` 表 roundtrip
+- `tests/test_introspect_repair.py::test_expected_tables_covers_all_storage_tables`
+  同步扩 `thumbnails`
+
 ## [1.9.2] - 2026-09-28
 
 主题:**TdlibTelegramClient.download_file thin delegate 签名漂移 — FULL media policy 同步全部 TypeError**。

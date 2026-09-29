@@ -73,7 +73,10 @@ def _msg_safe_for_jsonl(msg) -> bool:
             return False
         if m.object_key and _has_control_char(m.object_key):
             return False
-        if m.thumb_key and _has_control_char(m.thumb_key):
+        # 2026-09-29:thumb_key 已删;thumbnail_telegram_file_id 不直接走 jsonl
+        # roundtrip 路径 — 它是 TG 端的 file id,落 thumbnails.jsonl,不进
+        # message 的 media 子字典。
+        if m.thumbnail_telegram_file_id and _has_control_char(m.thumbnail_telegram_file_id):
             return False
     if msg.reactions:
         for r in msg.reactions:

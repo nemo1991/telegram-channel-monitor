@@ -101,14 +101,22 @@ def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> b
     return False
 
 
-def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
-    """logged-in(state="ready")开 app 后,VM.bootstrap_ui 应拉回已加入频道
-    填 known_channels,再 emit channels_changed 让 UI 渲染。
+def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
+    """2026-09-29:VM.bootstrap_ui 改走 storage 真理,不再走 TDLib getChats。
 
-    失败模式(回归保护):
-      - guard `if self._state != "ready"` 不应误判 (client 处于 ready)
-      - run_coroutine_threadsafe 调度后,fire-and-forget 协程确实被 loop tick
-      - channels 列表非空
+    设计意图:
+      - 已订阅真理来自 `storage.list_subscribed_channels()`,不来自
+        `client.list_joined_channels()`。
+      - 用户 join 了 1000 个频道但只白名单 5 个时,Media Manager 「全部频道」
+        下拉只显示 5 个,不会出现 1000 项噪音。
+      - VM bootstrap 不再被 TDLib state race 影响 — storage 是同步真理,
+        TDLib 还在中间态也能立刻拉到白名单。
+
+    测试:
+      1) client.add_channel 注入 3 个频道(TD 视角)
+      2) storage.upsert_channel 注入 2 个 is_subscribed=True(真理视角)
+      3) VM.bootstrap_ui 触发后,known_channels 应等于 2(只真理),
+         不是 3——反映新语义。
     """
     import tempfile
     from pathlib import Path
@@ -124,14 +132,14 @@ def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
         client = FakeTelegramClient()
         # 推到 "ready" 状态:本测试里直接赋属性(避免跑完整 login flow)
         client._state = "ready"
-        # 注入 3 个已加入的频道
+        # 注入 3 个已加入的频道(TD 视角,大于白名单)
         for cid, title in [(100, "新闻"), (200, "技术"), (300, "财经")]:
             client.add_channel(ChannelDTO(id=cid, title=title))
 
         async def setup_async() -> tuple:
             storage = InMemoryRepository()
             await storage.connect()
-            # 已订阅 100、200
+            # 真理侧:只 100、200 is_subscribed=True;300 只在 TD 那边存在
             await storage.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
             await storage.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
 
@@ -154,46 +162,38 @@ def test_vm_bootstrap_populates_known_channels_in_logged_in_state(qapp, qloop):
         # 触发 bootstrap_ui → 内部 fire-and-forget _go()
         vm.bootstrap_ui()
 
-        # 在 background loop 上 wait_for known_channels 填入 3 个
-        def _all_three() -> bool:
-            return len(vm.known_channels) >= 3
+        # 等 known_channels 填入 2 个(只真理)
+        def _two_channels() -> bool:
+            return len(vm.known_channels) >= 2
 
-        ok = _wait_for_sync(qloop, _all_three, timeout=3.0)
+        ok = _wait_for_sync(qloop, _two_channels, timeout=3.0)
         assert ok, (
             f"VM.bootstrap_ui 没有在 3s 内填 known_channels;"
-            f"got known_channels={dict(vm.known_channels)}; "
-            f"client._state={client._state!r}"
+            f"got known_channels={dict(vm.known_channels)}"
         )
-        assert len(vm.known_channels) == 3
+        # 新语义:VM 走 storage,只看到 2 个 subscribed(不是 3 个 TD 加入)
+        assert len(vm.known_channels) == 2
+        assert sorted(vm.known_channels.keys()) == [100, 200]
+        # 300 不应出现 —— TD join 了但 storage 没订阅,真理优先
+        assert 300 not in vm.known_channels
 
-        # _refresh_state 等价:求 known_channels ∩ subscribed_ids
-        subscribed_ids = monitor.subscribed_ids
-        rendered_subscribed = [ch for cid, ch in vm.known_channels.items() if cid in subscribed_ids]
-        assert sorted(c.id for c in rendered_subscribed) == [100, 200]
 
+def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
+    """2026-09-29:VM bootstrap 走 storage,不被 TDLib state race 阻塞。
 
-def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
-    """如果 bridge 还在中间态(tdlib_parameters 等),`list_joined_channels`
-    不应"一上来"判 not ready 就 [],而应等最多 N 秒让 state 走到 ready。
+    旧 race(已被消除):VM.bootstrap_ui 紧接着 fire-and-forget 调
+    `client.list_joined_channels()`;`list_joined_channels` 在 client._state
+    != "ready" 时立即 [] 退出 → 中间态窗口里 channels 永不显示。
 
-    这是 2026-07-18 用户报的"已监听 + 已加入频道在登录状态下打开应用
-    的时候未显示"的疑似根因:
-      - TDLib 触发 updateAuthorizationState(WaitTdlibParameters / ... /
-        Ready) 一系列事件后才最终到 Ready;
-      - `start()` await 的 `_state_event.wait()` 任何状态变化都 set,
-        所以 start() 可能在 WaitTdlibParameters 就返,state 不是 "ready";
-      - VM.bootstrap_ui 紧接着 fire-and-forget 调 list_joined_channels;
-      - guard 看到 state != "ready" → 立即 [] — 错过稍后才到的 ready,
-        channels 永不显示,直到用户手动刷新。
+    新设计:storage 是同步真理,VM bootstrap 直接读,跟 TDLib state 解耦。
 
     测试:
-      1. VM.bootstrap_ui 时 client._state == "tdlib_parameters"
-         (中间态,模拟 TDLib 还没走完)
-      2. 200ms 后,_state 跳到 "ready"
-      3. 等 ≤ 2s,known_channels 应填入 2 个频道 — 不是空
+      1) client._state = 'tdlib_parameters'(中间态,模拟 TDLib 还没走完)
+      2) storage 里 2 个 subscribed channels(真理已就绪)
+      3) VM.bootstrap_ui 触发后,**不等 state 变 ready**,known_channels
+         立刻填上 2 个 —— storage 不需要 TDLib state。
     """
     import tempfile
-    import threading as _th
     from pathlib import Path
 
     from tests.conftest import InMemoryRepository
@@ -205,13 +205,17 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
 
         bus = EventBus()
         client = FakeTelegramClient()
-        client._state = "tdlib_parameters"  # 中间态
-        for cid, title in [(100, "新闻"), (200, "技术")]:
-            client.add_channel(ChannelDTO(id=cid, title=title))
+        client._state = "tdlib_parameters"  # 中间态 —— 不动它
+        # TD 视角故意为空 / 不一致:VM 不应该看
+        # (如果走 list_joined 会拿到 [],但我们不在 client 上 add_channel)
 
         async def setup_async():
             storage = InMemoryRepository()
             await storage.connect()
+            # 真理侧 2 个 subscribed
+            await storage.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
+            await storage.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
+
             objects = LocalObjectStore(root=Path(td) / "o")
             await objects.connect()
             monitor = MonitorService(bus, client, storage, objects, settings)
@@ -222,22 +226,21 @@ def test_list_joined_waits_for_ready_state_during_transition(qapp, qloop):
         app_svc, monitor = setup_fut.result(timeout=5.0)
 
         vm = MonitorViewModel(app_svc, monitor, qloop)
-
-        # 200ms 后,模拟 TDLib 推到 ready
-        _th.Timer(0.2, lambda: setattr(client, "_state", "ready")).start()
-
         vm.bootstrap_ui()
 
-        # 等 ≤ 2s 让 known_channels 填上 2 个
+        # 给 0.5s —— storage 是同步真理,500ms 应该填好(测试也不让 wait 太长)
         def _two_channels() -> bool:
             return len(vm.known_channels) >= 2
 
-        ok = _wait_for_sync(qloop, _two_channels, timeout=2.0)
+        ok = _wait_for_sync(qloop, _two_channels, timeout=0.5)
         assert ok, (
-            f"list_joined_channels 应等 bridge 走到 ready 再拉,而不是 race "
-            f"在中间态就 [] 退出。known_channels={dict(vm.known_channels)}; "
+            f"VM.bootstrap_ui 应该不依赖 TDLib state;但 1s 内没填上 channels。"
+            f"known_channels={dict(vm.known_channels)};"
             f"client._state={client._state!r}"
         )
+        # 关键断言:client 仍然是中间态,但 VM 已经填好
+        assert client._state == "tdlib_parameters"
+        assert sorted(vm.known_channels.keys()) == [100, 200]
 
 
 def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
@@ -255,6 +258,11 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
 
     修复方向:list_joined_channels 应最多等 N 秒让 _state 走到 "ready",
     再决定 early return / 真请求。
+
+    2026-09-29 备注:VM.bootstrap_ui 已不再用 list_joined_channels(改走
+    storage 真理),但 `list_joined_channels` 本身仍被 live_forward dialog
+    (`MainWindow._on_live_forward`,main_window.py:1171)调用 —— race
+    守护仍要保留。
 
     注意:TdlibTelegramClient 创建(含 asyncio.Event)必须跑在 background
     loop(qloop)上,避免 Python 3.9 下 Event loop 绑定错误

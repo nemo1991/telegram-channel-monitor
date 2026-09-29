@@ -1361,7 +1361,7 @@ class MainWindow(QMainWindow):
     def _on_refresh_channels(self) -> None:
         self.status_bar.showMessage(self.tr("拉取频道列表…"), 2000)
         self._show_activity("拉取频道列表…")
-        self._vm.refresh_joined_channels()
+        self._vm.refresh_subscribed_channels()
 
     def _on_export(self) -> None:
         if not self.monitor.subscribed_ids:

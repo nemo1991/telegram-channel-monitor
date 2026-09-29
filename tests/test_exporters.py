@@ -88,7 +88,24 @@ async def test_export_each_format(tmp_path, fmt, ext):
 
 
 async def test_export_htmlembeds_thumbnails(tmp_path):
+    """HTML 导出:`include_thumbnails=True` 时从 thumbnails 表 + thumb/ 读 bytes 内嵌。"""
+    from tgmonitor.core.dto import MediaDownloadStatus, ThumbnailDTO
+
     storage, objects, bus, _ = await _setup(tmp_path)
+    # 2026-09-29:thumb 走独立 thumbnails 表;把 _setup put 的老
+    # `media/abc.jpg.thumb` 视作 thumb 入口 — 不,直接换成 thumb/ prefix
+    # + 落 thumb 行,语义清晰。
+    await objects.put("thumb/abc.jpg", b"\xff\xd8\xff\xd9fake-jpeg", None)
+    await storage.save_thumbnail(
+        ThumbnailDTO(
+            channel_id=200,
+            telegram_msg_id=1,
+            media_idx=0,
+            object_key="thumb/abc.jpg",
+            object_backend="local",
+            download_status=MediaDownloadStatus.DONE,
+        )
+    )
     svc = ExportService(storage, objects, bus)
     out = tmp_path / "out.html"
     req = ExportRequest(
@@ -613,6 +630,23 @@ async def test_zip_with_thumbnails(tmp_path):
     msg.media[0].object_key = "media/abc.jpg"
     msg.media[0].object_backend = "local"
     await storage.save_message(replace(msg, media=msg.media))
+
+    # 2026-09-29:thumb 走独立 thumbnails 表 + thumb/ prefix(不再用
+    # `media/<file>.thumb` 旧 key)。在 ObjectStore 里建一个 thumb entry,
+    # 落 thumbnails 表行(DONE 状态)给 ZIP / HTML 导出查询用。
+    from tgmonitor.core.dto import ThumbnailDTO
+
+    await objects.put("thumb/abc.jpg", b"\xff\xd8\xff\xd9fake-jpeg", None)
+    await storage.save_thumbnail(
+        ThumbnailDTO(
+            channel_id=200,
+            telegram_msg_id=1,
+            media_idx=0,
+            object_key="thumb/abc.jpg",
+            object_backend="local",
+            download_status=MediaDownloadStatus.DONE,
+        )
+    )
 
     svc = ExportService(storage, objects, bus)
     out = tmp_path / "out.zip"

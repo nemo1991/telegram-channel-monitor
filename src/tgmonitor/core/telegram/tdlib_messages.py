@@ -118,17 +118,21 @@ def _file_size(file_obj: Any) -> int | None:
     return _to_int_or_none(getattr(file_obj, "size", None))
 
 
-def _thumb_key_from(thumbnail: Any) -> tuple[str | None, str | None]:
-    """Thumbnail.file.id → (thumb_key, thumb_backend);无 thumbnail → (None, None)。"""
+def _thumb_file_id_from(thumbnail: Any) -> str | None:
+    """2026-09-29:thumbnail.file.id → telegram_thumb_file_id(供 MediaDownloader
+    按需下载缩略图用);无 thumbnail → None。
+
+    与旧 `_thumb_key_from`(返回预测 key `media/<fid>.thumb` + 写死 backend)
+    不同:此版本只提取 TG 端 file.id,**不预测 ObjectStore key**;key 由
+    MediaDownloader 在下载时按 `thumb/<sha256>.<ext>` 内容寻址生成。
+    """
     if thumbnail is None:
-        return None, None
+        return None
     f = getattr(thumbnail, "file", None)
     if f is None:
-        return None, None
+        return None
     fid = getattr(f, "id", None)
-    if fid is None:
-        return None, None
-    return f"media/{fid}.thumb", "local"
+    return str(fid) if fid is not None else None
 
 
 # ---- 媒体 handler 工厂 ----
@@ -182,9 +186,11 @@ def _build_media_handler(
             kwargs["duration"] = getattr(obj, "duration", None)
         if thumb_attr:
             th = getattr(obj, thumb_attr, None)
-            tk, tb = _thumb_key_from(th)
-            kwargs["thumb_key"] = tk
-            kwargs["thumb_backend"] = tb
+            # 2026-09-29:缩略图独立存储 — 只提取 TG 端 Thumbnail.file.id;
+            # 不预测 ObjectStore key(thumb key 由 MediaDownloader 在下载
+            # 时按 thumb/<sha256>.<ext> 算)。thumbnail_telegram_file_id 存
+            # 进 MediaDTO,MediaDownloader 用它调 client.download_file。
+            kwargs["thumbnail_telegram_file_id"] = _thumb_file_id_from(th)
         return ([MediaDTO(**kwargs)], _extract_caption(content))
 
     return _fn
@@ -219,7 +225,8 @@ def _handle_sticker(content: Any) -> tuple[list[MediaDTO], str]:
         return ([], "")
     file_obj = getattr(st, "sticker", None)
     th = getattr(st, "thumbnail", None)
-    tk, tb = _thumb_key_from(th)
+    # 2026-09-29:缩略图独立存储 — 只提取 TG 端 Thumbnail.file.id,
+    # MediaDownloader 按需下载时再生成 thumb/<sha256>.<ext>。
     return (
         [
             MediaDTO(
@@ -228,8 +235,7 @@ def _handle_sticker(content: Any) -> tuple[list[MediaDTO], str]:
                 width=getattr(st, "width", None),
                 height=getattr(st, "height", None),
                 telegram_file_id=_file_id(file_obj),
-                thumb_key=tk,
-                thumb_backend=tb,
+                thumbnail_telegram_file_id=_thumb_file_id_from(th),
                 emoji=getattr(st, "emoji", None),
             )
         ],

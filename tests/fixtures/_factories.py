@@ -48,8 +48,10 @@ def make_photo(channel_id: int = 100, msg_id: int = 1) -> MessageDTO:
                 file_size=1234,
                 width=800,
                 height=600,
-                thumb_key="media/abc.jpg.thumb",
-                thumb_backend="local",
+                # 2026-09-29:thumb_key / thumb_backend 已删(thumb 走独立
+                # thumbnails 表 + thumb/ prefix);改 thumbnail_telegram_file_id
+                # 关联 TG 端 Thumbnail.file.id。
+                thumbnail_telegram_file_id="33",
             )
         ],
     )

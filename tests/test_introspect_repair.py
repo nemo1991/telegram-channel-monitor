@@ -14,8 +14,12 @@ from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 
 
 def test_expected_tables_covers_all_storage_tables() -> None:
-    """EXPECTED_TABLES 必须等于 {channels, messages, media, meta}。"""
-    assert frozenset({"channels", "messages", "media", "meta"}) == EXPECTED_TABLES
+    """EXPECTED_TABLES 必须等于 {channels, messages, media, meta, thumbnails}。
+
+    2026-09-29:新增 `thumbnails` 独立表(缩略图走独立存储),与 media
+    顶层平行;FK 走 messages(channel_id, telegram_msg_id)。
+    """
+    assert frozenset({"channels", "messages", "media", "meta", "thumbnails"}) == EXPECTED_TABLES
 
 
 def test_expected_schema_messages_has_v14_columns() -> None:

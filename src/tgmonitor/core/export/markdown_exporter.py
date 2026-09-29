@@ -17,6 +17,7 @@ from tgmonitor.core.export.guards import _scrub_markdown
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 
 @exporter(ExportFormat.MARKDOWN)
@@ -40,6 +41,7 @@ class MarkdownExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,
+        storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用(MD 不用,签名对齐)
     ) -> int:
         """渲染 Markdown → 写文件 → 返回字节数。"""
         grouped: dict[int, list[MessageDTO]] = defaultdict(list)

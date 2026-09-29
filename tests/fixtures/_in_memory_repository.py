@@ -19,6 +19,7 @@ from tgmonitor.core.dto import (
     MessageDTO,
     SortDir,
     SortKey,
+    ThumbnailDTO,
 )
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import SchemaReport
@@ -34,6 +35,8 @@ class InMemoryRepository(StorageRepository):
         self._meta: dict[str, str] = {}
         # telegram_file_id -> MediaDTO(已 DONE)— find_media_by_file_id 用
         self._media_by_fid: dict[str, MediaDTO] = {}
+        # 2026-09-29:缩略图独立存储 — (channel_id, msg_id, media_idx) 三元组 → ThumbnailDTO
+        self._thumbs: dict[tuple[int, int, int], ThumbnailDTO] = {}
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
@@ -223,9 +226,14 @@ class InMemoryRepository(StorageRepository):
                         self._media_by_fid.pop(fid, None)
                     else:
                         self._media_by_fid[fid] = best
+            # 2026-09-29:同步清掉该消息的所有 thumb
+            self._purge_thumbs_for_msg(channel_id, telegram_msg_id)
 
     async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-08 v1.7.0:批量删单频道 N 条消息 + 收敛 _media_by_fid。"""
+        """2026-09-08 v1.7.0:批量删单频道 N 条消息 + 收敛 _media_by_fid。
+
+        2026-09-29:同时清掉这些消息的所有 thumb。
+        """
         if not msg_ids:
             return
         old_messages = []
@@ -233,6 +241,8 @@ class InMemoryRepository(StorageRepository):
             old = self.messages.pop((channel_id, mid), None)
             if old is not None:
                 old_messages.append(old)
+            # 2026-09-29:thumb 同步清
+            self._purge_thumbs_for_msg(channel_id, mid)
         # 收集去重的 fid(避免重复 _find_done_by_fid 扫描)
         fids: set[str] = set()
         for old in old_messages:
@@ -527,3 +537,43 @@ class InMemoryRepository(StorageRepository):
         result = [m for m in self.messages.values() if tag in m.tags]
         result.sort(key=lambda m: m.date, reverse=True)
         return result
+
+    # ---- 缩略图(2026-09-29 独立存储) ----
+
+    def _purge_thumbs_for_msg(self, channel_id: int, telegram_msg_id: int) -> bool:
+        """清掉一个 (channel_id, telegram_msg_id) 名下所有 thumb;返是否有删。"""
+        to_del = [k for k in self._thumbs if k[0] == channel_id and k[1] == telegram_msg_id]
+        for k in to_del:
+            del self._thumbs[k]
+        return bool(to_del)
+
+    async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
+        """upsert thumb(以 channel_id+msg_id+media_idx 三元组为主键)。"""
+        self._thumbs[(thumb.channel_id, thumb.telegram_msg_id, thumb.media_idx)] = thumb
+
+    async def get_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> ThumbnailDTO | None:
+        """单条 thumb;不存在返 None。"""
+        return self._thumbs.get((channel_id, telegram_msg_id, media_idx))
+
+    async def delete_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> None:
+        """不存在不抛(idempotent)。"""
+        self._thumbs.pop((channel_id, telegram_msg_id, media_idx), None)
+
+    async def list_thumbnails_for_message(
+        self, channel_id: int, telegram_msg_id: int
+    ) -> list[ThumbnailDTO]:
+        """一条消息的所有 thumb(通常 1 个);按 media_idx ASC。"""
+        result = [
+            t for (cid, mid, _idx), t in self._thumbs.items()
+            if cid == channel_id and mid == telegram_msg_id
+        ]
+        result.sort(key=lambda t: t.media_idx)
+        return result
+
+    async def count_thumbnails_by_object_key(self, object_key: str) -> int:
+        """orphan reconcile 用:被 storage 引用的 thumb key 计数。"""
+        return sum(1 for t in self._thumbs.values() if t.object_key == object_key)

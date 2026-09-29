@@ -22,6 +22,7 @@ from tgmonitor.core.dto import (
     ReactionDTO,
     SortDir,
     SortKey,
+    ThumbnailDTO,
 )
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import SchemaReport
@@ -47,8 +48,9 @@ def _media_to_doc(m: MediaDTO) -> dict[str, Any]:
         "telegram_file_id": m.telegram_file_id,
         "object_key": m.object_key,
         "object_backend": m.object_backend,
-        "thumb_key": m.thumb_key,
-        "thumb_backend": m.thumb_backend,
+        # 2026-09-29:删 thumb_key / thumb_backend(死字段);留 thumbnail_telegram_file_id
+        # — MediaDownloader 用它按需下载缩略图。
+        "thumbnail_telegram_file_id": m.thumbnail_telegram_file_id,
         "emoji": m.emoji,
         "download_status": m.download_status.value,
         "download_error": m.download_error,
@@ -67,11 +69,53 @@ def _doc_to_media(d: dict[str, Any]) -> MediaDTO:
         telegram_file_id=d.get("telegram_file_id"),
         object_key=d.get("object_key"),
         object_backend=d.get("object_backend"),
-        thumb_key=d.get("thumb_key"),
-        thumb_backend=d.get("thumb_backend"),
+        # 2026-09-29:thumb_key / thumb_backend 已死;老 doc 残留字段 `.get`
+        # 默认 None 即可。thumbnail_telegram_file_id 老 doc 无 → 默认 None。
         emoji=d.get("emoji"),
         download_status=_media_status(d.get("download_status")),
         download_error=d.get("download_error"),
+        thumbnail_telegram_file_id=d.get("thumbnail_telegram_file_id"),
+    )
+
+
+def _thumb_to_doc(t: ThumbnailDTO) -> dict[str, Any]:
+    """2026-09-29:thumbnail doc;`_id` 用 `f"{channel_id}:{msg_id}:{media_idx}"`
+    复合 string id — MongoDB `_id` 自带唯一索引,免建额外 unique 索引。
+    """
+    return {
+        "_id": f"{t.channel_id}:{t.telegram_msg_id}:{t.media_idx}",
+        "channel_id": t.channel_id,
+        "telegram_msg_id": t.telegram_msg_id,
+        "media_idx": t.media_idx,
+        "object_key": t.object_key,
+        "object_backend": t.object_backend,
+        "file_size": t.file_size,
+        "mime_type": t.mime_type,
+        "width": t.width,
+        "height": t.height,
+        "sha256": t.sha256,
+        "download_status": t.download_status.value,
+        "download_error": t.download_error,
+        "telegram_thumb_file_id": t.telegram_thumb_file_id,
+    }
+
+
+def _doc_to_thumb(d: dict[str, Any]) -> ThumbnailDTO:
+    """2026-09-29:thumbnail doc → DTO;`_id` 不读(由三 key 重新生成)。"""
+    return ThumbnailDTO(
+        channel_id=int(d["channel_id"]),
+        telegram_msg_id=int(d["telegram_msg_id"]),
+        media_idx=int(d["media_idx"]),
+        object_key=d.get("object_key"),
+        object_backend=d.get("object_backend"),
+        file_size=d.get("file_size"),
+        mime_type=d.get("mime_type"),
+        width=d.get("width"),
+        height=d.get("height"),
+        sha256=d.get("sha256"),
+        download_status=_media_status(d.get("download_status")),
+        download_error=d.get("download_error"),
+        telegram_thumb_file_id=d.get("telegram_thumb_file_id"),
     )
 
 
@@ -243,6 +287,10 @@ class MongoRepository(StorageRepository):
         # 旧 db.media 索引保留(空集合,无害)
         await self.db.media.create_index([("message_id", 1)])
         await self.db.media.create_index([("telegram_file_id", 1)])
+        # 2026-09-29:缩略图独立 collection。`_id` 是复合 string 主键
+        # (自带 unique),这里只加 `object_key` 索引给 orphan reconcile 用
+        # (不强制 unique — 跨消息同 thumb bytes 复用是合法状态)。
+        await self.db.thumbnails.create_index([("object_key", 1)])
 
     async def introspect_schema(self) -> SchemaReport:
         """2026-09-23 v1.8.x:Mongo schema-less,只检查期望索引是否齐全。
@@ -625,8 +673,16 @@ class MongoRepository(StorageRepository):
         )
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删单条消息;media 子文档随父 doc 一同删。"""
+        """删单条消息;media 子文档随父 doc 一同删。
+
+        2026-09-29:同时清掉该消息对应的 thumb 文档(thumbnails collection,
+        `delete_many` 按 channel_id+msg_id 过滤 — 一条 message 的 thumb 通常
+        1 个,但 list_thumbnails_for_message 设计上可能返回多个,所以走 many)。
+        """
         await self.db.messages.delete_one(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
+        )
+        await self.db.thumbnails.delete_many(
             {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
         )
 
@@ -635,10 +691,18 @@ class MongoRepository(StorageRepository):
 
         单次 `delete_many` 走 `telegram_msg_id: {$in: [...]}` 索引扫描,
         比 N 次 delete_one 节省 N-1 个 round-trip。
+
+        2026-09-29:同时清掉这 N 条消息对应的 thumb。
         """
         if not msg_ids:
             return
         await self.db.messages.delete_many(
+            {
+                "channel_id": channel_id,
+                "telegram_msg_id": {"$in": msg_ids},
+            }
+        )
+        await self.db.thumbnails.delete_many(
             {
                 "channel_id": channel_id,
                 "telegram_msg_id": {"$in": msg_ids},
@@ -971,6 +1035,50 @@ class MongoRepository(StorageRepository):
         async for d in self.db.messages.aggregate(pipeline):
             return int(d.get("total", 0))
         return 0
+
+    # ---- 缩略图(2026-09-29 独立存储) ----
+
+    async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
+        """upsert thumb(以 _id = `f"{channel_id}:{msg_id}:{media_idx}"` 复合主键)。
+
+        三 key 永远存在(thumb 与父 message 一起产生),主键冲突即可覆盖
+        —— `replace_one` upsert 模式。
+        """
+        await self.db.thumbnails.replace_one(
+            {"_id": _thumb_to_doc(thumb)["_id"]},
+            _thumb_to_doc(thumb),
+            upsert=True,
+        )
+
+    async def get_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> ThumbnailDTO | None:
+        """单条 thumb;不存在返 None。"""
+        d = await self.db.thumbnails.find_one(
+            {"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"}
+        )
+        return _doc_to_thumb(d) if d else None
+
+    async def delete_thumbnail(
+        self, channel_id: int, telegram_msg_id: int, media_idx: int
+    ) -> None:
+        """不存在不抛(idempotent)。message 删除时由 delete_message 级联调。"""
+        await self.db.thumbnails.delete_one(
+            {"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"}
+        )
+
+    async def list_thumbnails_for_message(
+        self, channel_id: int, telegram_msg_id: int
+    ) -> list[ThumbnailDTO]:
+        """一条消息的所有 thumb(通常 1 个);按 media_idx ASC。"""
+        cursor = self.db.thumbnails.find(
+            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id}
+        ).sort("media_idx", 1)
+        return [_doc_to_thumb(d) async for d in cursor]
+
+    async def count_thumbnails_by_object_key(self, object_key: str) -> int:
+        """orphan reconcile 用:被 storage 引用的 thumb key 计数(>0 = 不该删)。"""
+        return await self.db.thumbnails.count_documents({"object_key": object_key})
 
 
 def _escape_regex(s: str) -> str:

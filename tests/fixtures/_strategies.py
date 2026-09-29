@@ -62,8 +62,11 @@ def media_dtos(draw) -> MediaDTO:
         ),
         object_key=draw(st.one_of(st.none(), st.text(min_size=1, max_size=128))),
         object_backend=draw(st.one_of(st.none(), st.sampled_from(["local", "s3"]))),
-        thumb_key=draw(st.one_of(st.none(), st.text(min_size=1, max_size=128))),
-        thumb_backend=draw(st.one_of(st.none(), st.sampled_from(["local", "s3"]))),
+        # 2026-09-29:thumb_key / thumb_backend 已删(thumb 走独立 thumbnails
+        # 表 + thumb/ prefix);改 thumbnail_telegram_file_id 关联。
+        thumbnail_telegram_file_id=draw(
+            st.one_of(st.none(), st.text(min_size=1, max_size=64).filter(lambda s: s.strip()))
+        ),
         download_status=draw(st.sampled_from(list(MediaDownloadStatus))),
         download_error=draw(st.one_of(st.none(), st.text(max_size=128))),
         emoji=draw(

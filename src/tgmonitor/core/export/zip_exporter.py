@@ -43,6 +43,7 @@ from tgmonitor.core.export.base import Exporter, exporter
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ class ZipExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,
+        storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用
     ) -> int:
         """写 zip → 返回字节数。
 
@@ -145,17 +147,24 @@ class ZipExporter(Exporter):
                         )
                         continue
                     # 缩略图(可选):命名 `thumb_<arcname>`,失败也跳
-                    if include_thumbnails and media.thumb_key:
-                        try:
-                            with zf.open(f"thumb_{arcname}", "w") as writer:
-                                async for chunk in object_store.stream_read(media.thumb_key):
-                                    writer.write(chunk)
-                        except KeyError:
-                            log.warning(
-                                "zip export: thumb_key 不存在,跳过: msg_id=%s idx=%d key=%s",
-                                msg.telegram_msg_id,
-                                idx,
-                                media.thumb_key,
-                            )
-                            continue
+                    # 2026-09-29:thumb 走独立 thumbnails 表,从 storage.get_thumbnail 拿
+                    if include_thumbnails and storage is not None:
+                        thumb = await storage.get_thumbnail(
+                            msg.channel_id, msg.telegram_msg_id, idx
+                        )
+                        if thumb and thumb.object_key:
+                            try:
+                                with zf.open(f"thumb_{arcname}", "w") as writer:
+                                    async for chunk in object_store.stream_read(
+                                        thumb.object_key
+                                    ):
+                                        writer.write(chunk)
+                            except KeyError:
+                                log.warning(
+                                    "zip export: thumb_key 不存在,跳过: msg_id=%s idx=%d key=%s",
+                                    msg.telegram_msg_id,
+                                    idx,
+                                    thumb.object_key,
+                                )
+                                continue
         return out_path.stat().st_size  # noqa: ASYNC240 — 同步 stat 写盘后的路径
