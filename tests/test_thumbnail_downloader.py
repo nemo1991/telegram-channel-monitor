@@ -114,9 +114,15 @@ async def test_download_thumb_key_content_addressed(tmp_path):
     client.set_download("thumb-fid-A", THUMB_BYTES)
     client.set_download("thumb-fid-B", b"\x04DIFFERENT_BODY")
 
-    t_a1 = await dl.download_thumb(msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-A"))
-    t_a2 = await dl.download_thumb(msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-A"))
-    t_b = await dl.download_thumb(msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-B"))
+    t_a1 = await dl.download_thumb(
+        msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-A")
+    )
+    t_a2 = await dl.download_thumb(
+        msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-A")
+    )
+    t_b = await dl.download_thumb(
+        msg_pk=(1, 1), media=_photo(thumbnail_telegram_file_id="thumb-fid-B")
+    )
 
     assert t_a1 is not None and t_a1.object_key is not None
     assert t_a2 is not None and t_a2.object_key == t_a1.object_key  # 同一 key

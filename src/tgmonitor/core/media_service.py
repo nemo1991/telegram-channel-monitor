@@ -401,16 +401,17 @@ class MediaService:
             return None
         return await self._read_objectstore_bytes(media.object_backend, media.object_key)
 
-    async def _read_objectstore_bytes(
-        self, backend: str, key: str
-    ) -> bytes | None:
+    async def _read_objectstore_bytes(self, backend: str, key: str) -> bytes | None:
         """从 ObjectStore 读全量 bytes;任何异常返 None。日志 DEBUG 而非
         WARNING — thumb 读 miss 是合法状态(thumb FAILED/DNE 时不再 read),
         NOT org-conf(2026-09-29 之前 WARNING 噪音让 Media Manager 每次重画
         都刷日志)。
         """
+        objects = self._objects
+        if objects is None:
+            return None
         try:
-            stream = await self._objects.open_read(key)
+            stream = await objects.open_read(key)
         except Exception:  # noqa: BLE001
             log.debug("load_thumbnail_bytes miss: backend=%s key=%s", backend, key)
             return None

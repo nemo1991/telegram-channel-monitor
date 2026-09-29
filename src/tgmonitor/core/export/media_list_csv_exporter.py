@@ -29,6 +29,7 @@ from tgmonitor.core.export.guards import _guard_csv_cell
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
+    from tgmonitor.core.storage.repository import StorageRepository
 
 
 MEDIA_CSV_COLUMNS: list[str] = [
@@ -77,6 +78,7 @@ class MediaListCsvExporter(Exporter):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,
+        storage: StorageRepository | None = None,
     ) -> int:
         """写 per-media CSV → 返回字节数。"""
         with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染写盘同步

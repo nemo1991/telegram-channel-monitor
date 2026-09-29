@@ -219,9 +219,7 @@ async def test_load_thumbnail_bytes_returns_none_for_failed(
     )
     await storage.save_message(msg)
     assert (
-        await app.load_thumbnail_bytes(
-            media, channel_id=100, telegram_msg_id=1, media_idx=0
-        )
+        await app.load_thumbnail_bytes(media, channel_id=100, telegram_msg_id=1, media_idx=0)
         is None
     )
 
@@ -255,9 +253,7 @@ async def test_load_thumbnail_bytes_local_backend(
             download_status=MediaDownloadStatus.DONE,
         )
     )
-    out = await app.load_thumbnail_bytes(
-        med, channel_id=100, telegram_msg_id=1, media_idx=0
-    )
+    out = await app.load_thumbnail_bytes(med, channel_id=100, telegram_msg_id=1, media_idx=0)
     assert out == png
 
 
@@ -293,9 +289,7 @@ async def test_load_thumbnail_bytes_folder_backend(
                 download_status=MediaDownloadStatus.DONE,
             )
         )
-        out = await app.load_thumbnail_bytes(
-            med, channel_id=100, telegram_msg_id=1, media_idx=0
-        )
+        out = await app.load_thumbnail_bytes(med, channel_id=100, telegram_msg_id=1, media_idx=0)
         assert out == png
     finally:
         app.objects = saved  # type: ignore[assignment]
@@ -325,9 +319,7 @@ async def test_load_thumbnail_bytes_s3_returns_none_when_not_implemented(
                 download_status=MediaDownloadStatus.DONE,
             )
         )
-        out = await app.load_thumbnail_bytes(
-            med, channel_id=100, telegram_msg_id=1, media_idx=0
-        )
+        out = await app.load_thumbnail_bytes(med, channel_id=100, telegram_msg_id=1, media_idx=0)
         assert out is None
     finally:
         app.objects = saved  # type: ignore[assignment]
@@ -356,9 +348,7 @@ async def test_load_thumbnail_bytes_missing_key_returns_none(
             download_status=MediaDownloadStatus.DONE,
         )
     )
-    out = await app.load_thumbnail_bytes(
-        med, channel_id=100, telegram_msg_id=1, media_idx=0
-    )
+    out = await app.load_thumbnail_bytes(med, channel_id=100, telegram_msg_id=1, media_idx=0)
     assert out is None
 
 
@@ -381,7 +371,5 @@ async def test_load_thumbnail_bytes_falls_back_to_object_key_when_no_thumb_row(
         download_status=MediaDownloadStatus.DONE,
     )
     # thumb 表故意空 — fallback 路径
-    out = await app.load_thumbnail_bytes(
-        med, channel_id=100, telegram_msg_id=1, media_idx=0
-    )
+    out = await app.load_thumbnail_bytes(med, channel_id=100, telegram_msg_id=1, media_idx=0)
     assert out == png

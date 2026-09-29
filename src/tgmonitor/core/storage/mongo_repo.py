@@ -1059,13 +1059,9 @@ class MongoRepository(StorageRepository):
         )
         return _doc_to_thumb(d) if d else None
 
-    async def delete_thumbnail(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int
-    ) -> None:
+    async def delete_thumbnail(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """不存在不抛(idempotent)。message 删除时由 delete_message 级联调。"""
-        await self.db.thumbnails.delete_one(
-            {"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"}
-        )
+        await self.db.thumbnails.delete_one({"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"})
 
     async def list_thumbnails_for_message(
         self, channel_id: int, telegram_msg_id: int

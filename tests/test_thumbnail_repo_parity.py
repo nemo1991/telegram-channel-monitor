@@ -154,9 +154,15 @@ async def test_list_thumbnails_for_message_sorted(repo: StorageRepository) -> No
 
 async def test_count_by_object_key(repo: StorageRepository) -> None:
     """reconcile_orphans 用:同 object_key 跨 message 出现 N 次 → 计数 N。"""
-    await repo.save_thumbnail(_thumb(channel_id=1, telegram_msg_id=1, media_idx=0, object_key="thumb/shared.jpg"))
-    await repo.save_thumbnail(_thumb(channel_id=1, telegram_msg_id=2, media_idx=0, object_key="thumb/shared.jpg"))
-    await repo.save_thumbnail(_thumb(channel_id=2, telegram_msg_id=1, media_idx=0, object_key="thumb/other.jpg"))
+    await repo.save_thumbnail(
+        _thumb(channel_id=1, telegram_msg_id=1, media_idx=0, object_key="thumb/shared.jpg")
+    )
+    await repo.save_thumbnail(
+        _thumb(channel_id=1, telegram_msg_id=2, media_idx=0, object_key="thumb/shared.jpg")
+    )
+    await repo.save_thumbnail(
+        _thumb(channel_id=2, telegram_msg_id=1, media_idx=0, object_key="thumb/other.jpg")
+    )
     assert await repo.count_thumbnails_by_object_key("thumb/shared.jpg") == 2
     assert await repo.count_thumbnails_by_object_key("thumb/other.jpg") == 1
     assert await repo.count_thumbnails_by_object_key("thumb/none.jpg") == 0

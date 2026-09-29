@@ -93,13 +93,17 @@ CREATE TABLE IF NOT EXISTS media (
     telegram_file_id    TEXT,
     object_key          TEXT,
     object_backend      TEXT,
-    thumb_key           TEXT,
-    thumb_backend       TEXT,
     emoji               TEXT
 );
 
 -- 兼容旧库:已存在的 media 表补 emoji 列(IF NOT EXISTS 幂等)。
 ALTER TABLE media ADD COLUMN IF NOT EXISTS emoji TEXT;
+-- 2026-09-29 v1.10.0:旧 v1.9.x 的 thumb_key / thumb_backend 列已废弃
+-- (代码不再读也不再写,缩略图改走独立 thumbnails 表),DROP IF EXISTS 让
+-- introspect_schema fresh-DB 报告 ok。旧 v1.9.x 库的这两列里只有死引用,
+-- 真 thumb bytes 从未被下载过,丢零业务数据。
+ALTER TABLE media DROP COLUMN IF EXISTS thumb_key;
+ALTER TABLE media DROP COLUMN IF EXISTS thumb_backend;
 -- 下载状态列(异步下载队列写入;旧库无此列,IF NOT EXISTS 幂等)。
 ALTER TABLE media ADD COLUMN IF NOT EXISTS download_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE media ADD COLUMN IF NOT EXISTS download_error TEXT;

@@ -622,16 +622,17 @@ class MonitorService:
             )
             self._download_queue.task_done()
 
-    async def _maybe_download_thumb(
-        self, msg: MessageDTO, idx: int, med: MediaDTO
-    ) -> None:
+    async def _maybe_download_thumb(self, msg: MessageDTO, idx: int, med: MediaDTO) -> None:
         """2026-09-29:缩略图独立下载辅助。无 thumbnail_telegram_file_id 跳过;
         download_thumb 失败仅 log 不影响主流程。
         """
+        downloader = self.downloader
+        if downloader is None:
+            return
         if not med.thumbnail_telegram_file_id:
             return
         try:
-            thumb = await self.downloader.download_thumb(
+            thumb = await downloader.download_thumb(
                 msg_pk=(msg.channel_id, msg.telegram_msg_id),
                 media=med,
             )
@@ -1250,9 +1251,7 @@ class MediaDownloader:
             return failed(f"缩略图 {len(data):,} 字节超过单文件上限")
         # 2026-09-29:内容寻址 thumb key(跟 main key 命名对称),`make_thumb_key`
         # 复用 main 的 sha16 ext 规则。
-        ext = (
-            (media.mime_type or "").split("/")[-1] if media.mime_type else "jpg"
-        )
+        ext = (media.mime_type or "").split("/")[-1] if media.mime_type else "jpg"
         # mime 不可信(/jpeg/.jpg/没值),与 history 兼容默认 .jpg
         if ext not in ("jpg", "jpeg", "png", "webp"):
             ext = "jpg"

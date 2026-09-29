@@ -32,7 +32,8 @@ class Exporter(ABC):
         object_store: ObjectStore | None = None,
         include_thumbnails: bool = False,
         include_metadata: bool = True,  # 2026-09-10 v1.7.3:CSV / Markdown / HTML / MEDIA_CSV 控元数据列
-        storage: StorageRepository | None = None,  # 2026-09-29:thumb 走独立表,读时需要 storage.get_thumbnail
+        storage: StorageRepository
+        | None = None,  # 2026-09-29:thumb 走独立表,读时需要 storage.get_thumbnail
     ) -> int:
         """写出到 out_path,返回写入字节数。
 

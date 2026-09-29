@@ -557,9 +557,7 @@ class InMemoryRepository(StorageRepository):
         """单条 thumb;不存在返 None。"""
         return self._thumbs.get((channel_id, telegram_msg_id, media_idx))
 
-    async def delete_thumbnail(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int
-    ) -> None:
+    async def delete_thumbnail(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """不存在不抛(idempotent)。"""
         self._thumbs.pop((channel_id, telegram_msg_id, media_idx), None)
 
@@ -568,7 +566,8 @@ class InMemoryRepository(StorageRepository):
     ) -> list[ThumbnailDTO]:
         """一条消息的所有 thumb(通常 1 个);按 media_idx ASC。"""
         result = [
-            t for (cid, mid, _idx), t in self._thumbs.items()
+            t
+            for (cid, mid, _idx), t in self._thumbs.items()
             if cid == channel_id and mid == telegram_msg_id
         ]
         result.sort(key=lambda t: t.media_idx)

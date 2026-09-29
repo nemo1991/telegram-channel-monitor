@@ -155,9 +155,7 @@ class ZipExporter(Exporter):
                         if thumb and thumb.object_key:
                             try:
                                 with zf.open(f"thumb_{arcname}", "w") as writer:
-                                    async for chunk in object_store.stream_read(
-                                        thumb.object_key
-                                    ):
+                                    async for chunk in object_store.stream_read(thumb.object_key):
                                         writer.write(chunk)
                             except KeyError:
                                 log.warning(

@@ -140,9 +140,7 @@ class HtmlExporter(Exporter):
             for m in messages:
                 for idx, med in enumerate(m.media):
                     # 2026-09-29:thumb 走独立 thumbnails 表,从 storage.get_thumbnail 拿
-                    thumb = await storage.get_thumbnail(
-                        m.channel_id, m.telegram_msg_id, idx
-                    )
+                    thumb = await storage.get_thumbnail(m.channel_id, m.telegram_msg_id, idx)
                     if thumb and thumb.object_key:
                         try:
                             blob = await object_store.get(thumb.object_key)

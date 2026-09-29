@@ -1241,11 +1241,7 @@ class JsonlFileStore(StorageRepository):
 
     def _purge_thumbs_for_msg(self, channel_id: int, telegram_msg_id: int) -> bool:
         """清掉一个 (channel_id, telegram_msg_id) 名下所有 thumb;返是否有删。"""
-        to_del = [
-            key
-            for key in self._thumbs
-            if key[0] == channel_id and key[1] == telegram_msg_id
-        ]
+        to_del = [key for key in self._thumbs if key[0] == channel_id and key[1] == telegram_msg_id]
         for k in to_del:
             del self._thumbs[k]
         return bool(to_del)
@@ -1262,9 +1258,7 @@ class JsonlFileStore(StorageRepository):
         """单条 thumb;不存在返 None。"""
         return self._thumbs.get((channel_id, telegram_msg_id, media_idx))
 
-    async def delete_thumbnail(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int
-    ) -> None:
+    async def delete_thumbnail(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """不存在不抛(idempotent)。"""
         async with self._write_lock:
             if self._thumbs.pop((channel_id, telegram_msg_id, media_idx), None) is not None:
