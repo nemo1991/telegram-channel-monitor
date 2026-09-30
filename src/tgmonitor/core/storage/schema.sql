@@ -164,11 +164,6 @@ CREATE TABLE IF NOT EXISTS thumbnails (
         REFERENCES messages (channel_id, telegram_msg_id) ON DELETE CASCADE
 );
 
--- 旧库兼容:`media.thumb_key` / `media.thumb_backend` 列保留(不读不写,
--- 写 NULL)—— 给未来清理周期。新代码一律走 `thumbnails` 表。
-ALTER TABLE media ADD COLUMN IF NOT EXISTS thumb_key    TEXT;
-ALTER TABLE media ADD COLUMN IF NOT EXISTS thumb_backend TEXT;
-
 -- reconcile_orphans 用:已被 thumb 表引用的 object_key 不算孤儿,
 -- 部分索引缩小体积(只索引已下载成功的行)。
 CREATE INDEX IF NOT EXISTS idx_thumbnails_object_key
