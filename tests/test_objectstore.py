@@ -697,6 +697,55 @@ async def test_s3_stream_read_empty(monkeypatch):
     assert chunks == []
 
 
+async def test_s3_stream_read_falls_back_when_no_iter_chunks(monkeypatch):
+    """2026-09-30 v1.10.x:部分 S3 兼容实现 / 老 aioboto3 的 Body 不提供
+    `iter_chunks`(直接 aiohttp.ClientResponse,只有 `read`)。stream_read
+    必须有兜底路径走 `read(chunk_size)` 循环,不能让 ZIP 导出崩在 `'xxx'
+    has no attribute 'iter_chunks'`。
+
+    历史:用户报 2026-09-29 14:36 zip 导出错
+        `AttributeError: 'ClientResponse' object has no attribute 'iter_chunks'`
+    """
+
+    class _ReadOnlyBody:
+        """模拟 aiohttp.ClientResponse 风格的 body:无 iter_chunks,有 read。"""
+
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+            self._pos = 0
+
+        async def __aenter__(self) -> _ReadOnlyBody:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def read(self, n: int = -1) -> bytes:
+            if n < 0 or n >= len(self._data) - self._pos:
+                out = self._data[self._pos :]
+                self._pos = len(self._data)
+                return out
+            out = self._data[self._pos : self._pos + n]
+            self._pos += n
+            return out
+
+    class _ReadOnlyClient(_FakeS3Client):
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            return {"Body": _ReadOnlyBody(b"s3-readonly-data")}
+
+    fake = _FakeSession()
+    fake._fake_client = _ReadOnlyClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    chunks = [c async for c in store.stream_read("media/ro.bin", chunk_size=4)]
+    assert b"".join(chunks) == b"s3-readonly-data"
+    # 16 bytes / 4 → 4 chunks
+    assert len(chunks) == 4
+
+
 async def test_default_stream_read_falls_back_to_get(tmp_path):
     """PR #B6:不 override stream_read 的后端走默认实现(get() + chunk_size 切片)。"""
     # LocalObjectStore 显式继承默认实现(实际已 override,这里测默认路径)

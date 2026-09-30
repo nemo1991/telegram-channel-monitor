@@ -175,12 +175,28 @@ class S3ObjectStore(ObjectStore):
         `chunk_size=64KB` 是经验值:Local 单次 read 64KB 在 SSD 上 ~150μs,
         async gen overhead 可忽略;S3 网络往返 ~50ms,与 chunk size 无关
         (boto3 内部按网络 buffer 大小切,64KB 是给 Local 的友好默认值)。
+
+        2026-09-30 v1.10.x 兼容:部分 S3 兼容实现(早期 aioboto3 / OSS SDK /
+        Mock 服务器)`resp["Body"]` 不直接提供 `iter_chunks`,而是裸 aiohttp
+        `ClientResponse`(`content.iter_chunked(n)`)。分支处理:有 `iter_chunks`
+        → 原生路径(零拷贝 + httpx/urllib 互转由 aiobotocore 内部做);
+        否则用 `read(chunk_size)` 循环兜底(aiobotocore 任何版本都有 read)。
         """
         async with self._client() as s3:
             resp = await s3.get_object(Bucket=self._bucket, Key=key)
             async with resp["Body"] as stream:
-                async for chunk in stream.iter_chunks(chunk_size):
-                    yield chunk
+                if hasattr(stream, "iter_chunks"):
+                    async for chunk in stream.iter_chunks(chunk_size):
+                        yield chunk
+                else:
+                    # 兜底:aiobotocore StreamingBody 必有 read(chunk_size),
+                    # 语义等价 iter_chunks 但不开 generator,O(chunk_size)
+                    # 内存 + 略多的 event loop 调度。
+                    while True:
+                        chunk = await stream.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
 
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """S3 后端 — 用 `list_objects_v2` paginator 枚举桶里所有 key(2026-08-25 PR #2)。

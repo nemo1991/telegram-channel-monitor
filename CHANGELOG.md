@@ -5,6 +5,75 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.10.1] - 2026-09-30
+
+主题:**ZIP 导出崩溃 — 部分 S3 兼容实现 / 老 aioboto3 的 Body 不提供 `iter_chunks`,导致 `stream_read` 抛 `AttributeError`**。
+
+### 症状
+
+v1.10.0 用户报(2026-09-29 14:36):
+
+```
+ERROR tgmonitor.core.export.service: export failed
+  File "tgmonitor\core\export\service.py", line 237, in _run_messages
+  File "tgmonitor\core\export\zip_exporter.py", line 135, in render
+  File "tgmonitor\core\objectstore\s3_store.py", line 182, in stream_read
+AttributeError: 'ClientResponse' object has no attribute 'iter_chunks'
+```
+
+错误每 10 秒重试一次,叠加 qasync 主 loop 上的
+`RuntimeError: Cannot enter into task ...` 二次异常,直到 `MonitorService.backfill`
+也被打断。
+
+### 根因
+
+`S3ObjectStore.stream_read` 假定 `await s3.get_object(...)["Body"]` 必有
+`iter_chunks(chunk_size)` async iterator。aiobotocore 2.x(当前锁 2.25.1)
+的 `StreamingBody` 满足这个假设。但:
+
+- 部分 S3 兼容实现(MinIO / 阿里 OSS 通过 aioboto3 兼容层 / 旧版本 aioboto3)
+  直接返回 aiohttp `ClientResponse` 当 body,只有 `content.iter_chunked(n)` /
+  `read(n)`,无 `iter_chunks`
+- mock 服务器 / SDK 替代实现也可能返回非 `aiobotocore.response.StreamingBody`
+  的 body
+
+`iter_chunks` 在不同 S3 SDK 上不是统一契约,本项目之前无防御性 fallback。
+
+### 修复
+
+`s3_store.stream_read` 加 `hasattr(stream, "iter_chunks")` 分支:
+
+```python
+if hasattr(stream, "iter_chunks"):
+    async for chunk in stream.iter_chunks(chunk_size):
+        yield chunk
+else:
+    # 兜底:aiobotocore StreamingBody 必有 read(chunk_size),
+    # 任何 aiohttp ClientResponse / 第三方 SDK body 也有 read。
+    while True:
+        chunk = await stream.read(chunk_size)
+        if not chunk:
+            break
+        yield chunk
+```
+
+新加 `read` 路径是 aiobotocore 任何版本都有的原语,等价 iter_chunks 但不开
+generator — 略多的 event loop 调度,但功能等价且 O(chunk_size) 内存。
+
+### 测试
+
+新增 `tests/test_objectstore.py::test_s3_stream_read_falls_back_when_no_iter_chunks`:
+模拟只有 `read(chunk_size)` 无 `iter_chunks` 的 body,验证 stream_read 走
+兜底路径,16 字节 / chunk_size=4 → 4 chunks,与原生 `iter_chunks` 行为等价。
+
+### 影响范围
+
+- `S3ObjectStore.stream_read` — 修后兼容更广 S3 实现
+- 不影响 Local / Folder 后端(stream_read 本就用 Local 的 sync read + to_thread)
+- 不影响 Jsonl / Mongo / Postgres(Storage 层,跟 ObjectStore 解耦)
+
+## [1.10.0] - 2026-09-29
+
 ## [1.10.0] - 2026-09-29
 
 主题:**缩略图独立存储 — ObjectStore `thumb/` prefix + 独立表 `thumbnails`,与 `media/` 顶层平行,关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组**。
