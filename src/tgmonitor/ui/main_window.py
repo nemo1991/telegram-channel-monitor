@@ -59,8 +59,6 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MessageDTO, SyncOptions
 from tgmonitor.core.events import (
-    ChannelSyncDone,
-    ChannelSyncProgress,
     LoginStateChanged,
     MediaDeleted,
     MediaDownloaded,
@@ -70,14 +68,21 @@ from tgmonitor.core.events import (
     QuitRequested,
 )
 from tgmonitor.ui.async_bridge import run_coro
+from tgmonitor.ui.controllers import (
+    ExportController,
+    HeaderActionController,
+    MainWindowCtx,
+    SettingsReactionController,
+    SyncController,
+    ThemeController,
+    TrayController,
+)
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
-from tgmonitor.ui.widgets.export_dialog import ExportDialog
-from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
 from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
@@ -224,6 +229,37 @@ class MainWindow(QMainWindow):
         self._wire_theme_change_signal()
         self._refresh_state()
         self._vm.bootstrap_ui()
+
+        # ======================== 6 controller 装配(2026-10-01 v1.12.x) ========================
+        # 复杂 4 个(live_selection / media_actions / search / message_stream)
+        # 留 main_window.py 自身。
+        self._ctx = MainWindowCtx(
+            app=app,
+            monitor=monitor,
+            loop=loop,
+            vm=self._vm,
+            env_path=self.env_path,
+            main_window=self,
+            live_view=self.live_view,
+            message_detail=self.message_detail,
+            media_manager=self.media_manager,
+            selection_toolbar=self._selection_toolbar,
+            dashboard=self.dashboard,
+            channel_panel=self.channel_panel,
+            header=self.header,
+            status_bar=self.status_bar,
+            nav=self.nav,
+            stack=self.stack,
+            tray=self._tray,
+            search_debounce=self._search_debounce,
+            media_refresh_debounce=self._media_refresh_debounce,
+        )
+        self._theme_ctrl = ThemeController(self._ctx)
+        self._tray_ctrl = TrayController(self._ctx)
+        self._header_action_ctrl = HeaderActionController(self._ctx)
+        self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
+        self._export_ctrl = ExportController(self._ctx)
+        self._sync_ctrl = SyncController(self._ctx)
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
@@ -601,24 +637,21 @@ class MainWindow(QMainWindow):
 
         与 `_quit_app` 同义,但走 tray「退出」(不绕开 Qt 主循环)路径:
         VM `quit_requested` signal → 此 slot → `qt_app.quit`。
+        2026-10-01 v1.12.x:委托 `TrayController`。
         """
-        self._quit_app()
+        self._tray_ctrl.on_vm_quit_requested()
 
     def _on_monitoring_paused(self, source: str) -> None:
         """2026-09-03 v1.6.1:监听已暂停 — 状态栏常驻 label 显示 +
-        window title 加 `(⏸ 暂停)` 后缀。
-
-        2026-10-01 v1.11.x 状态栏组件化:status_bar 子组件自管 paused label
-        显隐,MainWindow 只委托 + 改 title。
+        window title 加 `(⏸ 暂停)` 后缀。委托 `TrayController`(v1.12.x)。
         """
-        self.status_bar.set_paused(True)
-        base_title = self.tr("tgmonitor · Telegram 频道监听")
-        self.setWindowTitle(f"{base_title}  ({self.tr('⏸ 暂停')})")
+        self._tray_ctrl.on_monitoring_paused(source)
 
     def _on_monitoring_resumed(self, source: str) -> None:
-        """2026-09-03 v1.6.1:监听已恢复 — 状态栏 label 隐藏 + title 复位。"""
-        self.status_bar.set_paused(False)
-        self.setWindowTitle(self.tr("tgmonitor · Telegram 频道监听"))
+        """2026-09-03 v1.6.1:监听已恢复 — 状态栏 label 隐藏 + title 复位。
+        委托 `TrayController`(v1.12.x)。
+        """
+        self._tray_ctrl.on_monitoring_resumed(source)
 
     async def _on_notification_fallback(self, event: object) -> None:
         """无 tray 系统(Linux 无 indicator / offscreen)→ 状态栏 fallback。
@@ -734,24 +767,8 @@ class MainWindow(QMainWindow):
         self.header.search_bar.edit.selectAll()
 
     def _on_theme_toggle(self) -> None:
-        """切换浅色/暗色主题。"""
-        from tgmonitor.ui.theme import ThemeManager
-
-        new = ThemeManager.toggle()
-        # 更新主题按钮图标
-        self.header.btn_theme.setText("☀" if new.value == "dark" else "🌙")
-        # 刷新 nav bar 内部样式
-        self.nav.refresh_theme()
-        # 频道类型图标(已 tinted)需要按新主题重画
-        if hasattr(self.channel_panel, "refresh_theme"):
-            self.channel_panel.refresh_theme()
-        # 2026-09-07 v1.6.8:status bar 文案走 tr()。
-        self.status_bar.show_message(
-            self.tr("已切换到 {kind} 主题").format(
-                kind=self.tr("暗色") if new.value == "dark" else self.tr("浅色")
-            ),
-            2000,
-        )
+        """切换浅色/暗色主题 — 委托 `ThemeController`。(2026-10-01 v1.12.x)"""
+        self._theme_ctrl.toggle()
 
     def _wire_theme_change_signal(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:ThemeManager.theme_changed → nav_bar 重画。
@@ -765,22 +782,8 @@ class MainWindow(QMainWindow):
         ThemeManager._instance().theme_changed.connect(self._on_theme_changed)
 
     def _on_theme_changed(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:ThemeManager 主题变 → UI 同步。"""
-        from tgmonitor.ui.theme import ThemeManager
-
-        actual = ThemeManager.actual()
-        # 按钮图标按 actual(非 current)—— SYSTEM 态下按 OS 实际值显示
-        self.header.btn_theme.setText("☀" if actual.value == "dark" else "🌙")
-        self.nav.refresh_theme()
-        if hasattr(self.channel_panel, "refresh_theme"):
-            self.channel_panel.refresh_theme()
-        # 2026-09-07 v1.6.8:status bar 文案走 tr()。
-        self.status_bar.show_message(
-            self.tr("已切换到 {kind} 主题").format(
-                kind=self.tr("暗色") if actual.value == "dark" else self.tr("浅色")
-            ),
-            2000,
-        )
+        """2026-08-30 v1.5.0 PR #A5:ThemeManager 主题变 → UI 同步 — 委托 controller。"""
+        self._theme_ctrl.on_theme_changed()
 
     def _on_global_escape(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Esc 全局快捷键。
@@ -1237,32 +1240,16 @@ class MainWindow(QMainWindow):
     # ======================== 槽 ========================
 
     def _on_refresh_channels(self) -> None:
-        self.status_bar.show_message(self.tr("拉取频道列表…"), 2000)
-        self.status_bar.show_activity("拉取频道列表…")
-        self._vm.refresh_subscribed_channels()
+        """2026-10-01 v1.12.x:委托 `SyncController`。"""
+        self._sync_ctrl.on_refresh_channels()
 
     def _on_export(self) -> None:
-        if not self.monitor.subscribed_ids:
-            QMessageBox.information(self, self.tr("导出"), self.tr("请先订阅至少一个频道"))
-            return
-        ids = sorted(int(cid) for cid in self.monitor.subscribed_ids)
-        dlg = ExportDialog(self.app, ids, self)
-        if dlg.exec():
-            req = dlg.request()
-            # 2026-08-30 v1.5.0 PR #A3:导出参数敲定后弹进度对话框 +
-            # 后台 start_export。dialog 自身订阅 vm.export_progress +
-            # 完成后由 _on_export_done 关闭。
-            self._export_dialog = ExportProgressDialog(self._vm, parent=self)
-            self._export_dialog.show()
-            self._vm.start_export(req)
+        """2026-10-01 v1.12.x:委托 `ExportController`。"""
+        self._export_ctrl.on_export()
 
     def _on_sync_all_channels(self) -> None:
-        """大盘快速操作:全量同步所有已订阅频道。"""
-        ids = list(self.monitor.subscribed_ids)
-        if not ids:
-            QMessageBox.information(self, self.tr("全量同步"), self.tr("已监听列表为空,先订阅频道"))
-            return
-        self._on_sync_requested(ids)
+        """大盘快速操作:全量同步所有已订阅频道 — 委托 `SyncController`(v1.12.x)。"""
+        self._sync_ctrl.on_sync_all_channels()
 
     def _on_logout_clicked(self) -> None:
         run_coro(self.loop, self.app.client.logout(), error_label="logout")
@@ -1378,13 +1365,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_header_action(self) -> None:
-        """头栏「登录」按钮 — 弹 LoginDialog(复用现有代码)"""
-        from tgmonitor.ui.widgets.login_dialog import LoginDialog
-
-        dlg = LoginDialog(self.app, self.loop, self)
-        dlg.exec()
-        # 登录成功后刷新状态
-        self._refresh_state()
+        """头栏「登录」按钮 — 弹 LoginDialog。委托 `HeaderActionController`(v1.12.x)。"""
+        self._header_action_ctrl.on_header_action()
 
     # ======================== EventBus 回调 ========================
 
@@ -1560,57 +1542,20 @@ class MainWindow(QMainWindow):
             self.status_bar.show_activity("等待网络…")
 
     def _on_export_progress(self, progress: object) -> None:
-        """导出进度 → 左侧活动指示器持续显示。dialog 自身的进度条同步显示。"""
-        # progress 可能是 dict 或 dataclass;兼容两种
-        done = getattr(progress, "done", None)
-        total = getattr(progress, "total", None)
-        if done is None and isinstance(progress, dict):
-            done = progress.get("done")
-            total = progress.get("total")
-        if done is not None and total:
-            self.status_bar.show_activity(f"导出 {done}/{total}")
+        """2026-10-01 v1.12.x:委托 `ExportController`。"""
+        self._export_ctrl.on_export_progress(progress)
 
     def _on_sync_progress(self, e) -> None:
-        """全量同步进度 → 左侧活动指示器持续显示。dialog 自身进度条同步。"""
-        if not isinstance(e, ChannelSyncProgress):
-            return
-        if e.total and e.total > 0:
-            self.status_bar.show_activity(f"同步 #{e.channel_id}: {e.done}/{e.total} ({e.stage})")
-        else:
-            self.status_bar.show_activity(f"同步 #{e.channel_id}: {e.stage}")
+        """2026-10-01 v1.12.x:委托 `SyncController`。"""
+        self._sync_ctrl.on_sync_progress(e)
 
     def _on_sync_done(self, e) -> None:
-        """全量同步完成 → 短暂显示汇总。"""
-        if not isinstance(e, ChannelSyncDone):
-            return
-        msg = f"同步完成: +{e.new_messages} 条新消息"
-        if e.failures:
-            msg += f" / {len(e.failures)} 失败"
-        self.status_bar.show_activity(msg, timeout_ms=3000)
+        """2026-10-01 v1.12.x:委托 `SyncController`。"""
+        self._sync_ctrl.on_sync_done(e)
 
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
-        # 2026-08-30 v1.5.0 PR #A3:关闭进度对话框(如有)— dialog 自身
-        # 已解 signal 连接,accept() 安全
-        dlg = getattr(self, "_export_dialog", None)
-        if dlg is not None:
-            dlg.accept()
-            # del 而非 = None:避免 ExportProgressDialog | None 注解变化
-            # 蔓延全文件;此字段本来就只在 export 期间有值
-            del self._export_dialog
-        if error:
-            QMessageBox.critical(self, self.tr("导出失败"), error)
-            self.status_bar.show_activity(f"⚠ 导出失败: {error}", timeout_ms=5000)
-        elif result:
-            QMessageBox.information(
-                self,
-                self.tr("导出完成"),
-                self.tr("已写入 {path}\n{n_msg} 条消息,{n_bytes} 字节").format(
-                    path=result["out_path"],
-                    n_msg=result["message_count"],
-                    n_bytes=result["bytes_written"],
-                ),
-            )
-            self.status_bar.show_activity(f"导出完成: {result['out_path']}", timeout_ms=4000)
+        """2026-10-01 v1.12.x:委托 `ExportController`。"""
+        self._export_ctrl.on_export_done(result, error)
 
     def _on_error(self, msg: str) -> None:
         log.warning("error: %s", msg)
@@ -1626,34 +1571,10 @@ class MainWindow(QMainWindow):
         needs_restart: bool,
         backend_label: str,
     ) -> None:
-        # 2026-10-01 v1.11.x 状态栏组件化:_objects_warn 改由 status_bar 自管,
-        # MainWindow 委托 `on_settings_changed` 移除。
-        self.status_bar.on_settings_changed()
-        # 2026-09-07 v1.6.9:兜底重绑快捷键 — SettingsPage「保存并应用」
-        # 路径已显式调过 `reload_shortcuts(self.app.settings)`,这里再调
-        # 一次幂等,覆盖未来 v1.7.x 其它 reconfigure 路径(目前没有)。
-        try:
-            self.reload_shortcuts(self.app.settings)
-        except Exception:  # noqa: BLE001
-            log.exception("reload_shortcuts failed in _on_settings_changed (non-fatal)")
-        msg = self.tr("已热重载: {what} → {backend}").format(what=what, backend=backend_label)
-        # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
-        self.status_bar.show_message(msg, 5000)
-        self.status_bar.show_activity(msg, timeout_ms=5000)
-        if needs_relogin:
-            QMessageBox.information(
-                self,
-                self.tr("凭据已变更"),
-                self.tr("Telegram 凭据已变更。\n请重新登录以继续监听。"),
-            )
-        elif needs_restart:
-            # v1.0.23:proxy / session_dir 是 TdlibClient 构造参数,运行时
-            # 不重建 client,变更已写入 .env 但需重启应用才生效
-            QMessageBox.information(
-                self,
-                "需重启生效",
-                "代理或会话目录已变更并保存。\nTDLib 客户端在启动时创建,请重启应用使其生效。",
-            )
+        """2026-10-01 v1.12.x:委托 `SettingsReactionController`。"""
+        self._settings_reaction_ctrl.on_settings_changed(
+            what, needs_relogin, needs_restart, backend_label
+        )
 
     # ======================== Media Manager 槽 (2026-08-24) ========================
 
