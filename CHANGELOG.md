@@ -5,6 +5,61 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.12.0] - 2026-10-01
+
+主题:**MainWindow 拆组件 + 文件清理**(纯重构,零行为变化)。`main_window.py`
+2,432 → 2,040 LOC(-392 净),3 个 nested widget 抽到 `ui/widgets/`,6 个
+per-domain handler 抽到 `ui/controllers/`,2 个 module 重命名去前导下划线,
+VM 跨层泄漏修掉,`ErrorLogDialog` 改用 callback 注入替代 `hasattr` 探针。
+
+### 改动
+
+- **3 个 nested widget → 顶层类**(`ui/widgets/`):
+  - `_HeaderBar` → `HeaderBar.py`(101 LOC,左 title + 搜索框 + 状态 label +
+    登录/登出/主题/铃铛按钮)
+  - `_SelectionToolbar` → `SelectionToolbar.py`(118 LOC,9 按钮:全选/反选/清空/
+    已读/导出/删除/转发/钉住/反应)
+  - `_ErrorLogDialog` → `ErrorLogDialog.py`(93 LOC,**改 callback 注入**
+    `on_clear: Callable[[], None] | None` 替代 `hasattr(parent, '_clear_error_log')` 探针)
+- **6 个 per-domain controller**(`ui/controllers/`):
+  - `ThemeController`(theme 切换 + 全页面重绘)
+  - `TrayController`(VM 转发 tray quit / pause / resume)
+  - `HeaderActionController`(顶栏按钮路由)
+  - `SettingsReactionController`(设置变更订阅 → 提示 + 重启指引)
+  - `ExportController`(导出弹窗 + 进度对话框 + 完成提示)
+  - `SyncController`(全量同步入口 + 进度反馈,38 行复杂 orchestrator 留 MainWindow 委托)
+  - 共享 `MainWindowCtx` dataclass(`_base.py`,82 LOC),plain class 不是 QObject。
+- **2 个 module 重命名(去前导下划线)**:
+  - `ui/_async.py` → `ui/async_bridge.py`(导入处 8 处更新)
+  - `ui/widgets/_reaction_format.py` → `ui/widgets/reaction_format.py`(导入处 4 处更新)
+- **VM 跨层泄漏修**:`widgets/thumbnail_cache.py` → `ui/thumbnail.py`(归 ui
+  顶层,VM import 改 `from tgmonitor.ui.thumbnail import render_pixmap`)。
+- **i18n 翻译 context 迁移**:`zh_CN.ts` / `en_US.ts` 中 `<name>_*HeaderBar` /
+ `<name>_*SelectionToolbar` / `<name>_*ErrorLogDialog` → 去下划线;`location`
+ filename 由 `main_window.py` → `widgets/*.py`。`.qm` 重编译。
+- **MainWindow** 18 个 `_on_X` 缩成 1 行 thin delegate(`self._X_ctrl.method(*a, **kw)`);
+  后续复杂 4 个 controller(`live_selection` / `media_actions` / `search` /
+  `message_stream`)留 main_window,跟随后续 PR。
+
+### 不再使用
+
+- `_HeaderBar` / `_SelectionToolbar` / `_ErrorLogDialog` nested class。
+- `hasattr(parent, '_clear_error_log')` 探针(`test_main_window_auth_error.py`
+  fixture 同步改 callback 注入)。
+- `ui/_async.py` / `ui/widgets/_reaction_format.py` / `ui/widgets/thumbnail_cache.py`
+  (路径已迁)。
+
+### 验证
+
+- `ruff check src tests`:All checks passed
+- `ruff format --check src tests`:234 files already formatted
+- `mypy` 8 入口矩阵(controllers / shutdown / thumbnail / header_bar /
+  selection_toolbar / error_log_dialog / main_window / app):0 errors
+- `pytest`(offscreen Qt):353 passed,21 skipped(预存 Qt offscreen paint path
+  race skip,无新增)
+- `tests/test_main_window_auth_error.py`:ErrorLogDialog 改 callback 注入,
+  fixture 用 `on_clear=win._clear_error_log` 注入
+
 ## [1.11.0] - 2026-10-01
 
 主题:**底部状态栏组件化重构**。`MainWindow` 自带的内联 7 子件 status bar 改为自定义
