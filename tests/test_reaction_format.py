@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from tgmonitor.core.dto import ReactionDTO
-from tgmonitor.ui.widgets._reaction_format import format_reactions_short
+from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 
 
 def test_format_returns_empty_for_none() -> None:

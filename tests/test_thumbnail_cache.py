@@ -24,7 +24,7 @@ from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType, Thumbna
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
 from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-from tgmonitor.ui.widgets.thumbnail_cache import (
+from tgmonitor.ui.thumbnail import (
     ThumbnailCache,
     cache_key_for,
     render_pixmap,

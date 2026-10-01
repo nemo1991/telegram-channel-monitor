@@ -47,7 +47,7 @@ from tgmonitor.core.events import (
     QuitRequested,
     SettingsChanged,
 )
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -578,7 +578,7 @@ class MonitorViewModel(QObject):
         → emit thumbnail_loaded。失败(None bytes / 非图像格式)on_success 拿到
         None,UI 端保持 emoji 不变。
         """
-        from tgmonitor.ui.widgets.thumbnail_cache import render_pixmap
+        from tgmonitor.ui.thumbnail import render_pixmap
 
         def _on_success(data: object) -> None:
             if not isinstance(data, (bytes, bytearray)) or not data:

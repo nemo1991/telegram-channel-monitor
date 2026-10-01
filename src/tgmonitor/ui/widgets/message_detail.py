@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ReactionDTO
-from tgmonitor.ui.widgets._reaction_format import format_reactions_short
+from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 
 # 2026-09-04 v1.6.7:Lightbox 预览白名单统一从 MediaManagerWidget 导入,
 # 不再本地拷贝 — 加 VIDEO/VIDEO_NOTE 一处生效。
@@ -50,7 +50,7 @@ def _to_local_str(dt: datetime | None) -> str:
 def _format_reactions(reactions: list[ReactionDTO]) -> str:
     """PR #10:reactions 列表 → 单行展示 `😀 5  👍 3  ...`。
 
-    2026-09-11 v1.7.4:实现下沉到 `format_reactions_short`(同目录 `_reaction_format.py`),
+    2026-09-11 v1.7.4:实现下沉到 `format_reactions_short`(同目录 `reaction_format.py`),
     LIVE 行 + 详情面板共用一份代码 — 避免两处分叉。
     详情面板全量展示(max_show=999),自投的用 `[]` 包。
     """

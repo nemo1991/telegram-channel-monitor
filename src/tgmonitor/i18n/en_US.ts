@@ -1967,138 +1967,138 @@ Please verify your database / object storage configuration and that the correspo
     </message>
 </context>
 <context>
-    <name>_ErrorLogDialog</name>
+    <name>ErrorLogDialog</name>
     <message>
-        <location filename="../ui/main_window.py" line="2318"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="44"/>
         <source>错误日志</source>
         <translation>Error Log</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2324"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="50"/>
         <source>最近 {n} 条错误(倒序):</source>
         <translation>Recent {n} error(s) (newest first):</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2334"/>
-        <location filename="../ui/main_window.py" line="2360"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="60"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="91"/>
         <source>(暂无错误)</source>
         <translation>(No errors)</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2341"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="67"/>
         <source>清空日志</source>
         <translation>Clear log</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2345"/>
+        <location filename="../ui/widgets/error_log_dialog.py" line="71"/>
         <source>关闭</source>
         <translation type="unfinished">Close</translation>
     </message>
 </context>
 <context>
-    <name>_HeaderBar</name>
+    <name>HeaderBar</name>
     <message>
-        <location filename="../ui/main_window.py" line="2123"/>
+        <location filename="../ui/widgets/header_bar.py" line="35"/>
         <source>tgmonitor</source>
         <translation>tgmonitor</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2133"/>
+        <location filename="../ui/widgets/header_bar.py" line="45"/>
         <source>⚪</source>
         <translation>⚪</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2137"/>
+        <location filename="../ui/widgets/header_bar.py" line="49"/>
         <source>就绪</source>
         <translation>Ready</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2141"/>
-        <location filename="../ui/main_window.py" line="2176"/>
+        <location filename="../ui/widgets/header_bar.py" line="53"/>
+        <location filename="../ui/widgets/header_bar.py" line="88"/>
         <source>登录</source>
         <translation>Login</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2146"/>
+        <location filename="../ui/widgets/header_bar.py" line="58"/>
         <source>登出</source>
         <translation>Logout</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2159"/>
+        <location filename="../ui/widgets/header_bar.py" line="71"/>
         <source>切换主题(Ctrl+T)</source>
         <translation>Toggle theme (Ctrl+T)</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2180"/>
+        <location filename="../ui/widgets/header_bar.py" line="92"/>
         <source>验证码</source>
         <translation>Verification code</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2184"/>
+        <location filename="../ui/widgets/header_bar.py" line="96"/>
         <source>2FA 密码</source>
         <translation>2FA password</translation>
     </message>
 </context>
 <context>
-    <name>_SelectionToolbar</name>
+    <name>SelectionToolbar</name>
     <message>
-        <location filename="../ui/main_window.py" line="2224"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="42"/>
         <source>已选 0 条</source>
         <translation>0 selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2229"/>
-        <location filename="../ui/main_window.py" line="2295"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="47"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="113"/>
         <source>全选</source>
         <translation>Select All</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2234"/>
-        <location filename="../ui/main_window.py" line="2296"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="52"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="114"/>
         <source>反选</source>
         <translation>Invert</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2239"/>
-        <location filename="../ui/main_window.py" line="2297"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="57"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="115"/>
         <source>清除选择</source>
         <translation>Clear Selection</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2247"/>
-        <location filename="../ui/main_window.py" line="2298"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="65"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="116"/>
         <source>✓ 标记已读</source>
         <translation>✓ Mark as Read</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2252"/>
-        <location filename="../ui/main_window.py" line="2299"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="70"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="117"/>
         <source>📤 导出选中</source>
         <translation>📤 Export Selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2257"/>
-        <location filename="../ui/main_window.py" line="2300"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="75"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="118"/>
         <source>🗑 删除选中</source>
         <translation>🗑 Delete Selected</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2263"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="81"/>
         <source>📤 转发到…</source>
         <translation>📤 Forward to…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2268"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="86"/>
         <source>📌 钉选</source>
         <translation>📌 Pin</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2273"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="91"/>
         <source>😀 表情回应…</source>
         <translation>😀 React…</translation>
     </message>
     <message>
-        <location filename="../ui/main_window.py" line="2283"/>
+        <location filename="../ui/widgets/selection_toolbar.py" line="101"/>
         <source>已选 %d 条</source>
         <translation>%d selected</translation>
     </message>

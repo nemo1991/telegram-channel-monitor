@@ -4,7 +4,7 @@
 - 收到 AuthErrorOccurred → ring buffer +1,铃铛按钮显示 + 计数
 - 再次收到 → 计数自增
 - _clear_error_log → 铃铛隐藏 + log 空
-- _on_bell_clicked → 弹 _ErrorLogDialog(用 mock exec)
+- _on_bell_clicked → 弹 ErrorLogDialog(用 mock exec)
 - 错误 source 映射到 kind 文案
 
 实现说明:
@@ -12,13 +12,16 @@
 - FakeWin = 继承 QWidget 的最小桩,继承只是为了让 QMessageBox.warning
   接受它作 parent。`_ErrorBellButton._on_bus_auth_error` 在 widget 内
   `async def` 但内部无 `await` — 测试里我们直接构造 widget。
-- `_ErrorLogDialog` 是真类,直接构造测试(不阻塞)。
+- `ErrorLogDialog` 是真类,直接构造测试(不阻塞)。
 
 2026-10-01 v1.11.x 状态栏组件化重构:ring buffer / bell_btn 搬到
 `StatusBar._ErrorBellButton`,`_on_bus_auth_error` handler 在 widget 内
 直接订阅 EventBus。MainWindow `_on_bell_clicked` / `_clear_error_log`
 从 `status_bar.get_error_log` / `status_bar.clear_error_log` 取/清。
 本测试拆 widget 端直接测 + MainWindow 端 dialog 入口测。
+
+2026-10-01 v1.12.x:`ErrorLogDialog` 已抽到
+`tgmonitor.ui.widgets.error_log_dialog`,callback 注入(替代 hasattr 探针)。
 """
 
 from __future__ import annotations
@@ -68,7 +71,9 @@ def _make_fake_window(qapp: QApplication) -> Any:
     """构造 MainWindow 桩:含 status_bar / _on_bell_clicked / _clear_error_log。
 
     2026-10-01 v1.11.x:status_bar 是 widget 形式;`_on_bell_clicked` 真调
-    `_ErrorLogDialog`;`_clear_error_log` 委托 `status_bar.clear_error_log`。
+    `ErrorLogDialog`;`_clear_error_log` 委托 `status_bar.clear_error_log`。
+    2026-10-01 v1.12.x:`ErrorLogDialog` 已迁出 `main_window.py`,用 callback
+    注入(不再 hasattr 探针)。
     """
 
     class FakeWin(QWidget):
@@ -79,9 +84,13 @@ def _make_fake_window(qapp: QApplication) -> Any:
             self.status_bar = StatusBar(_StubApp(), None)
 
         def _on_bell_clicked(self) -> None:
-            from tgmonitor.ui.main_window import _ErrorLogDialog
+            from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 
-            dlg = _ErrorLogDialog(self.status_bar.get_error_log(), parent=self)
+            dlg = ErrorLogDialog(
+                self.status_bar.get_error_log(),
+                parent=self,
+                on_clear=self._clear_error_log,
+            )
             dlg.show()
 
         def _clear_error_log(self) -> None:
@@ -186,36 +195,38 @@ def test_non_auth_error_ignored(qapp: QApplication) -> None:
     assert bell.isHidden() is True
 
 
-# ============== 铃铛点击 → _ErrorLogDialog ==============
+# ============== 铃铛点击 → ErrorLogDialog ==============
 
 
 def test_bell_click_opens_error_log_dialog(qapp: QApplication) -> None:
-    """P0-K:铃铛点击 → 弹 _ErrorLogDialog 含 ring buffer 内容。"""
+    """P0-K:铃铛点击 → 弹 ErrorLogDialog 含 ring buffer 内容。"""
     win = _make_fake_window(qapp)
     bell = win.status_bar._bell
     _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="验证码错")))
     _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="password", message="2fa 错")))
     qapp.processEvents()
 
-    from tgmonitor.ui.main_window import _ErrorLogDialog
+    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 
     captured: dict[str, Any] = {}
-    orig_init = _ErrorLogDialog.__init__
+    orig_init = ErrorLogDialog.__init__
 
-    def spy_init(self: Any, entries: Any, parent: Any = None) -> None:
+    def spy_init(self: Any, entries: Any, parent: Any = None, **kw: Any) -> None:
         captured["dlg"] = self
         captured["entries"] = entries
-        orig_init(self, entries, parent)
+        captured["on_clear"] = kw.get("on_clear")
+        orig_init(self, entries, parent, **kw)
 
     with (
-        patch.object(_ErrorLogDialog, "__init__", spy_init),
-        patch.object(_ErrorLogDialog, "show", return_value=None),
-        patch.object(_ErrorLogDialog, "exec", return_value=0),
+        patch.object(ErrorLogDialog, "__init__", spy_init),
+        patch.object(ErrorLogDialog, "show", return_value=None),
+        patch.object(ErrorLogDialog, "exec", return_value=0),
     ):
         win._on_bell_clicked()
     assert captured.get("dlg") is not None
     assert captured["dlg"].list.count() == 2  # type: ignore[attr-defined]
     assert len(captured["entries"]) == 2
+    assert captured["on_clear"] == win._clear_error_log  # callback 注入
 
 
 # ============== 清空日志 ==============
@@ -235,19 +246,19 @@ def test_clear_error_log_empties_and_hides_bell(qapp: QApplication) -> None:
     assert bell.isHidden() is True
 
 
-# ============== _ErrorLogDialog 直测 ==============
+# ============== ErrorLogDialog 直测 ==============
 
 
 def test_error_log_dialog_lists_entries_in_reverse(qapp: QApplication) -> None:
-    """P0-K:_ErrorLogDialog 倒序显示 — 最新在最上面。"""
-    from tgmonitor.ui.main_window import _ErrorLogDialog
+    """P0-K:ErrorLogDialog 倒序显示 — 最新在最上面。"""
+    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 
     entries = [
         (datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC), "code", "first"),
         (datetime(2026, 9, 14, 10, 5, 0, tzinfo=UTC), "code", "second"),
         (datetime(2026, 9, 14, 10, 10, 0, tzinfo=UTC), "password", "third"),
     ]
-    dlg = _ErrorLogDialog(entries, parent=None)
+    dlg = ErrorLogDialog(entries, parent=None)
     qapp.processEvents()
     assert dlg.list.count() == 3
     assert "third" in dlg.list.item(0).text()
@@ -258,9 +269,9 @@ def test_error_log_dialog_lists_entries_in_reverse(qapp: QApplication) -> None:
 
 def test_error_log_dialog_empty_shows_placeholder(qapp: QApplication) -> None:
     """P0-K:空 entries → header 0 条 + placeholder 行。"""
-    from tgmonitor.ui.main_window import _ErrorLogDialog
+    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 
-    dlg = _ErrorLogDialog([], parent=None)
+    dlg = ErrorLogDialog([], parent=None)
     qapp.processEvents()
     assert dlg.list.count() == 1
     assert "(暂无错误)" in dlg.list.item(0).text()
@@ -268,15 +279,18 @@ def test_error_log_dialog_empty_shows_placeholder(qapp: QApplication) -> None:
 
 
 def test_error_log_dialog_clear_button_clears_main(qapp: QApplication) -> None:
-    """P0-K:dialog 上的「清空日志」按钮 → 调 win._clear_error_log。"""
-    from tgmonitor.ui.main_window import _ErrorLogDialog
+    """P0-K:dialog 上的「清空日志」按钮 → 调 win._clear_error_log。
+
+    v1.12.x:callback 注入取代 hasattr 探针 — 直接传 `on_clear=win._clear_error_log`,
+    `_on_clear()` 内部触发回调。不再需要 `patch.object(dlg, "parent")`。
+    """
+    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 
     win = _make_fake_window(qapp)
     entries = [(datetime(2026, 9, 14, 10, 0, tzinfo=UTC), "code", "x")]
-    dlg = _ErrorLogDialog(entries, parent=None)
+    dlg = ErrorLogDialog(entries, parent=None, on_clear=win._clear_error_log)
     qapp.processEvents()
-    with patch.object(dlg, "parent", return_value=win):
-        dlg._on_clear()
+    dlg._on_clear()
     qapp.processEvents()
     bell = win.status_bar._bell
     assert bell.get_log() == []

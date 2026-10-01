@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ReactionDTO
-from tgmonitor.ui.widgets._reaction_format import format_reactions_short
+from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 from tgmonitor.ui.widgets.form_row import empty_hint
 
 # ============================================================

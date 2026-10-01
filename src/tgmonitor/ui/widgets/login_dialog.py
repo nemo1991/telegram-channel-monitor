@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.events import LoginStateChanged
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService

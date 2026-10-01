@@ -1,5 +1,9 @@
 """缩略图 LRU 缓存(2026-08-25 新增)。
 
+2026-10-01 v1.12.x:从 `ui/widgets/thumbnail_cache.py` 移到 `ui/thumbnail.py`
+—— 修 VM 跨层泄漏(`monitor_vm.py:581` 之前从 `widgets.thumbnail_cache`
+import `render_pixmap`,VM 本属 ui 顶层,不该下沉到 widgets 子包)。
+
 背景:Media Manager 行内显示 photo 缩略图,直接每次去 ObjectStore 读 bytes +
 QPixmap.fromData 会卡(尤其大缩略图 + 多媒体同时出现)。进程内 LRU(200 条)
 避免重复加载;photo / video 通用,失败回 None 让 UI 保持 emoji 占位。

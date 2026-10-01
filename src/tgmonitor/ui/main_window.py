@@ -37,11 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -50,11 +49,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -73,19 +69,21 @@ from tgmonitor.core.events import (
     NotificationRequested,
     QuitRequested,
 )
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.nav_bar import VerticalNavBar
-from tgmonitor.ui.state_labels import state_dot, state_label
+from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
+from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 from tgmonitor.ui.widgets.export_dialog import ExportDialog
 from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
+from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
-from tgmonitor.ui.widgets.search_bar import SearchBar
+from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.sync_dialog import (
     SyncOptionsDialog,
@@ -145,61 +143,6 @@ def _normalize_selection_items(items: list | None) -> list[tuple[int, int]]:
         except (TypeError, ValueError):
             continue
     return out
-
-
-def run_shutdown_coro_sync(
-    loop: asyncio.AbstractEventLoop,
-    cb: Callable[[], Awaitable[None]],
-    *,
-    deadline_ms: int = 10_000,
-) -> None:
-    """同步阻塞地跑一个 shutdown 协程 — Qt 主线程上,真等 future 完成。
-
-    2026-09-22 v1.8.x:从 `MainWindow.closeEvent` 抽出复用,让 `app.py`
-    aboutToQuit handler 也能用同模式做真同步等待(而非 fire-and-forget,
-    qasync loop close 时 future 还没跑就被 cancel)。
-
-    **2026-09-23 fix**:`subloop.exec()` 在 macOS 26 VM 镜像偶发 segfault
-    (docstring 已承认),Windows 真机平台插件上更稳定触发 — helper 改为
-    永远走 `fut.result(timeout)` 阻塞等,不嵌套 QEventLoop pump。
-
-    关键约束:**helper 必须不在主线程 pump**。qasync 主线程 loop 与 Qt
-    同线程,`fut.result()` 会阻塞主线程,不调 processEvents 也能让后台线程
-    的 loop 推进(因为 `run_coroutine_threadsafe` 已经把协程调度到独立
-    loop,后台线程自己 tick;主线程只是等 fut 完成)。这条路径天然避开
-    嵌套 QEventLoop 的所有 native race。
-
-    任何意外(RuntimeError / CancelledError / Exception)由调用方 try/except
-    兜底 — 此 helper 不抛(只 log warning)。
-
-    Args:
-        loop: shutdown 协程要跑的事件循环(qasync 主线程 loop)。
-        cb: 同步入口(返回协程),内部 cast 为 Coroutine 调
-            `run_coroutine_threadsafe`。
-        deadline_ms: hard upper bound,默认 10s。tests 可缩到 200ms 验超时。
-    """
-    import concurrent.futures
-
-    try:
-        coro = cast(Coroutine[Any, Any, None], cb())
-    except BaseException as exc:  # noqa: BLE001
-        log.warning("shutdown callback raised on entry: %s: %s", type(exc).__name__, exc)
-        return
-    try:
-        fut: concurrent.futures.Future[None] = asyncio.run_coroutine_threadsafe(coro, loop)
-    except RuntimeError:
-        log.warning("loop unavailable during shutdown")
-        return
-
-    try:
-        fut.result(timeout=deadline_ms / 1000)
-    except concurrent.futures.TimeoutError:
-        log.warning("shutdown timed out after %.1fs; cancelling", deadline_ms / 1000)
-        fut.cancel()
-    except concurrent.futures.CancelledError:
-        log.warning("shutdown coroutine was cancelled")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("shutdown raised: %s: %s", type(exc).__name__, exc)
 
 
 class MainWindow(QMainWindow):
@@ -340,7 +283,7 @@ class MainWindow(QMainWindow):
         if self._shutdown_cb is not None:
             try:
                 # 2026-09-22 v1.8.x:嵌套 subloop 同步等模式抽出到
-                # `run_shutdown_coro_sync`(同文件 module level),这里直接复用。
+                # `run_shutdown_coro_sync`(tgmonitor.ui.shutdown module),这里直接复用。
                 # 测试可通过 `_close_deadline_ms` 缩 deadline,避免 sleep(15)
                 # 让 CI 浪费 30s。
                 run_shutdown_coro_sync(
@@ -374,7 +317,7 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(0)
 
         # 紧凑头栏
-        self.header = _HeaderBar()
+        self.header = HeaderBar()
         right_layout.addWidget(self.header)
 
         # QStackedWidget 内容页
@@ -391,7 +334,7 @@ class MainWindow(QMainWindow):
         live_layout = QVBoxLayout(live_page)
         live_layout.setContentsMargins(0, 0, 0, 0)
         live_layout.setSpacing(0)
-        self._selection_toolbar = _SelectionToolbar()
+        self._selection_toolbar = SelectionToolbar()
         self._selection_toolbar.setVisible(False)
         live_layout.addWidget(self._selection_toolbar)
         body = QSplitter(Qt.Horizontal)
@@ -1464,16 +1407,22 @@ class MainWindow(QMainWindow):
 
         2026-10-01 v1.11.x:ring buffer 改由 `StatusBar._ErrorBellButton`
         自管,MainWindow 从 status_bar 取列表构造 dialog。
+        2026-10-01 v1.12.x:`ErrorLogDialog` 改用 callback 注入,不再依赖
+        `parent` 类型 — 任何 `QWidget` parent 都行,无需 `_clear_error_log`
+        hasattr 探针。
         """
-        dlg = _ErrorLogDialog(self.status_bar.get_error_log(), parent=self)
+        dlg = ErrorLogDialog(
+            self.status_bar.get_error_log(),
+            parent=self,
+            on_clear=self._clear_error_log,
+        )
         dlg.exec()
 
     def _clear_error_log(self) -> None:
         """清空错误日志(从 dialog 「清空」按钮 / 测试 fixture 调用)。
 
         2026-10-01 v1.11.x:铃铛 + ring buffer 都由 status_bar 自管,
-        这里改成委托。`_ErrorLogDialog._on_clear` 仍通过 `hasattr` 兼容
-        旧 MainWindow 实例字段。
+        这里改成委托。
         """
         self.status_bar.clear_error_log()
 
@@ -2168,265 +2117,3 @@ class MainWindow(QMainWindow):
 
 
 # ======================== 紧凑头栏 ========================
-
-
-class _HeaderBar(QWidget):
-    """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
-
-    不再用 QToolBar,改为自定义 widget,视觉更紧凑。
-    """
-
-    # 类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action/btn_theme/search_bar`,
-    # mypy 看到实例属性 = QPushButton / SearchBar 而非 X | None,清掉 21 处 union-attr。
-    # 不建 `_HeaderBar()` 之外的实例路径,删占位安全。
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("headerBar")
-        self.setFixedHeight(44)
-
-        hbox = QHBoxLayout(self)
-        hbox.setContentsMargins(16, 0, 16, 0)
-        hbox.setSpacing(12)
-
-        # 左: 标题
-        title = QLabel(self.tr("tgmonitor"))
-        title.setObjectName("appTitle")
-        hbox.addWidget(title)
-
-        # 搜索条
-        self.search_bar = SearchBar()
-        hbox.addWidget(self.search_bar)
-        hbox.addStretch(1)
-
-        # 右: 状态 + 操作
-        self.state_dot = QLabel(self.tr("⚪"))
-        self.state_dot.setFixedWidth(20)
-        hbox.addWidget(self.state_dot)
-
-        self.state_label = QLabel(self.tr("就绪"))
-        self.state_label.setObjectName("headerState")
-        hbox.addWidget(self.state_label)
-
-        self.btn_action = QPushButton(self.tr("登录"))
-        self.btn_action.setObjectName("headerActionBtn")
-        self.btn_action.setVisible(False)
-        hbox.addWidget(self.btn_action)
-
-        self.btn_logout = QPushButton(self.tr("登出"))
-        self.btn_logout.setObjectName("headerActionBtn")
-        self.btn_logout.setVisible(False)
-        hbox.addWidget(self.btn_logout)
-
-        # 主题切换按钮 — 显示「当前切到该主题后会变成什么」
-        from tgmonitor.ui.theme import ThemeManager
-
-        cur = ThemeManager.current()
-        self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
-        self.btn_theme.setObjectName("headerActionBtn")
-        self.btn_theme.setFixedWidth(36)
-        # 2026-09-07 v1.6.8:tooltip 走 tr()(「切换主题」随 locale 翻译)。
-        self.btn_theme.setToolTip(self.tr("切换主题(Ctrl+T)"))
-        hbox.addWidget(self.btn_theme)
-
-    def update_state(self, state: str, detail: str = "") -> None:
-        dot = state_dot(state)
-        label = state_label(state)
-        if state == "error" and detail:
-            label = f"{label}:{detail[:40]}"
-
-        self.state_dot.setText(dot)
-        self.state_label.setText(label)
-
-        # 根据状态显隐操作按钮
-        if state == "ready":
-            self.btn_action.setVisible(False)
-            self.btn_logout.setVisible(True)
-        elif state in ("phone_required", "closed", "uninit"):
-            self.btn_action.setText(self.tr("登录"))
-            self.btn_action.setVisible(True)
-            self.btn_logout.setVisible(False)
-        elif state in ("code_required",):
-            self.btn_action.setText(self.tr("验证码"))
-            self.btn_action.setVisible(True)
-            self.btn_logout.setVisible(False)
-        elif state in ("password_required",):
-            self.btn_action.setText(self.tr("2FA 密码"))
-            self.btn_action.setVisible(True)
-            self.btn_logout.setVisible(False)
-        else:
-            self.btn_action.setVisible(False)
-            self.btn_logout.setVisible(False)
-
-
-class _SelectionToolbar(QWidget):
-    """2026-09-08 v1.7.0:LIVE 多选浮层。
-
-    默认 hidden,`selection_count_changed > 0` 时被 MainWindow show 出来。
-    视觉与 `_HeaderBar` 一致 — 浅色卡片背景,暗色模式对应反转。
-    不复用 QToolBar(自定义 QWidget 视觉更紧凑,与现有风格统一)。
-
-    按钮 6 颗:全选 / 反选 / 清除 / (分隔) / 标记已读 / 导出 / 删除。
-    计数 label 单独 objectName="selectionCountLabel",后续可加高亮样式。
-    """
-
-    export_clicked = Signal()
-    delete_clicked = Signal()
-    mark_read_clicked = Signal()
-    clear_clicked = Signal()
-    select_all_clicked = Signal()
-    invert_clicked = Signal()
-    # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
-    forward_clicked = Signal()
-    pin_clicked = Signal()
-    react_clicked = Signal()
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("selectionToolbar")
-        self.setFixedHeight(44)
-
-        hbox = QHBoxLayout(self)
-        hbox.setContentsMargins(16, 0, 16, 0)
-        hbox.setSpacing(8)
-
-        # 计数 label
-        self._count_label = QLabel(self.tr("已选 0 条"))
-        self._count_label.setObjectName("selectionCountLabel")
-        hbox.addWidget(self._count_label)
-
-        # 全选 / 反选 / 清除 — 操作类
-        self._btn_select_all = QPushButton(self.tr("全选"))
-        self._btn_select_all.setObjectName("selectionActionBtn")
-        self._btn_select_all.clicked.connect(self.select_all_clicked.emit)
-        hbox.addWidget(self._btn_select_all)
-
-        self._btn_invert = QPushButton(self.tr("反选"))
-        self._btn_invert.setObjectName("selectionActionBtn")
-        self._btn_invert.clicked.connect(self.invert_clicked.emit)
-        hbox.addWidget(self._btn_invert)
-
-        self._btn_clear = QPushButton(self.tr("清除选择"))
-        self._btn_clear.setObjectName("selectionActionBtn")
-        self._btn_clear.clicked.connect(self.clear_clicked.emit)
-        hbox.addWidget(self._btn_clear)
-
-        hbox.addStretch(1)
-
-        # 动作类 — 主按钮
-        self._btn_mark_read = QPushButton(self.tr("✓ 标记已读"))
-        self._btn_mark_read.setObjectName("selectionActionBtn")
-        self._btn_mark_read.clicked.connect(self.mark_read_clicked.emit)
-        hbox.addWidget(self._btn_mark_read)
-
-        self._btn_export = QPushButton(self.tr("📤 导出选中"))
-        self._btn_export.setObjectName("selectionActionBtn")
-        self._btn_export.clicked.connect(self.export_clicked.emit)
-        hbox.addWidget(self._btn_export)
-
-        self._btn_delete = QPushButton(self.tr("🗑 删除选中"))
-        self._btn_delete.setObjectName("selectionDeleteBtn")
-        self._btn_delete.clicked.connect(self.delete_clicked.emit)
-        hbox.addWidget(self._btn_delete)
-
-        # 2026-09-09 v1.7.2:新增批量动作 — 转发 / 钉选 / 表情回应。
-        self._btn_forward = QPushButton(self.tr("📤 转发到…"))
-        self._btn_forward.setObjectName("selectionActionBtn")
-        self._btn_forward.clicked.connect(self.forward_clicked.emit)
-        hbox.addWidget(self._btn_forward)
-
-        self._btn_pin = QPushButton(self.tr("📌 钉选"))
-        self._btn_pin.setObjectName("selectionActionBtn")
-        self._btn_pin.clicked.connect(self.pin_clicked.emit)
-        hbox.addWidget(self._btn_pin)
-
-        self._btn_react = QPushButton(self.tr("😀 表情回应…"))
-        self._btn_react.setObjectName("selectionActionBtn")
-        self._btn_react.clicked.connect(self.react_clicked.emit)
-        hbox.addWidget(self._btn_react)
-
-    def set_count(self, n: int) -> None:
-        """更新计数 label — 由 `_on_live_selection_messages` 调。
-
-        `tr("已选 {0} 条").format(n)` 不行(中英文数字混排),用 `%d` 兼容。
-        """
-        self._count_label.setText(self.tr("已选 %d 条") % n)
-
-    def retranslateUi(self) -> None:  # noqa: N802 — Qt 命名
-        """2026-09-08 v1.7.0:语言切换 — 重建 label 文案。
-
-        与 `_HeaderBar` / `MessageDetail` 一致;setText 调 set_count 触发
-        label refresh。
-        """
-        # 计数 label:由 MainWindow 持有 selection,这里无法 — 让外部重调
-        # set_count 即可,无需 rebuild。
-        # 按钮 label 全是 setText 在 __init__ 时设过;这里走 setText 重新
-        # tr() 即可,保持与 `_HeaderBar` 一致的 idiom。
-        self._btn_select_all.setText(self.tr("全选"))
-        self._btn_invert.setText(self.tr("反选"))
-        self._btn_clear.setText(self.tr("清除选择"))
-        self._btn_mark_read.setText(self.tr("✓ 标记已读"))
-        self._btn_export.setText(self.tr("📤 导出选中"))
-        self._btn_delete.setText(self.tr("🗑 删除选中"))
-
-
-class _ErrorLogDialog(QDialog):
-    """2026-09-14 v1.7.5 PR #6 (P0-K):错误日志 dialog — 状态栏铃铛入口。
-
-    显示 `MainWindow._error_log`(时间 / 来源 / 消息),时间倒序。
-    提供「清空日志」按钮 — 但清空不影响铃铛隐藏逻辑(下次错误又增)。
-    """
-
-    def __init__(
-        self,
-        entries: list[tuple[datetime, str, str]],
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._entries = list(entries)
-        self.setObjectName("errorLogDialog")
-        self.setWindowTitle(self.tr("错误日志"))
-        self.resize(640, 360)
-        self._build()
-
-    def _build(self) -> None:
-        root = QVBoxLayout(self)
-        header = QLabel(self.tr("最近 {n} 条错误(倒序):").format(n=len(self._entries)))
-        header.setObjectName("errorLogHeader")
-        root.addWidget(header)
-        self.list = QListWidget()
-        # 倒序:最新在最上面
-        for when, source, msg in reversed(self._entries):
-            text = f"{when.strftime('%H:%M:%S')}  [{source}]  {msg}"
-            item = QListWidgetItem(text)
-            self.list.addItem(item)
-        if not self._entries:
-            empty = QListWidgetItem(self.tr("(暂无错误)"))
-            empty.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.list.addItem(empty)
-        root.addWidget(self.list, 1)
-        # 按钮行:清空 + 关闭
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
-        self._btn_clear = QPushButton(self.tr("清空日志"))
-        self._btn_clear.setObjectName("errorLogClearBtn")
-        self._btn_clear.clicked.connect(self._on_clear)
-        btn_row.addWidget(self._btn_clear)
-        btn_close = QPushButton(self.tr("关闭"))
-        btn_close.setObjectName("errorLogCloseBtn")
-        btn_close.clicked.connect(self.accept)
-        btn_row.addWidget(btn_close)
-        root.addLayout(btn_row)
-
-    def _on_clear(self) -> None:
-        """清空日志 — 同时调 MainWindow 自身的 _error_log 引用。"""
-        # 通过 parent 调用 MainWindow 的清空入口(而非直接改 self._entries),
-        # 这样铃铛按钮的隐藏逻辑(可选)能跟上。
-        win = self.parent()
-        if win is not None and hasattr(win, "_clear_error_log"):
-            win._clear_error_log()
-        self._entries = []
-        self.list.clear()
-        empty = QListWidgetItem(self.tr("(暂无错误)"))
-        empty.setFlags(Qt.ItemFlag.NoItemFlags)
-        self.list.addItem(empty)

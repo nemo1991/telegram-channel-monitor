@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
 from tgmonitor.i18n import install_translator
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.widgets.form_row import combo_field, path_field, spin_field, text_field
 
 if TYPE_CHECKING:

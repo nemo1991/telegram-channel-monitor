@@ -371,7 +371,7 @@ def run() -> None:
         # `_shutdown_async` 内每个 stage 自带 timeout(client 2s / monitor 2s,
         # 见 `AppService.shutdown` + `_shutdown_async`),最坏 ~5s,hard
         # upper bound 留 8s 缓冲。
-        from tgmonitor.ui.main_window import run_shutdown_coro_sync
+        from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 
         run_shutdown_coro_sync(loop, _shutdown_async, deadline_ms=8_000)
 

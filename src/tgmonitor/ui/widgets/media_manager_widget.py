@@ -54,7 +54,7 @@ from tgmonitor.core.dto import (
     SortDir,
     SortKey,
 )
-from tgmonitor.ui.widgets.thumbnail_cache import ThumbnailCache, cache_key_for
+from tgmonitor.ui.thumbnail import ThumbnailCache, cache_key_for
 
 log = logging.getLogger(__name__)
 

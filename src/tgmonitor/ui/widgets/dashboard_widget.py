@@ -45,7 +45,7 @@ from tgmonitor.core.events import (
     MessageReceived,
     SettingsChanged,
 )
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import action_icon
 from tgmonitor.ui.state_labels import state_badge, state_hint
 

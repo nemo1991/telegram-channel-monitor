@@ -1,4 +1,4 @@
-"""run_coro helper 单元测试 — src/tgmonitor/ui/_async.py。
+"""run_coro helper 单元测试 — src/tgmonitor/ui/async_bridge.py。
 
 不依赖 Qt / qasync — 跑 raw asyncio loop 在背景线程,验证:
   1. success path:on_success 拿到返回值
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 
 
 @pytest.fixture
@@ -78,7 +78,7 @@ def test_logs_exception_and_calls_on_error(
         raise ValueError("boom")
 
     errs: list[BaseException] = []
-    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
+    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui.async_bridge"):
         fut = run_coro(
             bg_loop,
             fail(),
@@ -113,7 +113,7 @@ def test_on_error_swallows_its_own_exception(
         called.append(e)
         raise RuntimeError("user-callback-crash")
 
-    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
+    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui.async_bridge"):
         fut = run_coro(
             bg_loop,
             fail(),
@@ -139,7 +139,7 @@ def test_on_success_swallows_its_own_exception(
     def bad_success(r: str) -> None:
         raise RuntimeError("user-success-crash")
 
-    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui._async"):
+    with caplog.at_level(logging.ERROR, logger="tgmonitor.ui.async_bridge"):
         fut = run_coro(
             bg_loop,
             ok(),

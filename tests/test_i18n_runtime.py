@@ -137,7 +137,7 @@ def test_v175_pr6_batch_failure_and_auth_translations(
       - BatchProgressDialog「查看失败详情」
       - BatchFailureDetailDialog「批量操作失败详情 / 共 N 条失败:」
       - MainWindow「鉴权错误 / 验证码错误 / 两步验证密码错误」
-      - _ErrorLogDialog「错误日志 / 清空日志」
+      - ErrorLogDialog「错误日志 / 清空日志」(2026-10-01 v1.12.x 从 _ErrorLogDialog 迁出)
     """
     # zh_CN
     install_translator(qapp_no_locale_force, locale="zh_CN")
@@ -153,8 +153,8 @@ def test_v175_pr6_batch_failure_and_auth_translations(
     assert QCoreApplication.translate("MainWindow", "鉴权错误") == "鉴权错误"
     assert QCoreApplication.translate("MainWindow", "验证码错误") == "验证码错误"
     assert QCoreApplication.translate("MainWindow", "两步验证密码错误") == "两步验证密码错误"
-    assert QCoreApplication.translate("_ErrorLogDialog", "错误日志") == "错误日志"
-    assert QCoreApplication.translate("_ErrorLogDialog", "清空日志") == "清空日志"
+    assert QCoreApplication.translate("ErrorLogDialog", "错误日志") == "错误日志"
+    assert QCoreApplication.translate("ErrorLogDialog", "清空日志") == "清空日志"
 
     # en_US
     install_translator(qapp_no_locale_force, locale="en_US")
@@ -172,8 +172,8 @@ def test_v175_pr6_batch_failure_and_auth_translations(
     assert QCoreApplication.translate("MainWindow", "鉴权错误") == "Authentication error"
     assert QCoreApplication.translate("MainWindow", "验证码错误") == "Invalid verification code"
     assert QCoreApplication.translate("MainWindow", "两步验证密码错误") == "Invalid 2FA password"
-    assert QCoreApplication.translate("_ErrorLogDialog", "错误日志") == "Error Log"
-    assert QCoreApplication.translate("_ErrorLogDialog", "清空日志") == "Clear log"
+    assert QCoreApplication.translate("ErrorLogDialog", "错误日志") == "Error Log"
+    assert QCoreApplication.translate("ErrorLogDialog", "清空日志") == "Clear log"
 
 
 def test_v175_pr8_searchbar_filter_toggle_tooltips_bilingual(
@@ -352,7 +352,7 @@ def test_all_tr_calls_extracted_to_ts() -> None:
     # 2026-09-11 v1.7.5:Media Manager 整页 i18n(filter combo / sort / toolbar /
     # status / file dialog)+ 快捷键说明文案更新,源数 ~342;放宽上限到 360。
     # 2026-09-14 v1.7.5 PR #6:BatchProgressDialog 失败详情(3 tr)+
-    # MainWindow 鉴权错误入口(8 tr)+ _ErrorLogDialog(5 tr),源数 ~375;
+    # MainWindow 鉴权错误入口(8 tr)+ ErrorLogDialog(5 tr,2026-10-01 v1.12.x 迁出),源数 ~375;
     # 放宽上限到 395。
     assert 180 <= ts_sources <= 395, f"ts sources={ts_sources} 异常;py tr() calls={py_tr_calls}"
     # 大致覆盖率

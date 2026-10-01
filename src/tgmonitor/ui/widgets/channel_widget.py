@@ -38,14 +38,14 @@ from tgmonitor.core.events import (
     ChannelTitleChanged,
     ChannelUnsubscribed,
 )
-from tgmonitor.ui._async import run_coro
+from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.theme import Theme, ThemeManager
-from tgmonitor.ui.widgets.form_row import empty_hint
-from tgmonitor.ui.widgets.thumbnail_cache import (
+from tgmonitor.ui.thumbnail import (
     ThumbnailCache,
     render_pixmap,
 )
+from tgmonitor.ui.widgets.form_row import empty_hint
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
