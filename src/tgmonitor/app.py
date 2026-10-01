@@ -217,7 +217,7 @@ def run() -> None:
         app.bootstrap 拆到 `_background_startup` 后台 task,让 win.show() 立即
         执行 — 避免冷启动 / libtdjson 慢(1-5s,断网可达 10s+)时用户对着空白
         dock 图标干等。UI 在 win.show() 后立即可见,后台启动各 step 通过
-        `win._show_activity(...)` 在状态栏左侧活动指示器滚动显示。
+        `win.status_bar.show_activity(...)` 在状态栏左侧活动指示器滚动显示。
 
         整个跑在 qasync 的 loop 上,与 Qt 事件交错。这样 loop 始终 running,
         彻底去掉旧 `run_until_complete` + `run_forever` 中间的 paused 窗口。
@@ -287,7 +287,7 @@ def run() -> None:
         2. monitor.start()(起 asyncio worker)
         3. app.bootstrap()(调 libtdjson 启动会话,触发 LoginStateChanged)
 
-        每步通过 `win._show_activity(...)` 更新状态栏左侧活动指示器,出错走
+        每步通过 `win.status_bar.show_activity(...)` 更新状态栏左侧活动指示器,出错走
         ErrorOccurred 事件(bus subscriber 已存在,自动弹窗/计数)。
 
         2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start + bootstrap。
@@ -295,7 +295,7 @@ def run() -> None:
         """
         try:
             # Step 1: 加载白名单
-            win._show_activity("加载已订阅频道...")
+            win.status_bar.show_activity("加载已订阅频道...")
             t = time.monotonic()
             subscribed = await app_svc.storage.list_subscribed_channels()
             monitor.set_whitelist(c.id for c in subscribed)
@@ -310,17 +310,17 @@ def run() -> None:
                     "[startup-bg] settings.paused=true — skip monitor.start() + "
                     "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
                 )
-                win._show_activity("监听已暂停 — 点 tray「继续监听」启动")
+                win.status_bar.show_activity("监听已暂停 — 点 tray「继续监听」启动")
                 return
 
             # Step 2: 启动 monitor
-            win._show_activity("启动监听服务...")
+            win.status_bar.show_activity("启动监听服务...")
             t = time.monotonic()
             await monitor.start()
             log.info("[startup-bg] monitor.start() returned in %.2fs", time.monotonic() - t)
 
             # Step 3: bootstrap libtdjson — 触发 LoginStateChanged,header 自动跟进
-            win._show_activity("连接 Telegram...")
+            win.status_bar.show_activity("连接 Telegram...")
             t = time.monotonic()
             login_state, login_detail = await app_svc.bootstrap()
             log.info(
@@ -330,11 +330,11 @@ def run() -> None:
             )
 
             # 稳态:清空活动指示器(后续 LoginStateChanged / 错误事件会再次填充)
-            win._show_activity("")
+            win.status_bar.show_activity("")
         except Exception as exc:
             log.exception("[startup-bg] failed")
             try:
-                win._show_activity(f"启动失败: {exc}")
+                win.status_bar.show_activity(f"启动失败: {exc}")
             except Exception:  # noqa: BLE001
                 pass
             await app_svc.bus.publish(

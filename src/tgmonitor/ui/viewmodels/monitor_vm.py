@@ -145,6 +145,19 @@ class MonitorViewModel(QObject):
     # 实时性受服务端策略限制。MainWindow 接到 → 调 LIVE 行
     # `refresh_reactions`(局部更新,不重建列表)。
     message_interactions_changed = Signal(object)
+    # 2026-10-01 v1.11.x 状态栏组件化:4 个新 Qt signal — payload 透传,状态栏
+    # 子组件订阅后自己渲染。MainWindow 不再直接 mutate status bar widget 实例。
+    # - selected_channel_changed:payload str | None(LIVE 多选切换 / clear)
+    # - backend_label_changed:payload str(DB=…,ObjectStore=…)
+    # - last_message_received:payload datetime | None(每次 message_received
+    #   末尾 emit,状态栏 _LastMessageLabel 取最新时间)
+    # - stats_changed:payload tuple[int,int](监听频道数,消息总数)— 监听
+    #   数从 channels_changed handler emit,消息总数从 message_received
+    #   末尾累加 emit
+    selected_channel_changed = Signal(object)
+    backend_label_changed = Signal(str)
+    last_message_received = Signal(object)
+    stats_changed = Signal(object)
 
     def __init__(
         self,
@@ -167,6 +180,10 @@ class MonitorViewModel(QObject):
         # 2026-08-30 v1.5.0 PR #A3:当前导出 future — UI 取消时 cancel 此 future
         # (run_coro 返 asyncio.Future,Future.cancel() 等同 Task.cancel())
         self._export_task: asyncio.Future[None] | None = None
+        # 2026-10-01 v1.11.x 状态栏组件化:_message_count 累计当前 session
+        # 收到的消息数(进程生命周期内)。restart 清零。状态栏 _StatsLabel
+        # 通过 `stats_changed` signal 订阅。
+        self._message_count = 0
         self._wire_bus()
 
     def _wire_bus(self) -> None:
@@ -210,6 +227,12 @@ class MonitorViewModel(QObject):
             return
         # 直接 emit MessageDTO — 不要 asdict,会丢嵌套 MediaDTO 类型
         self.message_received.emit(e.message)
+        # 2026-10-01 v1.11.x 状态栏组件化:累计消息数 + emit 状态栏 2 signal
+        # (last_message_received / stats_changed)。状态栏 _StatsLabel /
+        # _LastMessageLabel 自己渲染;MainWindow 不再关心。
+        self._message_count += 1
+        self.last_message_received.emit(e.message.date)
+        self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_message_edited(self, e: Event) -> None:
         """2026-08-24:TDLib updateMessageContent 来的编辑事件 → 转发 UI。
@@ -300,6 +323,8 @@ class MonitorViewModel(QObject):
         self.known_channels[e.channel.id] = e.channel
         self.monitor.add_to_whitelist(e.channel.id)
         self.channels_changed.emit()
+        # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅 stats_changed
+        self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_channel_unsubscribed(self, e: Event) -> None:
         if not isinstance(e, ChannelUnsubscribed):
@@ -310,6 +335,7 @@ class MonitorViewModel(QObject):
         # 不再显示这个频道。不必等下次 refresh_subscribed_channels 同步。
         self.known_channels.pop(e.channel_id, None)
         self.channels_changed.emit()
+        self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_export_done(self, e: Event) -> None:
         if not isinstance(e, ExportDone):
@@ -366,6 +392,9 @@ class MonitorViewModel(QObject):
         new = e.new_settings
         backend_label = f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
         self.settings_changed.emit(e.what, e.needs_relogin, e.needs_restart, backend_label)
+        # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _BackendLabel 订阅本信号,
+        # 自管更新,不再需要 MainWindow 转发。
+        self.backend_label_changed.emit(backend_label)
 
     async def _on_sync_progress(self, e: Event) -> None:
         if not isinstance(e, ChannelSyncProgress):
@@ -594,6 +623,16 @@ class MonitorViewModel(QObject):
 
     # ---- UI 主动调用 ----
 
+    def set_selected_channel(self, name: str | None) -> None:
+        """2026-10-01 v1.11.x 状态栏组件化:MainWindow 在 LIVE 多选 / 切换选中
+        频道后调本方法,emit `selected_channel_changed` 让 status_bar
+        `_SelectedChannelLabel` 更新显示。
+
+        Args:
+            name: 选中频道标题;None 表示清除选中(切走 / 用户按 Esc)。
+        """
+        self.selected_channel_changed.emit(name)
+
     def bootstrap_ui(self) -> None:
         """MainWindow 构造后调一次:拉一次 subscribed 列表 + 通知 UI 刷新下栏。
 
@@ -630,6 +669,9 @@ class MonitorViewModel(QObject):
             for ch in chs:
                 self.known_channels[ch.id] = ch
             self.channels_changed.emit()
+            # 2026-10-01 v1.11.x 状态栏组件化:启动后立即 emit stats_changed
+            # 让状态栏 _StatsLabel 拿到首屏已订阅频道数。
+            self.stats_changed.emit((len(self.known_channels), self._message_count))
 
         run_coro(self.loop, _go(), error_label="refresh_channels")
 

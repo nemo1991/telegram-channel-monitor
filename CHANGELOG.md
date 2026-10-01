@@ -5,6 +5,41 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.11.0] - 2026-10-01
+
+主题:**底部状态栏组件化重构**。`MainWindow` 自带的内联 7 子件 status bar 改为自定义
+`StatusBar(QWidget + QHBoxLayout)`,9 个子组件(`LEFT 5 + RIGHT 4`)拆成独立可测 widget,
+新增 4 类常驻展示信息:`DB/OS backend name` · `监听频道数 / 消息总数` · `最近消息时间` · `当前选中频道`。
+
+### 改动
+
+- 新增 `src/tgmonitor/ui/widgets/status_bar.py`(498 LOC):`StatusBar` + 9 子组件
+  (`_SelectedChannelLabel` / `_StatsLabel` / `_BackendLabel` / `_LastMessageLabel` /
+  `_ActivityLabel` / `_ConnectionLabel` / `_PausedLabel` / `_ErrorBellButton` /
+  `_ObjectsWarnLabel`)+ 自管 transient message / setup_message。index `ObjectName="customStatusBar"`
+  替换原 `QStatusBar`。
+- `MainWindow` 状态栏相关代码从 ~70 行 inline + 6 个 slot 缩成 ~15 行组装 + 11 个 thin
+  delegate slot;`AuthErrorOccurred` 订阅下沉到 `_ErrorBellButton`(跟 `dashboard_widget`
+  模式一致);`_objects_warn_label` 动态 add/remove 也由 widget 自管。
+- `monitor_vm.py` 加 4 个 Signal(`selected_channel_changed` / `backend_label_changed` /
+  `last_message_received` / `stats_changed`)+ 累计 `self._message_count`。
+- `style.qss` / `style_dark.qss`:`QStatusBar` 规则替换为 `#customStatusBar`。
+- 测试:`tests/test_status_bar.py`(35 用例,直接构造子组件测纯单元)+ 改 5 个已有测试
+  适配新路径。
+- `app.py` 5 处 `_show_activity` → `status_bar.show_activity`。
+
+### 不再使用
+
+- Qt 原生 `QStatusBar`(`addWidget` / `addPermanentWidget` / `showMessage`)协议。
+- `MainWindow._show_activity` / `_throttle_activity` / `_on_bus_auth_error` / `_error_log`
+  / `_bell_btn` / `_objects_warn_label` 字段(handler 改 thin delegate,字段全部下沉)。
+
+### 用户可见变化
+
+- 状态栏 LEFT 区: `📡 选中频道 · 监听:N 消息:M · DB:xxx OS:xxx · 最后:HH:MM · (活动文案)`
+- 状态栏 RIGHT 区:`(对象存储警告,如有) · TG 连接 · ⏸ 暂停(如有) · 🔔 N(如有)`
+- 设置变更 / 后端切换时,新 backend label 立刻反映在状态栏;频道订阅变化时,统计立刻更新。
+
 ## [1.10.1] - 2026-09-30
 
 主题:**ZIP 导出崩溃 — 部分 S3 兼容实现 / 老 aioboto3 的 Body 不提供 `iter_chunks`,导致 `stream_read` 抛 `AttributeError`**。

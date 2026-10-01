@@ -154,15 +154,18 @@ def test_background_startup_publishes_error_on_failure(app_source: str) -> None:
 
 
 def test_background_startup_updates_activity_label(app_source: str) -> None:
-    """`_background_startup` 每步必须调 `win._show_activity(...)` —
+    """`_background_startup` 每步必须调 `win.status_bar.show_activity(...)` —
     否则状态栏左侧看不到启动进度。
+
+    2026-10-01 v1.11.x 状态栏组件化:`_show_activity` 改走 `status_bar.show_activity`。
     """
     body = _extract_function_body(app_source, "_background_startup")
     assert body is not None
-    activity_calls = re.findall(r"win\._show_activity\(", body)
+    activity_calls = re.findall(r"win\.status_bar\.show_activity\(", body)
     # 至少 3 处:加载白名单 / 启动 monitor / bootstrap(或 paused 提示)
     assert len(activity_calls) >= 3, (
-        f"_background_startup 应至少调 3 次 win._show_activity(...),实际 {len(activity_calls)} 次"
+        f"_background_startup 应至少调 3 次 win.status_bar.show_activity(...),"
+        f"实际 {len(activity_calls)} 次"
     )
 
 

@@ -42,6 +42,10 @@ class _MinimalMainWindow(MainWindow):
         self._tray_first_close_hint_shown = False
         self._shutdown_cb = None
         self.setStatusBar(QStatusBar(self))
+        # 2026-10-01 v1.11.x:状态栏改自定义 StatusBar,closeEvent 调
+        # `status_bar.show_message(...)`;_MinimalMainWindow 给个 stub 即可
+        # (本测试只验 hide/ignore/NotificationRequested 路径,不关心状态栏文案)。
+        self.status_bar = MagicMock()
 
 
 def _make_close_event() -> QCloseEvent:

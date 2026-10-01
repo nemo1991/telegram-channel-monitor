@@ -70,11 +70,16 @@ class _FakeDetailPanel:
 
 
 class _FakeWindow:
-    """最小 MainWindow 桩 — 覆盖 retry feedback 两个 slot 需要的依赖。"""
+    """最小 MainWindow 桩 — 覆盖 retry feedback 两个 slot 需要的依赖。
+
+    2026-10-01 v1.11.x 状态栏组件化:`_show_activity` 已迁移到
+    `status_bar.show_activity`,MainWindow slot 改为直接调
+    `status_bar.show_activity(...)`。桩带 `_FakeStatusBar.activity_label` +
+    `show_activity` delegate,模拟 StatusBar 子组件。
+    """
 
     def __init__(self) -> None:
-        self._activity_label = QLabel("")
-        self._activity_throttle: dict[str, float] = {}
+        self.status_bar = _FakeStatusBar()
         self.media_manager = _FakeMediaManager()
         self.live_view = _FakeLiveView()
         self.message_detail = _FakeDetailPanel()
@@ -83,8 +88,20 @@ class _FakeWindow:
         """slot 内 `self.tr("…")` 调用 — fake 不挂 QObject,走 identity。"""
         return text
 
-    # 绑 MainWindow 上的 unbound method,slot 内会调到
-    _show_activity = MainWindow._show_activity
+    @property
+    def _activity_label(self) -> QLabel:
+        """向后兼容旧测试读 `win._activity_label.text()` — 返回 status_bar 子 label。"""
+        return self.status_bar._activity_label
+
+
+class _FakeStatusBar:
+    """StatusBar 子集 — 只暴露 activity_label + show_activity delegate。"""
+
+    def __init__(self) -> None:
+        self._activity_label = QLabel("")
+
+    def show_activity(self, text: str, *, timeout_ms: int | None = None) -> None:
+        self._activity_label.setText(text)
 
 
 def _make_media(file_name: str, *, is_done: bool) -> MediaDTO:

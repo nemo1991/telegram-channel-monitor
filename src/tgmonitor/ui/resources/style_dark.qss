@@ -464,15 +464,14 @@ QHeaderView::section {
     font-size: 12px;
 }
 
-/* ===== 状态栏 ===== */
-QStatusBar {
+/* ===== 状态栏(自定义 StatusBar widget,替代 QStatusBar) ===== */
+#customStatusBar {
     background: #232333;
     border-top: 1px solid #353550;
     color: #c0c4d0;
     font-size: 12px;
     padding: 2px 12px;
 }
-QStatusBar::item { border: none; }
 
 /* ===== 滚动区域(设置页) ===== */
 #settingsScroll {

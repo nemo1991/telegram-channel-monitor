@@ -78,6 +78,10 @@ class _FakeWindow:
     """最小 MainWindow 桩 — 覆盖 _on_media_deleted slot 需要的依赖。
 
     QTimer parent=self — 测试只构造桩,QApplication 由 conftest 兜底。
+
+    2026-10-01 v1.11.x 状态栏组件化:`_show_activity` / `_throttle_activity`
+    已迁到 `status_bar.show_activity` / `status_bar.throttle_activity`。
+    桩改带 `status_bar` 子对象 + 模拟 ActivityLabel 子组件。
     """
 
     def __init__(self) -> None:
@@ -95,6 +99,7 @@ class _FakeWindow:
 
         self._activity_label = _Lbl(self)
         self._activity_throttle: dict[str, float] = {}
+        self.status_bar = _FakeStatusBar(self)
         self.media_manager = _FakeMediaManager()
 
         # 与 _on_media_deleted / _flush_media_refresh_pending 配的真 QTimer
@@ -109,9 +114,34 @@ class _FakeWindow:
         return text
 
     # 绑 MainWindow 上的 unbound method
-    _show_activity = MainWindow._show_activity
-    _throttle_activity = MainWindow._throttle_activity
     _flush_media_refresh_pending = MainWindow._flush_media_refresh_pending
+
+
+class _FakeStatusBar:
+    """StatusBar 子集 — 只暴露 activity throttle / show delegate。"""
+
+    def __init__(self, owner: _FakeWindow) -> None:
+        self._owner = owner
+
+    def show_activity(self, text: str, *, timeout_ms=None) -> None:
+        self._owner._activity_label.setText(text)
+
+    def throttle_activity(
+        self,
+        key: str,
+        text: str,
+        min_interval_ms: int,
+        timeout_ms: int | None = None,
+    ) -> None:
+        # 复用旧 MainWindow 节流逻辑
+        import time as _time
+
+        now = _time.monotonic() * 1000.0
+        last = self._owner._activity_throttle.get(key, 0.0)
+        if now - last < min_interval_ms:
+            return
+        self._owner._activity_throttle[key] = now
+        self.show_activity(text, timeout_ms=timeout_ms)
 
 
 # ============================================================
