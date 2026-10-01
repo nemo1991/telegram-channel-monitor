@@ -19,7 +19,6 @@ import concurrent.futures
 import logging
 from typing import Any, Awaitable, Callable, Coroutine, cast
 
-
 log = logging.getLogger(__name__)
 
 

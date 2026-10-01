@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ReactionDTO
-from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 
 # 2026-09-04 v1.6.7:Lightbox 预览白名单统一从 MediaManagerWidget 导入,
 # 不再本地拷贝 — 加 VIDEO/VIDEO_NOTE 一处生效。
 from tgmonitor.ui.widgets.media_manager_widget import LIGHTBOX_PREVIEWABLE_TYPES
+from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 
 
 def _to_local_str(dt: datetime | None) -> str:
