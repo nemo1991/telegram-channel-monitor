@@ -18,6 +18,13 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# 2026-10-02 v1.12.1:`test_bell_button_auth_error_shows_and_counts` 在 Windows offscreen
+# 平台 `qapp.processEvents()` 后偶发 access violation / SIGSEGV(v1.12.0 push 后
+# CI 首次爆,与 `test_main_window_delete_feedback` / `test_media_manager_i18n`
+# 三个 qt offscreen paint path race 同根:`asyncio.run` 跑完后 nested Qt
+# event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`(v1.8.3
+# 起扩到 (win32, linux, darwin))。
+import sys
 from datetime import UTC, datetime  # noqa: E402
 
 import pytest  # noqa: E402
@@ -37,14 +44,6 @@ from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     _SelectedChannelLabel,
     _StatsLabel,
 )
-
-# 2026-10-02 v1.12.1:`test_bell_button_auth_error_shows_and_counts` 在 Windows offscreen
-# 平台 `qapp.processEvents()` 后偶发 access violation / SIGSEGV(v1.12.0 push 后
-# CI 首次爆,与 `test_main_window_delete_feedback` / `test_media_manager_i18n`
-# 三个 qt offscreen paint path race 同根:`asyncio.run` 跑完后 nested Qt
-# event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`(v1.8.3
-# 起扩到 (win32, linux, darwin))。
-import sys
 
 _PAINT_PATH_RACE_PLATFORMS = ("win32", "linux", "darwin")
 windows_qt_paint_skip = pytest.mark.skipif(
