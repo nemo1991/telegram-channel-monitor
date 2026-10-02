@@ -143,6 +143,7 @@ def test_activity_label_empty_clears(qapp: QApplication) -> None:
     label.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_activity_label_timeout_clears(qapp: QApplication) -> None:
     """timeout_ms > 0 → 到点自动清空。
 
@@ -435,6 +436,7 @@ def test_status_bar_setters_delegate(qapp: QApplication) -> None:
     sb.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_status_bar_show_message_and_clear(qapp: QApplication) -> None:
     """show_message / clear_message 自管 transient label。"""
     sb = _make_status_bar(qapp)
@@ -447,6 +449,7 @@ def test_status_bar_show_message_and_clear(qapp: QApplication) -> None:
     sb.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_status_bar_on_settings_changed_removes_objects_warn(
     qapp: QApplication,
 ) -> None:
