@@ -300,6 +300,7 @@ def test_bell_button_auth_error_shows_and_counts(qapp: QApplication) -> None:
     bell.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_bell_button_ring_buffer_cap_100(qapp: QApplication) -> None:
     """超过 100 条 → 只留最近 100。"""
     bell = _make_bell(qapp)
@@ -318,6 +319,7 @@ def test_bell_button_ring_buffer_cap_100(qapp: QApplication) -> None:
     bell.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_bell_button_non_auth_ignored(qapp: QApplication) -> None:
     """非 AuthErrorOccurred → 不动铃铛。"""
     bell = _make_bell(qapp)
@@ -334,6 +336,7 @@ def test_bell_button_non_auth_ignored(qapp: QApplication) -> None:
     bell.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_bell_button_clear_resets(qapp: QApplication) -> None:
     bell = _make_bell(qapp)
 
@@ -460,6 +463,7 @@ def test_status_bar_on_settings_changed_removes_objects_warn(
     sb.deleteLater()
 
 
+@windows_qt_paint_skip
 def test_status_bar_clear_error_log_via_bell(qapp: QApplication) -> None:
     """clear_error_log 委托 _ErrorBellButton.clear。"""
     sb = _make_status_bar(qapp)
