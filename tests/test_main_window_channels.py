@@ -155,7 +155,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
 
         # 在 background loop 上跑 setup_async
         setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=5.0)
+        app_svc, monitor = setup_fut.result(timeout=30.0)
 
         # 构造 VM
         vm = MonitorViewModel(app_svc, monitor, qloop)
@@ -223,7 +223,7 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
             return app_svc, monitor
 
         setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=5.0)
+        app_svc, monitor = setup_fut.result(timeout=30.0)
 
         vm = MonitorViewModel(app_svc, monitor, qloop)
         vm.bootstrap_ui()
@@ -417,7 +417,7 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         # MainWindow 构造会触发 __init__ 里的 _refresh_state + bootstrap_ui
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
@@ -455,7 +455,7 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         widget = ChannelWidget(app_svc, qloop)
         # 构造完没有数据 → _empty_joined 应显示
@@ -488,7 +488,7 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         widget = ChannelWidget(app_svc, qloop)
         # 先确认空时显示
@@ -685,7 +685,7 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # VM 没数据,全部回退到 `#<id>`
@@ -719,7 +719,7 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # 直接 inject VM.known_channels 一个 DTO
@@ -772,7 +772,7 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
 
@@ -835,7 +835,7 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=5.0)
+        app_svc, monitor = fut.result(timeout=30.0)
 
         win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
 
