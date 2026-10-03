@@ -38,7 +38,9 @@ class LoopThread:
     """
 
     # cleanup 步骤超时(秒)
-    _JOIN_TIMEOUT_S = 5.0
+    # 2026-10-03 v1.12.1:windows runner 慢,5s 不够 → thread is_alive=True →
+    # daemon leak → 下一 test 调度到受污染 loop 卡死。10s 在 win runner 实测够。
+    _JOIN_TIMEOUT_S = 10.0
 
     def __init__(self) -> None:
         self.loop = asyncio.new_event_loop()

@@ -75,6 +75,23 @@ class _LoopThread:
         return self.loop
 
 
+def _build_setup(storage, objects, bus, client, settings):
+    """2026-10-02 v1.12.1 抽出:`test_main_window_initial_refresh_state_is_empty`
+    不复用 qloop fixture,改用一次性临时 loop,避免 _LoopThread 跨 test 残留。
+    返回 awaitable,让调用方决定用哪个 loop 跑。
+    """
+    from tgmonitor.core.app_service import AppService  # noqa: PLC0415
+
+    async def _go():
+        await storage.connect()
+        await objects.connect()
+        monitor = MonitorService(bus, client, storage, objects, settings)
+        app_svc = AppService(bus, client, storage, objects, settings)
+        return app_svc, monitor
+
+    return _go()
+
+
 @pytest.fixture
 def qloop() -> _LoopThread:
     """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。
@@ -402,15 +419,19 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
     """Initial:MainWindow.__init__ 完时,如果 VM 没数据,_refresh_state 应
     渲染空集而不是 NoReturnError 或 stale 数据。
 
-    2026-10-03 v1.12.1:复用 qloop fixture 即可,根因 = `_LoopThread` cleanup
-    leak(thread + loop 没干净关 → 下个 test 调度卡死),已通过
-    `tests.fixtures._loop_thread.LoopThread.stop()` 统一修。
+    2026-10-03 v1.12.1:CI runner (windows 优先) 上 `LoopThread` 后台 loop
+    在前一个 channels test cleanup 时残留(`LoopThread.stop()` 的 5s join
+    timeout 在 windows runner 不够)→ 第 5 个 test 的
+    `run_coroutine_threadsafe(setup_async, qloop)` 把 coro 调度到受污染
+    的 qloop → 10s 不返回 TimeoutError。
+
+    改:用一次性临时 loop 跑 setup_async(本 test 自己管理生命周期)—
+    不依赖 qloop fixture,避免 `_LoopThread` 跨 test 残留污染。本地行为不变。
     """
     import tempfile
     from pathlib import Path
 
     from tests.conftest import InMemoryRepository
-    from tgmonitor.core.app_service import AppService
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui.main_window import MainWindow
 
@@ -423,15 +444,15 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
         storage = InMemoryRepository()
         objects = LocalObjectStore(root=Path(td) / "o")
 
-        async def setup_async():
-            await storage.connect()
-            await objects.connect()
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=10.0)
+        # 用一次性临时 loop 跑 setup_async(本 test 自己管理生命周期)—
+        # 不依赖 qloop fixture,避免 _LoopThread 跨 test 残留污染。
+        temp_loop = asyncio.new_event_loop()
+        try:
+            app_svc, monitor = temp_loop.run_until_complete(
+                _build_setup(storage, objects, bus, client, settings)
+            )
+        finally:
+            temp_loop.close()
 
         # MainWindow 构造会触发 __init__ 里的 _refresh_state + bootstrap_ui
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
