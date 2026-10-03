@@ -75,18 +75,36 @@ class _LoopThread:
         return self.loop
 
 
-def _build_setup(storage, objects, bus, client, settings):
+def _build_setup(
+    storage,
+    objects,
+    bus,
+    client,
+    settings,
+    *,
+    before_monitor=None,
+    after_monitor=None,
+):
     """2026-10-02 v1.12.1 抽出:`test_main_window_initial_refresh_state_is_empty`
     不复用 qloop fixture,改用一次性临时 loop,避免 _LoopThread 跨 test 残留。
     返回 awaitable,让调用方决定用哪个 loop 跑。
+
+    2026-10-03 v1.12.1 follow-up:扩 hooks(`before_monitor` 在 storage.connect
+    之后、MonitorService 创建之前;`after_monitor` 在 MonitorService 创建之后、
+    返回前)— 让 line 132/209 这种需要在 monitor 创建前后做 storage.seed 或
+    set_whitelist 的 test 也能用 temp_loop 模式跑 setup_async。
     """
     from tgmonitor.core.app_service import AppService  # noqa: PLC0415
 
     async def _go():
         await storage.connect()
         await objects.connect()
+        if before_monitor is not None:
+            await before_monitor(storage)
         monitor = MonitorService(bus, client, storage, objects, settings)
         app_svc = AppService(bus, client, storage, objects, settings)
+        if after_monitor is not None:
+            await after_monitor(storage, monitor)
         return app_svc, monitor
 
     return _go()
@@ -145,12 +163,14 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
       2) storage.upsert_channel 注入 2 个 is_subscribed=True(真理视角)
       3) VM.bootstrap_ui 触发后,known_channels 应等于 2(只真理),
          不是 3——反映新语义。
-    """
-    import tempfile
-    from pathlib import Path
 
+    2026-10-03 v1.12.1 follow-up:setup_async 改走一次性临时 loop 跑 setup
+    (同 test_main_window_initial_refresh_state_is_empty 模式),绕开 _LoopThread
+    跨 test 残留污染 — GH Actions ubuntu/macos CI runner 上 _JOIN_TIMEOUT_S=10s
+    仍偶发不够,前一个 channels test 残留 daemon → 本 test 的
+    `run_coroutine_threadsafe(setup_async, qloop)` 调度到受污染 loop 永不返回。
+    """
     from tests.conftest import InMemoryRepository
-    from tgmonitor.core.app_service import AppService
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
 
     with tempfile.TemporaryDirectory() as td:
@@ -164,26 +184,36 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
         for cid, title in [(100, "新闻"), (200, "技术"), (300, "财经")]:
             client.add_channel(ChannelDTO(id=cid, title=title))
 
-        async def setup_async() -> tuple:
-            storage = InMemoryRepository()
-            await storage.connect()
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def _seed(s):
             # 真理侧:只 100、200 is_subscribed=True;300 只在 TD 那边存在
-            await storage.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
-            await storage.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
+            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
+            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
 
-            objects = LocalObjectStore(root=Path(td) / "o")
-            await objects.connect()
-
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
+        async def _apply_whitelist(s, obj_monitor):
             # 把 storage 加载的白名单推到 monitor
-            subscribed = await storage.list_subscribed_channels()
-            monitor.set_whitelist(c.id for c in subscribed)
-            return app_svc, monitor
+            subscribed = await s.list_subscribed_channels()
+            obj_monitor.set_whitelist(c.id for c in subscribed)
 
-        # 在 background loop 上跑 setup_async
-        setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=10.0)
+        # 用一次性临时 loop 跑 setup(本 test 自己管理生命周期)— 避免
+        # _LoopThread 跨 test 残留污染。
+        temp_loop = asyncio.new_event_loop()
+        try:
+            app_svc, monitor = temp_loop.run_until_complete(
+                _build_setup(
+                    storage,
+                    objects,
+                    bus,
+                    client,
+                    settings,
+                    before_monitor=_seed,
+                    after_monitor=_apply_whitelist,
+                )
+            )
+        finally:
+            temp_loop.close()
 
         # 构造 VM
         vm = MonitorViewModel(app_svc, monitor, qloop)
@@ -220,12 +250,11 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
       2) storage 里 2 个 subscribed channels(真理已就绪)
       3) VM.bootstrap_ui 触发后,**不等 state 变 ready**,known_channels
          立刻填上 2 个 —— storage 不需要 TDLib state。
-    """
-    import tempfile
-    from pathlib import Path
 
+    2026-10-03 v1.12.1 follow-up:同 test_main_window_initial_refresh_state_is_empty
+    模式,setup_async 改用一次性临时 loop 跑(绕开 _LoopThread 跨 test 残留污染)。
+    """
     from tests.conftest import InMemoryRepository
-    from tgmonitor.core.app_service import AppService
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
 
     with tempfile.TemporaryDirectory() as td:
@@ -237,21 +266,28 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
         # TD 视角故意为空 / 不一致:VM 不应该看
         # (如果走 list_joined 会拿到 [],但我们不在 client 上 add_channel)
 
-        async def setup_async():
-            storage = InMemoryRepository()
-            await storage.connect()
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def _seed(s):
             # 真理侧 2 个 subscribed
-            await storage.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
-            await storage.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
+            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
+            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
 
-            objects = LocalObjectStore(root=Path(td) / "o")
-            await objects.connect()
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=10.0)
+        temp_loop = asyncio.new_event_loop()
+        try:
+            app_svc, monitor = temp_loop.run_until_complete(
+                _build_setup(
+                    storage,
+                    objects,
+                    bus,
+                    client,
+                    settings,
+                    before_monitor=_seed,
+                )
+            )
+        finally:
+            temp_loop.close()
 
         vm = MonitorViewModel(app_svc, monitor, qloop)
         vm.bootstrap_ui()

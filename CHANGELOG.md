@@ -19,6 +19,19 @@ runner 不够,daemon leak → 下个 test 调度到受污染 loop 卡死)。
   revert 的临时 loop 方案:用 `asyncio.new_event_loop()` 一次性 loop 跑
   `setup_async`,不依赖 qloop fixture,彻底绕开 `_LoopThread` 跨 test 残留
   污染(直接防御)。
+- `tests/test_main_window_channels.py:132,209`
+  `test_vm_bootstrap_populates_known_channels_from_storage` +
+  `test_vm_bootstrap_does_not_wait_for_tdlib_state` 也改用一次性临时 loop
+  跑 setup_async(同 line 418 模式)。CI re-run 37122247641 验证:ubuntu/macos
+  GH Actions runner 上 `_JOIN_TIMEOUT_S=10s` 仍偶发不够,前一个 channels
+  test 残留 daemon → 本 test 的 `run_coroutine_threadsafe(setup_async,
+  qloop)` 调度到受污染 loop 永不返回(本地全量 pytest 不卡,只有 CI runner
+  触发)。
+- `_build_setup(...)` helper 扩 hooks:`before_monitor`(在 storage.connect
+  后、MonitorService 创建前,用于 storage.upsert_channel 之类 seed)和
+  `after_monitor`(在 MonitorService 创建后、返回前,用于 monitor.set_whitelist
+  之类 post-init),让 line 132/209 这种需要在 monitor 创建前后做 storage
+  操作的 test 也能用 temp_loop 模式。
 - `tests/fixtures/_loop_thread.py:41` `LoopThread._JOIN_TIMEOUT_S` 5s →
   10s(windows runner 5s 偶发不够,daemon leak;其他用 qloop fixture 的
   test 兜底)。
@@ -28,7 +41,7 @@ runner 不够,daemon leak → 下个 test 调度到受污染 loop 卡死)。
 ### 不再使用
 
 - v1.12.1 c8dd939 → b3725e7 中误删的 `temp_loop = asyncio.new_event_loop()`
-  防御模式(本次恢复)。
+  防御模式(本次恢复 + 扩到 3 个 test)。
 
 ### 验证
 
