@@ -147,6 +147,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_qt_callbacks_per_test():
+    """2026-10-04 plan 阶段 2.2:core/media_service.py 把 Qt 调用抽到
+    module-level callback(`register_qt_callbacks(...)`)。autouse fixture
+    保证每个 test 看到 None callback — 不想看到上一个 test 注入的回调。
+
+    默认 callback 是 None,需要真 Qt 行为的 test 自己 monkeypatch
+    `tgmonitor.core.media_service._module_open_url_cb` / `_module_tmp_root_cb`。
+    """
+    from tgmonitor.core.media_service import _reset_qt_callbacks_for_testing
+
+    _reset_qt_callbacks_for_testing()
+    yield
+    _reset_qt_callbacks_for_testing()
+
+
+@pytest.fixture(autouse=True)
 def force_zh_cn_locale() -> None:
     """2026-09-03 v1.5.3 PR #D3 + 2026-09-07 v1.6.8 二期:强制 zh_CN locale。
 

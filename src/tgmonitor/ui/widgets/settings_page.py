@@ -354,7 +354,7 @@ class SettingsPage(QWidget):
             edit = QKeySequenceEdit()
             # 初值:Settings 字段非空用 settings,否则 default_for(action)
             settings_val = getattr(self._app.settings, f"key_{action}", "")
-            edit.setKeySequence(QKeySequence(settings_val) if settings_val else default_for(action))
+            edit.setKeySequence(QKeySequence(settings_val) if settings_val else QKeySequence(default_for(action)))
             edit.setToolTip(self.tr("清空 = 恢复默认"))
             self._keybinding_edits[action] = edit
 
@@ -857,7 +857,7 @@ class SettingsPage(QWidget):
 
             for action, edit in self._keybinding_edits.items():
                 settings_val = getattr(s, f"key_{action}", "")
-                edit.setKeySequence(binding_for(action, settings_val))
+                edit.setKeySequence(QKeySequence(binding_for(action, settings_val)))
 
     # ------ 槽 ------
 

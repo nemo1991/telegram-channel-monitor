@@ -27,7 +27,7 @@ import os
 import secrets
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from tgmonitor.core.dto import (
     CopyResult,
@@ -55,6 +55,59 @@ if TYPE_CHECKING:
     from tgmonitor.core.monitor.service import MediaDownloader
 
 log = logging.getLogger(__name__)
+
+
+# ============================================================
+# Qt callback 注入(2026-10-04 plan 阶段 2.2:core 完全无 PySide6 依赖)
+# ============================================================
+#
+# `open_media_with_result` 与 `_stage_s3_to_tmp` 原本 lazy import Qt:
+#   - `QDesktopServices.openUrl(QUrl.fromLocalFile(path))`
+#   - `QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)`
+#
+# 把这两个 Qt 调用抽到 module-level callback。UI 层在 bootstrap 时通过
+# `register_qt_callbacks(...)` 注入真实现(`tgmonitor/ui/_qt_callbacks.py`
+# 内做 Qt 类型转换);CLI 路径不调 open_media,不注册;
+# 测试 fixture 在 `conftest.py` 注入 fake callback。
+#
+# 设计要点:
+# - 默认值 None,callbacks 未注册时 `open_media_with_result` 立即返失败
+#   而**不**抛异常 — 让 `app.objects=None` / 未配 callback 的 edge case
+#   与现有 None 行为一致(失败而不是崩)
+# - 显式 setter 而非 `__init__` 参数注入 — 保持 MediaService 签名不变,
+#   bootstrap / reconfigure / CLI 路径都不用改
+# - 不暴露 fallback Qt 实现 — 模块级 None,纯注入式 contract
+
+_module_open_url_cb: Callable[[str], bool] | None = None
+_module_tmp_root_cb: Callable[[], Path] | None = None
+
+
+def register_qt_callbacks(
+    *,
+    open_url: Callable[[str], bool] | None = None,
+    tmp_root: Callable[[], Path] | None = None,
+) -> None:
+    """UI bootstrap 调用此函数注入 Qt callback。
+
+    任一参数为 None 表示不动现有值(允许单独更新一个)。
+    测试 fixture / monkeypatch 也走这个 setter — 保证 core 不 import Qt。
+    """
+    global _module_open_url_cb, _module_tmp_root_cb
+    if open_url is not None:
+        _module_open_url_cb = open_url
+    if tmp_root is not None:
+        _module_tmp_root_cb = tmp_root
+
+
+def _reset_qt_callbacks_for_testing() -> None:
+    """仅供 test fixture(conftest.py)还原 module-level callback。
+
+    实际"清空"语义 — 让两个 callback 回到 None,保证 test 间隔离。
+    不在公开 API 范围(test-only helper)。
+    """
+    global _module_open_url_cb, _module_tmp_root_cb
+    _module_open_url_cb = None
+    _module_tmp_root_cb = None
 
 
 class MediaService:
@@ -487,18 +540,21 @@ class MediaService:
     ) -> OpenMediaResult:
         """打开 media + 返回结构化结果(2026-08-25 v1.3.0 PR #5)。
 
-        Local / Folder:直接 `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`。
-        S3:把 ObjectStore bytes 写到 `QStandardPaths.TempLocation` 下的 tmp 文件
-        再 openUrl;tmp 成功路径不主动 unlink(交给 OS 在 app exit / 重启时回收;
-        Windows 上 OS 持有 handle 时 unlink 会失败,故意不冒此风险),失败路径
-        显式 unlink 兜底。
+        Local / Folder:直接调 UI 注入的 open_url callback(等价于
+        `QDesktopServices.openUrl(QUrl.fromLocalFile(path))`)。
+        S3:把 ObjectStore bytes 写到 UI 注入的 tmp_root callback 返的目录
+        下的 tmp 文件,再 open_url;tmp 成功路径不主动 unlink(交给 OS 在
+        app exit / 重启时回收;Windows 上 OS 持有 handle 时 unlink 会失败,
+        故意不冒此风险),失败路径显式 unlink 兜底。
 
-        所有异常(对象存储连接断 / get 失败 / tmp 写失败 / openUrl 返 False)都
+        所有异常(对象存储连接断 / get 失败 / tmp 写失败 / open_url 返 False)都
         收口到 OpenMediaResult,不让 UI 看到原始堆栈。
-        """
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
 
+        2026-10-04 plan 阶段 2.2:Qt 调用抽到 `tgmonitor.ui._qt_callbacks`,
+        core 完全不 import PySide6。callbacks 未注册(CLI 路径 / 没调
+        `register_qt_callbacks`)时返失败 DTO 而不是抛 — 与现有
+        `objects=None` 失败语义一致。
+        """
         from tgmonitor.core.objectstore.folder_store import FolderObjectStore
         from tgmonitor.core.objectstore.local_store import LocalObjectStore
         from tgmonitor.core.objectstore.s3_store import S3ObjectStore
@@ -510,19 +566,22 @@ class MediaService:
         if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
             return OpenMediaResult(False, "媒体未下载完成")
 
+        if _module_open_url_cb is None:
+            return OpenMediaResult(False, "open_url callback 未注册(UI 层未 bootstrap)")
+
         try:
             if isinstance(self._objects, (LocalObjectStore, FolderObjectStore)):
                 # 用 backend 自带的 _path 而非 self._objects._root / key —
                 # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
                 # 直接拼 root 会落到错的子目录。
                 abs_path = self._objects._path(med.object_key)  # noqa: SLF001
-                # 2026-09-26 fix(open-media-hang):openUrl 在 macOS 上同步走
+                # 2026-09-26 fix(open-media-hang):open_url 在 macOS 上同步走
                 # `[NSWorkspace openURL:]` AppleEvent → LaunchServices,会卡
                 # 主线程 100ms~数秒;放 worker thread 跑,UI 不冻。
                 ok = bool(
                     await asyncio.to_thread(
-                        QDesktopServices.openUrl,
-                        QUrl.fromLocalFile(str(abs_path)),
+                        _module_open_url_cb,
+                        str(abs_path),
                     )
                 )
                 return (
@@ -532,11 +591,11 @@ class MediaService:
                 )
             if isinstance(self._objects, S3ObjectStore):
                 tmp = await self._stage_s3_to_tmp(med)
-                # 同上 — S3 路径 openUrl 也走 worker thread,见上注。
+                # 同上 — S3 路径 open_url 也走 worker thread,见上注。
                 ok = bool(
                     await asyncio.to_thread(
-                        QDesktopServices.openUrl,
-                        QUrl.fromLocalFile(str(tmp)),
+                        _module_open_url_cb,
+                        str(tmp),
                     )
                 )
                 if not ok:
@@ -677,15 +736,19 @@ class MediaService:
 
     async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
         """2026-08-25 v1.3.0 PR #5:把 S3 media bytes 写到本地 tmp 文件用于
-        `QDesktopServices.openUrl`。
+        `open_url callback`(等价 `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`)。
 
         - 扩展名推断优先级:`med.file_name` 后缀 > `med.mime_type` 查
           `mimetypes.guess_extension` > `.bin` fallback
-        - tmp 目录:`QStandardPaths.TempLocation`(macOS 是 per-user tmp),
-          不可写时回退 `~/.cache/tgmonitor`
+        - tmp 目录:`tmp_root callback` 返的路径(macOS = `QStandardPaths.
+          writableLocation(QStandardPaths.StandardLocation.TempLocation)`),
+          callback 未注册时回退 `~/.cache/tgmonitor`
         - 文件名:`tgmonitor-<secrets.token_hex(8)><suffix>` — `tgmonitor-`
           前缀留给未来 sweep 工具批量清理
         - 写文件用 `asyncio.to_thread(tmp_path.write_bytes, data)` 防卡 loop
+
+        2026-10-04 plan 阶段 2.2:`QStandardPaths` 调用抽到 UI 层 callback,
+        core 完全不 import PySide6。
         """
         # 1. suffix
         suffix = ""
@@ -698,16 +761,13 @@ class MediaService:
         if not suffix:
             suffix = ".bin"
 
-        # 2. tmp 目录
-        try:
-            from PySide6.QtCore import QStandardPaths
-
-            tmp_dir_str = QStandardPaths.writableLocation(
-                QStandardPaths.StandardLocation.TempLocation,
-            )
-        except Exception:  # noqa: BLE001 — PySide6 不可用兜底
-            tmp_dir_str = ""
-        tmp_dir = Path(tmp_dir_str) if tmp_dir_str else Path.home() / ".cache" / "tgmonitor"
+        # 2. tmp 目录 — callback 未注册时用 `~/.cache/tgmonitor` fallback
+        # (CLI 路径 / 测试不调 open_url → 不会触发,fallback 不影响)
+        tmp_dir: Path
+        if _module_tmp_root_cb is None:
+            tmp_dir = Path.home() / ".cache" / "tgmonitor"
+        else:
+            tmp_dir = _module_tmp_root_cb()
         await asyncio.to_thread(tmp_dir.mkdir, parents=True, exist_ok=True)
 
         # 3. 写文件

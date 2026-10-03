@@ -577,23 +577,27 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
 ) -> None:
     """S3 后端成功路径:get_object 拉 bytes → 写 tmp → openUrl 返 True。
 
-    monkeypatch 掉 QDesktopServices.openUrl 抓调用 + 强返 True,然后断言:
+    monkeypatch 掉 core 的 `_module_open_url_cb` callback 抓调用 +
+    强返 True,然后断言:
     1) get_object 调了一次(走 S3 client)
-    2) openUrl 调了一次,参数是 tmp 文件 path
+    2) open_url callback 调了一次,参数是 tmp 文件 path
     3) tmp 文件存在 + 内容 == S3 bytes
-    """
-    from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QDesktopServices
 
+    2026-10-04 plan 阶段 2.2:Qt 调用抽到 module-level callback,
+    不再 monkeypatch `QDesktopServices.openUrl`。
+    """
     saved_objects, fake = _make_s3_backend(app, monkeypatch)
     await app.objects.connect()  # type: ignore[attr-defined]
     fake._client_obj.set_data(b"fake-jpeg-content")
 
-    openurl_calls: list[QUrl] = []
+    openurl_calls: list[str] = []
+    from tgmonitor.core.media_service import (  # noqa: PLC0415
+        _module_open_url_cb,
+    )
+
     monkeypatch.setattr(
-        QDesktopServices,
-        "openUrl",
-        lambda url: openurl_calls.append(url) or True,
+        "tgmonitor.core.media_service._module_open_url_cb",
+        lambda path: openurl_calls.append(path) or True,
     )
 
     await storage.save_message(
@@ -608,9 +612,7 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     # connect() 探了一下 head_bucket,open_media 调 get_object 拉 bytes
     assert ("get_object", {"Bucket": "t", "Key": "media/photo.jpg"}) in fake._client_obj.calls
     assert len(openurl_calls) == 1
-    url = openurl_calls[0]
-    assert url.isLocalFile()
-    tmp_path = url.toLocalFile()
+    tmp_path = openurl_calls[0]
     assert tmp_path.endswith(".jpg"), f"expected .jpg suffix, got {tmp_path}"
     # 文件存在 + 内容与 S3 一致
     from pathlib import Path
@@ -626,14 +628,18 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
     storage: StorageRepository,
     monkeypatch,
 ) -> None:
-    """S3 后端 + openUrl 返 False → tmp 文件被 unlink + 返 OpenMediaResult(False)。"""
-    from PySide6.QtGui import QDesktopServices
+    """S3 后端 + open_url callback 返 False → tmp 文件被 unlink + 返 OpenMediaResult(False)。
 
+    2026-10-04 plan 阶段 2.2:monkeypatch module-level callback 而非 Qt 对象。
+    """
     saved_objects, fake = _make_s3_backend(app, monkeypatch)
     await app.objects.connect()  # type: ignore[attr-defined]
     fake._client_obj.set_data(b"data")
 
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda _url: False)
+    monkeypatch.setattr(
+        "tgmonitor.core.media_service._module_open_url_cb",
+        lambda _path: False,
+    )
 
     await storage.save_message(
         _msg(100, 1, [_done_media("f1", "media/photo.jpg")]),
@@ -920,14 +926,15 @@ async def test_open_media_with_result_does_not_block_event_loop(
 
     import time
 
-    from PySide6.QtGui import QDesktopServices
-
-    def slow_open(_url) -> bool:
+    def slow_open(_path: str) -> bool:
         # 模拟 macOS LaunchServices cold cache 的 200ms 同步阻塞
         time.sleep(0.2)
         return True
 
-    monkeypatch.setattr(QDesktopServices, "openUrl", slow_open)
+    monkeypatch.setattr(
+        "tgmonitor.core.media_service._module_open_url_cb",
+        slow_open,
+    )
 
     await objectstore.put("media/photo.jpg", b"jpeg-bytes", None)
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
@@ -949,22 +956,25 @@ async def test_open_media_invokes_openurl_off_main_thread(
     objectstore: ObjectStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """openUrl 必须在 worker thread 上跑(由 asyncio.to_thread 触发)。
+    """open_url callback 必须在 worker thread 上跑(由 asyncio.to_thread 触发)。
 
     若退化到主 loop 跑,这里 tids 相等 → 失败。略 fragile(executor 行为
     依赖 asyncio 实现),但作为 fix 是否生效的直接信号。
+
+    2026-10-04 plan 阶段 2.2:monkeypatch module-level callback 而非 Qt 对象。
     """
     import threading
 
-    from PySide6.QtGui import QDesktopServices
-
     seen: list[int] = []
 
-    def record(_url) -> bool:
+    def record(_path: str) -> bool:
         seen.append(threading.get_ident())
         return True
 
-    monkeypatch.setattr(QDesktopServices, "openUrl", record)
+    monkeypatch.setattr(
+        "tgmonitor.core.media_service._module_open_url_cb",
+        record,
+    )
     main_tid = threading.get_ident()
 
     await objectstore.put("media/photo.jpg", b"jpeg", None)

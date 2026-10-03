@@ -233,6 +233,15 @@ def run() -> None:
             state["monitor"] = monitor
             state["settings"] = settings
 
+            # 2026-10-04 plan 阶段 2.2:core/media_service.py 完全无 Qt 依赖,
+            # Qt 调用通过 module-level callback 注入。GUI bootstrap 完成后
+            # 立即注册,后续 `open_media_with_result` / `_stage_s3_to_tmp`
+            # 走 Qt 实现。CLI 路径(`tgmonitor sync` / `monitor`)不调本函数,
+            # callback 保持 None,与 `objects=None` 失败语义一致。
+            from tgmonitor.ui._qt_callbacks import register as _register_qt_callbacks
+
+            _register_qt_callbacks()
+
             # UI 构造 — 现在 services 已构造,事件总线已就位。
             # 注意:此时 monitor 还没 start() / bootstrap 还没跑,但 UI 读
             # app.is_paused / monitor.subscribed_ids 都有兜底,header 状态由

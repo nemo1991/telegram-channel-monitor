@@ -120,19 +120,31 @@ def test_parse_key_sequence_empty_returns_none() -> None:
     assert parse_key_sequence("   ") is None
 
 
-def test_parse_key_sequence_valid_returns_sequence() -> None:
-    """合法串 → 非空 QKeySequence(往返保留 toString)。"""
+def test_parse_key_sequence_valid_returns_string() -> None:
+    """合法串 → 规范化后字符串(等价 Qt toString)。"""
     seq = parse_key_sequence("Ctrl+R")
-    assert seq is not None
-    assert not seq.isEmpty()
-    assert seq.toString() == "Ctrl+R"
+    assert seq == "Ctrl+R"
 
 
 def test_parse_key_sequence_invalid_returns_none() -> None:
-    """无法解析的乱串 → None(Qt 不抛异常,返回 empty seq,我们二次校验)。"""
-    # QKeySequence 对完全不能解析的输入返回 empty seq
-    seq = parse_key_sequence("zzzz_not_a_key")
-    assert seq is None
+    """无法解析的乱串 → None(Qt 不抛异常,返回空串,我们二次校验)。
+
+    2026-10-04 plan 阶段 2:`core/keybinding.py` 改纯 str,`_normalize` 检测
+    任何无法识别的 token(纯下划线字母数字混合等)→ 整串视为 invalid,
+    与 Qt `QKeySequence(s).toString() == ""` 等价。
+    """
+    assert parse_key_sequence("zzzz_not_a_key") is None
+
+
+def test_parse_key_sequence_partial_invalid_returns_none() -> None:
+    """部分 token 合法 + 部分 invalid → 整串 invalid。"""
+    assert parse_key_sequence("Ctrl+GarbageKey") is None
+
+
+def test_parse_key_sequence_function_keys() -> None:
+    """功能键(独立,无 modifier)也合法 — Qt portable 字符串格式。"""
+    assert parse_key_sequence("Esc") == "Esc"
+    assert parse_key_sequence("Esc") == "Esc"
 
 
 # ---- default_for ----
@@ -140,17 +152,16 @@ def test_parse_key_sequence_invalid_returns_none() -> None:
 
 def test_default_for_known_actions() -> None:
     """已知 action → DEFAULT_BINDINGS 对应值。"""
-    assert default_for("refresh").toString() == "Ctrl+R"
-    assert default_for("search").toString() == "Ctrl+F"
-    assert default_for("quit").toString() == "Ctrl+Q"
-    assert default_for("escape").toString() == "Esc"
-    assert default_for("show_window").toString() == "Ctrl+0"
+    assert default_for("refresh") == "Ctrl+R"
+    assert default_for("search") == "Ctrl+F"
+    assert default_for("quit") == "Ctrl+Q"
+    assert default_for("escape") == "Esc"
+    assert default_for("show_window") == "Ctrl+0"
 
 
 def test_default_for_unknown_action_returns_empty() -> None:
-    """未知 action 名 → empty QKeySequence(QShortcut 跳过)。"""
-    seq = default_for("nonexistent_action_xyz")
-    assert seq.isEmpty()
+    """未知 action 名 → 空串(QShortcut 跳过)。"""
+    assert default_for("nonexistent_action_xyz") == ""
 
 
 # ---- binding_for ----
@@ -158,26 +169,22 @@ def test_default_for_unknown_action_returns_empty() -> None:
 
 def test_binding_for_uses_settings_value_when_valid() -> None:
     """settings_value 合法 → 用 settings_value,不走默认。"""
-    seq = binding_for("refresh", "F5")
-    assert seq.toString() == "F5"
+    assert binding_for("refresh", "F5") == "F5"
 
 
 def test_binding_for_falls_back_to_default_when_empty() -> None:
     """settings_value 空 → 走默认(用户没改键)。"""
-    seq = binding_for("refresh", "")
-    assert seq.toString() == "Ctrl+R"
+    assert binding_for("refresh", "") == "Ctrl+R"
 
 
 def test_binding_for_falls_back_to_default_when_invalid() -> None:
     """settings_value 解析失败 → 默认(防 1 字符乱输入破坏快捷键)。"""
-    seq = binding_for("refresh", "garbage_xyz")
-    assert seq.toString() == "Ctrl+R"
+    assert binding_for("refresh", "garbage_xyz") == "Ctrl+R"
 
 
 def test_binding_for_normalizes_casing() -> None:
-    """Qt QKeySequence 把 'ctrl+r' normalize 成 'Ctrl+R' — 兼容性正常。"""
-    seq = binding_for("refresh", "ctrl+r")
-    assert seq.toString() == "Ctrl+R"
+    """`ctrl+r` 归一为 `Ctrl+R` — 与 Qt QKeySequence(s).toString() 等价。"""
+    assert binding_for("refresh", "ctrl+r") == "Ctrl+R"
 
 
 # ---- find_duplicates ----
@@ -278,7 +285,7 @@ class _FakeMainWindow(QObject):
 
     def __init__(self) -> None:
         super().__init__()
-        from PySide6.QtGui import QAction, QShortcut  # noqa: PLC0415
+        from PySide6.QtGui import QAction, QKeySequence, QShortcut  # noqa: PLC0415
 
         from tgmonitor.core.keybinding import DEFAULT_BINDINGS, binding_for  # noqa: PLC0415
 
@@ -292,7 +299,8 @@ class _FakeMainWindow(QObject):
         s = Settings.for_test()
         bindings = {name: getattr(s, f"key_{name}", "") for name in DEFAULT_BINDINGS}
         for action, slot_factory in _NOOP_SLOTS.items():
-            seq = binding_for(action, bindings.get(action, ""))
+            seq_str = binding_for(action, bindings.get(action, ""))
+            seq = QKeySequence(seq_str)
             if seq.isEmpty():
                 continue
             sc = QShortcut(seq, self)
@@ -301,7 +309,7 @@ class _FakeMainWindow(QObject):
 
     # 复制真实 reload_shortcuts 行为(避免 import 整个 main_window)
     def reload_shortcuts(self, settings: Settings) -> None:  # type: ignore[type-arg]
-        from PySide6.QtGui import QShortcut  # noqa: PLC0415
+        from PySide6.QtGui import QKeySequence, QShortcut  # noqa: PLC0415
 
         from tgmonitor.core.keybinding import DEFAULT_BINDINGS, binding_for  # noqa: PLC0415
 
@@ -312,17 +320,18 @@ class _FakeMainWindow(QObject):
 
         bindings = {name: getattr(settings, f"key_{name}", "") for name in DEFAULT_BINDINGS}
         for action, slot_factory in _NOOP_SLOTS.items():
-            seq = binding_for(action, bindings.get(action, ""))
+            seq_str = binding_for(action, bindings.get(action, ""))
+            seq = QKeySequence(seq_str)
             if seq.isEmpty():
                 continue
             sc = QShortcut(seq, self)
             sc.activated.connect(slot_factory(self))
             self._shortcuts[action] = sc
 
-        show_seq = binding_for("show_window", bindings.get("show_window", ""))
+        show_seq = QKeySequence(binding_for("show_window", bindings.get("show_window", "")))
         if not show_seq.isEmpty():
             self.act_show.setShortcut(show_seq)
-        quit_seq = binding_for("quit", bindings.get("quit", ""))
+        quit_seq = QKeySequence(binding_for("quit", bindings.get("quit", "")))
         if not quit_seq.isEmpty():
             self.act_quit.setShortcut(quit_seq)
 
@@ -378,6 +387,7 @@ def test_main_window_reload_shortcuts_empty_falls_back_to_default() -> None:
     # 直接调 binding_for / _ACTION_SLOTS 重建 fake
     from PySide6.QtGui import (
         QAction,  # noqa: PLC0415
+        QKeySequence,  # noqa: PLC0415
         QShortcut,  # noqa: PLC0415
     )
 
@@ -393,7 +403,8 @@ def test_main_window_reload_shortcuts_empty_falls_back_to_default() -> None:
     mw.act_quit = QAction("quit", mw)
     bindings = {name: getattr(s, f"key_{name}", "") for name in DEFAULT_BINDINGS}
     for action, slot_factory in _NOOP_SLOTS.items():
-        seq = binding_for(action, bindings.get(action, ""))
+        seq_str = binding_for(action, bindings.get(action, ""))
+        seq = QKeySequence(seq_str)
         if seq.isEmpty():
             continue
         sc = QShortcut(seq, mw)

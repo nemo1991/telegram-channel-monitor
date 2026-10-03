@@ -692,7 +692,8 @@ class MainWindow(QMainWindow):
         settings = self.app.settings
         bindings = {name: getattr(settings, f"key_{name}", "") for name in DEFAULT_BINDINGS}
         for action, slot_factory in _ACTION_SLOTS.items():
-            seq = binding_for(action, bindings.get(action, ""))
+            seq_str = binding_for(action, bindings.get(action, ""))
+            seq = QKeySequence(seq_str)
             if seq.isEmpty():
                 continue
             sc = QShortcut(seq, self)
@@ -701,10 +702,10 @@ class MainWindow(QMainWindow):
 
         # File menu QAction 同步(act_show / act_quit 是 self. attr,
         # 在 _build_menu 已建;这里覆盖 setShortcut 用 Settings 实际值)。
-        show_seq = binding_for("show_window", bindings.get("show_window", ""))
+        show_seq = QKeySequence(binding_for("show_window", bindings.get("show_window", "")))
         if not show_seq.isEmpty():
             self.act_show.setShortcut(show_seq)
-        quit_seq = binding_for("quit", bindings.get("quit", ""))
+        quit_seq = QKeySequence(binding_for("quit", bindings.get("quit", "")))
         if not quit_seq.isEmpty():
             self.act_quit.setShortcut(quit_seq)
 
@@ -729,21 +730,22 @@ class MainWindow(QMainWindow):
 
         bindings = {name: getattr(settings, f"key_{name}", "") for name in DEFAULT_BINDINGS}
         for action, slot_factory in _ACTION_SLOTS.items():
-            seq = binding_for(action, bindings.get(action, ""))
+            seq_str = binding_for(action, bindings.get(action, ""))
+            seq = QKeySequence(seq_str)
             if seq.isEmpty():
                 continue
             sc = QShortcut(seq, self)
             sc.activated.connect(slot_factory(self))
             self._shortcuts[action] = sc
 
-        if hasattr(self, "act_show"):
-            show_seq = binding_for("show_window", bindings.get("show_window", ""))
-            if not show_seq.isEmpty():
-                self.act_show.setShortcut(show_seq)
-        if hasattr(self, "act_quit"):
-            quit_seq = binding_for("quit", bindings.get("quit", ""))
-            if not quit_seq.isEmpty():
-                self.act_quit.setShortcut(quit_seq)
+        # 2026-10-04 plan 阶段 4.2:act_show / act_quit 是 _build_menu 必建
+        # 属性,不再 hasattr 探针 — 直接引用,menu 没建好的话这里崩是合理。
+        show_seq = QKeySequence(binding_for("show_window", bindings.get("show_window", "")))
+        if not show_seq.isEmpty():
+            self.act_show.setShortcut(show_seq)
+        quit_seq = QKeySequence(binding_for("quit", bindings.get("quit", "")))
+        if not quit_seq.isEmpty():
+            self.act_quit.setShortcut(quit_seq)
 
         log.info("shortcuts reloaded: %d bindings", len(self._shortcuts))
 
