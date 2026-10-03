@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import threading
 import time
 
 import pytest
@@ -64,20 +63,17 @@ class _FakeMainWindow(MainWindow):
 
 
 class _LoopThread:
-    """在后台线程跑一个 asyncio loop,模拟 qasync 的 QEventLoop。"""
+    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
 
     def __init__(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        from tests.fixtures._loop_thread import LoopThread
 
-    def _run(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        self._inner = LoopThread()
+        self.loop = self._inner.loop
+        self._thread = self._inner._thread
 
     def stop(self) -> None:
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self._thread.join(timeout=2.0)
+        self._inner.stop()
 
     @property
     def asyncio_loop(self) -> asyncio.AbstractEventLoop:
@@ -87,8 +83,10 @@ class _LoopThread:
 @pytest.fixture
 def loop_thread():
     lt = _LoopThread()
-    yield lt
-    lt.stop()
+    try:
+        yield lt
+    finally:
+        lt.stop()
 
 
 # ---- 默认路径:没挂 cb → 直接关 ----

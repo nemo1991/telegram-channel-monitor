@@ -16,10 +16,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import struct
-import threading
 import zlib
 from pathlib import Path
 
@@ -36,30 +34,30 @@ from tgmonitor.core.events import EventBus
 
 
 class _LoopThread:
-    """后台 asyncio loop(模拟 qasync 主线程)— 走 thread+run_forever。"""
+    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
 
     def __init__(self) -> None:
-        self.loop: asyncio.AbstractEventLoop
-        self._thread: threading.Thread | None = None
+        from tests.fixtures._loop_thread import LoopThread
+
+        self._inner = LoopThread()
+        self.loop = self._inner.loop
+        self._thread = self._inner._thread
 
     def start(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self.loop.run_forever, daemon=True)
-        self._thread.start()
+        # backward compat — 已经 start 了
+        return None
 
     def stop(self) -> None:
-        if self.loop is not None:
-            self.loop.call_soon_threadsafe(self.loop.stop)
+        self._inner.stop()
 
 
 @pytest.fixture
 def qloop_16() -> _LoopThread:
     lt = _LoopThread()
-    lt.start()
-    yield lt.loop
-    lt.stop()
-    if lt._thread is not None:
-        lt._thread.join(timeout=2)
+    try:
+        yield lt.loop
+    finally:
+        lt.stop()
 
 
 def _build_widget(qapp, qloop_16):  # noqa: ANN001 — 测试 helper

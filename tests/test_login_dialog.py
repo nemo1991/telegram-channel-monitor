@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import threading
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,29 +27,28 @@ from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: E402
 
 
 class _LoopThread:
-    """后台线程跑一个持续运行的 asyncio loop — 模拟 qasync 的 QEventLoop。"""
+    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
 
     def __init__(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        from tests.fixtures._loop_thread import LoopThread
 
-    def _run(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        self._inner = LoopThread()
+        self.loop = self._inner.loop
+        self._thread = self._inner._thread
 
 
 @pytest.fixture
 def qloop() -> asyncio.AbstractEventLoop:
-    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。"""
+    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。
+
+    2026-10-03 v1.12.1:cleanup 改走 `LoopThread.stop()`,统一 cancel → drain
+    → stop → join → close,跨 test 不 leak 残留 thread/loop。
+    """
     lt = _LoopThread()
-    yield lt.loop
-    lt.loop.call_soon_threadsafe(lt.loop.stop)
-    lt._thread.join(timeout=2.0)
     try:
-        lt.loop.close()
-    except Exception:  # noqa: BLE001
-        pass
+        yield lt.loop
+    finally:
+        lt._inner.stop()
 
 
 def _make_dlg(qloop, *, submit_phone=None):

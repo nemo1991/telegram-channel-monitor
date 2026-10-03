@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-import threading
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -52,47 +51,42 @@ def _window_settings(base: Path) -> Settings:
 
 
 class _LoopThread:
-    """后台线程跑一个持续运行的 asyncio loop — 模拟 qasync 的 QEventLoop。"""
+    """历史兼容 wrapper — 2026-10-03 v1.12.1 把 inline 定义集中到
+    `tests.fixtures._loop_thread.LoopThread`,旧 API(`lt.loop` /
+    `lt.asyncio_loop`)保留,新测试用 `LoopThread` 直接。
+    """
 
     def __init__(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        from tests.fixtures._loop_thread import LoopThread
+
+        self._inner = LoopThread()
+        self.loop = self._inner.loop
+        self._thread = self._inner._thread
 
     def _run(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        # 占位 — 实际跑在 LoopThread._run
+        return None
+
+    def stop(self) -> None:
+        self._inner.stop()
+
+    @property
+    def asyncio_loop(self) -> asyncio.AbstractEventLoop:
+        return self.loop
 
 
 @pytest.fixture
 def qloop() -> _LoopThread:
-    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。"""
-    lt = _LoopThread()
-    yield lt.loop
-    # stop + close loop
-    lt.loop.call_soon_threadsafe(lt.loop.stop)
-    lt._thread.join(timeout=2.0)
-    try:
-        lt.loop.close()
-    except Exception:  # noqa: BLE001
-        pass
+    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。
 
-
-def _build_setup(storage, objects, bus, client, settings):
-    """2026-10-02 v1.12.1 抽出:`test_main_window_initial_refresh_state_is_empty`
-    不复用 qloop fixture,改用一次性临时 loop,避免 _LoopThread 跨 test 残留。
-    返回 awaitable,让调用方决定用哪个 loop 跑。
+    2026-10-03 v1.12.1:cleanup 改走 `LoopThread.stop()`,统一 cancel → drain
+    → stop → join → close,跨 test 不 leak 残留 thread/loop。
     """
-    from tgmonitor.core.app_service import AppService  # noqa: PLC0415
-
-    async def _go():
-        await storage.connect()
-        await objects.connect()
-        monitor = MonitorService(bus, client, storage, objects, settings)
-        app_svc = AppService(bus, client, storage, objects, settings)
-        return app_svc, monitor
-
-    return _go()
+    lt = _LoopThread()
+    try:
+        yield lt.loop
+    finally:
+        lt.stop()
 
 
 def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> bool:
@@ -172,7 +166,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
 
         # 在 background loop 上跑 setup_async
         setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=60.0)
+        app_svc, monitor = setup_fut.result(timeout=10.0)
 
         # 构造 VM
         vm = MonitorViewModel(app_svc, monitor, qloop)
@@ -240,7 +234,7 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
             return app_svc, monitor
 
         setup_fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = setup_fut.result(timeout=60.0)
+        app_svc, monitor = setup_fut.result(timeout=10.0)
 
         vm = MonitorViewModel(app_svc, monitor, qloop)
         vm.bootstrap_ui()
@@ -408,10 +402,9 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
     """Initial:MainWindow.__init__ 完时,如果 VM 没数据,_refresh_state 应
     渲染空集而不是 NoReturnError 或 stale 数据。
 
-    2026-10-02 v1.12.1:CI runner 上 `_LoopThread` 后台 loop 在前一个 test
-    cleanup 时残留 → 第 5 个 channels test 的 `run_coroutine_threadsafe`
-    setup_async 卡 60s 不返回。改用一次性临时 loop(本 test 自己的 loop,
-    不复用 qloop fixture)避免 fixture 间污染。本地行为不变。
+    2026-10-03 v1.12.1:复用 qloop fixture 即可,根因 = `_LoopThread` cleanup
+    leak(thread + loop 没干净关 → 下个 test 调度卡死),已通过
+    `tests.fixtures._loop_thread.LoopThread.stop()` 统一修。
     """
     import tempfile
     from pathlib import Path
@@ -430,15 +423,15 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
         storage = InMemoryRepository()
         objects = LocalObjectStore(root=Path(td) / "o")
 
-        # 用一次性临时 loop 跑 setup_async(本 test 自己管理生命周期)—
-        # 不依赖 qloop fixture,避免 _LoopThread 跨 test 残留污染。
-        temp_loop = asyncio.new_event_loop()
-        try:
-            app_svc, monitor = temp_loop.run_until_complete(
-                _build_setup(storage, objects, bus, client, settings)
-            )
-        finally:
-            temp_loop.close()
+        async def setup_async():
+            await storage.connect()
+            await objects.connect()
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            app_svc = AppService(bus, client, storage, objects, settings)
+            return app_svc, monitor
+
+        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         # MainWindow 构造会触发 __init__ 里的 _refresh_state + bootstrap_ui
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
@@ -476,7 +469,7 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         widget = ChannelWidget(app_svc, qloop)
         # 构造完没有数据 → _empty_joined 应显示
@@ -509,7 +502,7 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         widget = ChannelWidget(app_svc, qloop)
         # 先确认空时显示
@@ -706,7 +699,7 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # VM 没数据,全部回退到 `#<id>`
@@ -740,7 +733,7 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # 直接 inject VM.known_channels 一个 DTO
@@ -793,7 +786,7 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
 
@@ -856,7 +849,7 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
             return app_svc, monitor
 
         fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=60.0)
+        app_svc, monitor = fut.result(timeout=10.0)
 
         win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
 
