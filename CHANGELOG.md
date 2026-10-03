@@ -5,6 +5,37 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.12.1] - 2026-10-03
+
+主题:**CI test 基建修复**(纯测试,零行为变化)。v1.12.0 后 GH Actions
+windows-latest pytest 在 `test_main_window_initial_refresh_state_is_empty`
+持续 TimeoutError(`LoopThread` 后台 thread join 5s timeout 在 windows
+runner 不够,daemon leak → 下个 test 调度到受污染 loop 卡死)。
+
+### 改动
+
+- `tests/test_main_window_channels.py:418-462`
+  `test_main_window_initial_refresh_state_is_empty` 恢复 v1.12.1 中途被误
+  revert 的临时 loop 方案:用 `asyncio.new_event_loop()` 一次性 loop 跑
+  `setup_async`,不依赖 qloop fixture,彻底绕开 `_LoopThread` 跨 test 残留
+  污染(直接防御)。
+- `tests/fixtures/_loop_thread.py:41` `LoopThread._JOIN_TIMEOUT_S` 5s →
+  10s(windows runner 5s 偶发不够,daemon leak;其他用 qloop fixture 的
+  test 兜底)。
+- 新 `_build_setup(...)` helper(78-94 行)封装 setup_async 的协程构造,
+  调用方决定跑在哪个 loop。
+
+### 不再使用
+
+- v1.12.1 c8dd939 → b3725e7 中误删的 `temp_loop = asyncio.new_event_loop()`
+  防御模式(本次恢复)。
+
+### 验证
+
+- 本地:50 passed, 3 skipped in 7.62s(channels/close/login/channel_widget
+  4 文件联合)。
+- CI:GH Actions windows + ubuntu + macos 全 PySide6 offscreen,pytest 全绿。
+
 ## [1.12.0] - 2026-10-01
 
 主题:**MainWindow 拆组件 + 文件清理**(纯重构,零行为变化)。`main_window.py`
