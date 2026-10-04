@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
-
 # ============================================================
 # ChannelsApi 单元测试用捕获客户端(2026-10-04 plan 阶段 1.3.C:4 份
 # inline `_CaptureClient` 合并成 module-level 类 — 减 ~120 LOC 重复)

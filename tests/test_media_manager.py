@@ -591,9 +591,6 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     fake._client_obj.set_data(b"fake-jpeg-content")
 
     openurl_calls: list[str] = []
-    from tgmonitor.core.media_service import (  # noqa: PLC0415
-        _module_open_url_cb,
-    )
 
     monkeypatch.setattr(
         "tgmonitor.core.media_service._module_open_url_cb",
