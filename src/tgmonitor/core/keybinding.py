@@ -103,10 +103,28 @@ def _normalize(s: str) -> str:
 # modifier / 功能键的大小写归一表(Qt portable string 用同样的形式)
 _MODIFIER_KEYS = {"Ctrl", "Shift", "Alt", "Meta"}
 _FUNCTION_KEYS = {
-    "Esc", "Escape", "Tab", "Backspace", "Return", "Enter", "Space",
-    "Delete", "Home", "End", "PageUp", "PageDown", "Up", "Down", "Left", "Right",
-    "Insert", "Print", "Pause",
-    "CapsLock", "NumLock", "ScrollLock",
+    "Esc",
+    "Escape",
+    "Tab",
+    "Backspace",
+    "Return",
+    "Enter",
+    "Space",
+    "Delete",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "Insert",
+    "Print",
+    "Pause",
+    "CapsLock",
+    "NumLock",
+    "ScrollLock",
 }
 
 
@@ -170,7 +188,8 @@ _FUNCTION_NORMALIZED: dict[str, str] = {
     "NumLock": "NumLock",
     "ScrollLock": "ScrollLock",
     # 全大写兜底
-    "ESC": "Esc", "ESCAPE": "Escape",
+    "ESC": "Esc",
+    "ESCAPE": "Escape",
 }
 
 

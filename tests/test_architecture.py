@@ -96,7 +96,9 @@ def _scan_subpackage_imports(py_file: Path, package: str, sub_root: str) -> list
 # ============================================================
 
 
-@pytest.mark.parametrize("py_file", _collect_py_files("core"), ids=lambda p: str(p.relative_to(SRC)))
+@pytest.mark.parametrize(
+    "py_file", _collect_py_files("core"), ids=lambda p: str(p.relative_to(SRC))
+)
 def test_core_does_not_import_qt_or_qasync(py_file: Path) -> None:
     """`src/tgmonitor/core/` 下任何 .py 文件,任何位置(顶层 / lazy / try 块)
     都禁止 import PySide6 或 qasync。

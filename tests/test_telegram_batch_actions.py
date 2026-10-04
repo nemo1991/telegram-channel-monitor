@@ -42,6 +42,7 @@ class _CaptureClient:
     async def request(self, payload: dict) -> None:
         self.captured.append(payload)
 
+
 # ============== forward_messages ==============
 
 
