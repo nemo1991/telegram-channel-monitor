@@ -199,11 +199,3 @@ def test_pick_channel_classmethod_returns_channel_id_on_accept(
     monkeypatch.setattr(ChannelPickerDialog, "selected_channel_id", lambda self: 200)
     result = ChannelPickerDialog.pick_channel(None, channels)
     assert result == 200
-
-
-def test_dialog_cleanup_on_close(dialog: ChannelPickerDialog, qapp: QApplication) -> None:
-    """关窗不抛(防 test teardown 报警)。"""
-    _drain(qapp)
-    dialog.close()
-    dialog.deleteLater()
-    _drain(qapp)

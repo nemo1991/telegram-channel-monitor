@@ -16,6 +16,33 @@ from __future__ import annotations
 
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
+
+# ============================================================
+# ChannelsApi 单元测试用捕获客户端(2026-10-04 plan 阶段 1.3.C:4 份
+# inline `_CaptureClient` 合并成 module-level 类 — 减 ~120 LOC 重复)
+# ============================================================
+
+
+class _CaptureClient:
+    """ChannelsApi 单元测试用最小 client — 只实现 `request()` 把 payload 记
+    到 `captured`,以及 `ChannelsApi` 内部会调的 `_check_alive()`(空实现)。
+
+    使用模式:
+        captured: list[dict] = []
+        api = ChannelsApi(_CaptureClient(captured))
+        await api.add_reaction(...)
+        assert captured == [{"@type": ..., ...}]
+    """
+
+    def __init__(self, captured: list[dict]) -> None:
+        self.captured = captured
+
+    def _check_alive(self) -> None:  # noqa: D401 — ChannelsApi 内部调用
+        pass
+
+    async def request(self, payload: dict) -> None:
+        self.captured.append(payload)
+
 # ============== forward_messages ==============
 
 
@@ -185,15 +212,7 @@ async def test_add_reaction_standard_emoji_dispatches_emoji_type() -> None:
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 
     captured: list[dict] = []
-
-    class _CaptureClient:
-        def _check_alive(self) -> None:  # noqa: D401 — ChannelsApi 内部调用
-            pass
-
-        async def request(self, payload: dict) -> None:
-            captured.append(payload)
-
-    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    api = ChannelsApi(_CaptureClient(captured))  # type: ignore[arg-type]
     await api.add_reaction(100, 42, "🔥")
     assert len(captured) == 1
     rt = captured[0]["reaction_type"]
@@ -205,15 +224,7 @@ async def test_add_reaction_custom_emoji_dispatches_custom_emoji_type() -> None:
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 
     captured: list[dict] = []
-
-    class _CaptureClient:
-        def _check_alive(self) -> None:  # noqa: D401
-            pass
-
-        async def request(self, payload: dict) -> None:
-            captured.append(payload)
-
-    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    api = ChannelsApi(_CaptureClient(captured))  # type: ignore[arg-type]
     await api.add_reaction(100, 42, "custom_emoji_id:5368324170671202286")
     assert len(captured) == 1
     rt = captured[0]["reaction_type"]
@@ -228,15 +239,7 @@ async def test_remove_reaction_custom_emoji_dispatches_custom_emoji_type() -> No
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 
     captured: list[dict] = []
-
-    class _CaptureClient:
-        def _check_alive(self) -> None:  # noqa: D401
-            pass
-
-        async def request(self, payload: dict) -> None:
-            captured.append(payload)
-
-    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    api = ChannelsApi(_CaptureClient(captured))  # type: ignore[arg-type]
     await api.remove_reaction(100, 42, "custom_emoji_id:5368324170671202286")
     assert len(captured) == 1
     assert captured[0]["@type"] == "removeMessageReaction"
@@ -251,15 +254,7 @@ async def test_add_reaction_empty_string_is_noop() -> None:
     from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
 
     captured: list[dict] = []
-
-    class _CaptureClient:
-        def _check_alive(self) -> None:  # noqa: D401
-            pass
-
-        async def request(self, payload: dict) -> None:
-            captured.append(payload)
-
-    api = ChannelsApi(_CaptureClient())  # type: ignore[arg-type]
+    api = ChannelsApi(_CaptureClient(captured))  # type: ignore[arg-type]
     await api.add_reaction(100, 42, "")
     await api.remove_reaction(100, 42, "")
     assert captured == []

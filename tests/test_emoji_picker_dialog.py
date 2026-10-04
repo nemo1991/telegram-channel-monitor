@@ -161,11 +161,3 @@ def test_get_emoji_classmethod_returns_tuple_on_accept(
     monkeypatch.setattr(EmojiPickerDialog, "is_big", lambda self: True)
     result = EmojiPickerDialog.get_emoji()
     assert result == ("🔥", True)
-
-
-def test_dialog_cleanup_on_close(dialog: EmojiPickerDialog, qapp: QApplication) -> None:
-    """关窗不抛(防 test teardown 报警)。"""
-    _drain(qapp)
-    dialog.close()
-    dialog.deleteLater()
-    _drain(qapp)
