@@ -576,8 +576,8 @@ class MediaManagerWidget(QWidget):
         `storage.list_media` 透传。
         """
         # sort / dir combo 的 currentData 可能是 None(刚构造时)→ 用 fallback
-        sort = self.cmb_sort.currentData() if hasattr(self, "cmb_sort") else None
-        sort_dir = self.cmb_dir.currentData() if hasattr(self, "cmb_dir") else None
+        sort = self.cmb_sort.currentData()
+        sort_dir = self.cmb_dir.currentData()
         return {
             "channel_id": self.cmb_channel.currentData(),
             "media_type": self.cmb_type.currentData(),

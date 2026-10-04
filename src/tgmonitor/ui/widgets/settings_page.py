@@ -749,15 +749,11 @@ class SettingsPage(QWidget):
         # ("zh_CN" / "en_US"),直接传给 EditableSettings(它内部 pydantic
         # 字段是 Literal["zh_CN", "en_US"] — 用 data() 而非 currentText
         # 保证翻译后 user 选「English」不会写出 "English" 字面)。
-        lang_value = self.cmb_lang.currentData() if hasattr(self, "cmb_lang") else "zh_CN"
+        lang_value = self.cmb_lang.currentData() or "zh_CN"
         # 2026-09-07 v1.6.9:快捷键 — keySequence().toString() 直传
         # QKeySequence 串格式("Ctrl+R" 等);空 = 用户清空,落 .env = ""
         # (走 keybinding.default_for 兜底,与 `key_theme=""` 同语义)。
-        kb = (
-            {a: e.keySequence().toString() for a, e in self._keybinding_edits.items()}
-            if hasattr(self, "_keybinding_edits")
-            else {}
-        )
+        kb = {a: e.keySequence().toString() for a, e in self._keybinding_edits.items()}
         return EditableSettings(
             api_id=self.in_api_id.value(),
             api_hash=self.in_api_hash.text().strip(),
@@ -839,25 +835,22 @@ class SettingsPage(QWidget):
 
         # 2026-09-03 v1.5.4 PR #P4:主题持久化 checkbox 状态同步
         # (空 = 不勾选,与 v1.5.0 行为一致;非空 = 勾选)
-        if hasattr(self, "chk_theme_persist"):
-            self.chk_theme_persist.setChecked(bool(s.key_theme))
+        self.chk_theme_persist.setChecked(bool(s.key_theme))
 
         # 2026-09-07 v1.6.8:回填当前语言。findData 用 locale code,不会
         # 受显示文本翻译影响。
-        if hasattr(self, "cmb_lang"):
-            idx_lang = self.cmb_lang.findData(s.lang)
-            if idx_lang >= 0:
-                self.cmb_lang.setCurrentIndex(idx_lang)
+        idx_lang = self.cmb_lang.findData(s.lang)
+        if idx_lang >= 0:
+            self.cmb_lang.setCurrentIndex(idx_lang)
 
         # 2026-09-07 v1.6.9:回填快捷键 — keybinding.binding_for 拿实际
         # QKeySequence(空 settings.value → 走 default_for(action) 兜底,
         # UI 上仍显示硬编码默认,避免空白看起来「没绑」)。
-        if hasattr(self, "_keybinding_edits"):
-            from tgmonitor.core.keybinding import binding_for
+        from tgmonitor.core.keybinding import binding_for
 
-            for action, edit in self._keybinding_edits.items():
-                settings_val = getattr(s, f"key_{action}", "")
-                edit.setKeySequence(QKeySequence(binding_for(action, settings_val)))
+        for action, edit in self._keybinding_edits.items():
+            settings_val = getattr(s, f"key_{action}", "")
+            edit.setKeySequence(QKeySequence(binding_for(action, settings_val)))
 
     # ------ 槽 ------
 
@@ -940,21 +933,20 @@ class SettingsPage(QWidget):
         # 2026-09-07 v1.6.9:快捷键冲突校验 — 两 action 绑同一键 → 弹
         # warning,保留旧值,不落盘。`find_duplicates` 走 keybinding 模
         # 块的「toString().lower()」比较,与 Qt 自身解析路径一致。
-        if hasattr(self, "_keybinding_edits"):
-            from tgmonitor.core.keybinding import find_duplicates
+        from tgmonitor.core.keybinding import find_duplicates
 
-            proposed = {
-                a: edit.keySequence().toString() for a, edit in self._keybinding_edits.items()
-            }
-            dupes = find_duplicates(proposed)
-            if dupes:
-                pretty = ", ".join(f"{a1} ↔ {a2}" for a1, a2 in dupes)
-                QMessageBox.warning(
-                    self,
-                    self.tr("快捷键冲突"),
-                    self.tr(f"以下快捷键重复绑定:\n{pretty}\n\n请修改后重试。"),
-                )
-                return
+        proposed = {
+            a: edit.keySequence().toString() for a, edit in self._keybinding_edits.items()
+        }
+        dupes = find_duplicates(proposed)
+        if dupes:
+            pretty = ", ".join(f"{a1} ↔ {a2}" for a1, a2 in dupes)
+            QMessageBox.warning(
+                self,
+                self.tr("快捷键冲突"),
+                self.tr(f"以下快捷键重复绑定:\n{pretty}\n\n请修改后重试。"),
+            )
+            return
         errs = e.validate()
         if errs:
             QMessageBox.warning(self, self.tr("校验失败"), "\n".join(errs))
@@ -980,6 +972,7 @@ class SettingsPage(QWidget):
             # 不看 key_* 字段(纯 UI),reconfigure 走 cheap path 不重 backend,
             # 但 `self.app.settings` 实例已替换,这里直接传新对象。
             main_win = self.window()
+            # noqa: capability-probe — reload_shortcuts 是 MainWindow 可选扩展能力(测试注入 fake 不一定有)
             if main_win is not None and hasattr(main_win, "reload_shortcuts"):
                 try:
                     main_win.reload_shortcuts(new_settings)
@@ -1080,77 +1073,69 @@ class SettingsPage(QWidget):
         self.btn_apply.setText(self.tr("保存并应用"))
 
         # 语言分组(单独一个组,需要重建 cmb_lang items)
-        if hasattr(self, "cmb_lang"):
-            cur_lang = self.cmb_lang.currentData() or "zh_CN"
-            self.cmb_lang.blockSignals(True)
-            self.cmb_lang.clear()
-            self.cmb_lang.addItem(self.tr("简体中文"), "zh_CN")
-            self.cmb_lang.addItem(self.tr("English"), "en_US")
-            idx = self.cmb_lang.findData(cur_lang)
-            if idx >= 0:
-                self.cmb_lang.setCurrentIndex(idx)
-            self.cmb_lang.blockSignals(False)
+        cur_lang = self.cmb_lang.currentData() or "zh_CN"
+        self.cmb_lang.blockSignals(True)
+        self.cmb_lang.clear()
+        self.cmb_lang.addItem(self.tr("简体中文"), "zh_CN")
+        self.cmb_lang.addItem(self.tr("English"), "en_US")
+        idx = self.cmb_lang.findData(cur_lang)
+        if idx >= 0:
+            self.cmb_lang.setCurrentIndex(idx)
+        self.cmb_lang.blockSignals(False)
 
         # 主题 cmb — 同样需要重建 items
-        if hasattr(self, "cmb_theme"):
-            from tgmonitor.ui.theme import Theme
+        from tgmonitor.ui.theme import Theme
 
-            cur_theme = self.cmb_theme.currentData() or Theme.SYSTEM.value
-            self.cmb_theme.blockSignals(True)
-            self.cmb_theme.clear()
-            self.cmb_theme.addItem(self.tr("浅色"), Theme.LIGHT.value)
-            self.cmb_theme.addItem(self.tr("暗色"), Theme.DARK.value)
-            self.cmb_theme.addItem(self.tr("跟随系统"), Theme.SYSTEM.value)
-            idx = self.cmb_theme.findData(cur_theme)
-            if idx >= 0:
-                self.cmb_theme.setCurrentIndex(idx)
-            self.cmb_theme.blockSignals(False)
+        cur_theme = self.cmb_theme.currentData() or Theme.SYSTEM.value
+        self.cmb_theme.blockSignals(True)
+        self.cmb_theme.clear()
+        self.cmb_theme.addItem(self.tr("浅色"), Theme.LIGHT.value)
+        self.cmb_theme.addItem(self.tr("暗色"), Theme.DARK.value)
+        self.cmb_theme.addItem(self.tr("跟随系统"), Theme.SYSTEM.value)
+        idx = self.cmb_theme.findData(cur_theme)
+        if idx >= 0:
+            self.cmb_theme.setCurrentIndex(idx)
+        self.cmb_theme.blockSignals(False)
 
         # checkbox 文本
-        if hasattr(self, "chk_theme_persist"):
-            self.chk_theme_persist.setText(
-                self.tr("持久化主题(写 .env `TG_KEY_THEME`,重启应用仍生效)")
-            )
+        self.chk_theme_persist.setText(
+            self.tr("持久化主题(写 .env `TG_KEY_THEME`,重启应用仍生效)")
+        )
 
         # 快捷键帮助 — 2026-09-07 v1.6.9:现已通过下方「快捷键」分组持久化,
         # help_shortcuts 文案简化为「编辑见下方」,不再列硬编码。
-        if hasattr(self, "help_shortcuts"):
-            self.help_shortcuts.setText(
-                self.tr(
-                    "快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换\n"
-                    "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
-                    "        Ctrl+C 复制当前消息文本\n"
-                    "\n"
-                    "完整可编辑列表见下方「⌨ 快捷键」分组。"
-                )
+        self.help_shortcuts.setText(
+            self.tr(
+                "快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换\n"
+                "        Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消\n"
+                "        Ctrl+C 复制当前消息文本\n"
+                "\n"
+                "完整可编辑列表见下方「⌨ 快捷键」分组。"
             )
+        )
 
         # 2026-09-07 v1.6.9:快捷键分组的 14 行 label + 提示文本走 tr()
         # 重译。edit widget 本身无 tr() 文本,保留不变。
-        if hasattr(self, "_keybinding_labels"):
-            for action, lbl in self._keybinding_labels.items():
-                lbl.setText(self._keybinding_label(action) + ":")
+        for action, lbl in self._keybinding_labels.items():
+            lbl.setText(self._keybinding_label(action) + ":")
 
         # 测试代理按钮文字(可能在 "测试中…" 状态)
-        if hasattr(self, "btn_test_proxy"):
-            # 若正在测试,保持 "测试中…";否则恢复 "测试连接"。
-            # 用 disabled 状态判断——_on_test_proxy 把它 disable 时改成
-            # "测试中…",完成后 enable + 改回 "测试连接"。
-            if self.btn_test_proxy.isEnabled():
-                self.btn_test_proxy.setText(self.tr("测试连接"))
-            else:
-                self.btn_test_proxy.setText(self.tr("测试中…"))
+        # 若正在测试,保持 "测试中…";否则恢复 "测试连接"。
+        # 用 disabled 状态判断——_on_test_proxy 把它 disable 时改成
+        # "测试中…",完成后 enable + 改回 "测试连接"。
+        if self.btn_test_proxy.isEnabled():
+            self.btn_test_proxy.setText(self.tr("测试连接"))
+        else:
+            self.btn_test_proxy.setText(self.tr("测试中…"))
 
         # 2026-09-24 v1.8.3:TDLib 缓存按钮文字(可能在 "清理中…" 状态)
         # label 内容是动态大小,retranslate 时刷新一次。
-        if hasattr(self, "_btn_clear_cache"):
-            if self._btn_clear_cache.isEnabled():
-                self._btn_clear_cache.setText(self.tr("🧹 清理缓存"))
-            else:
-                self._btn_clear_cache.setText(self.tr("🧹 清理中…"))
-        if hasattr(self, "_cache_label"):
-            # 静默刷新:retranslate 后大小仍是真实数字,无需弹窗
-            self._refresh_cache_label()
+        if self._btn_clear_cache.isEnabled():
+            self._btn_clear_cache.setText(self.tr("🧹 清理缓存"))
+        else:
+            self._btn_clear_cache.setText(self.tr("🧹 清理中…"))
+        # 静默刷新:retranslate 后大小仍是真实数字,无需弹窗
+        self._refresh_cache_label()
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt 命名
         """2026-09-07 v1.6.8:LanguageChange → retranslateUi 全文重译。

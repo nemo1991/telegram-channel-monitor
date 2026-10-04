@@ -29,8 +29,7 @@ class ThemeController:
         # 刷新 nav bar 内部样式
         self._ctx.nav.refresh_theme()
         # 频道类型图标(已 tinted)需要按新主题重画
-        if hasattr(self._ctx.channel_panel, "refresh_theme"):
-            self._ctx.channel_panel.refresh_theme()
+        self._ctx.channel_panel.refresh_theme()
         # 2026-09-07 v1.6.8:status bar 文案走 tr()。
         self._ctx.status_bar.show_message(
             self._tr("已切换到 {kind} 主题").format(
@@ -47,8 +46,7 @@ class ThemeController:
         # 按钮图标按 actual(非 current)—— SYSTEM 态下按 OS 实际值显示
         self._ctx.header.btn_theme.setText("☀" if actual.value == "dark" else "🌙")
         self._ctx.nav.refresh_theme()
-        if hasattr(self._ctx.channel_panel, "refresh_theme"):
-            self._ctx.channel_panel.refresh_theme()
+        self._ctx.channel_panel.refresh_theme()
         # 2026-09-07 v1.6.8:status bar 文案走 tr()。
         self._ctx.status_bar.show_message(
             self._tr("已切换到 {kind} 主题").format(

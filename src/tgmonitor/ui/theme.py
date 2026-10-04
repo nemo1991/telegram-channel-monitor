@@ -75,6 +75,7 @@ class ThemeManager(QObject):
             scheme = app.styleHints().colorScheme()
             # Qt.ColorScheme.Dark=2 / Light=0 / Unknown=1
             # 直接用 int() 不可(ColorScheme 是 enum 但不是 IntEnum)— 用 .value
+            # noqa: capability-probe — Qt <6.5 ColorScheme 是 IntEnum(int 直接工作),>=6.5 是 enum(需 .value),兼容层 duck-type
             scheme_value = int(scheme.value) if hasattr(scheme, "value") else int(scheme)
             return Theme.DARK if scheme_value == 2 else Theme.LIGHT
         except (ImportError, AttributeError, RuntimeError, ValueError):

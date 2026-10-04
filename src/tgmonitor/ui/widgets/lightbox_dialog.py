@@ -301,6 +301,7 @@ class LightboxDialog(QDialog):
         # v1.6.10:按当前 kind / data 启灰工具栏按钮
         self._update_button_states()
         # 2026-09-09 v1.7.2:刷新 ▶/⏸ 按钮图标(切图后状态可能变)。
+        # noqa: capability-probe — 控制条按 kind 条件 build,kind=image 不创建
         if hasattr(self, "_btn_play_pause"):
             self._update_play_pause_button()
 
@@ -869,6 +870,7 @@ class LightboxDialog(QDialog):
 
     def _update_button_states(self) -> None:
         """按当前 kind / data 启灰工具栏按钮。"""
+        # noqa: capability-probe — 控制条按 kind 条件 build,老测试无控制条场景
         if not hasattr(self, "_btn_prev"):
             # _build_control_bar 未调 — 老测试无控制条场景,跳过
             return

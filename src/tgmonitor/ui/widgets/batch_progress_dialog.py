@@ -114,6 +114,7 @@ class BatchProgressDialog(QDialog):
         """
         self.lbl_status.setText(self.tr("正在取消…"))
         self._btn_cancel.setEnabled(False)
+        # noqa: capability-probe — VM.cancel_current_batch 是可选扩展能力(早期 VM 无),新 VM 才有
         if hasattr(self._vm, "cancel_current_batch"):
             self._vm.cancel_current_batch()
 
