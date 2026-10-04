@@ -183,6 +183,38 @@ class MainWindow(QMainWindow):
         设置页改好配置后热重载清除。
         """
         super().__init__()
+        # v1.0.1:env_path fallback 跟 app.py 同步 — platform-native
+        # (~/.local/share/tgmonitor/.env / ~/Library/Application Support/tgmonitor/.env),
+        # 不依赖 cwd。
+        from tgmonitor.core.config import _user_data_dir
+
+        resolved_env_path: Path = env_path or (_user_data_dir() / ".env")
+        self._setup_core(app, monitor, loop, resolved_env_path, objects_error)
+        self._build_ui()
+        self._build_menu()
+        self._build_tray()
+        self._wire_shortcuts()
+        self._wire_events()
+        self._wire_theme_change_signal()
+        self._refresh_state()
+        self._vm.bootstrap_ui()
+        self._setup_controllers()
+
+    def _setup_core(
+        self,
+        app: AppService,
+        monitor: MonitorService,
+        loop: asyncio.AbstractEventLoop,
+        env_path: Path,
+        objects_error: str | None,
+    ) -> None:
+        """2026-10-04 plan 阶段 3.2:`__init__` 拆 3 段 — 核心字段 + VM + tray + 4 VM 信号。
+
+        装配顺序故意保持原 __init__ 的执行序列(flag 必须在 super 之后立即置位,
+        env_path fallback 必须在 setWindowTitle 之前,VM 信号必须在 controller
+        装配之前就位以确保 controller 调 main_window.*_vm 时 handler 已 connect)。
+        """
+
         self.app = app
         self.monitor = monitor
         self.loop = loop
@@ -201,7 +233,7 @@ class MainWindow(QMainWindow):
         # 不依赖 cwd。
         from tgmonitor.core.config import _user_data_dir
 
-        self.env_path = env_path or (_user_data_dir() / ".env")
+        self.env_path = env_path or (_user_data_dir() / ".env")  # noqa: F841 — _user_data_dir already imported
         self.setWindowTitle(self.tr("tgmonitor · Telegram 频道监听"))
         self.resize(1180, 740)
 
@@ -221,22 +253,20 @@ class MainWindow(QMainWindow):
         # clear 触发清空 — 但 toolbar.clear 是后置动作,handler 触发顺序:按钮
         # click → handler → clear,所以读到的是上一帧选择)。
         self._last_live_selection: list[tuple[int, int]] = []
-        self._build_ui()
-        self._build_menu()
-        self._build_tray()
-        self._wire_shortcuts()
-        self._wire_events()
-        self._wire_theme_change_signal()
-        self._refresh_state()
-        self._vm.bootstrap_ui()
+    def _setup_controllers(self) -> None:
+        """2026-10-04 plan 阶段 3.2:装配 MainWindowCtx + 6 controller。
+
+        controller 间无顺序依赖(各自只读 ctx 字段),按当前 alphabetical
+        顺序排(export / header_action / settings_reaction / theme / tray / sync)。
+        """
 
         # ======================== 6 controller 装配(2026-10-01 v1.12.x) ========================
         # 复杂 4 个(live_selection / media_actions / search / message_stream)
         # 留 main_window.py 自身。
         self._ctx = MainWindowCtx(
-            app=app,
-            monitor=monitor,
-            loop=loop,
+            app=self.app,
+            monitor=self.monitor,
+            loop=self.loop,
             vm=self._vm,
             env_path=self.env_path,
             main_window=self,
@@ -260,7 +290,6 @@ class MainWindow(QMainWindow):
         self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
         self._export_ctrl = ExportController(self._ctx)
         self._sync_ctrl = SyncController(self._ctx)
-
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
         self._shutdown_cb = cb
@@ -336,6 +365,19 @@ class MainWindow(QMainWindow):
     # ======================== UI 装配 ========================
 
     def _build_ui(self) -> None:
+        """2026-10-04 plan 阶段 3.1:拆 `_build_central_widget` + `_wire_signals` 两段。
+
+        本方法只做编排,装配细节见两个私有方法。
+        """
+        self._build_central_widget()
+        self._wire_signals()
+
+    def _build_central_widget(self) -> None:
+        """装配 central widget + 5 个 stacked page + status bar + 2 个 debounce timer。
+
+        2026-10-04 plan 阶段 3.1:从原 `_build_ui` 拆出。装配关系复杂,信号
+        连接全部留在 `_wire_signals`。
+        """
         central = QWidget()
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
@@ -445,7 +487,16 @@ class MainWindow(QMainWindow):
 
         root.addWidget(right, 1)
         self.setCentralWidget(central)
+    def _wire_signals(self) -> None:
+        """2026-10-04 plan 阶段 3.1:集中所有信号连接(原 `_build_ui` 后半段)。
 
+        5 大类:
+        - nav / header / search bar / theme → MainWindow 内部槽
+        - Dashboard / ChannelWidget → 业务回调
+        - MediaManagerWidget → vm 或本地回调
+        - MessageView / MessageDetail → selection + 详情
+        - SelectionToolbar + 详情顶部按钮 → 批量动作入口
+        """
         # ---- 信号连接 ----
         self.nav.current_changed.connect(self.stack.setCurrentIndex)
         # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
@@ -557,7 +608,6 @@ class MainWindow(QMainWindow):
         self.message_detail.export_current_requested.connect(self._on_live_export_current)
         self.message_detail.delete_current_requested.connect(self._on_live_delete_current)
         self.message_detail.copy_text_requested.connect(self._on_live_copy_text)
-
     def _build_menu(self) -> None:
         """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
 
