@@ -17,8 +17,8 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 
-from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
 from tests.fixtures._factories import make_message
+from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
 from tgmonitor.ui.widgets.form_row import empty_hint
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 

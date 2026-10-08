@@ -24,8 +24,8 @@ from PySide6.QtGui import QBrush  # noqa: E402
 from PySide6.QtTest import QSignalSpy  # noqa: E402
 from PySide6.QtWidgets import QStyleOptionViewItem  # noqa: E402
 
-from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
 from tests.fixtures._factories import make_message  # noqa: E402
+from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
 from tgmonitor.ui.widgets.message_view import (  # noqa: E402
     MessageItemDelegate,
     MessageListModel,
