@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -57,7 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MessageDTO, SyncOptions
+from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, SyncOptions
 from tgmonitor.core.events import (
     LoginStateChanged,
     MediaDeleted,
@@ -71,6 +70,7 @@ from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.controllers import (
     ExportController,
     HeaderActionController,
+    LiveSelectionController,
     MainWindowCtx,
     SearchController,
     SettingsReactionController,
@@ -131,24 +131,8 @@ _ACTION_SLOTS: dict[str, Callable[[Any], Callable[[], None]]] = {
 # 2026-09-08 v1.7.0:右键菜单 / 详情按钮传上来的 items 形状是
 # list[tuple[cid, mid]] 或 list[(cid, mid, idx)](media manager 风格)。
 # LIVE 多选统一成 list[tuple[int, int]] 传给 AppService。
-def _normalize_selection_items(items: list | None) -> list[tuple[int, int]]:
-    """过滤 None / 长度不足 / 非数字项,返 `(cid, mid)` 列表。
-
-    `items` 来源两种:
-    - `MessageView.selection_messages_changed` 信号:`list[tuple[cid, mid]]`
-    - 兼容性容错(未来 media manager 风格复用):`list[(cid, mid, idx)]`
-    """
-    if not items:
-        return []
-    out: list[tuple[int, int]] = []
-    for it in items:
-        if not isinstance(it, tuple) or len(it) < 2:
-            continue
-        try:
-            out.append((int(it[0]), int(it[1])))
-        except (TypeError, ValueError):
-            continue
-    return out
+# 2026-10-04 plan 阶段 3.3:_normalize_selection_items 抽到
+# `LiveSelectionController`(只有 live_selection 用)。
 
 
 class MainWindow(QMainWindow):
@@ -250,10 +234,8 @@ class MainWindow(QMainWindow):
         self._vm.monitoring_paused.connect(self._on_monitoring_paused)
         self._vm.monitoring_resumed.connect(self._on_monitoring_resumed)
         # 2026-09-08 v1.7.0:LIVE 多选 toolbar 缓存最近一次 selection —
-        # toolbar 按钮按下时不必重新问 live_view(selection 可能已被 toolbar
-        # clear 触发清空 — 但 toolbar.clear 是后置动作,handler 触发顺序:按钮
-        # click → handler → clear,所以读到的是上一帧选择)。
-        self._last_live_selection: list[tuple[int, int]] = []
+        # 2026-10-04 plan 阶段 3.3:挪到 `LiveSelectionController._last_live_selection`
+        # (MainWindow 不再持有)。
 
     def _setup_controllers(self) -> None:
         """2026-10-04 plan 阶段 3.2:装配 MainWindowCtx + 6 controller。
@@ -324,6 +306,53 @@ class MainWindow(QMainWindow):
         )
         self.header.search_bar.tag_toggled.connect(self._search_ctrl.on_search_tag_toggled)
         self.header.search_bar.pinned_toggled.connect(self._search_ctrl.on_search_pinned_toggled)
+        # 2026-10-04 plan 阶段 3.3:live_selection controller — 抽 14 _on_live_*
+        # handler + 7 _run_live_* helper + _show_batch_progress_dialog +
+        # _normalize_selection_items 到独立 plain class。controller 自持
+        # `_last_live_selection` 共享 state。
+        self._live_selection_ctrl = LiveSelectionController(self._ctx)
+        # ---- LIVE 多选 signal wire(顺序敏感:controller 先实例化) ----
+        # selection state
+        self.live_view.selection_count_changed.connect(
+            self._live_selection_ctrl.on_selection_count_changed
+        )
+        self.live_view.selection_messages_changed.connect(
+            self._live_selection_ctrl.on_selection_messages_changed
+        )
+        # 右键菜单 6 入口(带 items)
+        self.live_view.export_requested.connect(self._live_selection_ctrl.on_live_export)
+        self.live_view.delete_requested.connect(self._live_selection_ctrl.on_live_delete)
+        self.live_view.mark_read_requested.connect(self._live_selection_ctrl.on_live_mark_read)
+        # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
+        self.live_view.favorite_requested.connect(self._live_selection_ctrl.on_live_favorite)
+        self.live_view.tags_requested.connect(self._live_selection_ctrl.on_live_tags)
+        self.live_view.notes_requested.connect(self._live_selection_ctrl.on_live_notes)
+        # toolbar 6 按钮(读 controller 内部 _last_live_selection)
+        self._selection_toolbar.export_clicked.connect(
+            self._live_selection_ctrl.on_live_export_selected
+        )
+        self._selection_toolbar.delete_clicked.connect(
+            self._live_selection_ctrl.on_live_delete_selected
+        )
+        self._selection_toolbar.mark_read_clicked.connect(
+            self._live_selection_ctrl.on_live_mark_read_selected
+        )
+        # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
+        self._selection_toolbar.forward_clicked.connect(
+            self._live_selection_ctrl.on_live_forward_selected
+        )
+        self._selection_toolbar.pin_clicked.connect(self._live_selection_ctrl.on_live_pin_selected)
+        self._selection_toolbar.react_clicked.connect(
+            self._live_selection_ctrl.on_live_react_selected
+        )
+        # 详情顶部 3 按钮 — 单条操作入口
+        self.message_detail.export_current_requested.connect(
+            self._live_selection_ctrl.on_live_export_current
+        )
+        self.message_detail.delete_current_requested.connect(
+            self._live_selection_ctrl.on_live_delete_current
+        )
+        self.message_detail.copy_text_requested.connect(self._live_selection_ctrl.on_live_copy_text)
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
@@ -592,39 +621,11 @@ class MainWindow(QMainWindow):
         # 2026-09-08 v1.7.0:多选浮层 + 详情顶部 3 按钮 — 走同一 selection
         # 入口。toolbar 默认 hidden,count>0 时 show 并更新计数 label;
         # count=0 时 hide(selectionCleared 也走同一槽,toolbar.clear 复用)。
-        self.live_view.selection_count_changed.connect(self._on_live_selection_count)
-        self.live_view.selection_messages_changed.connect(self._on_live_selection_messages)
-        self.live_view.export_requested.connect(self._on_live_export)
-        self.live_view.delete_requested.connect(self._on_live_delete)
-        self.live_view.mark_read_requested.connect(self._on_live_mark_read)
-        # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
-        self.live_view.favorite_requested.connect(self._on_live_favorite)
-        self.live_view.tags_requested.connect(self._on_live_tags)
-        self.live_view.notes_requested.connect(self._on_live_notes)
-        self._selection_toolbar.export_clicked.connect(
-            lambda: self._on_live_export(self._last_live_selection)
-        )
-        self._selection_toolbar.delete_clicked.connect(
-            lambda: self._on_live_delete(self._last_live_selection)
-        )
-        self._selection_toolbar.mark_read_clicked.connect(
-            lambda: self._on_live_mark_read(self._last_live_selection)
-        )
-        # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
-        self._selection_toolbar.forward_clicked.connect(
-            lambda: self._on_live_forward(self._last_live_selection)
-        )
-        self._selection_toolbar.pin_clicked.connect(
-            lambda: self._on_live_pin(self._last_live_selection)
-        )
-        self._selection_toolbar.react_clicked.connect(
-            lambda: self._on_live_react(self._last_live_selection)
-        )
+        # 2026-10-04 plan 阶段 3.3:全部委托 `LiveSelectionController`,实际
+        # 连接在 `_setup_controllers` 完成(controller 实例化后立即连,顺序
+        # 敏感:避免 `_wire_signals` 提前引用 `_live_selection_ctrl` 触发
+        # AttributeError,同 `SearchController` 模式)。
         self._selection_toolbar.clear_clicked.connect(self.live_view.clear_selection)
-        # 详情顶部 3 按钮 — 单条操作入口
-        self.message_detail.export_current_requested.connect(self._on_live_export_current)
-        self.message_detail.delete_current_requested.connect(self._on_live_delete_current)
-        self.message_detail.copy_text_requested.connect(self._on_live_copy_text)
 
     def _build_menu(self) -> None:
         """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
@@ -881,352 +882,10 @@ class MainWindow(QMainWindow):
         if self.stack.currentIndex() != 0:
             self._switch_tab(0)
 
-    # ---- 2026-09-08 v1.7.0:LIVE 多选 + 详情顶部 3 按钮 handler ----
-
-    def _on_live_selection_count(self, count: int) -> None:
-        """LIVE 多选数量变化 → toolbar 显示 / 隐藏。
-
-        count=0 → 隐藏(selectionCleared 也会走这里);count>0 → 显示并
-        触发 `selection_messages_changed` 缓存最后选择(供 toolbar 按钮
-        后续 lambda 读取 — toolbar 按钮按下时 selectionModel 可能已被
-        clear 触发清空)。
-        """
-        self._selection_toolbar.setVisible(count > 0)
-
-    def _on_live_selection_messages(self, items: list) -> None:
-        """缓存最近一次完整 selection — toolbar 按钮按下时不再依赖
-        `live_view.selectionModel` 当前状态(用户点 toolbar → 可能已经在
-        clear 阶段)。
-        """
-        # items 是 list[tuple[cid, mid]] 或 list[(cid, mid, idx)] — 我们只关心 (cid, mid)
-        normalized: list[tuple[int, int]] = []
-        for it in items:
-            if isinstance(it, tuple) and len(it) >= 2:
-                normalized.append((int(it[0]), int(it[1])))
-        self._last_live_selection = normalized
-        # 同步更新 toolbar 计数 label
-        self._selection_toolbar.set_count(len(normalized))
-
-    def _on_live_export(self, items: list) -> None:
-        """右键菜单 / toolbar 触发 → 弹 ExportDialog(selected_messages=items)。
-
-        items 是 list[(cid, mid)],与 Media Manager 「导出 CSV」流程分开,
-        走 ExportDialog(让用户选 JSON/HTML/ZIP + 输出路径)。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-        # 复用现有 ExportDialog,在外部再注入 selected_messages
-        # (ExportDialog 当前只支持 channel_ids / single_message_id,本 PR
-        # 扩展它接受 selected_messages — 详见 export_dialog.py 改动)。
-        from tgmonitor.ui.widgets.export_dialog import ExportDialog  # 局部 import 避开循环
-
-        dlg = ExportDialog(
-            self.app,
-            channel_ids=[],
-            selected_messages=normalized,
-        )
-        if not dlg.exec():
-            return
-        req = dlg.request()
-        self._run_live_export(req)
-
-    def _on_live_delete(self, items: list) -> None:
-        """右键菜单 / toolbar 触发 → 二次确认 → 批量删(LIVE 软删 + media cleanup)。
-
-        走 `AppService.delete_messages_batch`(返成功数);不调 TDLib
-        `deleteMessages`(live 删除本地副本,TG 端不动 — 与 Clear Channel
-        行为对齐,v1.7.0 不引入服务端删除)。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-        n = len(normalized)
-        ans = QMessageBox.warning(
-            self,
-            self.tr("删除确认"),
-            # 2026-09-08 v1.7.0:%d 占位 — `self.tr()` 返回翻译后再 `% n` 插值。
-            # 不能用 f-string(lupdate 抽的是模板,翻译后 `{n}` 不再被替换)。
-            self.tr("确定删除选中的 %d 条消息?\n删除后无法撤销。") % n,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if ans != QMessageBox.Yes:
-            return
-        self._run_live_delete(normalized)
-        # 删完顺手 clear selection(避免用户在空 row 上右键菜单)
-        self.live_view.clear_selection()
-
-    def _on_live_mark_read(self, items: list) -> None:
-        """右键菜单 / toolbar 触发 → 批量标已读(走 TDLib viewMessages)。
-
-        走 `AppService.mark_messages_read`(返成功条数);paused 时返 0
-        + log warning,不抛 UI 错误。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-        self._run_live_mark_read(normalized)
-        # 标已读不改本地视图,不清 selection(用户可能想接着操作)
-
-    def _on_live_export_current(self, channel_id: int, telegram_msg_id: int) -> None:
-        """详情顶部「导出」→ 单条消息导出(走 ExportDialog)。"""
-        from tgmonitor.ui.widgets.export_dialog import ExportDialog
-
-        dlg = ExportDialog(
-            self.app,
-            channel_ids=[channel_id],
-            single_message_id=telegram_msg_id,
-        )
-        if not dlg.exec():
-            return
-        req = dlg.request()
-        self._run_live_export(req)
-
-    def _on_live_delete_current(self, channel_id: int, telegram_msg_id: int) -> None:
-        """详情顶部「删除」→ 二次确认 → 单条删 + 关详情面板。"""
-        ans = QMessageBox.warning(
-            self,
-            self.tr("删除确认"),
-            self.tr("确定删除这条消息?\n删除后无法撤销。"),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if ans != QMessageBox.Yes:
-            return
-        self._run_live_delete([(channel_id, telegram_msg_id)])
-        # 关详情 — 当前消息已删,留着也没意义
-        self.message_detail.show_message(None)
-
-    def _on_live_copy_text(self, text: str) -> None:
-        """详情顶部「复制文本」→ 仅做 toast 提示(实际 copy 在 MessageDetail
-        handler 里走 QGuiApplication.clipboard().setText)。
-
-        上层这里只 log + status bar 显示「已复制」;未来可接 toast 系统。
-        """
-        log.info("copied %d chars to clipboard", len(text))
-        self.status_bar.show_message(self.tr("已复制 %d 字符") % len(text), 3000)
-
-    def _run_live_export(self, req) -> None:
-        """透传 ExportDialog 拼好的 ExportRequest → 走 ExportProgressDialog。
-
-        req 来自 `ExportDialog.request()`,字段(selected_messages /
-        single_message_id / channel_ids / format / ...)已组装好。复用现有
-        `_on_export_done` / `_on_export_done_with_error` 反馈路径。
-        """
-
-        # 2026-09-08 v1.7.0:`app.export` 是 AsyncIterator,不能直接传 run_coro
-        # (需 Coroutine)。包成 fire-and-forget 协程消耗迭代器,跟 VM.start_export
-        # 一致。
-        async def _go() -> None:
-            async for _ in self.app.export(req):
-                pass
-
-        run_coro(self.loop, _go(), error_label="live_export")
-
-    def _run_live_delete(self, items: list[tuple[int, int]]) -> None:
-        """批量删 — `AppService.delete_messages_batch` 返成功数。
-
-        通过 VM.publish_threadsafe 走 async loop,UI 不阻塞。
-        2026-09-09 v1.7.2:加 BatchProgressDialog 显示进度。
-        """
-        if not items:
-            return
-        self._show_batch_progress_dialog("delete")
-        run_coro(self.loop, self.app.delete_messages_batch(items), error_label="live_delete")
-
-    def _run_live_mark_read_guarded(self, items: list[tuple[int, int]]) -> None:
-        """2026-09-09 v1.7.2:批量标已读带 BatchProgressDialog 包装。"""
-        if not items:
-            return
-        self._show_batch_progress_dialog("mark_read")
-        run_coro(self.loop, self.app.mark_messages_read(items), error_label="live_mark_read")
-
-    def _run_live_mark_read(self, items: list[tuple[int, int]]) -> None:
-        """批量标已读 — `AppService.mark_messages_read` 返成功条数。
-
-        paused 时返 0 + log warning,不抛 UI 错误。
-        """
-        if not items:
-            return
-        run_coro(self.loop, self.app.mark_messages_read(items), error_label="live_mark_read")
-
-    def _run_live_forward(self, items: list[tuple[int, int]], to_chat_id: int) -> None:
-        """2026-09-09 v1.7.2:批量转发 — `AppService.forward_messages`。
-        配合 `_show_batch_progress_dialog` 在 LIVE 选多条 → 转发到… →
-        弹目标频道选择 → 触发本方法。
-        """
-        if not items:
-            return
-        self._show_batch_progress_dialog("forward")
-        run_coro(
-            self.loop, self.app.forward_messages(items, to_chat_id), error_label="live_forward"
-        )
-
-    def _run_live_pin(self, items: list[tuple[int, int]]) -> None:
-        """2026-09-09 v1.7.2:批量钉选。"""
-        if not items:
-            return
-        self._show_batch_progress_dialog("pin")
-        run_coro(self.loop, self.app.pin_messages(items), error_label="live_pin")
-
-    def _run_live_react(
-        self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
-    ) -> None:
-        """2026-09-09 v1.7.2:批量 emoji 回应。
-
-        2026-09-10 v1.7.3:`extra=emoji` 传给 BatchProgressDialog,标题显示
-        「批量回应 😀 中…」(unreact 类似)。
-        2026-09-11 v1.7.4:`is_big` 透传到 AppService.add_reaction — 由
-        EmojiPickerDialog 的「大表情」checkbox 决定。
-        """
-        if not items or not emoji:
-            return
-        self._show_batch_progress_dialog("react", extra=emoji)
-        run_coro(
-            self.loop,
-            self.app.add_reaction(items, emoji, is_big=is_big),
-            error_label="live_react",
-        )
-
-    def _show_batch_progress_dialog(self, op: str, extra: str = "") -> None:
-        """2026-09-09 v1.7.2:构造 + show 非模态 BatchProgressDialog,
-        VM signal 驱动进度。`op` 用于标题(`forward` / `pin` / `react` 等)。
-
-        无返回 — 调用方 fire-and-forget,VM `batch_done` signal 触发
-        `dialog.accept()` 收尾。
-
-        2026-09-10 v1.7.3:`extra` 在 react/unreact 时传入 emoji,标题插入;
-        其他 op 忽略。
-        """
-        from tgmonitor.ui.widgets.batch_progress_dialog import BatchProgressDialog
-
-        dlg = BatchProgressDialog(self._vm, op=op, extra=extra, parent=self)
-        dlg.show()
-
-    def _on_live_forward(self, items: list) -> None:
-        """2026-09-09 v1.7.2:批量转发入口 — 弹目标频道选择 dialog,接收 ID 后转发。
-
-        2026-09-11 v1.7.4:升级为 ChannelPickerDialog(列表 + 搜索 + 双击),取代
-        QInputDialog.getInt 输入整数 chat_id(易输错,无候选)。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-
-        async def _go() -> list[ChannelDTO]:
-            return await self.app.list_joined_channels()
-
-        def _on_channels(channels: list[ChannelDTO]) -> None:
-            # 局部 import — channel picker 是次常用路径,避免启动开销。
-            from tgmonitor.ui.widgets.channel_picker_dialog import ChannelPickerDialog
-
-            to_cid = ChannelPickerDialog.pick_channel(self, channels)
-            if to_cid is None:
-                return
-            self._run_live_forward(normalized, to_cid)
-            self.live_view.clear_selection()
-
-        run_coro(self.loop, _go(), on_success=_on_channels, error_label="live_forward_pick")
-
-    def _on_live_pin(self, items: list) -> None:
-        """2026-09-09 v1.7.2:批量钉选入口。
-
-        2026-09-13 v1.7.5 PR #3 (P0-C):二次确认 — 钉选是「写服务端 +
-        不能 quick undo」的操作,与批量删除对齐。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-        n = len(normalized)
-        ans = QMessageBox.warning(
-            self,
-            self.tr("钉选确认"),
-            self.tr("确定钉选选中的 %d 条消息?\n操作不可撤销。") % n,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if ans != QMessageBox.Yes:
-            return
-        self._run_live_pin(normalized)
-        self.live_view.clear_selection()
-
-    def _on_live_react(self, items: list) -> None:
-        """2026-09-09 v1.7.2:批量 emoji 回应入口 — 弹 QInputDialog 输入 emoji 字符。
-
-        2026-09-11 v1.7.4:升级为 EmojiPickerDialog(60+ grid + is_big + 手输兜底),
-        取代 QInputDialog.getText。
-        2026-09-13 v1.7.5 PR #3 (P0-C):emoji 选完后弹二次确认 — 批量打
-        emoji 是「写服务端」操作,不可撤销,与 pin / delete 对齐。
-        """
-        normalized = _normalize_selection_items(items)
-        if not normalized:
-            return
-        # 局部 import — emoji picker 是次常用路径,避免 main_window 启动开销。
-        from tgmonitor.ui.widgets.emoji_picker_dialog import EmojiPickerDialog
-
-        result = EmojiPickerDialog.get_emoji(self)
-        if result is None:
-            return
-        emoji, is_big = result
-        n = len(normalized)
-        ans = QMessageBox.warning(
-            self,
-            self.tr("回应确认"),
-            self.tr("确定对选中的 %d 条消息打 %s 反应?\n操作不可撤销。") % (n, emoji),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if ans != QMessageBox.Yes:
-            return
-        self._run_live_react(normalized, emoji, is_big=is_big)
-        self.live_view.clear_selection()
-
-    def _on_live_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
-        """2026-09-09 v1.7.2:右键菜单 ★ 触发 → 调 AppService.set_favorite。
-
-        `value` 由右键菜单根据当前 is_favorite 翻转传进来(选中=False → 传 True)。
-        """
-        run_coro(
-            self.loop,
-            self.app.set_favorite(channel_id, telegram_msg_id, value),
-            error_label="live_favorite",
-        )
-
-    def _on_live_tags(self, channel_id: int, telegram_msg_id: int) -> None:
-        """2026-09-09 v1.7.2:右键菜单 🏷 触发 → 弹 tag 输入 → 调 AppService.set_tags。
-
-        逗号 / 空格分隔多个 tag;空白过滤。
-        """
-        text, ok = QInputDialog.getText(
-            self,
-            self.tr("设置标签"),
-            self.tr("输入标签(逗号或空格分隔,如 tech, news):"),
-        )
-        if not ok:
-            return
-        tags = [t.strip() for t in text.replace(",", " ").split() if t.strip()]
-        run_coro(
-            self.loop,
-            self.app.set_tags(channel_id, telegram_msg_id, tags),
-            error_label="live_tags",
-        )
-
-    def _on_live_notes(self, channel_id: int, telegram_msg_id: int) -> None:
-        """2026-09-09 v1.7.2:右键菜单 📝 触发 → 多行输入框 → 调 AppService.set_notes。"""
-        # 用 QInputDialog.getMultiLineText 替代单行输入 — 备注通常多行。
-        text, ok = QInputDialog.getMultiLineText(
-            self,
-            self.tr("设置备注"),
-            self.tr("为本条消息添加备注(支持多行):"),
-        )
-        if not ok:
-            return
-        run_coro(
-            self.loop,
-            self.app.set_notes(channel_id, telegram_msg_id, text),
-            error_label="live_notes",
-        )
+    # 2026-10-04 plan 阶段 3.3:14 _on_live_* handler + 7 _run_live_* helper +
+    # _show_batch_progress_dialog + _normalize_selection_items 全部抽到
+    # `LiveSelectionController`,MainWindow 不再持有。本 marker 占位方便
+    # 阅读 git blame。
 
     def _copy_current_message_text(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
