@@ -18,15 +18,20 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
+from tests.fixtures._factories import make_message
 from tgmonitor.ui.widgets.form_row import empty_hint
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 
 
 def _make_msg() -> MessageDTO:
-    return MessageDTO(
-        id=0,
+    """2026-10-04 plan 阶段 1.3.D:走工厂 `make_message` + `**overrides` 传
+    `raw=...` / 自定义 `media=[...]` — 工厂 `**overrides` 让任意 MessageDTO
+    字段都能 override,本地不再手搓 `MessageDTO(...)`。
+    """
+
+    return make_message(
         channel_id=100,
-        telegram_msg_id=42,
+        msg_id=42,
         text="hello 世界",
         author="alice",
         date=datetime(2026, 7, 15, 13, 50, 10),

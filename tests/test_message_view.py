@@ -25,6 +25,7 @@ from PySide6.QtTest import QSignalSpy  # noqa: E402
 from PySide6.QtWidgets import QStyleOptionViewItem  # noqa: E402
 
 from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO, ReactionDTO  # noqa: E402
+from tests.fixtures._factories import make_message  # noqa: E402
 from tgmonitor.ui.widgets.message_view import (  # noqa: E402
     MessageItemDelegate,
     MessageListModel,
@@ -345,10 +346,15 @@ def test_empty_overlay_reappears_after_clear(qapp):
 
 
 def _make_msg(channel_id: int, telegram_msg_id: int) -> MessageDTO:
-    return MessageDTO(
-        id=0,
+    """2026-10-04 plan 阶段 1.3.D:走 `make_message` 工厂 + `**overrides` 传
+    `text="x"` / `author=None` / 固定 `date`。本函数在 24 callsite 用 —
+    工厂泛化后等价于 `make_message(channel_id=cid, msg_id=mid, text="x",
+    author=None, date=...)`,净减 5 行。
+    """
+
+    return make_message(
         channel_id=channel_id,
-        telegram_msg_id=telegram_msg_id,
+        msg_id=telegram_msg_id,
         text="x",
         author=None,
         date=datetime(2026, 7, 15, 13, 0, 0),
@@ -987,12 +993,15 @@ def _make_msg_with_reactions(
     telegram_msg_id: int = 100,
     reactions: list | None = None,
 ) -> MessageDTO:
-    """2026-09-11 v1.7.4:构造带 reactions 的 message DTO。"""
+    """2026-09-11 v1.7.4:构造带 reactions 的 message DTO。
 
-    return MessageDTO(
-        id=0,
+    2026-10-04 plan 阶段 1.3.D:走 `tests.fixtures._factories.make_message` +
+    `**overrides` 传 `reactions=...`,不在本地手搓 `MessageDTO(...)`。
+    """
+
+    return make_message(
         channel_id=1,
-        telegram_msg_id=telegram_msg_id,
+        msg_id=telegram_msg_id,
         text="x",
         date=datetime(2026, 7, 15, 13, 0, 0),
         reactions=reactions,
