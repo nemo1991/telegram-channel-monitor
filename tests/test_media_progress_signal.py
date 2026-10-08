@@ -12,20 +12,24 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+from tests.fixtures._factories import make_message
 from tests.fixtures._fake_app import FakeApp
+from tgmonitor.core.dto import MediaDTO, MediaType
 from tgmonitor.core.events import EventBus, MediaDownloadProgress
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
 
 def _make_message(channel_id: int = 100, msg_id: int = 42, media_count: int = 1):
-    """构造测试用 MessageDTO;避开真实 TG 链路。"""
-    from tgmonitor.core.dto import MediaDTO, MediaType, MessageDTO
+    """构造测试用 MessageDTO;避开真实 TG 链路。
 
+    2026-10-04 plan 阶段 1.3.D:走 `tests.fixtures._factories.make_message`
+    + media_count 仍在本文件按字段填充(工厂不接 media_count)。
+    """
     media = [MediaDTO(type=MediaType.PHOTO, file_name=f"m{i}.jpg") for i in range(media_count)]
-    return MessageDTO(
-        id=1,
+    return make_message(
+        id=1,  # noqa: A002 — 故意覆盖 id(工厂默认 0)
         channel_id=channel_id,
-        telegram_msg_id=msg_id,
+        msg_id=msg_id,
         date=datetime(2026, 9, 1, 12, 0, 0),
         text="photo",
         media=media,
