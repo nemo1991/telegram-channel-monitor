@@ -52,6 +52,20 @@ windows_qt_paint_skip = pytest.mark.skipif(
     ),
 )
 
+# 2026-10-04 plan 阶段 1.3.E:debounce QTimer + QEventLoop().exec() 触发的
+# 偶发 race — 严格说「known-flaky」而非「hard skip」。`strict=False` 让
+# xfail 不阻塞 CI 绿(测试失败 = xfail 算 pass,意外 pass 也算 pass —
+# 不会让 CI 卡顿,只会让 race 真修完时这些 case 重新变成「真 pass」并自然
+# 出现在 strict 模式下需要被清理的「xfailed-but-running» 列表)。
+windows_qt_paint_xfail = pytest.mark.xfail(
+    sys.platform in _PAINT_PATH_RACE_PLATFORMS,
+    strict=False,
+    reason=(
+        "Qt offscreen paint path race 偶发(本地 Qt 6.11+ macOS 真机过);"
+        "strict=False 让 race 真修完时此 xfail 自然消失,不阻塞 CI。"
+    ),
+)
+
 
 class _FakeSignal:
     """可连接的伪 Qt Signal — 简单 callable 列表。
@@ -178,7 +192,7 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
 # ============================================================
 
 
-@windows_qt_paint_skip
+@windows_qt_paint_xfail
 def test_on_media_deleted_triggers_widget_refresh(qapp) -> None:
     """`on_media_deleted` 必须经 debounce timer 触发 widget refresh。
 
@@ -224,7 +238,7 @@ def test_on_media_deleted_non_mediadeleted_type_is_ignored(qapp) -> None:
     assert win.media_manager.refresh_requested.emit_count == 0
 
 
-@windows_qt_paint_skip
+@windows_qt_paint_xfail
 def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     """批量 N 条连续 MediaDeleted → debounce timer 合并为单次 widget refresh。
 
@@ -252,7 +266,7 @@ def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     assert win.media_manager.refresh_requested.emit_count == 1
 
 
-@windows_qt_paint_skip
+@windows_qt_paint_xfail
 def test_on_media_deleted_throttles_activity_messages(qapp) -> None:
     """批量 100 条连续 delete → 活动文案不刷成「已删除 媒体 × 100」。
 
