@@ -6,6 +6,10 @@
 - retry_media:reset + force 重下
 - open_media:Local / Folder / S3 路径分支
 - 事件发布(MediaDeleted / MediaRetried / MediaDownloaded)
+
+2026-10-04 plan 阶段 1.3.B:`_FakeS3Client` / `_FakeS3Stream` /
+`_FakeS3ClientCtx` / `_FakeS3Session` 替身 class 提到
+`tests/fixtures/_s3_client.py`,本文件直接 import 共用。
 """
 
 from __future__ import annotations
@@ -19,6 +23,9 @@ from typing import TYPE_CHECKING
 import aioboto3
 import pytest
 
+from tests.fixtures._s3_client import (  # noqa: E402
+    FakeS3Session,
+)
 from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
@@ -468,79 +475,14 @@ async def test_delete_by_channel_does_not_touch_other_channels(
 # ---- open_media_with_result(2026-08-25 v1.3.0 PR #5)-----------------
 
 
-class _FakeS3Stream:
-    """最小 aioboto3 StreamingBody 替身 — 仅供 open_media 测试用。"""
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-
-    async def __aenter__(self) -> _FakeS3Stream:
-        return self
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-    async def read(self) -> bytes:
-        return self._data
-
-
-class _FakeS3Client:
-    """最小 boto3 s3 client 替身 — 只实现 open_media 路径需要的 get_object。"""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
-        self._data: bytes = b"jpeg-bytes"
-        self._raise: Exception | None = None
-
-    def set_data(self, data: bytes) -> None:
-        self._data = data
-
-    def set_raise(self, exc: Exception | None) -> None:
-        self._raise = exc
-
-    async def head_bucket(self, **kw: object) -> dict:
-        # connect() 探测用 — 让它成功,跳过 create_bucket 路径
-        self.calls.append(("head_bucket", dict(kw)))
-        return {}
-
-    async def get_object(self, **kw: object) -> dict:
-        self.calls.append(("get_object", dict(kw)))
-        if self._raise is not None:
-            raise self._raise
-        return {"Body": _FakeS3Stream(self._data)}
-
-
-class _FakeS3ClientCtx:
-    """aioboto3 ClientCreatorContext 替身 — `async with` 进入后返回 inner client。"""
-
-    def __init__(self, client: _FakeS3Client) -> None:
-        self._client_obj = client
-
-    async def __aenter__(self) -> _FakeS3Client:
-        return self._client_obj
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-
-class _FakeS3Session:
-    """aioboto3.Session 替身 — `Session().client('s3')` 返一个 ClientCreatorContext。"""
-
-    def __init__(self) -> None:
-        self._client_obj = _FakeS3Client()
-
-    def client(self, *args: object, **kw: object) -> _FakeS3ClientCtx:
-        return _FakeS3ClientCtx(self._client_obj)
-
-
 def _make_s3_backend(
     app: AppService,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[object, _FakeS3Session]:
+) -> tuple[object, FakeS3Session]:
     """把 app.objects 切到 S3ObjectStore(用 fake aioboto3.Session 注入)。"""
     from tgmonitor.core.objectstore.s3_store import S3ObjectStore
 
-    fake = _FakeS3Session()
+    fake = FakeS3Session()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="t", region="us-east-1")
     # _make_s3_backend 是同步函数,但 store.connect 是 async — 必须在 async 测试里 await

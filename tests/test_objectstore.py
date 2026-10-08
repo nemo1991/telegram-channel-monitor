@@ -1,4 +1,11 @@
-"""对象存储后端单测(Local + Folder + S3)。"""
+"""对象存储后端单测(Local + Folder + S3)。
+
+2026-10-04 plan 阶段 1.3.B:`_FakeS3Client` / `_FakeStream` /
+`_FakeClientContext` / `_FakePaginator` / `_FakePaginatorIter` /
+`_FakeSession` 等替身 class 提到 `tests/fixtures/_s3_client.py`,
+本文件 import 共用。本文件 `_*MissingBucketClient` 等子类继承
+fixture 的 `FakeS3Client`,test 体特化的 method 仍留本文件。
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,10 @@ import aioboto3
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 
+from tests.fixtures._s3_client import (
+    FakeS3Client,
+    FakeS3Session,
+)
 from tgmonitor.core.objectstore.base import ObjectMeta
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
@@ -130,131 +141,16 @@ async def test_folder_put_get_uses_to_thread(tmp_path, monkeypatch):
 
 
 # ---- S3(aioboto3)----
+# Fake S3 client / stream / paginator / session 等替身已统一到
+# `tests.fixtures._s3_client.py`,本文件直接 import(见文件顶部)。
+# 子类(`_MissingBucketClient` 等)继承 `FakeS3Client` 写局部特化 method。
 
 
-class _FakeStream:
-    """模拟 aioboto3 StreamingBody:异步上下文管理器 + read()。"""
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-
-    async def __aenter__(self) -> _FakeStream:
-        return self
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-    async def read(self) -> bytes:
-        return self._data
-
-
-class _FakeS3Client:
-    """记录调用的假 boto3 client。"""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
-        # iter_keys 测试:模拟 list_objects_v2 的 keys(可被子类覆盖)
-        self._list_keys: list[str] = []
-
-    def set_list_keys(self, keys: list[str]) -> None:
-        """注入 list_objects_v2 返回的 key 列表。"""
-        self._list_keys = list(keys)
-
-    def _record(self, op: str, kw: dict) -> None:
-        self.calls.append((op, dict(kw)))
-
-    async def head_bucket(self, **kw: object) -> dict:
-        self._record("head_bucket", kw)
-        return {}
-
-    async def create_bucket(self, **kw: object) -> dict:
-        self._record("create_bucket", kw)
-        return {}
-
-    async def put_object(self, **kw: object) -> dict:
-        self._record("put_object", kw)
-        return {"ETag": '"abc"'}
-
-    async def get_object(self, **kw: object) -> dict:
-        self._record("get_object", kw)
-        return {"Body": _FakeStream(b"data")}
-
-    async def head_object(self, **kw: object) -> dict:
-        self._record("head_object", kw)
-        return {"ContentType": "image/jpeg", "ContentLength": 4}
-
-    async def delete_object(self, **kw: object) -> dict:
-        self._record("delete_object", kw)
-        return {}
-
-    def get_paginator(self, name: str) -> _FakePaginator:
-        """fake paginator — 单页返所有 keys,真 boto3 是按页切分。"""
-        self._record("get_paginator", {"name": name})
-        return _FakePaginator(self._list_keys)
-
-
-class _FakeClientContext:
-    """模拟 aioboto3 的 ClientCreatorContext。
-
-    关键行为:`Session.client()` 返回的是**异步上下文管理器本身**,必须
-    `async with` 进入后才能拿到真正的 client —— 修复前 s3_store 直接把
-    context 对象当 client 用,`put_object` 等调用全部 AttributeError。
-    """
-
-    def __init__(self, client: _FakeS3Client) -> None:
-        self._client = client
-
-    async def __aenter__(self) -> _FakeS3Client:
-        return self._client
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-
-class _FakePaginator:
-    """mock boto3 paginator:把 keys 列表切成 N 页(每页 page_size)返。
-
-    用真 boto3 的分页行为:每页一个 batch;batch 抽完后 StopAsyncIteration。
-    page_size 默认 1000(等同 boto3 默认 PaginationConfig.PageSize 上限)。
-    """
-
-    def __init__(self, keys: list[str], page_size: int = 1000) -> None:
-        self._keys = list(keys)
-        self._page_size = page_size
-
-    def paginate(self, **kw: object) -> _FakePaginatorIter:
-        return _FakePaginatorIter(self._keys, self._page_size)
-
-
-class _FakePaginatorIter:
-    def __init__(self, keys: list[str], page_size: int = 1000) -> None:
-        self._keys = list(keys)
-        self._page_size = page_size
-
-    def __aiter__(self) -> _FakePaginatorIter:
-        return self
-
-    async def __anext__(self) -> dict:
-        if not self._keys:
-            raise StopAsyncIteration
-        batch = self._keys[: self._page_size]
-        del self._keys[: self._page_size]
-        return {"Contents": [{"Key": k} for k in batch]}
-
-
-class _FakeSession:
-    def __init__(self) -> None:
-        self._fake_client = _FakeS3Client()
-
-    def client(self, *args: object, **kw: object) -> _FakeClientContext:
-        return _FakeClientContext(self._fake_client)
-
-
-def _make_s3_store(monkeypatch) -> tuple[S3ObjectStore, _FakeS3Client]:
-    fake = _FakeSession()
+def _make_s3_store(monkeypatch) -> tuple[S3ObjectStore, FakeS3Client]:
+    fake = FakeS3Session()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
-    return store, fake._fake_client
+    return store, fake._client_obj
 
 
 async def test_s3_put_get_roundtrip(monkeypatch):
@@ -282,18 +178,18 @@ async def test_s3_put_get_roundtrip(monkeypatch):
 async def test_s3_connect_creates_bucket_when_missing(monkeypatch):
     """head_bucket 404(桶不存在)→ 走 create_bucket 分支。"""
 
-    class _MissingBucketClient(_FakeS3Client):
+    class _MissingBucketClient(FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
             raise _client_error(404, "NoSuchBucket")
 
-    fake = _FakeSession()
-    fake._fake_client = _MissingBucketClient()
+    fake = FakeS3Session()
+    fake._client_obj = _MissingBucketClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="new-bucket", region="ap-east-1")
     await store.connect()
-    created = [c for c in fake._fake_client.calls if c[0] == "create_bucket"]
-    assert created, f"create_bucket 未调用: {fake._fake_client.calls}"
+    created = [c for c in fake._client_obj.calls if c[0] == "create_bucket"]
+    assert created, f"create_bucket 未调用: {fake._client_obj.calls}"
     assert created[0][1]["Bucket"] == "new-bucket"
     assert created[0][1]["CreateBucketConfiguration"]["LocationConstraint"] == "ap-east-1"
 
@@ -301,41 +197,41 @@ async def test_s3_connect_creates_bucket_when_missing(monkeypatch):
 async def test_s3_connect_forbidden_raises(monkeypatch):
     """head_bucket 403(无权限)→ 直接上抛,不尝试建桶(配置错误不落盘)。"""
 
-    class _ForbiddenClient(_FakeS3Client):
+    class _ForbiddenClient(FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
             raise _client_error(403, "AccessDenied")
 
-    fake = _FakeSession()
-    fake._fake_client = _ForbiddenClient()
+    fake = FakeS3Session()
+    fake._client_obj = _ForbiddenClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     with pytest.raises(ClientError):
         await store.connect()
-    assert [c[0] for c in fake._fake_client.calls] == ["head_bucket"]
+    assert [c[0] for c in fake._client_obj.calls] == ["head_bucket"]
 
 
 async def test_s3_connect_endpoint_error_raises(monkeypatch):
     """head_bucket 网络 / 端点类错误(BotoCoreError)→ 上抛,不尝试建桶。"""
 
-    class _NetErrorClient(_FakeS3Client):
+    class _NetErrorClient(FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
             raise BotoCoreError()
 
-    fake = _FakeSession()
-    fake._fake_client = _NetErrorClient()
+    fake = FakeS3Session()
+    fake._client_obj = _NetErrorClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     with pytest.raises(BotoCoreError):
         await store.connect()
-    assert [c[0] for c in fake._fake_client.calls] == ["head_bucket"]
+    assert [c[0] for c in fake._client_obj.calls] == ["head_bucket"]
 
 
 async def test_s3_connect_bucket_owned_by_you_ok(monkeypatch):
     """head 404 → create 报 BucketAlreadyOwnedByYou(并发建桶竞争)→ 视为成功。"""
 
-    class _CreateRaceClient(_FakeS3Client):
+    class _CreateRaceClient(FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
             raise _client_error(404, "NoSuchBucket")
@@ -344,8 +240,8 @@ async def test_s3_connect_bucket_owned_by_you_ok(monkeypatch):
             self._record("create_bucket", kw)
             raise _client_error(409, "BucketAlreadyOwnedByYou")
 
-    fake = _FakeSession()
-    fake._fake_client = _CreateRaceClient()
+    fake = FakeS3Session()
+    fake._client_obj = _CreateRaceClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     await store.connect()  # 不抛
@@ -354,7 +250,7 @@ async def test_s3_connect_bucket_owned_by_you_ok(monkeypatch):
 async def test_s3_connect_create_forbidden_raises(monkeypatch):
     """head 404 → create 报 AccessDenied(无建桶权限)→ 上抛。"""
 
-    class _CreateDeniedClient(_FakeS3Client):
+    class _CreateDeniedClient(FakeS3Client):
         async def head_bucket(self, **kw: object) -> dict:
             self._record("head_bucket", kw)
             raise _client_error(404, "NoSuchBucket")
@@ -363,8 +259,8 @@ async def test_s3_connect_create_forbidden_raises(monkeypatch):
             self._record("create_bucket", kw)
             raise _client_error(403, "AccessDenied")
 
-    fake = _FakeSession()
-    fake._fake_client = _CreateDeniedClient()
+    fake = FakeS3Session()
+    fake._client_obj = _CreateDeniedClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     with pytest.raises(ClientError):
@@ -657,15 +553,15 @@ async def test_folder_stream_read_missing_key_raises(tmp_path):
 async def test_s3_stream_read_basic(monkeypatch):
     """PR #B6:S3 后端 stream_read 走 boto3 `iter_chunks` 原生流式。"""
 
-    class _ChunkedS3Client(_FakeS3Client):
+    class _ChunkedS3Client(FakeS3Client):
         """覆盖 get_object 返 _FakeStreamChunked(支持 iter_chunks)。"""
 
         async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
             self._record("get_object", kw)
             return {"Body": _FakeStreamChunked(b"s3-data-12345")}
 
-    fake = _FakeSession()
-    fake._fake_client = _ChunkedS3Client()
+    fake = FakeS3Session()
+    fake._client_obj = _ChunkedS3Client()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     await store.connect()
@@ -675,20 +571,20 @@ async def test_s3_stream_read_basic(monkeypatch):
     # 13 bytes / 4 → ceil(13/4) = 4 chunks: [s3-, dat, a-1, 2345]
     assert len(chunks) == 4
     # 校验 get_object 被调 + Body 上下文管理
-    gets = [c for c in fake._fake_client.calls if c[0] == "get_object"]
+    gets = [c for c in fake._client_obj.calls if c[0] == "get_object"]
     assert gets[0][1] == {"Bucket": "test-bucket", "Key": "media/s3.bin"}
 
 
 async def test_s3_stream_read_empty(monkeypatch):
     """PR #B6:S3 stream_read 空文件 → 0 chunks,正常终止。"""
 
-    class _EmptyStreamClient(_FakeS3Client):
+    class _EmptyStreamClient(FakeS3Client):
         async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
             self._record("get_object", kw)
             return {"Body": _FakeStreamChunked(b"")}
 
-    fake = _FakeSession()
-    fake._fake_client = _EmptyStreamClient()
+    fake = FakeS3Session()
+    fake._client_obj = _EmptyStreamClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     await store.connect()
@@ -729,13 +625,13 @@ async def test_s3_stream_read_falls_back_when_no_iter_chunks(monkeypatch):
             self._pos += n
             return out
 
-    class _ReadOnlyClient(_FakeS3Client):
+    class _ReadOnlyClient(FakeS3Client):
         async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
             self._record("get_object", kw)
             return {"Body": _ReadOnlyBody(b"s3-readonly-data")}
 
-    fake = _FakeSession()
-    fake._fake_client = _ReadOnlyClient()
+    fake = FakeS3Session()
+    fake._client_obj = _ReadOnlyClient()
     monkeypatch.setattr(aioboto3, "Session", lambda: fake)
     store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
     await store.connect()
