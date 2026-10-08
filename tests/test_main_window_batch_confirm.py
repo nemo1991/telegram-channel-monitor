@@ -81,6 +81,8 @@ def _build_ctrl(state: _FakeState) -> tuple[LiveSelectionController, MainWindowC
         vm=MagicMock(name="vm"),
         env_path=MagicMock(name="env_path"),
         main_window=state,
+        window_title_setter=MagicMock(name="window_title_setter"),
+        quit_app=MagicMock(name="quit_app"),
         live_view=state,
         message_detail=MagicMock(name="message_detail"),
         media_manager=MagicMock(name="media_manager"),

@@ -1,6 +1,6 @@
 # mypy: disable-error-code=attr-defined
-# 访问 `MainWindow._quit_app` — controller / MainWindow thin delegate
-# 共享同一方法。
+# PySide6 6.6+.pyi 漏 QCoreApplication.translate 等 — 同 main_window.py
+# 顶层注释,统一关掉 attr-defined。
 """Tray / 监听暂停-恢复 controller — VM 转发过来的 quit / pause / resume。
 
 2026-10-01 v1.12.x 从 `MainWindow` 抽出。3 个 handler:
@@ -8,11 +8,15 @@
 - `_on_monitoring_paused`:`MonitoringPaused` signal(status bar + window title)
 - `_on_monitoring_resumed`:`MonitoringResumed` signal(status bar + window title)
 
-`_quit_app` 是 MainWindow 内部 utility — controller 直接调
-`ctx.main_window._quit_app()`,走 MainWindow 引用,无需 callback 注入。
+2026-10-04 plan 阶段 3.4:反向调用(`setWindowTitle` / `quit_app`)改走
+ctx 上下文里的 callback,不再直接调 `main_window.setWindowTitle` /
+`main_window._quit_app` — MainWindow 注入 lambda,controller 不持有反向
+引用。
 """
 
 from __future__ import annotations
+
+from PySide6.QtCore import QCoreApplication
 
 from tgmonitor.ui.controllers._base import MainWindowCtx
 
@@ -29,7 +33,7 @@ class TrayController:
         与 MainWindow._quit_app 同义,但走 tray「退出」(不绕开 Qt 主循环)路径:
         VM `quit_requested` signal → 此 handler → `qt_app.quit`。
         """
-        self._ctx.main_window._quit_app()
+        self._ctx.quit_app()
 
     def on_monitoring_paused(self, source: str) -> None:
         """2026-09-03 v1.6.1:监听已暂停 — 状态栏常驻 label 显示 +
@@ -39,18 +43,14 @@ class TrayController:
         显隐,MainWindow 只委托 + 改 title。
         """
         self._ctx.status_bar.set_paused(True)
-        from PySide6.QtCore import QCoreApplication
-
         base_title = QCoreApplication.translate("MainWindow", "tgmonitor · Telegram 频道监听")
-        self._ctx.main_window.setWindowTitle(
+        self._ctx.window_title_setter(
             f"{base_title}  ({QCoreApplication.translate('MainWindow', '⏸ 暂停')})"
         )
 
     def on_monitoring_resumed(self, source: str) -> None:
         """2026-09-03 v1.6.1:监听已恢复 — 状态栏 label 隐藏 + title 复位。"""
         self._ctx.status_bar.set_paused(False)
-        from PySide6.QtCore import QCoreApplication
-
-        self._ctx.main_window.setWindowTitle(
+        self._ctx.window_title_setter(
             QCoreApplication.translate("MainWindow", "tgmonitor · Telegram 频道监听")
         )

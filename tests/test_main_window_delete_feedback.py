@@ -154,6 +154,8 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
         vm=MagicMock(name="vm"),
         env_path=MagicMock(name="env_path"),
         main_window=win,
+        window_title_setter=MagicMock(name="window_title_setter"),
+        quit_app=MagicMock(name="quit_app"),
         live_view=MagicMock(name="live_view"),
         message_detail=MagicMock(name="message_detail"),
         media_manager=win.media_manager,

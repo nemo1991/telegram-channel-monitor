@@ -60,6 +60,8 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
         vm=vm,
         env_path=MagicMock(name="env_path"),
         main_window=MagicMock(name="main_window"),
+        window_title_setter=MagicMock(name="window_title_setter"),
+        quit_app=MagicMock(name="quit_app"),
         live_view=live_view,
         message_detail=MagicMock(name="message_detail"),
         media_manager=MagicMock(name="media_manager"),

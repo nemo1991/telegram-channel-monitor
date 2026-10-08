@@ -6,6 +6,11 @@
 复杂 4 个 (live_selection / media_actions / search / message_stream) 留
 `main_window.py`,跟随后续 PR。
 
+2026-10-04 plan 阶段 3.3:4 复杂 controller 落点。
+2026-10-04 plan 阶段 3.4:加 `window_title_setter` / `quit_app` 反向调用
+callback — 替代 `tray_controller` 直接调 `main_window.setWindowTitle` /
+`main_window._quit_app`,MainWindow 注入 lambda,controller 不持有反向引用。
+
 为什么 dataclass + shared reference,不是 enum-style config:
 - controller 需要 widget refs (live_view / status_bar / header / nav / ...)
 - 还要共享 mutable 状态(`_last_live_selection` / `_shutdown_cb` /
@@ -23,6 +28,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMainWindow, QStackedWidget
@@ -50,9 +56,11 @@ class MainWindowCtx:
     - 字段按 controller 需要按需暴露;不强制一次性填齐
     - plain class(controller)接受 ctx,只读字段,避免反向修改污染 state
     - MainWindow 仍持所有真实状态,controller 不重复持有
-    - `main_window` 字段持有 MainWindow QWidget 引用 — controller 需要
-      调 `setWindowTitle` / `close` / `show` 等 QWidget 方法时通过此
-      字段访问(避免 controller 重复持有 widget state)
+    - `main_window` 字段持 MainWindow QWidget 引用 — controller 需要
+      作 `parent=QWidget` 给 dialog(LoginDialog / BatchProgressDialog /
+      QMessageBox 等)时通过此字段访问;反向"调出去"动作(改窗口标题
+      / 触发退出)走 `window_title_setter` / `quit_app` callback,不直接
+      持 `main_window` 反向方法调用。
     """
 
     app: AppService
@@ -61,8 +69,15 @@ class MainWindowCtx:
     vm: MonitorViewModel
     env_path: Path
 
-    # MainWindow QWidget 引用(controller 需 setWindowTitle / close 时用)
+    # MainWindow QWidget 引用(controller 作 dialog parent 时用)
     main_window: QMainWindow
+
+    # 反向调用 callback(2026-10-04 plan 阶段 3.4)— MainWindow 注入 lambda,
+    # controller 调出去改 window 状态但不需要碰 QWidget 引用本身。
+    # - `window_title_setter(title)` 等价 `main_window.setWindowTitle(title)`
+    # - `quit_app()` 等价 `main_window._quit_app()`(走 `qt_app.quit()`)
+    window_title_setter: Callable[[str], None]
+    quit_app: Callable[[], None]
 
     # Widget refs(按需)
     live_view: MessageView

@@ -253,6 +253,8 @@ class MainWindow(QMainWindow):
         # ======================== 6 controller 装配(2026-10-01 v1.12.x) ========================
         # 复杂 4 个(live_selection / media_actions / search / message_stream)
         # 留 main_window.py 自身。
+        # 2026-10-04 plan 阶段 3.4:反向调用通道注入 `window_title_setter` /
+        # `quit_app` lambda,controller 不再持 `main_window` 反向调出去。
         self._ctx = MainWindowCtx(
             app=self.app,
             monitor=self.monitor,
@@ -260,6 +262,8 @@ class MainWindow(QMainWindow):
             vm=self._vm,
             env_path=self.env_path,
             main_window=self,
+            window_title_setter=self.setWindowTitle,
+            quit_app=self._quit_app,
             live_view=self.live_view,
             message_detail=self.message_detail,
             media_manager=self.media_manager,
