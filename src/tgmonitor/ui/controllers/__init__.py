@@ -3,8 +3,9 @@
 2026-10-01 v1.12.x:6 个低风险 controller(theme / tray / header_action /
 settings_reaction / export / sync)。
 2026-10-04 plan 阶段 3.3:抽 `SearchController`(模板)+ `LiveSelectionController`
-+ `MediaActionsController`(MediaManagerWidget 入口 + VM media event)。
-`message_stream_controller` 留 `main_window.py`,跟随后续 PR。
++ `MediaActionsController`(MediaManagerWidget 入口 + VM media event)+
+`MessageStreamController`(VM LIVE 流消息 + EventBus MessageDeleted)。
+4 个复杂 controller 全部落点。
 
 每个 controller 是 plain class(`MainWindowCtx` dataclass,用法见 `_base.py`),
 非 QObject。MainWindow 仍持真实 widget 状态,controller 通过 ctx 访问 —
@@ -17,6 +18,7 @@ from tgmonitor.ui.controllers.export_controller import ExportController
 from tgmonitor.ui.controllers.header_action_controller import HeaderActionController
 from tgmonitor.ui.controllers.live_selection_controller import LiveSelectionController
 from tgmonitor.ui.controllers.media_actions_controller import MediaActionsController
+from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
 from tgmonitor.ui.controllers.search_controller import SearchController
 from tgmonitor.ui.controllers.settings_reaction_controller import SettingsReactionController
 from tgmonitor.ui.controllers.sync_controller import SyncController
@@ -34,4 +36,5 @@ __all__ = [
     "SearchController",
     "LiveSelectionController",
     "MediaActionsController",
+    "MessageStreamController",
 ]

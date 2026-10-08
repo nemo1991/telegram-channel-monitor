@@ -54,11 +54,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import MessageDTO, SyncOptions
+from tgmonitor.core.dto import SyncOptions
 from tgmonitor.core.events import (
     LoginStateChanged,
-    MessageDeleted,
-    MessageInteractionsChanged,
     NotificationRequested,
     QuitRequested,
 )
@@ -69,6 +67,7 @@ from tgmonitor.ui.controllers import (
     LiveSelectionController,
     MainWindowCtx,
     MediaActionsController,
+    MessageStreamController,
     SearchController,
     SettingsReactionController,
     SyncController,
@@ -403,6 +402,21 @@ class MainWindow(QMainWindow):
         self._media_refresh_debounce.timeout.connect(
             self._media_actions_ctrl.flush_media_refresh_pending
         )
+
+        # 2026-10-04 plan 阶段 3.3:message_stream controller — 抽 VM
+        # `message_received` / `message_edited` / `message_interactions_changed`
+        # + EventBus `MessageDeleted` 4 handler 到独立 plain class。
+        self._message_stream_ctrl = MessageStreamController(self._ctx)
+        # ---- VM LIVE 流消息 signal wire ----
+        self._vm.message_received.connect(self._message_stream_ctrl.on_message_received)
+        self._vm.message_edited.connect(self._message_stream_ctrl.on_message_edited)
+        self._vm.message_interactions_changed.connect(
+            self._message_stream_ctrl.on_message_interactions_changed
+        )
+        # ---- EventBus MessageDeleted 订阅(LIVE 流删行) ----
+        from tgmonitor.core.events import MessageDeleted  # noqa: PLC0415
+
+        self.app.bus.subscribe(MessageDeleted, self._message_stream_ctrl.on_bus_message_deleted)
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
@@ -929,8 +943,10 @@ class MainWindow(QMainWindow):
     # ======================== ViewModel 事件绑定 ========================
 
     def _wire_events(self) -> None:
-        self._vm.message_received.connect(self._on_message_received)
-        self._vm.message_edited.connect(self._on_message_edited)
+        # 2026-10-04 plan 阶段 3.3:VM message_received / message_edited /
+        # message_interactions_changed → `MessageStreamController`(signal wire
+        # 在 `_setup_controllers`,避免提前引用 `_message_stream_ctrl`)。
+        # EventBus `MessageDeleted` 也改在 `_setup_controllers` 段订阅。
         # 2026-10-04 plan 阶段 3.3:VM media_downloaded / media_retried /
         # media_deleted → `MediaActionsController`(signal wire 在
         # `_setup_controllers`,避免提前引用 `_media_actions_ctrl`)。
@@ -954,10 +970,6 @@ class MainWindow(QMainWindow):
         # vm.search_messages(...) 完成后 emit `message_search_results(list[MessageDTO])`,
         # MainWindow 接到直接 `set_messages` 替换视图(覆盖原有 LIVE 流)。
         self._vm.message_search_results.connect(self.live_view.set_messages)
-        # 2026-09-11 v1.7.4:reactions 增量推送 → LIVE 行局部刷新。
-        # TDLib `updateMessageReactions` bots-only(user client 不收),
-        # 仅靠 `updateMessageInteractionInfo`,服务端推送策略决定延迟。
-        self._vm.message_interactions_changed.connect(self._on_message_interactions_changed)
         # Media Manager 转发(2026-08-24)
         self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
         self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
@@ -971,9 +983,6 @@ class MainWindow(QMainWindow):
         # 2026-10-01 v1.11.x 状态栏组件化:`AuthErrorOccurred` 改由
         # status_bar 内部的 `_ErrorBellButton` widget-private 订阅,MainWindow
         # 不再持有 `_error_log` / `_bell_btn` / `_on_bus_auth_error`。
-        # MessageDeleted 直接订阅总线(VM 没 Qt signal — LIVE 流需要按事件
-        # 删行)
-        self.app.bus.subscribe(MessageDeleted, self._on_bus_message_deleted)
         # status_bar 子组件对外 signal(MainWindow 只做 thin 委托或承接 dialog)
         self.status_bar._bell.bell_clicked.connect(self._on_bell_clicked)
 
@@ -1039,48 +1048,11 @@ class MainWindow(QMainWindow):
         self.status_bar.clear_error_log()
 
     # ======================== VM 事件回调 ========================
-
-    def _on_message_received(self, m: MessageDTO) -> None:
-        self.live_view.set_channel_titles(
-            {cid: ch.title for cid, ch in self._vm.known_channels.items()}
-        )
-        self.live_view.append(m)
-        # 活动指示器:限频 1.5s/次,避免大流量刷屏
-        ch_title = self._vm.known_channels.get(m.channel_id)
-        title = ch_title.title if ch_title else f"#{m.channel_id}"
-        self.status_bar.throttle_activity(
-            "message_received",
-            f"+1 {title}",
-            min_interval_ms=1500,
-            timeout_ms=1200,
-        )
-
-    def _on_message_edited(self, m: MessageDTO) -> None:
-        """2026-08-24:TDLib updateMessageContent → MessageEdited 事件 → 整条 cell 重渲。
-
-        按 (channel_id, telegram_msg_id) 找现有 row,不增删。
-        """
-        self.live_view.replace_message(m)
-
-    def _on_message_interactions_changed(self, e) -> None:
-        """2026-09-11 v1.7.4:TDLib `updateMessageInteractionInfo` → reactions / views 变化。
-
-        LIVE 行:`live_view.refresh_reactions` 局部更新一行 — 不重建列表,
-        不丢失滚动 / 选中状态。详情面板:若正显示同一条,重新 show_message
-        渲染 reactions / views。
-
-        **TDLib 限制**:`updateMessageReactions` 是 bots-only,user client
-        不收;本路径依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged
-        .reactions`),服务端推送策略决定延迟。Anonymous reactions 永远看不到。
-        """
-        if not isinstance(e, MessageInteractionsChanged):
-            return
-        # LIVE 行 reactions 局部刷新(reactions=None 时 refresh_reactions 内部忽略)
-        self.live_view.refresh_reactions(e.channel_id, e.telegram_msg_id, e.reactions)
-        # 详情面板同步:若正显示该消息,用 LIVE 模型里的最新 DTO 重建(reactions 已就地更新)。
-        dto = self.live_view.dto_by_key(e.channel_id, e.telegram_msg_id)
-        if dto is not None:
-            self.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
+    # 2026-10-04 plan 阶段 3.3:VM `message_received` / `message_edited` /
+    # `message_interactions_changed` + EventBus `MessageDeleted` 4 handler
+    # 抽到 `MessageStreamController`。MainWindow 仍持 `_on_login_state`
+    # 等登录/连接/导出/同步委托给 _settings/_sync/_export controller 之外的
+    # 杂项 VM signal。
 
     def _on_login_state(self, state: str) -> None:
         # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
@@ -1139,19 +1111,6 @@ class MainWindow(QMainWindow):
         """2026-10-01 v1.12.x:委托 `SettingsReactionController`。"""
         self._settings_reaction_ctrl.on_settings_changed(
             what, needs_relogin, needs_restart, backend_label
-        )
-
-    async def _on_bus_message_deleted(self, e) -> None:
-        """EventBus:MonitorService.delete_message 发的 MessageDeleted → LIVE 流删行。
-
-        bytes 清理由 MonitorService.delete_message 内部已做,这里只管 UI。
-        """
-        if not isinstance(e, MessageDeleted):
-            return
-        self.live_view.remove_row(e.channel_id, e.telegram_msg_id)
-        # 活动指示器:删除消息短促提示(LIVE 流的删除可能用户没注意到)
-        self.status_bar.show_activity(
-            f"已删除 #{e.channel_id}/{e.telegram_msg_id}", timeout_ms=2000
         )
 
     # ======================== 同步请求 ========================
