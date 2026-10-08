@@ -1,30 +1,39 @@
-"""MainWindow MediaDeleted slot — 删除反馈可见性回归。
+"""`MediaActionsController.on_media_deleted` 删除反馈可见性回归。
 
 2026-09-28 用户反馈:Media Manager 点「删除」无反应 — row 不消失、状态栏
 无任何提示,体感「点了没反应」。根因:`vm.media_deleted` 事件无 UI 订阅,
 单条删除走完 `MediaDeleted` 事件没人接;批量删除靠末尾手动调
-`_on_media_refresh()`,但 `vm.delete_media_batch` 是 fire-and-forget,refresh
+`on_media_refresh()`,但 `vm.delete_media_batch` 是 fire-and-forget,refresh
 在 `_go` 跑完前就发了 → 拿到的还是旧 storage。
 
 本测试守住四条边界:
-  1. `_on_media_deleted` 必须:更新活动指示器 + 触发 widget refresh
+  1. `on_media_deleted` 必须:更新活动指示器 + 触发 widget refresh
   2. 100ms debounce timer 合并:连续 N 条 MediaDeleted → 单次 widget refresh
   3. 非 MediaDeleted 类型(slot 边界)直接 return,不抛、不刷
   4. activity 文案走 throttle,批量 100 条不会刷成流水账
+
+2026-10-04 plan 阶段 3.3:handler 从 MainWindow 抽到 MediaActionsController。
+测试改直接构造 controller + mock ctx(沿用 test_search_controller.py /
+test_live_selection_controller.py 模板);`_FakeWindow` 仍提供 activity
+label + debounce QTimer 桩。
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
+import pytest  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
 
 from tgmonitor.core.events import MediaDeleted, MessageDeleted  # noqa: E402
-from tgmonitor.ui.main_window import MainWindow  # noqa: E402
+from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
+from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
+    MediaActionsController,
+)
 
 # 2026-09-28 v1.9.2:与 `test_media_manager_i18n.py::windows_qt_paint_skip` 同根
 # 因 —— Qt offscreen paint path race 在 `QEventLoop().exec()` 嵌套时触发,
@@ -74,47 +83,38 @@ class _FakeMediaManager:
         pass  # 计 emit_count 在 _FakeSignal 上
 
 
+class _FakeActivityLabel:
+    """QObject 子集。ActvityLabel — 子组件 `setText` / `text()`。"""
+
+    def __init__(self) -> None:
+        self._text = ""
+
+    def setText(self, text: str) -> None:  # noqa: N802 — Qt API 命名
+        self._text = text
+
+    def text(self) -> str:
+        return self._text
+
+
 class _FakeWindow:
-    """最小 MainWindow 桩 — 覆盖 _on_media_deleted slot 需要的依赖。
+    """最小 MainWindow 桩 — 覆盖 `_FakeActivityLabel` + `media_manager` +
+    `_media_refresh_debounce` QTimer。
 
-    QTimer parent=self — 测试只构造桩,QApplication 由 conftest 兜底。
-
-    2026-10-01 v1.11.x 状态栏组件化:`_show_activity` / `_throttle_activity`
-    已迁到 `status_bar.show_activity` / `status_bar.throttle_activity`。
-    桩改带 `status_bar` 子对象 + 模拟 ActivityLabel 子组件。
+    2026-10-04 plan 阶段 3.3:`on_media_deleted` 已移到 `MediaActionsController`,
+    测试通过 `MediaActionsController(ctx).on_media_deleted(e)` 触发。
     """
 
     def __init__(self) -> None:
-        self._activity_label_text = ""
-
-        class _Lbl:
-            def setText(self, text: str) -> None:  # noqa: N802 — Qt API 命名
-                self.owner._activity_label_text = text
-
-            def text(self) -> str:  # 用于断言
-                return self.owner._activity_label_text
-
-            def __init__(self, owner: _FakeWindow) -> None:
-                self.owner = owner
-
-        self._activity_label = _Lbl(self)
+        self._activity_label = _FakeActivityLabel()
         self._activity_throttle: dict[str, float] = {}
         self.status_bar = _FakeStatusBar(self)
         self.media_manager = _FakeMediaManager()
 
-        # 与 _on_media_deleted / _flush_media_refresh_pending 配的真 QTimer
-        # (debounce 行为依赖 Qt 事件循环,offscreen 平台照常工作)
+        # 与 `on_media_deleted` 配的真 QTimer(debounce 行为依赖 Qt 事件循环,
+        # offscreen 平台照常工作)
         self._media_refresh_debounce = QTimer()
         self._media_refresh_debounce.setSingleShot(True)
         self._media_refresh_debounce.setInterval(100)
-        self._media_refresh_debounce.timeout.connect(self._flush_media_refresh_pending)
-
-    def tr(self, text: str) -> str:
-        """slot 内 `self.tr("…")` 调用 — fake 不挂 QObject,走 identity。"""
-        return text
-
-    # 绑 MainWindow 上的 unbound method
-    _flush_media_refresh_pending = MainWindow._flush_media_refresh_pending
 
 
 class _FakeStatusBar:
@@ -144,26 +144,52 @@ class _FakeStatusBar:
         self.show_activity(text, timeout_ms=timeout_ms)
 
 
+def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
+    """构造 `MediaActionsController` + ctx 引用 `_FakeWindow` 提供的 status_bar
+    / media_manager / debounce timer。"""
+    ctx = MainWindowCtx(
+        app=MagicMock(name="app"),
+        monitor=MagicMock(name="monitor"),
+        loop=MagicMock(name="loop"),
+        vm=MagicMock(name="vm"),
+        env_path=MagicMock(name="env_path"),
+        main_window=win,
+        live_view=MagicMock(name="live_view"),
+        message_detail=MagicMock(name="message_detail"),
+        media_manager=win.media_manager,
+        selection_toolbar=MagicMock(name="selection_toolbar"),
+        dashboard=MagicMock(name="dashboard"),
+        channel_panel=MagicMock(name="channel_panel"),
+        header=MagicMock(name="header"),
+        status_bar=win.status_bar,
+        nav=MagicMock(name="nav"),
+        stack=MagicMock(name="stack"),
+        tray=None,
+        search_debounce=MagicMock(name="search_debounce"),
+        media_refresh_debounce=win._media_refresh_debounce,
+    )
+    return MediaActionsController(ctx)
+
+
 # ============================================================
-# `_on_media_deleted` 行为
+# `on_media_deleted` 行为
 # ============================================================
 
 
 @windows_qt_paint_skip
 def test_on_media_deleted_triggers_widget_refresh(qapp) -> None:
-    """`_on_media_deleted` 必须经 debounce timer 触发 widget refresh。
+    """`on_media_deleted` 必须经 debounce timer 触发 widget refresh。
 
     用户报告:点 Delete 后 row 不消失。这是 v1.9.1 修(delete-no-feedback)
     的根因边界。
     """
     win = _FakeWindow()
+    ctrl = _build_ctrl(win)
     e = MediaDeleted(channel_id=100, telegram_msg_id=5, media_idx=0)
-    MainWindow._on_media_deleted(win, e)
+    ctrl.on_media_deleted(e)
 
     # debounce timer 启动但还没到点 → refresh 未触发
     assert win.media_manager.refresh_requested.emit_count == 0
-    # 等 110ms 让 debounce 到点
-    QTimer.singleShot(150, lambda: None)  # dummy 让事件循环跑
     # 主动等 debounce 到点
     from PySide6.QtCore import QEventLoop
 
@@ -175,20 +201,22 @@ def test_on_media_deleted_triggers_widget_refresh(qapp) -> None:
 
 
 def test_on_media_deleted_shows_activity_toast(qapp) -> None:
-    """`_on_media_deleted` 必须更新活动指示器 — 给用户视觉反馈。"""
+    """`on_media_deleted` 必须更新活动指示器 — 给用户视觉反馈。"""
     win = _FakeWindow()
-    MainWindow._on_media_deleted(win, MediaDeleted())
+    ctrl = _build_ctrl(win)
+    ctrl.on_media_deleted(MediaDeleted())
     assert "已删除" in win._activity_label.text()
 
 
 def test_on_media_deleted_non_mediadeleted_type_is_ignored(qapp) -> None:
-    """`_on_media_deleted` 收到非 `MediaDeleted` 实例 → 直接 return。
+    """`on_media_deleted` 收到非 `MediaDeleted` 实例 → 直接 return。
 
     守住 slot 边界:EventBus 也会推 `MessageDeleted`(整条消息删除,不是
     单条 media),两者不应混淆。本 slot 只关心 per-media 删除。
     """
     win = _FakeWindow()
-    MainWindow._on_media_deleted(win, MessageDeleted(channel_id=100, telegram_msg_id=5))
+    ctrl = _build_ctrl(win)
+    ctrl.on_media_deleted(MessageDeleted(channel_id=100, telegram_msg_id=5))
     # 不更新 activity、不启 debounce
     assert win._activity_label.text() == ""
     assert win.media_manager.refresh_requested.emit_count == 0
@@ -204,10 +232,10 @@ def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     from PySide6.QtCore import QEventLoop
 
     win = _FakeWindow()
+    ctrl = _build_ctrl(win)
     # 5 条连续 delete — 每次都 restart debounce timer
     for i in range(5):
-        MainWindow._on_media_deleted(
-            win,
+        ctrl.on_media_deleted(
             MediaDeleted(channel_id=100, telegram_msg_id=i + 1, media_idx=0),
         )
     # timer 重启但还没到点 → refresh 未触发
@@ -232,10 +260,10 @@ def test_on_media_deleted_throttles_activity_messages(qapp) -> None:
     from PySide6.QtCore import QEventLoop
 
     win = _FakeWindow()
+    ctrl = _build_ctrl(win)
     first_label_text = ""
     for i in range(100):
-        MainWindow._on_media_deleted(
-            win,
+        ctrl.on_media_deleted(
             MediaDeleted(channel_id=100, telegram_msg_id=i + 1, media_idx=0),
         )
         if i == 0:

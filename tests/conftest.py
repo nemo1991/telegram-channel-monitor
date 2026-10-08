@@ -172,11 +172,25 @@ def force_zh_cn_locale() -> None:
     v1.6.8:保留这个 fixture —— 新加的 i18n 测试自己用 monkeypatch +
     Settings reload 切语言,旧的中文断言零改动继续 pass。`autouse=True`
     自动 apply 到所有 test。
+
+    2026-10-04 plan 阶段 3.3:`test_main_window_batch_confirm.py` 的 i18n 测试
+    调用 `install_translator("en_US")` 后,QTranslator(loaded from en_US.qm)
+    + QLocale.setDefault("en_US") 都改了,且 QTranslator 实例已
+    `qt_app.installTranslator(...)`。下一个 test 进 fixture 仅 setDefault
+    不卸 QTranslator,`QCoreApplication.translate("MainWindow", src)` 仍
+    走 en_US 翻译 → LiveSelectionController `_on_live_react` 的 `%(n, emoji)`
+    报 `TypeError: %d format: a real number is required, not str`(en_US 翻译
+    的占位符顺序 `%s %d` 跟中文 / 控制器 `(int, str)` 入参不一致)。
+    修法:fixture 走 `install_translator("zh_CN")` 全套恢复,idempotent 同 locale
+    跳过(`install_translator` 内部已 cache `_current_locale`)。
     """
     try:
-        from PySide6.QtCore import QLocale  # noqa: PLC0415
+        from PySide6.QtCore import QCoreApplication  # noqa: PLC0415
 
-        QLocale.setDefault(QLocale("zh_CN"))
+        if QCoreApplication.instance() is not None:
+            from tgmonitor.i18n import install_translator  # noqa: PLC0415
+
+            install_translator(QCoreApplication.instance(), locale="zh_CN")
     except ImportError:
         # 无 Qt 环境(headless service test)→ 跳过
         pass
