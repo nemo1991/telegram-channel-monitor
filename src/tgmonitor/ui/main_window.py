@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -70,6 +70,7 @@ from tgmonitor.ui.controllers import (
     MessageStreamController,
     SearchController,
     SettingsReactionController,
+    ShortcutController,
     SyncController,
     SyncFlowController,
     ThemeController,
@@ -97,27 +98,6 @@ log = logging.getLogger(__name__)
 ShutdownCb = Callable[[], Awaitable[None]]
 
 # ---- 状态映射 ----
-
-# 2026-09-07 v1.6.9:快捷键 action → 槽映射(module-level,工厂函数吃 self)。
-# `_wire_shortcuts` / `reload_shortcuts` 走这里批量绑,避免 14 处重复
-# `_bind(action, slot)` 重复样板。
-_ACTION_SLOTS: dict[str, Callable[[Any], Callable[[], None]]] = {
-    "tab_live": lambda mw: lambda: mw._switch_tab(0),
-    "tab_dashboard": lambda mw: lambda: mw._switch_tab(1),
-    "tab_channels": lambda mw: lambda: mw._switch_tab(2),
-    "tab_media": lambda mw: lambda: mw._switch_tab(3),
-    "tab_settings": lambda mw: lambda: mw._switch_tab(4),
-    "refresh": lambda mw: mw._on_refresh_channels,
-    "search": lambda mw: mw._focus_search,
-    "export": lambda mw: mw._on_export,
-    "toggle_theme": lambda mw: mw._on_theme_toggle,
-    "quit": lambda mw: mw._quit_app,
-    "settings": lambda mw: lambda: mw._switch_tab(4),
-    "escape": lambda mw: mw._on_global_escape,
-    "copy": lambda mw: mw._copy_current_message_text,
-    "show_window": lambda mw: mw._show_and_raise,
-}
-
 
 # 2026-09-08 v1.7.0:右键菜单 / 详情按钮传上来的 items 形状是
 # list[tuple[cid, mid]] 或 list[(cid, mid, idx)](media manager 风格)。
@@ -169,12 +149,16 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_tray()
-        self._wire_shortcuts()
         self._wire_events()
         self._wire_theme_change_signal()
         self._refresh_state()
         self._vm.bootstrap_ui()
         self._setup_controllers()
+        # 2026-10-09 v1.12.x 下一 plan 目标 1.3:快捷键绑定挪到
+        # `_setup_controllers` 之后,因 `ShortcutController` 在那里实例化
+        # 且需要 `act_show` / `act_quit`(`_build_menu` 必建) + `self._ctx`
+        # 已就位。
+        self._wire_shortcuts()
 
     def _setup_core(
         self,
@@ -287,6 +271,10 @@ class MainWindow(QMainWindow):
         # 2026-10-09 plan 目标 1.2:抽 `AppStateController` — 接管 C+D 类 82 LOC
         # (VM login/conn/error + EventBus notification/login + bell/clear)。
         self._app_state_ctrl = AppStateController(self._ctx)
+        # 2026-10-09 plan 目标 1.3:抽 `ShortcutController` — 接管 F 类 94 LOC
+        # (`_wire_shortcuts` 38 + `reload_shortcuts` 40 + `_ACTION_SLOTS` 16)。
+        # 实际 bind 由 `__init__` 末尾的 `_wire_shortcuts()` thin delegate 触发。
+        self._shortcut_ctrl = ShortcutController(self._ctx)
         # 2026-10-04 plan 阶段 3.3:搜索 controller(模板)— 抽 8 个 handler
         # (`_on_search_*` + `_run_search_query`)到独立 plain class。
         self._search_ctrl = SearchController(self._ctx)
@@ -779,82 +767,16 @@ class MainWindow(QMainWindow):
         await self._app_state_ctrl.on_notification_fallback(event)
 
     def _wire_shortcuts(self) -> None:
-        """全局键盘快捷键 — v1.6.9 重构。
-
-        旧实现:14 个硬编码 `QShortcut(QKeySequence("..."), self)`,局部
-        变量引用,reload 时无法 deleteLater。
-
-        新实现:`_ACTION_SLOTS` 注册 action→slot,`_bind_shortcuts(settings)`
-        从 `tgmonitor.core.keybinding.binding_for(action, settings_value)`
-        拿实际 QKeySequence,旧 QShortcut `deleteLater()` 后新建。首次
-        启动 __init__ 阶段 `self.app.settings` 已就绪,直接读它。
-
-        持有 `self._shortcuts: dict[str, QShortcut]` 用于热替换 —
-        `reload_shortcuts(settings)` 由 SettingsPage「保存并应用」成功
-        后调用。
+        """2026-10-09 v1.12.x:thin delegate `ShortcutController.bind_shortcuts`。
+        保留方法名以保持测试夹具引用稳定。
         """
-        from tgmonitor.core.keybinding import DEFAULT_BINDINGS, binding_for
-
-        self._shortcuts: dict[str, QShortcut] = {}
-        settings = self.app.settings
-        bindings = {name: getattr(settings, f"key_{name}", "") for name in DEFAULT_BINDINGS}
-        for action, slot_factory in _ACTION_SLOTS.items():
-            seq_str = binding_for(action, bindings.get(action, ""))
-            seq = QKeySequence(seq_str)
-            if seq.isEmpty():
-                continue
-            sc = QShortcut(seq, self)
-            sc.activated.connect(slot_factory(self))
-            self._shortcuts[action] = sc
-
-        # File menu QAction 同步(act_show / act_quit 是 self. attr,
-        # 在 _build_menu 已建;这里覆盖 setShortcut 用 Settings 实际值)。
-        show_seq = QKeySequence(binding_for("show_window", bindings.get("show_window", "")))
-        if not show_seq.isEmpty():
-            self.act_show.setShortcut(show_seq)
-        quit_seq = QKeySequence(binding_for("quit", bindings.get("quit", "")))
-        if not quit_seq.isEmpty():
-            self.act_quit.setShortcut(quit_seq)
+        self._shortcut_ctrl.bind_shortcuts()
 
     def reload_shortcuts(self, settings: Any) -> None:
-        """v1.6.9:SettingsPage「保存并应用」成功后调此热重载快捷键。
-
-        行为:
-        1. 旧 `self._shortcuts` 全部 `deleteLater()`(Qt 在下一事件循环
-           释放,避免悬空引用)
-        2. 按新 settings 重建 QShortcut(action 字典顺序)
-        3. 同步 file menu `act_show` / `act_quit` 的 setShortcut
-
-        幂等 — SettingsPage 路径已显式调一次,MainWindow._on_settings_changed
-        兜底再调一次无副作用。
+        """v1.6.9:SettingsPage「保存并应用」成功后调此热重载快捷键 — 2026-10-09
+        转给 `ShortcutController.reload_shortcuts`。
         """
-        from tgmonitor.core.keybinding import DEFAULT_BINDINGS, binding_for
-
-        for sc in self._shortcuts.values():
-            sc.setParent(None)
-            sc.deleteLater()
-        self._shortcuts.clear()
-
-        bindings = {name: getattr(settings, f"key_{name}", "") for name in DEFAULT_BINDINGS}
-        for action, slot_factory in _ACTION_SLOTS.items():
-            seq_str = binding_for(action, bindings.get(action, ""))
-            seq = QKeySequence(seq_str)
-            if seq.isEmpty():
-                continue
-            sc = QShortcut(seq, self)
-            sc.activated.connect(slot_factory(self))
-            self._shortcuts[action] = sc
-
-        # 2026-10-04 plan 阶段 4.2:act_show / act_quit 是 _build_menu 必建
-        # 属性,不再 hasattr 探针 — 直接引用,menu 没建好的话这里崩是合理。
-        show_seq = QKeySequence(binding_for("show_window", bindings.get("show_window", "")))
-        if not show_seq.isEmpty():
-            self.act_show.setShortcut(show_seq)
-        quit_seq = QKeySequence(binding_for("quit", bindings.get("quit", "")))
-        if not quit_seq.isEmpty():
-            self.act_quit.setShortcut(quit_seq)
-
-        log.info("shortcuts reloaded: %d bindings", len(self._shortcuts))
+        self._shortcut_ctrl.reload_shortcuts(settings)
 
     def _switch_tab(self, idx: int) -> None:
         self.nav.set_current(idx)

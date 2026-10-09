@@ -22,6 +22,7 @@ from tgmonitor.ui.controllers.media_actions_controller import MediaActionsContro
 from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
 from tgmonitor.ui.controllers.search_controller import SearchController
 from tgmonitor.ui.controllers.settings_reaction_controller import SettingsReactionController
+from tgmonitor.ui.controllers.shortcut_controller import ShortcutController
 from tgmonitor.ui.controllers.sync_controller import SyncController
 from tgmonitor.ui.controllers.sync_flow_controller import SyncFlowController
 from tgmonitor.ui.controllers.theme_controller import ThemeController
@@ -37,6 +38,7 @@ __all__ = [
     "ExportController",
     "SyncController",
     "SyncFlowController",
+    "ShortcutController",
     "SearchController",
     "LiveSelectionController",
     "MediaActionsController",
