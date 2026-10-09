@@ -70,13 +70,13 @@ def test_format_local_timezone(qapp):
     """naive UTC datetime 必须按本地时区显示,而不是当作本地时间原样输出。"""
     view = MessageView()
     # 13:50 UTC → 北京时间 21:50(+0800)
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=42,
+        msg_id=42,
         text="hi",
         author="alice",
-        date=datetime(2026, 7, 15, 13, 50, 10),  # naive,语义上 UTC
+        date=datetime(2026, 7, 15, 13, 50, 10),
     )
     line = view._format(msg).split("\n")[0]  # 第一行是 head
     # 不能是 "13:50"(那是直接打印 UTC),也不能是 "[#100]"(没 title 退化错)
@@ -91,10 +91,10 @@ def test_format_local_timezone(qapp):
 def test_format_aware_utc_also_converts(qapp):
     """aware UTC datetime 同样按本地时区显示。"""
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=42,
+        msg_id=42,
         text="hi",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10, tzinfo=UTC),
@@ -104,7 +104,12 @@ def test_format_aware_utc_also_converts(qapp):
 
 
 def test_format_no_date_shows_placeholder(qapp):
-    """m.date 为 None 时 head 时间占位为 '?'。"""
+    """m.date 为 None 时 head 时间占位为 '?'。
+
+    2026-10-09:不走 `make_message` 工厂 — 工厂 `date=` 参数有「传 None 也
+    走默认」的设计(避免 `None or default` 歧义),这里要验 `_format` 真
+    处理 `MessageDTO.date is None` 的边界,必须留 MessageDTO 字面构造。
+    """
     view = MessageView()
     msg = MessageDTO(
         id=0,
@@ -125,10 +130,10 @@ def test_format_uses_channel_title_when_known(qapp):
     """set_channel_titles 注册的 id → title 必须出现在 head 里。"""
     view = MessageView()
     view.set_channel_titles({100: "Telegram News"})
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=999,
+        msg_id=999,
         text="hi",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -143,10 +148,10 @@ def test_format_uses_channel_title_when_known(qapp):
 def test_format_falls_back_to_id_when_title_unknown(qapp):
     """未注册的 channel_id → 退化为 [#id](无 title 时使用 id 作为占位)。"""
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=-1001234567890,
-        telegram_msg_id=1,
+        msg_id=1,
         text="x",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -159,10 +164,10 @@ def test_format_falls_back_to_id_when_title_unknown(qapp):
 def test_format_msg_id_is_telegram_id_not_db_pk(qapp):
     """telegram_msg_id 是该频道内的原始消息 id,不是 MessageDTO.id (DB 自增)。"""
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=42,  # DB pk — 不应显示
         channel_id=100,
-        telegram_msg_id=98765,  # 应显示
+        msg_id=98765,  # 应显示
         text="x",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -192,10 +197,10 @@ def test_append_renders_correct_text(qapp):
     """append → FormattedRole 应包含本地时区 / 频道名 / msg id。"""
     view = MessageView()
     view.set_channel_titles({100: "My Channel"})
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=1234,
+        msg_id=1234,
         text="hello world",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -210,10 +215,10 @@ def test_append_renders_correct_text(qapp):
 def test_append_media_has_dedicated_bg(qapp):
     """带媒体的消息应有 HasMediaRole=True(delegate paint 时填底色)。"""
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=1,
+        msg_id=1,
         text="",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -227,18 +232,18 @@ def test_append_media_has_dedicated_bg(qapp):
 def test_append_dedup_updates_existing_row(qapp):
     """同 (channel_id, telegram_msg_id) 重复 append → 更新文本而非新增行。"""
     view = MessageView()
-    m1 = MessageDTO(
+    m1 = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=1,
+        msg_id=1,
         text="first",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
     )
-    m2 = MessageDTO(
+    m2 = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=1,
+        msg_id=1,
         text="edited",
         author=None,
         date=datetime(2026, 7, 15, 13, 51, 0),
@@ -261,10 +266,10 @@ def test_append_with_media_dto_does_not_crash(qapp):
     本测试构造一个真实含 media 的 MessageDTO 走完整 append 路径,确保不崩。
     """
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=100,
-        telegram_msg_id=42,
+        msg_id=42,
         text="look at this",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -310,10 +315,10 @@ def test_empty_overlay_hidden_after_first_append(qapp):
     view = MessageView()
     assert not view._empty_overlay.isHidden()  # 先确认初始显示
 
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=1,
-        telegram_msg_id=1,
+        msg_id=1,
         text="first!",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -327,13 +332,7 @@ def test_empty_overlay_reappears_after_clear(qapp):
     """clear_view() 把所有 item 删了 → overlay 应再次显示。"""
     view = MessageView()
     view.append(
-        MessageDTO(
-            id=0,
-            channel_id=1,
-            telegram_msg_id=1,
-            text="x",
-            date=datetime(2026, 7, 15, 13, 0, 0),
-        )
+        make_message(id=0, channel_id=1, msg_id=1, text="x", date=datetime(2026, 7, 15, 13, 0, 0))
     )
     assert view._empty_overlay.isHidden()
 
@@ -451,19 +450,19 @@ def test_set_messages_preserves_filter(qapp):
     """PR #B5:set_messages 后,已有的 `_filter_text` 仍生效 — 新行被 filter。"""
     view = MessageView()
     view.set_filter("foo")
-    m_match = MessageDTO(
+    m_match = make_message(
         id=0,
         channel_id=1,
-        telegram_msg_id=100,
+        msg_id=100,
         text="foo bar",  # 含 "foo" → 匹配
         author=None,
         date=datetime(2026, 7, 15, 13, 0, 0),
         media=[],
     )
-    m_no_match = MessageDTO(
+    m_no_match = make_message(
         id=0,
         channel_id=1,
-        telegram_msg_id=101,
+        msg_id=101,
         text="baz",  # 不含 "foo"
         author=None,
         date=datetime(2026, 7, 15, 13, 1, 0),
@@ -642,10 +641,10 @@ def test_replace_message_updates_row_in_place(qapp):
     view = MessageView()
     m_orig = _make_msg(1, 1)
     view.append(m_orig)
-    m_edited = MessageDTO(
+    m_edited = make_message(
         id=0,
         channel_id=1,
-        telegram_msg_id=1,
+        msg_id=1,
         text="edited!",
         author=None,
         date=datetime(2026, 7, 15, 13, 50, 10),
@@ -660,10 +659,10 @@ def test_update_media_status_re_renders(qapp):
     from tgmonitor.core.dto import MediaDownloadStatus
 
     view = MessageView()
-    msg = MessageDTO(
+    msg = make_message(
         id=0,
         channel_id=1,
-        telegram_msg_id=1,
+        msg_id=1,
         text="x",
         author=None,
         date=datetime(2026, 7, 15, 13, 0, 0),
@@ -887,10 +886,10 @@ def _make_meta_msg(
     is_pinned: bool = False,
 ) -> MessageDTO:
     """构造带 metadata 的 message DTO,默认全空。"""
-    return MessageDTO(
+    return make_message(
         id=0,
         channel_id=channel_id,
-        telegram_msg_id=telegram_msg_id,
+        msg_id=telegram_msg_id,
         text="x",
         author=None,
         date=datetime(2026, 7, 15, 13, 0, 0),

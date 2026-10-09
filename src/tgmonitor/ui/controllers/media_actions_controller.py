@@ -65,9 +65,7 @@ class MediaActionsController:
 
         同时把当前 known channels 推给 widget 的 channel 下拉框。
         """
-        self._ctx.media_manager.set_known_channels(
-            list(self._ctx.vm.known_channels.values())
-        )
+        self._ctx.media_manager.set_known_channels(list(self._ctx.vm.known_channels.values()))
         f = self._ctx.media_manager.current_filters()
         self._ctx.vm.load_media_list(
             channel_id=f["channel_id"],
@@ -134,9 +132,7 @@ class MediaActionsController:
         ans = QMessageBox.warning(
             self._ctx.main_window,
             "Prune Orphans",
-            self._tr(
-                "扫描对象存储并删除无引用的孤立文件。\n此操作不可撤销,确认执行?"
-            ),
+            self._tr("扫描对象存储并删除无引用的孤立文件。\n此操作不可撤销,确认执行?"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -200,11 +196,7 @@ class MediaActionsController:
             media_type=f.get("media_type"),
             search=f.get("search", ""),
             sort=cast(SortKey, sort_val) if sort_val is not None else SortKey.DATE,
-            sort_dir=(
-                cast(SortDir, sort_dir_val)
-                if sort_dir_val is not None
-                else SortDir.DESC
-            ),
+            sort_dir=(cast(SortDir, sort_dir_val) if sort_dir_val is not None else SortDir.DESC),
             out_path=out_path,
         )
         self._ctx.vm.export_media_list(req)
@@ -245,9 +237,7 @@ class MediaActionsController:
         QMessageBox.warning(
             self._ctx.main_window,
             self._tr("打开媒体失败"),
-            self._tr(
-                "无法打开频道 #{cid} 消息 #{mid} 第 {idx} 个媒体:\n\n{reason}"
-            ).format(
+            self._tr("无法打开频道 #{cid} 消息 #{mid} 第 {idx} 个媒体:\n\n{reason}").format(
                 cid=channel_id, mid=telegram_msg_id, idx=media_idx + 1, reason=reason
             ),
         )
@@ -268,6 +258,7 @@ class MediaActionsController:
         其它类型(AUDIO/VOICE/DOCUMENT)→ 系统查看器 fallback。
         全程 async,UI handler 立即返回不阻塞 event loop。
         """
+
         async def _load_and_show() -> None:
             storage = self._ctx.app.storage
             if storage is None:
@@ -298,9 +289,9 @@ class MediaActionsController:
                 QMessageBox.information(
                     self._ctx.main_window,
                     "Lightbox",
-                    self._tr(
-                        "无法加载预览(可能未下载或 backend 不可用)。\n文件:{name}"
-                    ).format(name=med.file_name or "(no name)"),
+                    self._tr("无法加载预览(可能未下载或 backend 不可用)。\n文件:{name}").format(
+                        name=med.file_name or "(no name)"
+                    ),
                 )
                 return
 
@@ -371,6 +362,7 @@ class MediaActionsController:
         """2026-08-27 v1.4.0 PR #16:Reveal in Folder — 调 AppService.reveal_in_folder,
         失败弹 QMessageBox.warning(同 Open 失败模式)。
         """
+
         # 2026-10-04 plan 阶段 3.3:原 `run_coro(self._qloop, ...)` 是 bug —
         # `self._qloop` 从未赋值,运行到会 AttributeError。统一走 `ctx.loop`。
         async def _go():
@@ -405,6 +397,7 @@ class MediaActionsController:
         """2026-08-27 v1.4.0 PR #16:Copy 路径 / URI — 调 AppService.copy_media_path,
         成功写剪贴板,失败弹 QMessageBox.warning。
         """
+
         async def _go():
             return await self._ctx.app.copy_media_path(
                 channel_id,
