@@ -61,6 +61,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.controllers import (
+    AppStateController,
     ExportController,
     HeaderActionController,
     LiveSelectionController,
@@ -79,7 +80,6 @@ from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
 from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
@@ -284,6 +284,9 @@ class MainWindow(QMainWindow):
         # 接管 `_on_sync_requested` 38 行 orchestrator + 3 helper。SyncController
         # 仍走 `_on_sync_all_channels` 委派 main_window thin delegate。
         self._sync_flow_ctrl = SyncFlowController(self._ctx)
+        # 2026-10-09 plan 目标 1.2:抽 `AppStateController` — 接管 C+D 类 82 LOC
+        # (VM login/conn/error + EventBus notification/login + bell/clear)。
+        self._app_state_ctrl = AppStateController(self._ctx)
         # 2026-10-04 plan 阶段 3.3:搜索 controller(模板)— 抽 8 个 handler
         # (`_on_search_*` + `_run_search_query`)到独立 plain class。
         self._search_ctrl = SearchController(self._ctx)
@@ -421,6 +424,18 @@ class MainWindow(QMainWindow):
         from tgmonitor.core.events import MessageDeleted  # noqa: PLC0415
 
         self.app.bus.subscribe(MessageDeleted, self._message_stream_ctrl.on_bus_message_deleted)
+        # 2026-10-09 v1.12.x:`AppStateController` 5 个 wire(原 `_wire_events` /
+        # `_build_tray` 早于 `_setup_controllers`,挪到此处确保 controller
+        # 已实例化):
+        #   - VM login_state / conn_state / error
+        #   - EventBus LoginStateChanged / NotificationRequested
+        #   - status_bar._bell.bell_clicked
+        self._vm.login_state.connect(self._app_state_ctrl.on_login_state)
+        self._vm.conn_state.connect(self._app_state_ctrl.on_conn_state)
+        self._vm.error.connect(self._app_state_ctrl.on_error)
+        self.app.bus.subscribe(LoginStateChanged, self._app_state_ctrl.on_bus_login)
+        self.status_bar._bell.bell_clicked.connect(self._app_state_ctrl.on_bell_clicked)
+        self.app.bus.subscribe(NotificationRequested, self._app_state_ctrl.on_notification_fallback)
 
     def set_shutdown_callback(self, cb: ShutdownCb) -> None:
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
@@ -703,10 +718,9 @@ class MainWindow(QMainWindow):
         self._tray = TrayIcon(self, self.app)
         if self._tray.is_active:
             self._tray.show()
-        # 订阅 NotificationRequested → 状态栏 fallback(无 tray 系统也
-        # 走通)。TrayIcon 内部已订阅一次,这里 main_window 再订阅一份做
-        # status bar 兜底,EventBus 广播 N 订阅者互不影响。
-        self.app.bus.subscribe(NotificationRequested, self._on_notification_fallback)
+        # 2026-10-09 v1.12.x:NotificationRequested 订阅挪到 `_wire_signals`
+        # 阶段(原 `_build_tray` 早于 `_setup_controllers`,controller 还未
+        # 实例化)。TrayIcon 内部仍订一份做系统通知;此处补订做状态栏兜底。
 
     def _show_and_raise(self) -> None:
         """File / tray「显示主窗口」共用 — unminimize + 顶置 + 焦点。"""
@@ -758,22 +772,11 @@ class MainWindow(QMainWindow):
         self._tray_ctrl.on_monitoring_resumed(source)
 
     async def _on_notification_fallback(self, event: object) -> None:
-        """无 tray 系统(Linux 无 indicator / offscreen)→ 状态栏 fallback。
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_notification_fallback`。
 
-        `isinstance` 严格过滤:EventBus publish 任意事件都会触发此 handler
-        (因 subscribe 接的是 type object,会按 MRO 匹配),此 handler 只关心
-        NotificationRequested。
+        保留方法名以保持测试夹具引用稳定(实际信号已直连 controller)。
         """
-        if not isinstance(event, NotificationRequested):
-            return
-        # 系统通知已由 TrayIcon 发出;此处只走状态栏(覆盖两种环境)
-        # 2026-10-01 v1.11.x:status_bar 自管 show_message 协议(替代 QStatusBar.showMessage)
-        if self._tray is None or not self._tray.is_active:
-            self.status_bar.show_message(f"{event.title}: {event.body}", 5000)
-        # 活动指示器:无 tray 兜底时也走左侧;有 tray 时左侧仍给提示
-        # (用户若盯着主窗口不切到 tray,也能看到)
-        prefix = "⚠ " if event.level == "error" else ("⚡ " if event.level == "warning" else "")
-        self.status_bar.show_activity(f"{prefix}{event.title}: {event.body}", timeout_ms=5000)
+        await self._app_state_ctrl.on_notification_fallback(event)
 
     def _wire_shortcuts(self) -> None:
         """全局键盘快捷键 — v1.6.9 重构。
@@ -957,11 +960,10 @@ class MainWindow(QMainWindow):
         # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
         # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
         self._vm.media_download_progress.connect(self.media_manager.on_download_progress)
-        self._vm.login_state.connect(self._on_login_state)
-        self._vm.conn_state.connect(self._on_conn_state)
+        # 2026-10-09 v1.12.x:VM login/conn/error wire 挪到 `_wire_signals` 阶段
+        # (原 `_wire_events` 早于 `_setup_controllers`,controller 还未实例化)。
         self._vm.channels_changed.connect(self._refresh_state)
         self._vm.export_done.connect(self._on_export_done)
-        self._vm.error.connect(self._on_error)
         self._vm.settings_changed.connect(self._on_settings_changed)
         # 2026-09-25 v1.8.x:同步/导出进度 → 状态栏左侧活动指示器。
         # 之前 sync_progress / export_progress 只绑 dialog,MainWindow 不感知,
@@ -982,13 +984,10 @@ class MainWindow(QMainWindow):
         # 缩略图 VM signal — 直接绑 widget(2026-08-25 PR #1)
         self.media_manager.set_view_model(self._vm)
 
-        # 订阅 EventBus 登录状态变化(状态点更新)
-        self.app.bus.subscribe(LoginStateChanged, self._on_bus_login)
-        # 2026-10-01 v1.11.x 状态栏组件化:`AuthErrorOccurred` 改由
-        # status_bar 内部的 `_ErrorBellButton` widget-private 订阅,MainWindow
-        # 不再持有 `_error_log` / `_bell_btn` / `_on_bus_auth_error`。
-        # status_bar 子组件对外 signal(MainWindow 只做 thin 委托或承接 dialog)
-        self.status_bar._bell.bell_clicked.connect(self._on_bell_clicked)
+        # 2026-10-09 v1.12.x:`AppStateController` 5 个 wire 全部挪到
+        # `_wire_signals` 阶段(原 `_wire_events` 早于 `_setup_controllers`,
+        # controller 还未实例化):VM login/conn/error + EventBus login +
+        # status_bar._bell.bell_clicked + NotificationRequested。
 
     # ======================== 槽 ========================
 
@@ -1014,42 +1013,25 @@ class MainWindow(QMainWindow):
     # ======================== EventBus 回调 ========================
 
     async def _on_bus_login(self, e) -> None:
-        if not isinstance(e, LoginStateChanged):
-            return
-        self.header.update_state(e.state, e.detail)
-        self._refresh_state()
-        # 活动指示器:与 _on_login_state VM slot 同语义,这里走 EventBus 路径
-        # (TDLib 走原始 dict 经 EventBus → UI,与 VM 走 Qt signal 双轨)。
-        if e.state in ("ready", "logged_in"):
-            self.status_bar.show_activity("登录完成", timeout_ms=2000)
-        elif e.state in ("error", "closed"):
-            self.status_bar.show_activity(f"登录失败: {e.state}", timeout_ms=5000)
-        else:
-            self.status_bar.show_activity(f"登录中: {e.state}")
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_bus_login`。
+
+        保留方法名以保持测试夹具引用稳定(实际信号已直连 controller)。
+        """
+        await self._app_state_ctrl.on_bus_login(e)
 
     def _on_bell_clicked(self) -> None:
-        """铃铛点击 — 弹错误日志 dialog。
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_bell_clicked`。
 
-        2026-10-01 v1.11.x:ring buffer 改由 `StatusBar._ErrorBellButton`
-        自管,MainWindow 从 status_bar 取列表构造 dialog。
-        2026-10-01 v1.12.x:`ErrorLogDialog` 改用 callback 注入,不再依赖
-        `parent` 类型 — 任何 `QWidget` parent 都行,无需 `_clear_error_log`
-        hasattr 探针。
+        保留方法名以保持测试夹具引用稳定(实际信号已直连 controller)。
         """
-        dlg = ErrorLogDialog(
-            self.status_bar.get_error_log(),
-            parent=self,
-            on_clear=self._clear_error_log,
-        )
-        dlg.exec()
+        self._app_state_ctrl.on_bell_clicked()
 
     def _clear_error_log(self) -> None:
-        """清空错误日志(从 dialog 「清空」按钮 / 测试 fixture 调用)。
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_clear_error_log`。
 
-        2026-10-01 v1.11.x:铃铛 + ring buffer 都由 status_bar 自管,
-        这里改成委托。
+        保留方法名以保持测试夹具引用稳定(实际信号已直连 controller)。
         """
-        self.status_bar.clear_error_log()
+        self._app_state_ctrl.on_clear_error_log()
 
     # ======================== VM 事件回调 ========================
     # 2026-10-04 plan 阶段 3.3:VM `message_received` / `message_edited` /
@@ -1059,28 +1041,15 @@ class MainWindow(QMainWindow):
     # 杂项 VM signal。
 
     def _on_login_state(self, state: str) -> None:
-        # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
-        self.status_bar.show_message(self.tr("登录状态: {state}").format(state=state), 4000)
-        # 活动指示器:登录是持续过程,登录中显示中间态,登录完成短暂提示后清空。
-        if state in ("ready", "logged_in"):
-            self.status_bar.show_activity("登录完成", timeout_ms=2000)
-        elif state in ("error", "closed"):
-            self.status_bar.show_activity(f"登录失败: {state}", timeout_ms=5000)
-        else:
-            # phone_required / code_required / password_required — 等待用户输入
-            self.status_bar.show_activity(f"登录中: {state}")
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_login_state`。
+
+        保留方法名以保持测试夹具引用稳定(实际信号已直连 controller)。
+        """
+        self._app_state_ctrl.on_login_state(state)
 
     def _on_conn_state(self, state: str) -> None:
-        # 2026-10-01 v1.11.x:conn 翻译表搬到 status_bar.py,MainWindow
-        # 只委托 setter(测试桩用 `_on_conn_state` 也仍可绑)。
-        self.status_bar.set_connection_state(state)
-        # 活动指示器:连接态短促提示,稳态时清空(右侧 conn_label 已是持久指示)
-        if state == "ready":
-            self.status_bar.show_activity("TG 已连接", timeout_ms=1500)
-        elif state in ("connecting", "updating"):
-            self.status_bar.show_activity(f"TG 连接中: {state}")
-        elif state == "waiting_for_network":
-            self.status_bar.show_activity("等待网络…")
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_conn_state`。"""
+        self._app_state_ctrl.on_conn_state(state)
 
     def _on_export_progress(self, progress: object) -> None:
         """2026-10-01 v1.12.x:委托 `ExportController`。"""
@@ -1099,11 +1068,8 @@ class MainWindow(QMainWindow):
         self._export_ctrl.on_export_done(result, error)
 
     def _on_error(self, msg: str) -> None:
-        log.warning("error: %s", msg)
-        # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
-        self.status_bar.show_message(f"⚠ {msg}", 5000)
-        # 活动指示器同步显示(右侧 conn + 中间 showMessage + 左侧 activity 三处)
-        self.status_bar.show_activity(f"⚠ {msg}", timeout_ms=5000)
+        """2026-10-09 v1.12.x:thin delegate `AppStateController.on_error`。"""
+        self._app_state_ctrl.on_error(msg)
 
     def _on_settings_changed(
         self,

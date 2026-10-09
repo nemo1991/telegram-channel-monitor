@@ -14,6 +14,7 @@ settings_reaction / export / sync)。
 """
 
 from tgmonitor.ui.controllers._base import MainWindowCtx
+from tgmonitor.ui.controllers.app_state_controller import AppStateController
 from tgmonitor.ui.controllers.export_controller import ExportController
 from tgmonitor.ui.controllers.header_action_controller import HeaderActionController
 from tgmonitor.ui.controllers.live_selection_controller import LiveSelectionController
@@ -28,6 +29,7 @@ from tgmonitor.ui.controllers.tray_controller import TrayController
 
 __all__ = [
     "MainWindowCtx",
+    "AppStateController",
     "ThemeController",
     "TrayController",
     "HeaderActionController",

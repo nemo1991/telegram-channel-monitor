@@ -29,10 +29,19 @@ class _FakeWindow:
 
     2026-10-01 v1.11.x:`_on_conn_state` 只委托 `status_bar.set_connection_state`,
     且同时调 `status_bar.show_activity`(原 `_show_activity`)— 桩要带这两字段。
+    2026-10-09 v1.12.x:`_on_conn_state` 改成 thin delegate `AppStateController`
+    桩要持 `_app_state_ctrl` 委托给 status_bar(本测试只关心
+    `set_connection_state` 的 label 映射,activity 走 controller 流程即可)。
     """
 
     def __init__(self) -> None:
         self.status_bar = _FakeStatusBar()
+        # 2026-10-09:thin delegate 转给一个最小 controller 桩,直接调 status_bar。
+        from types import SimpleNamespace
+
+        self._app_state_ctrl = SimpleNamespace(
+            on_conn_state=lambda state: self.status_bar.set_connection_state(state),
+        )
 
     _on_conn_state = MainWindow._on_conn_state
 
