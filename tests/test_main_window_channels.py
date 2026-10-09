@@ -759,8 +759,8 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
         app_svc, monitor = fut.result(timeout=10.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-        # VM 没数据,全部回退到 `#<id>`
-        titles = win._build_sync_titles([100, 200, 300])
+        # VM 没数据,全部回退到 `#<id>`(2026-10-09 v1.12.x 抽到 `SyncFlowController`)
+        titles = win._sync_flow_ctrl._build_sync_titles([100, 200, 300])
         assert titles == {100: "#100", 200: "#200", 300: "#300"}
 
 
@@ -793,9 +793,9 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
         app_svc, monitor = fut.result(timeout=10.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-        # 直接 inject VM.known_channels 一个 DTO
+        # 直接 inject VM.known_channels 一个 DTO(2026-10-09 走 `SyncFlowController`)
         win._vm.known_channels[42] = ChannelDTO(id=42, title="新闻频道")
-        titles = win._build_sync_titles([42, 100])
+        titles = win._sync_flow_ctrl._build_sync_titles([42, 100])
         assert titles[42] == "新闻频道"
         assert titles[100] == "#100"  # 没 DTO,回退
 
@@ -817,6 +817,10 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
     from tgmonitor.core.dto import SyncOptions
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui import main_window as mw
+
+    # 2026-10-09 v1.12.x:`SyncOptionsDialog` 已从 main_window 移到
+    # `sync_flow_controller`,patch 走 controller 自身的 namespace。
+    from tgmonitor.ui.controllers import sync_flow_controller as sfc_mod
 
     with tempfile.TemporaryDirectory() as td:
         settings = Settings.for_test(
@@ -847,7 +851,8 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
 
         win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
 
-        # Patch the SyncOptionsDialog class on main_window's namespace
+        # Patch `SyncOptionsDialog` 在 `SyncFlowController` 的 namespace(controller
+        # 模块顶层 `from sync_dialog import SyncOptionsDialog`,binding 在此)。
         captured: dict = {}
 
         class _StubDialog:
@@ -862,15 +867,15 @@ def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) ->
             def options(self):
                 return captured["defaults"]
 
-        original = mw.SyncOptionsDialog
-        mw.SyncOptionsDialog = _StubDialog  # type: ignore[assignment,misc]
+        original = sfc_mod.SyncOptionsDialog
+        sfc_mod.SyncOptionsDialog = _StubDialog  # type: ignore[assignment,misc]
         try:
-            result = win._show_sync_options_dialog(
+            result = win._sync_flow_ctrl._show_sync_options_dialog(
                 [1, 2, 3],
                 {1: "c1", 2: "c2", 3: "c3"},
             )
         finally:
-            mw.SyncOptionsDialog = original  # type: ignore[assignment,misc]
+            sfc_mod.SyncOptionsDialog = original  # type: ignore[assignment,misc]
 
         assert isinstance(result, SyncOptions)
         assert result.chat_delay_ms == 777
@@ -887,6 +892,7 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
     from tgmonitor.core.app_service import AppService
     from tgmonitor.core.objectstore.local_store import LocalObjectStore
     from tgmonitor.ui import main_window as mw
+    from tgmonitor.ui.controllers import sync_flow_controller as sfc_mod
 
     with tempfile.TemporaryDirectory() as td:
         settings = _window_settings(Path(td))
@@ -920,11 +926,11 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
             def options(self):
                 return None
 
-        original = mw.SyncOptionsDialog
-        mw.SyncOptionsDialog = _StubCancelDialog  # type: ignore[assignment,misc]
+        original = sfc_mod.SyncOptionsDialog
+        sfc_mod.SyncOptionsDialog = _StubCancelDialog  # type: ignore[assignment,misc]
         try:
-            result = win._show_sync_options_dialog([1], {1: "c1"})
+            result = win._sync_flow_ctrl._show_sync_options_dialog([1], {1: "c1"})
         finally:
-            mw.SyncOptionsDialog = original  # type: ignore[assignment,misc]
+            sfc_mod.SyncOptionsDialog = original  # type: ignore[assignment,misc]
 
         assert result is None

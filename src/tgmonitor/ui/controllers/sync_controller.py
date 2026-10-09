@@ -35,8 +35,8 @@ class SyncController:
     def on_sync_all_channels(self) -> None:
         """大盘快速操作:全量同步所有已订阅频道。
 
-        委托 `MainWindow._on_sync_requested`(复杂 38 行 orchestrator,含
-        3 个 helpers + async `_go()` + signal cleanup)— 后续 PR 再搬。
+        委托 `SyncFlowController.on_sync_requested`(2026-10-09 v1.12.x 抽提
+        出 main_window 4 个 helper 后的 orchestrator)— controller 不重复实现。
         """
         from PySide6.QtWidgets import QMessageBox
 
@@ -49,7 +49,9 @@ class SyncController:
                 mw.tr("已监听列表为空,先订阅频道"),
             )
             return
-        # 复用 MainWindow 上的完整编排器(controller 不重复实现)
+        # 2026-10-09 v1.12.x:thin delegate `_on_sync_requested` 仍保留在
+        # main_window.signal-connect 拓扑(channel_panel.sync_requested),
+        # 调用走 `self._ctx.main_window._on_sync_requested` 透传。
         mw._on_sync_requested(ids)
 
     def on_sync_progress(self, e) -> None:

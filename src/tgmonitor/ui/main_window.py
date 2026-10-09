@@ -54,7 +54,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import SyncOptions
 from tgmonitor.core.events import (
     LoginStateChanged,
     NotificationRequested,
@@ -71,6 +70,7 @@ from tgmonitor.ui.controllers import (
     SearchController,
     SettingsReactionController,
     SyncController,
+    SyncFlowController,
     ThemeController,
     TrayController,
 )
@@ -86,10 +86,6 @@ from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
-from tgmonitor.ui.widgets.sync_dialog import (
-    SyncOptionsDialog,
-    SyncProgressDialog,
-)
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 if TYPE_CHECKING:
@@ -284,6 +280,10 @@ class MainWindow(QMainWindow):
         self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
         self._export_ctrl = ExportController(self._ctx)
         self._sync_ctrl = SyncController(self._ctx)
+        # 2026-10-09 v1.12.x 下一 plan 目标 1.1:抽 `SyncFlowController` —
+        # 接管 `_on_sync_requested` 38 行 orchestrator + 3 helper。SyncController
+        # 仍走 `_on_sync_all_channels` 委派 main_window thin delegate。
+        self._sync_flow_ctrl = SyncFlowController(self._ctx)
         # 2026-10-04 plan 阶段 3.3:搜索 controller(模板)— 抽 8 个 handler
         # (`_on_search_*` + `_run_search_query`)到独立 plain class。
         self._search_ctrl = SearchController(self._ctx)
@@ -1120,81 +1120,8 @@ class MainWindow(QMainWindow):
     # ======================== 同步请求 ========================
 
     def _on_sync_requested(self, channel_ids: list[int]) -> None:
-        """同步请求入口 — 编排 4 个 helper 把 38 行展开成 10 行 orchestrator。
-
-        流程:
-          1. titles dict 从 VM known_channels 拉(channel id → title)
-          2. show options dialog → user 取消或 settings 不合规就 None
-          3. open progress dialog + connect VM signals to it
-          4. run_coro 后台 fire 同步 — 协程 finally 里清理 signal connections
-        """
-        titles = self._build_sync_titles(channel_ids)
-        options = self._show_sync_options_dialog(channel_ids, titles)
-        if options is None:
-            return
-
-        progress_dlg = SyncProgressDialog(
-            titles,
-            cancel_cb=self.app.channel_sync.cancel,
-            parent=self,
-        )
-        self._wire_sync_progress_signals(progress_dlg)
-
-        async def _go() -> None:
-            try:
-                await self.app.sync_channels(channel_ids, options)
-            finally:
-                # progress dialog 关闭后 disconnect VM signals — 防 dangling slot
-                # Qt C++ 侧 reference 累积。dialog 已 GC / signal 已断 → swallow
-                # RuntimeError / TypeError(Qt 已 disconnect 后再调 disconnect 抛)
-                try:
-                    self._vm.sync_progress.disconnect(progress_dlg.on_progress)
-                    self._vm.sync_done.disconnect(progress_dlg.on_done)
-                except (RuntimeError, TypeError):
-                    pass
-
-        run_coro(self.loop, _go(), error_label="sync_with_progress")
-        progress_dlg.exec()
-
-    def _build_sync_titles(self, channel_ids: list[int]) -> dict[int, str]:
-        """`channel_id → title` 给 SyncOptionsDialog / SyncProgressDialog 显示用。
-
-        VM 里有 DTO 用 `.title`,没找到(VMe 还没 bootstrap)回退 `#<id>`。
-        """
-        titles: dict[int, str] = {}
-        for cid in channel_ids:
-            ch = self._vm.known_channels.get(cid)
-            titles[cid] = ch.title if ch else f"#{cid}"
-        return titles
-
-    def _show_sync_options_dialog(
-        self,
-        channel_ids: list[int],
-        titles: dict[int, str],
-    ) -> SyncOptions | None:
-        """弹 SyncOptionsDialog + 读取 user 选择的选项。
-
-        返回 None:用户取消 OR 校验失败(让 options() 返 None)— 调用方不继续。
-        """
-        defaults = SyncOptions(
-            chat_delay_ms=self.app.settings.sync_chat_delay_ms,
-            page_delay_ms=self.app.settings.sync_page_delay_ms,
-            resume_from_saved=self.app.settings.sync_resume_from_saved,
-        )
-        dlg = SyncOptionsDialog(channel_ids, titles, defaults, self)
-        if not dlg.exec():
-            return None
-        return dlg.options()
-
-    def _wire_sync_progress_signals(self, dialog: SyncProgressDialog) -> None:
-        """把 VM 的 sync_progress / sync_done Signal 连到 progress dialog 的 slot。
-
-        解绑在 `_on_sync_requested._go()` 的 `finally` 里做(避免 dialog 已
-        destroy 时 disconnect 抛 RuntimeError 的处理)— 见 REVIEW M3 关于
-        dialog GC 后 dangling slot 的提示。
-        """
-        self._vm.sync_progress.connect(dialog.on_progress)
-        self._vm.sync_done.connect(dialog.on_done)
+        """同步请求入口 thin delegate — 委托 `SyncFlowController`(2026-10-09)。"""
+        self._sync_flow_ctrl.on_sync_requested(channel_ids)
 
     # ======================== 状态刷新 ========================
 
