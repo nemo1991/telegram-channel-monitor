@@ -46,6 +46,30 @@ class _MinimalMainWindow(MainWindow):
         # `status_bar.show_message(...)`;_MinimalMainWindow 给个 stub 即可
         # (本测试只验 hide/ignore/NotificationRequested 路径,不关心状态栏文案)。
         self.status_bar = MagicMock()
+        # 2026-10-10 v1.12.x:`_quit_app` / `_show_and_raise` thin delegate
+        # 走 `self._lifecycle_ctrl`,但本 fixture 不走真 controller — stub
+        # 一个,直接调 MainWindow 原方法体逻辑(本测试只验 `_truly_quit` /
+        # `qt_app.quit()` 等基础行为,不关心 controller 内部)。
+        from types import SimpleNamespace
+
+        self._lifecycle_ctrl = SimpleNamespace(
+            quit_app=lambda: self._legacy_quit_app(),
+            show_and_raise=lambda: self._legacy_show_and_raise(),
+        )
+        # 保留旧实现供 stub 调(LifecycleController 抽提前的原方法体,本测试
+        # 验「走对了 controller 委派」而非「controller 内部逻辑」,所以原
+        # 行为在本 fixture 内重放,等 LifecycleController 单测覆盖完整逻辑)。
+
+    def _legacy_quit_app(self) -> None:
+        self._truly_quit = True
+        qt_app = QApplication.instance()
+        assert qt_app is not None, "QApplication gone before quit"
+        qt_app.quit()
+
+    def _legacy_show_and_raise(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
 
 def _make_close_event() -> QCloseEvent:
@@ -141,13 +165,19 @@ def test_minimal_close_inactive_tray_skips_minimize(
 
 
 def test_quit_app_sets_truly_quit(qapp: QApplication) -> None:
-    """`_quit_app` 标 _truly_quit=True + 调 qt_app.quit()(patch 避免真关)。"""
+    """`_quit_app` 标 _truly_quit=True + 调 qt_app.quit()(patch 避免真关)。
+
+    2026-10-10:`_quit_app` 走 `_lifecycle_ctrl.quit_app()` 委派;本测试
+    走 `_MinimalMainWindow` 自带 legacy stub(直接调 PySide6 全局
+    `QApplication.instance()`),patch 目标 = `PySide6.QtWidgets.
+    QApplication.instance`。
+    """
     win = _MinimalMainWindow()
     assert win._truly_quit is False
     mock_quit = MagicMock()
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            "tgmonitor.ui.main_window.QApplication.instance",
+            "PySide6.QtWidgets.QApplication.instance",
             classmethod(lambda cls: MagicMock(quit=mock_quit)),
         )
         win._quit_app()

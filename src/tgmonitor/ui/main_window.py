@@ -43,7 +43,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -64,6 +63,7 @@ from tgmonitor.ui.controllers import (
     AppStateController,
     ExportController,
     HeaderActionController,
+    LifecycleController,
     LiveSelectionController,
     MainWindowCtx,
     MediaActionsController,
@@ -275,6 +275,10 @@ class MainWindow(QMainWindow):
         # (`_wire_shortcuts` 38 + `reload_shortcuts` 40 + `_ACTION_SLOTS` 16)。
         # 实际 bind 由 `__init__` 末尾的 `_wire_shortcuts()` thin delegate 触发。
         self._shortcut_ctrl = ShortcutController(self._ctx)
+        # 2026-10-10 plan 目标 1.4:抽 `LifecycleController` — 接管 F 类 110 LOC
+        # (show_and_raise / quit_app / switch_tab / on_nav_changed /
+        # focus_search / on_global_escape / copy_current_message_text)。
+        self._lifecycle_ctrl = LifecycleController(self._ctx)
         # 2026-10-04 plan 阶段 3.3:搜索 controller(模板)— 抽 8 个 handler
         # (`_on_search_*` + `_run_search_query`)到独立 plain class。
         self._search_ctrl = SearchController(self._ctx)
@@ -711,32 +715,16 @@ class MainWindow(QMainWindow):
         # 实例化)。TrayIcon 内部仍订一份做系统通知;此处补订做状态栏兜底。
 
     def _show_and_raise(self) -> None:
-        """File / tray「显示主窗口」共用 — unminimize + 顶置 + 焦点。"""
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.show_and_raise`。
+        保留方法名以保持测试夹具引用稳定(`test_main_window_tray.py`)。
+        """
+        self._lifecycle_ctrl.show_and_raise()
 
     def _quit_app(self) -> None:
-        """File→Quit / Ctrl+Q / tray「退出」共用 — `qt_app.quit()` 触发
-        aboutToQuit → `app.py:_shutdown_then_quit` 同步等 `_shutdown_async`
-        完成后真 quit。
-
-        2026-09-22 v1.8.x:之前路径是 `_truly_quit=True; qt_app.quit()`,
-        Qt 注释误以为「qt_app.quit() → 各 QWindow 关 → closeEvent 触发」,
-        但实测 `qt_app.quit()` **不会**自动 close 窗口,只退出事件循环 —
-        closeEvent 不会因此触发,`_shutdown_then_quit`(aboutToQuit handler)
-        调度 future,qasync 不保证 pump,future 可能直接被 loop close cancel。
-
-        修法:`_shutdown_then_quit` 改为嵌套 subloop 同步等(与 closeEvent 同
-        模式),所有 quit 路径(File→Quit / Ctrl+Q / tray「退出」/ SIGINT /
-        SIGTERM / macOS dock Cmd+Q)都收敛到 aboutToQuit → 真同步跑完
-        shutdown。`setQuitOnLastWindowClosed(False)` 让 `_truly_quit=False`
-        的关窗走 hide(不退出),`_truly_quit=True` 走真退出。
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.quit_app`。
+        保留方法名以保持测试夹具引用稳定(`test_main_window_tray.py`)。
         """
-        self._truly_quit = True
-        qt_app = QApplication.instance()
-        assert qt_app is not None, "QApplication gone before quit"
-        qt_app.quit()  # → aboutToQuit → _shutdown_then_quit 同步等完成 → loop close
+        self._lifecycle_ctrl.quit_app()
 
     def _on_vm_quit_requested(self) -> None:
         """2026-08-30 v1.5.0 PR #A4:tray menu「退出」→ VM 转发 → 真退出。
@@ -779,23 +767,22 @@ class MainWindow(QMainWindow):
         self._shortcut_ctrl.reload_shortcuts(settings)
 
     def _switch_tab(self, idx: int) -> None:
-        self.nav.set_current(idx)
-        # nav.set_current 已经 emit current_changed,stack 会自动跟
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.switch_tab`。
+        保留方法名以保持测试夹具 + 内部 call site 引用稳定。
+        """
+        self._lifecycle_ctrl.switch_tab(idx)
 
     def _on_nav_changed(self, idx: int) -> None:
-        """nav tab 切换 — 切到 MEDIA 页(3)触发一次列表刷新。
-
-        其他页忽略。VM 异步拉数据,第一次可能因 known_channels 还没就绪而
-        短暂为空,后续 channels_changed → _refresh_state 也会再刷一次。
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.on_nav_changed`。
+        保留方法名以保持 signal wire 引用稳定(`nav.current_changed.connect`)。
         """
-        if idx == 3:
-            self._on_media_refresh()
+        self._lifecycle_ctrl.on_nav_changed(idx)
 
     def _focus_search(self) -> None:
-        """聚焦到搜索框 + 自动切到 LIVE 页(搜索只在消息视图里有意义)"""
-        self._switch_tab(0)
-        self.header.search_bar.edit.setFocus()
-        self.header.search_bar.edit.selectAll()
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.focus_search`。
+        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
+        """
+        self._lifecycle_ctrl.focus_search()
 
     def _on_theme_toggle(self) -> None:
         """切换浅色/暗色主题 — 委托 `ThemeController`。(2026-10-01 v1.12.x)"""
@@ -817,57 +804,16 @@ class MainWindow(QMainWindow):
         self._theme_ctrl.on_theme_changed()
 
     def _on_global_escape(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:Esc 全局快捷键。
-
-        优先级:
-        1. 搜索框有 focus → 清空搜索 + 失焦(回 LIVE)
-        2. 设置页 / 子 dialog 有 focus → 退到默认(LIVE)
-        3. 否则 no-op(避免误清 LIVE 选中)
-
-        2026-09-02 v1.5.2 PR #B5:搜索框 clear 同时清 date panel + 折叠按钮 +
-        stop debounce timer(避免 stale fetch 跑到空 query 上)。
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.on_global_escape`。
+        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
         """
-        sb = self.header.search_bar.edit
-        if sb.hasFocus():
-            # 2026-09-02 PR #B5:stop timer 防 stale search 在 clear 后继续
-            # 触发(用户在 300ms 内按 Esc 但 search 已 emit 过);直接 clear()
-            # 会走 SearchBar._on_text_changed → 启新 timer,这里提前 stop。
-            self._search_debounce.stop()
-            self.header.search_bar.clear()  # SearchBar.clear() 重置 text + dates + adv
-            sb.clearFocus()
-            # 主动 emit `[]` → 清空视图(后续 live 消息自然 append 重建 LIVE 流)
-            self.live_view.set_messages([])
-            return
-        # 若当前不在 LIVE,回 LIVE(简化 — 用户感知的「取消」)
-        if self.stack.currentIndex() != 0:
-            self._switch_tab(0)
-
-    # 2026-10-04 plan 阶段 3.3:14 _on_live_* handler + 7 _run_live_* helper +
-    # _show_batch_progress_dialog + _normalize_selection_items 全部抽到
-    # `LiveSelectionController`,MainWindow 不再持有。本 marker 占位方便
-    # 阅读 git blame。
+        self._lifecycle_ctrl.on_global_escape()
 
     def _copy_current_message_text(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:Ctrl+C 复制当前 LIVE 选中消息 text。
-
-        2026-09-02 v1.5.3 PR #D1:MessageView 由 `QListWidget` 升级为 `QListView`
-        + `MessageListModel`,`currentItem().data(Qt.UserRole)` 协议废除,
-        改用 `live_view.current_message()` helper(MessageView 新增 method)
-        走 `model.data(currentIndex, DtoRole)` 拿 MessageDTO。
+        """2026-10-10 v1.12.x:thin delegate `LifecycleController.copy_current_message_text`。
+        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
         """
-        if self.stack.currentIndex() != 0:
-            return  # 只在 LIVE 页生效
-        msg = self.live_view.current_message()
-        if msg is None:
-            return
-        text = getattr(msg, "text", None) or ""
-        if not text:
-            self.status_bar.show_message(self.tr("当前消息无文本"), 1500)
-            return
-        from PySide6.QtWidgets import QApplication
-
-        QApplication.clipboard().setText(text)
-        self.status_bar.show_message(self.tr("已复制 {n} 字").format(n=len(text)), 1500)
+        self._lifecycle_ctrl.copy_current_message_text()
 
     # ======================== ViewModel 事件绑定 ========================
 
