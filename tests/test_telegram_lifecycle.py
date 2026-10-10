@@ -137,7 +137,9 @@ async def test_submit_code_wrong_publishes_auth_error(settings, bus, stub_tdlib_
         client.request = _bad_request  # type: ignore[method-assign]
 
         await client._code_queue.put("00000")
-        await asyncio.wait_for(client._check_authentication_code(), timeout=1.0)
+        # 2026-10-10 v1.12.x plan-batch2 目标 3 step 2:`_check_authentication_code`
+        # 抽到 `AuthStateHandler` composition delegate,通过 `client._auth.X` 调。
+        await asyncio.wait_for(client._auth._check_authentication_code(), timeout=1.0)
 
         await bus.flush()
         assert any(e.source == "code" for e in captured)
@@ -167,7 +169,8 @@ async def test_submit_password_wrong_publishes_auth_error(settings, bus, stub_td
         client.request = _bad_request  # type: ignore[method-assign]
 
         await client._password_queue.put("wrongpw")
-        await asyncio.wait_for(client._check_authentication_password(), timeout=1.0)
+        # 2026-10-10 v1.12.x plan-batch2 目标 3 step 2:见上方 `_check_authentication_code` 注。
+        await asyncio.wait_for(client._auth._check_authentication_password(), timeout=1.0)
         await bus.flush()
 
         assert any(e.source == "password" for e in captured)
@@ -298,7 +301,9 @@ async def test_auth_error_occured_subclasses_error_occurred(settings, bus, stub_
     bus.subscribe(ErrorOccurred, _cap)
 
     async with make_client(settings, bus) as client:
-        await client._publish_auth_error("code", "wrong code")
+        # 2026-10-10 v1.12.x plan-batch2 目标 3 step 2:`_publish_auth_error`
+        # 抽到 `AuthStateHandler`,走 `client._auth._publish_auth_error` 调。
+        await client._auth._publish_auth_error("code", "wrong code")
         await bus.flush()
         assert any(e.message == "wrong code" for e in parents)
 
@@ -325,7 +330,9 @@ async def test_kill_drains_input_queues(settings, bus, stub_tdlib_init):
 
 
 def test_auth_state_map_covers_lifecycle_keys():
-    keys = set(tdc._AUTH_STATE_MAP.keys())
+    from tgmonitor.core.telegram.tdlib_proxy import _AUTH_STATE_MAP
+
+    keys = set(_AUTH_STATE_MAP.keys())
     # 这些字符串是 TDLib 的 @type 串
     expected = {
         "authorizationStateWaitTdlibParameters",
