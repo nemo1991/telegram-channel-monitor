@@ -1,4 +1,4 @@
-"""MonitorService — 监听服务核心。
+"""MonitorService — 监听服务核心(facade)。
 
 职责:
 1. 订阅 `TelegramClient.subscribe_updates()` 的实时更新
@@ -8,6 +8,24 @@
 5. 落库 + 发 `MessageReceived` 事件
 
 启动/停止:`start()` / `stop()`,由 `AppService.start_monitor()` 调用。
+
+2026-10-10 v1.12.x plan-batch2 目标 2:1,278 → 707 LOC facade,4 个 mixin
+子模块按职责分离:
+  - `whitelist.py`      — 白名单 / 后端热重载(WhitelistMixin)
+  - `backfill.py`       — 周期补拉 / reconnect kick(BackfillMixin)
+  - `orchestrator.py`   — start/stop/主循环/心跳(OrchestratorMixin)
+  - `event_handlers.py` — 5 个 bus 订阅(EventHandlerMixin)
+  - `delete.py`         — 删 + 孤儿 bytes 清理(DeleteMixin)
+
+本文件仅保留:
+  - 核心消息处理:`_handle` / `_handle_edited` / `_download_worker` /
+    `_maybe_download_thumb`(热路径,3 个互相依赖,放一起不动)
+  - 状态字段:`__init__` + 中间状态字段(5 个 mixin 都依赖)
+  - 公共常量:`_BACKFILL_*` / `_HEARTBEAT_INTERVAL`
+  - 公开 type 门面:`MonitorService` class(组合 5 mixin)
+
+`MediaDownloader` 仍从此模块 re-export,保持向后兼容
+(`from tgmonitor.core.monitor.service import MediaDownloader`)。
 """
 
 from __future__ import annotations
@@ -15,43 +33,49 @@ from __future__ import annotations
 import asyncio
 import collections
 import dataclasses
-import hashlib
 import logging
-import time
-from typing import Iterable
 
 from tgmonitor.core.config import MediaPolicy, Settings
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ThumbnailDTO
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.core.events import (
-    ChannelMetadataChanged,
-    ChannelPhotoChanged,
-    ChannelTitleChanged,
-    ConnectionStateChanged,
-    ErrorOccurred,
     EventBus,
     MediaDownloaded,
     MediaDownloadProgress,
-    MessageDeleted,
     MessageEdited,
-    MessageInteractionsChanged,
-    MessagePinChanged,  # 2026-09-10 v1.7.3:server-side pin / unpin 推送
     MessageReceived,
 )
-from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
+from tgmonitor.core.monitor.backfill import BackfillMixin
+from tgmonitor.core.monitor.delete import DeleteMixin
+from tgmonitor.core.monitor.downloader import MediaDownloader  # noqa: F401  # re-export
+from tgmonitor.core.monitor.event_handlers import EventHandlerMixin
+from tgmonitor.core.monitor.orchestrator import OrchestratorMixin
+from tgmonitor.core.monitor.whitelist import WhitelistMixin
+from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
-from tgmonitor.core.telegram.tdlib_channels import ChatUnavailableError
-from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
+
+__all__ = ["MonitorService", "MediaDownloader"]  # MediaDownloader re-export
 
 log = logging.getLogger(__name__)
 
 
-class MonitorService:
+class MonitorService(
+    WhitelistMixin,
+    OrchestratorMixin,
+    BackfillMixin,
+    EventHandlerMixin,
+    DeleteMixin,
+):
     """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。
 
     除了实时流,还会以 `_BACKFILL_INTERVAL` 周期对白名单频道做一轮补拉
     (见 `_backfill`):TDLib 的 `updateNewMessage` 只推送连接期间的新消息,
     断线 / 重启期间的消息不会重放,补拉负责兜底,避免监测不全 / 长空窗。
+
+    类继承 5 个 mixin 顺序:
+    `WhitelistMixin → OrchestratorMixin → BackfillMixin →
+     EventHandlerMixin → DeleteMixin`
+    — 都只 mixin methods,不重 `__init__`;`__init__` 集中在本类。
     """
 
     # 周期补拉参数(测试可 monkeypatch 调小)
@@ -87,6 +111,9 @@ class MonitorService:
         self._whitelist: set[int] = set()  # 被订阅的 channel_id
         self._handled = 0  # 累计成功落库消息数(心跳日志用)
         self._last_heartbeat = 0.0  # time.monotonic() 上次心跳时间(周期节流用)
+        # reconnect 立即 kick 补拉后,设 True 跳过紧接的周期 tick
+        # (避免重复回拉 — 在 BackfillMixin._handle_connection_state 里设)。
+        self._skip_next_tick = False
         # 补拉中判定"频道不可访问"的 channel_id(每频道只 warning 一次,
         # 避免每 30s 轮刷日志);某频道补拉成功后从集合移除,可重新 warning。
         self._unavailable_channels: set[int] = set()
@@ -100,293 +127,9 @@ class MonitorService:
         # miss 走 _handle。OrderedDict 限长 10000,超长 evict 最旧。
         self._seen_ids: collections.OrderedDict[tuple[int, int], None] = collections.OrderedDict()
 
-    def set_whitelist(self, channel_ids: Iterable[int]) -> None:
-        """替换白名单 — 由 AppService 启动 monitor 时调。"""
-        self._whitelist = set(channel_ids)
-
-    def add_to_whitelist(self, channel_id: int) -> None:
-        """增量加一个频道到白名单(订阅后立即生效)。"""
-        self._whitelist.add(channel_id)
-
-    def remove_from_whitelist(self, channel_id: int) -> None:
-        """从白名单摘掉一个频道(退订;不存在 idempotent 不抛)。"""
-        self._whitelist.discard(channel_id)
-
-    async def update_backends(
-        self,
-        storage: StorageRepository,
-        objects: ObjectStore,
-        settings: Settings,
-    ) -> None:
-        """热重载后把新 storage/objects/settings 同步给 monitor 及其下载器。
-
-        由 `AppService.reconfigure` 调用(2026-08-18 修):之前 reconfigure
-        只换 AppService 自己的引用,monitor / MediaDownloader 仍持旧
-        storage —— 热重载切 PG 后实时 / 补拉消息仍写旧库,重启才生效。
-        这里同步替换引用 + 重建 MediaDownloader(新 storage/objects/
-        max_bytes)+ 从新 storage 重载白名单(订阅真理随存储切换)。
-        """
-        self.storage = storage
-        self.objects = objects
-        self.settings = settings
-        if self.downloader is not None:
-            self.downloader = MediaDownloader(
-                self.client,
-                storage,
-                objects,
-                max_bytes=settings.media_max_bytes,
-            )
-        # 订阅真理随存储切换:白名单从新 storage 重载;失败只降级记日志,
-        # 不阻断 reconfigure 的其余提交(保留原白名单,下一次订阅/退订事件会修正)。
-        try:
-            subscribed = await storage.list_subscribed_channels()
-        except Exception:  # noqa: BLE001
-            log.exception("update_backends: 从新 storage 重载白名单失败,保持原白名单")
-            return
-        self.set_whitelist(c.id for c in subscribed)
-
-    @property
-    def subscribed_ids(self) -> frozenset[int]:
-        """订阅频道 id 的快照集合 — UI 只读访问用。
-
-        内部 `_whitelist` 仍由 `set_whitelist` / `add_to_whitelist` /
-        `remove_from_whitelist` 维护;每次访问返回一个新 `frozenset` 副本,
-        UI 端不会意外修改内部状态。
-        """
-        return frozenset(self._whitelist)
-
-    async def start(self) -> None:
-        """启动主循环;幂等(已启动时 no-op)。"""
-        if self._task is not None:
-            return
-        self._stop.clear()
-        self._seen_ids.clear()
-        self._stream = self.client.subscribe_updates()
-        self._task = asyncio.create_task(self._run(), name="MonitorService")
-        self._backfill_task = asyncio.create_task(
-            self._backfill_loop(), name="MonitorService.backfill"
-        )
-        # 2026-08-27 v1.4.0 PR #10:订阅 reactions / views 增量更新事件。
-        # TDLib 高频推 updateMessageInteractionInfo,落库走 bus → 单点 +
-        # 订阅者异常被吞,比 stream 更安全。
-        self.bus.subscribe(MessageInteractionsChanged, self._handle_interactions_changed)
-        # 2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 → 落库 + republish
-        # MessageEdited 触发 UI 行 📌 刷新(只有 republish 才能让 UI 实时感知
-        # 外部 pin,而不依赖下次 reload)。
-        self.bus.subscribe(MessagePinChanged, self._handle_pin_changed)
-        # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
-        # 减 object_key refcount,与 `delete_message` 路径同语义。
-        self.bus.subscribe(MessageDeleted, self._handle_message_deleted)
-        # 2026-08-27 v1.4.0 PR #14:订阅频道元数据变更事件。`updateChannel`
-        # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
-        self.bus.subscribe(ChannelMetadataChanged, self._handle_channel_metadata)
-        # 2026-09-03 v1.6.0 PR #Q2:订阅普通 chat 改名 / 改头像事件。直接落库
-        # (channel_id 即 chat_id,无需反查);UI 端 `ChannelListCard` 也会
-        # 订阅同一事件实时刷新卡片。
-        self.bus.subscribe(ChannelTitleChanged, self._handle_channel_title_changed)
-        self.bus.subscribe(ChannelPhotoChanged, self._handle_channel_photo_changed)
-        self.bus.subscribe(ConnectionStateChanged, self._handle_connection_state)
-        # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
-        if self.downloader is not None:
-            self._download_queue = asyncio.Queue()
-            self._download_task = asyncio.create_task(
-                self._download_worker(), name="MonitorService.download"
-            )
-        log.info(
-            "MonitorService started; whitelist size=%d",
-            len(self._whitelist),
-        )
-
-    async def stop(self) -> None:
-        """停 monitor + 关流 + 等 task 退出(2s 超时硬 cancel)。"""
-        self._stop.set()
-        if self._download_task is not None:
-            self._download_task.cancel()
-            try:
-                await self._download_task
-            except asyncio.CancelledError:
-                pass
-            self._download_task = None
-        self._download_queue = None
-        if self._backfill_task is not None:
-            self._backfill_task.cancel()
-            try:
-                await self._backfill_task
-            except asyncio.CancelledError:
-                pass
-            self._backfill_task = None
-        if self._stream is not None:
-            try:
-                await self._stream.aclose()
-            except Exception:  # noqa: BLE001
-                pass
-        if self._task is not None:
-            try:
-                await asyncio.wait_for(self._task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
-                self._task.cancel()
-            self._task = None
-
-    # ---- 主循环 ----
-
-    async def _run(self) -> None:
-        assert self._stream is not None
-        backoff = 1.0
-        while not self._stop.is_set():
-            try:
-                while not self._stop.is_set():
-                    try:
-                        # 用 timeout 包住 anext:流静默超过 _HEARTBEAT_INTERVAL
-                        # 秒时抛 TimeoutError → 打心跳后继续等。
-                        async with asyncio.timeout(self._HEARTBEAT_INTERVAL):
-                            msg = await anext(self._stream)
-                    except StopAsyncIteration:
-                        break  # 流正常结束(aclose 后 __anext__ 抛它)
-                    except TimeoutError:
-                        self._log_heartbeat(no_updates=True)
-                        continue
-                    if msg is None:
-                        # 防御:个别流实现可能把关闭哨兵(None)漏出来而不是抛
-                        # StopAsyncIteration — 同样视为流结束。
-                        log.debug("monitor stream closed (None sentinel)")
-                        break
-                    # 有消息时也周期打心跳 —— 活跃频道下用户同样能确认通道活着,
-                    # 而不是只见 update received 不见 heartbeat。
-                    self._log_heartbeat(no_updates=False)
-                    log.debug(
-                        "monitor update received: channel=%s msg_id=%s",
-                        msg.channel_id,
-                        msg.telegram_msg_id,
-                    )
-                    try:
-                        # 2026-08-24:按 _seen_ids 区分「新消息」与「编辑」—
-                        # TDLib 编辑( updateMessageContent)走同一个 stream,
-                        # 用 cache 命中标记。
-                        key = (msg.channel_id, msg.telegram_msg_id)
-                        if key in self._seen_ids:
-                            await self._handle_edited(msg)
-                        else:
-                            await self._handle(msg)
-                    except Exception as e:  # noqa: BLE001
-                        log.exception("handle message failed: %s", e)
-                        await self.bus.publish(
-                            ErrorOccurred(
-                                source="monitor.handle",
-                                message=str(e),
-                                exception=e,
-                            )
-                        )
-                # 正常退出(流关闭)
-                break
-            except Exception as e:  # noqa: BLE001
-                log.exception("monitor loop crashed, will reconnect in %.1fs: %s", backoff, e)
-                await self.bus.publish(
-                    ErrorOccurred(source="monitor.loop", message=str(e), exception=e)
-                )
-                # 退避后重新订阅
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=backoff)
-                    break  # 停止事件触发
-                except TimeoutError:
-                    pass
-                backoff = min(backoff * 2, 30.0)
-                try:
-                    if self._stream is not None:
-                        await self._stream.aclose()
-                except Exception:  # noqa: BLE001
-                    pass
-                self._stream = self.client.subscribe_updates()
-
-    def _log_heartbeat(self, *, no_updates: bool) -> None:
-        """周期心跳 INFO 日志:距上次心跳 ≥ `_HEARTBEAT_INTERVAL` 才打。
-
-        `no_updates=True` 表示该次由流静默超时触发(距上次消息已超过一个周期);
-        `False` 表示流有消息、只是到点顺带汇报一次。两者都证明实时通道活着。
-        INFO 级别是为了默认可见 —— 用户不需要设 `TG_LOG_LEVEL=DEBUG` 就能
-        确认 monitor 是否在心跳(30s 一条不算日志噪音)。
-        """
-        now = time.monotonic()
-        if now - self._last_heartbeat < self._HEARTBEAT_INTERVAL:
-            return
-        self._last_heartbeat = now
-        log.info(
-            "monitor heartbeat: stream alive%s (whitelist=%d, handled=%d)",
-            ", no updates" if no_updates else "",
-            len(self._whitelist),
-            self._handled,
-        )
-
-    # ---- 周期补拉(断线 / 重启期间的兜底) ----
-
-    async def _backfill(self, channel_id: int) -> None:
-        """补拉该频道最近消息:TDLib 的 `updateNewMessage` 只在连接期间推送,
-        断线 / 重启期间的新消息不会重放,这里以周期兜底,顺带覆盖"实时流静默
-        死亡"的场景(此时 `request()` 仍可用,消息数据照常入库)。
-
-        锚点 = 库里该频道最大 `telegram_msg_id`;`iter_chat_history` 向旧方向
-        递减,遇到 `<= 锚点` 即说明其余已覆盖,break。首次(无历史)锚点 = 0,
-        只处理最近 `_BACKFILL_MAX_PAGE` 条当启动预热 — **不**让无锚点频道把
-        整段历史翻完(每 30s 拉几万条会撞 flood wait,反而制造长空窗)。
-        """
-        try:
-            max_id = await self.storage.get_max_telegram_msg_id(channel_id) or 0
-            n = 0
-            async for msg in self.client.iter_chat_history(
-                channel_id,
-                limit=self._BACKFILL_LIMIT,
-            ):
-                if n >= self._BACKFILL_MAX_PAGE:
-                    log.warning(
-                        "backfill channel %d hit cap %d; 新消息过多,建议手动全量同步",
-                        channel_id,
-                        self._BACKFILL_MAX_PAGE,
-                    )
-                    break
-                if max_id > 0 and msg.telegram_msg_id <= max_id:
-                    break
-                await self._handle(msg)
-                n += 1
-        except ClientClosingError:
-            return  # close() 中,静默退出,不打 traceback
-        except ChatUnavailableError as e:
-            # 频道不可访问(新 session 未加载 / 已被移除):只 warning 一次,
-            # 不再每轮刷 error traceback;恢复可用(下一轮成功)后清掉标记。
-            if channel_id not in self._unavailable_channels:
-                self._unavailable_channels.add(channel_id)
-                log.warning("backfill channel %d skipped: %s", channel_id, e)
-        except Exception:  # noqa: BLE001
-            log.exception("backfill channel %d failed", channel_id)
-        else:
-            # 本轮成功 → 清除不可用标记(若之前被跳过,恢复后可重新 warning)
-            self._unavailable_channels.discard(channel_id)
-
-    async def _backfill_all(self) -> None:
-        """对白名单里每个频道跑一轮补拉(频控:每频道每轮一次 getChatHistory)。
-
-        未登录(非 ready)时不拉取 —— TDLib 未就绪时 getChatHistory 会抛
-        "Client not started",每轮刷错误日志;登录成功 state 变 ready 后,
-        下一轮补拉自动恢复,无需外部触发。
-        """
-        if self.client.state != "ready":
-            log.info("backfill skipped: not ready (state=%s)", self.client.state)
-            return
-        for cid in list(self._whitelist):
-            await self._backfill(cid)
-
-    async def _backfill_loop(self) -> None:
-        """周期补拉主循环:每 `_BACKFILL_INTERVAL` 秒全量扫一轮白名单。"""
-        while not self._stop.is_set():
-            await asyncio.sleep(self._BACKFILL_INTERVAL)
-            if self._stop.is_set():
-                break
-            # 心跳:每轮补拉打一条 INFO —— 实时流挂了但补拉还活着时,
-            # 日志里能看到两者不同步,定位"空窗"来源(INFO 默认可见)
-            log.info(
-                "backfill round start: whitelist=%d handled=%d",
-                len(self._whitelist),
-                self._handled,
-            )
-            await self._backfill_all()
+    # ---- 核心消息流(_handle / _handle_edited / _download_worker) ----
+    # 注:3 个 method 互相依赖(共享 _seen_ids / 共享下载队列 / 共享 _handled),
+    # 故意不放 mixin —— 拆开会让 facade 转发 3 层,反而增加阅读跳数。
 
     async def _handle(self, msg: MessageDTO) -> None:
         """新消息路径(2026-08-24):已存/已编辑的消息在 `_run` 处已路由到 `_handle_edited`。
@@ -658,367 +401,6 @@ class MonitorService:
                 idx,
             )
 
-    async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删单条消息 + 清孤儿 bytes + 发 MessageDeleted 事件。
-
-        2026-08-24:顺手清 bytes — 对该 message 的每个 `media.object_key`
-        做一次 refcount 检查(`_count_media_with_object_key`),refcount=0 时
-        才 `objects.delete(key)`,避免误删跨消息去重场景下其它 message 还在
-        用的 bytes。清理失败只 log,不阻断删除。
-
-        2026-08-27 PR #11:走 `_delete_with_orphan_check` 复用;publish 仍在
-        这里(AppService 用户触发的删除需要通知 UI)。
-        """
-        await self._delete_with_orphan_check(channel_id, telegram_msg_id)
-        await self.bus.publish(
-            MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
-        )
-
-    async def delete_messages(
-        self,
-        items: list[tuple[int, int]],
-        cancel_event: asyncio.Event | None = None,
-    ) -> int:
-        """2026-09-08 v1.7.0:批量删 N 条消息 + 清孤儿 + 发 N 次 MessageDeleted。
-
-        按 (channel_id,) 分组后各调 `storage.delete_messages` 一次性 SQL,
-        复用 `_delete_with_orphan_check` 的 refcount 语义(串行,保证共享
-        object_key 的两条消息被删时 refcount 正确递减)。单条失败不阻断,
-        返成功条数。
-
-        2026-09-11 v1.7.4 (regression fix):`cancel_event` 可选 — 每条 RPC
-        前查 `cancel_event.is_set()`,True 则 break(不 publish,不发
-        MessageDeleted);原 facade 一次跑完整批无法中断,改为可选事件以
-        兼容旧调用点 + 让 AppService.delete_messages_batch 走真批量路径
-        而非退化为 per-item。
-
-        Out of scope(v1.8+):整体 refcount 收集优化(N×media → 1 round-trip)。
-        """
-        if not items:
-            return 0
-        succeeded: list[tuple[int, int]] = []
-        for cid, mid in items:
-            if cancel_event is not None and cancel_event.is_set():
-                break
-            try:
-                await self._delete_with_orphan_check(cid, mid)
-                succeeded.append((cid, mid))
-            except Exception:  # noqa: BLE001
-                log.exception("delete_messages(%s, %s) failed", cid, mid)
-        # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
-        for cid, mid in succeeded:
-            await self.bus.publish(MessageDeleted(channel_id=cid, telegram_msg_id=mid))
-        return len(succeeded)
-
-    async def _handle_message_deleted(self, event: MessageDeleted) -> None:
-        """2026-08-27 v1.4.0 PR #11:TDLib `updateDeleteMessages` → 落库删 row +
-        清孤儿 bytes。**不**再 publish(避免与发布者形成无限循环)。
-        """
-        try:
-            await self._delete_with_orphan_check(event.channel_id, event.telegram_msg_id)
-        except Exception as e:  # noqa: BLE001
-            log.exception("handle MessageDeleted failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.delete",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _delete_with_orphan_check(
-        self,
-        channel_id: int,
-        telegram_msg_id: int,
-    ) -> None:
-        """PR #11:删 row + 清孤儿 bytes 核心逻辑,与 AppService.delete_message 共享。"""
-        old = await self.storage.get_message(channel_id, telegram_msg_id)
-        await self.storage.delete_message(channel_id, telegram_msg_id)
-        if not old:
-            return
-        for med in old.media:
-            key = med.object_key
-            if not key:
-                continue
-            try:
-                # 2026-08-25 PR #3:refcount 下沉到 storage 后端
-                # (SQL count / Mongo aggregate / InMemory / Jsonl 顺序扫)。
-                n = await self.storage.count_media_by_object_key(key)
-            except Exception:  # noqa: BLE001
-                log.exception("count media by key failed: %s", key)
-                continue
-            if n == 0 and self.objects is not None:
-                try:
-                    await self.objects.delete(key)
-                    log.info(
-                        "monitor delete orphan bytes: channel=%s msg=%s key=%s",
-                        channel_id,
-                        telegram_msg_id,
-                        key,
-                    )
-                except Exception:  # noqa: BLE001
-                    log.warning(
-                        "monitor delete bytes %s failed (already gone?)",
-                        key,
-                        exc_info=True,
-                    )
-
-    async def _handle_interactions_changed(
-        self,
-        event: MessageInteractionsChanged,
-    ) -> None:
-        """2026-08-27 v1.4.0 PR #10:TDLib `updateMessageInteractionInfo`
-        → storage `update_message_interactions`(views / reactions 增量)。
-
-        落库后**不再 republish**(避免无限循环:EventBus.subscribe 自己是
-        反模式);详情面板直接订阅 `MessageInteractionsChanged` 即可,
-        落库前/落库后两条事件同 payload,UI 自取所需时点。
-        """
-        try:
-            await self.storage.update_message_interactions(
-                event.channel_id,
-                event.telegram_msg_id,
-                views=event.views,
-                # event.reactions 已是 list[ReactionDTO](TDLib 映射层保证),
-                # storage 实现负责 list/dict 双形态容错
-                reactions=event.reactions,
-            )
-            log.debug(
-                "interactions updated: channel=%s msg=%s views=%s reactions=%d",
-                event.channel_id,
-                event.telegram_msg_id,
-                event.views,
-                len(event.reactions) if event.reactions else 0,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("update interactions failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.interactions",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _handle_pin_changed(
-        self,
-        event: MessagePinChanged,
-    ) -> None:
-        """2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` → 落库 + republish。
-
-        与 `_handle_interactions_changed` 不同的是:这里**必须** republish
-        `MessageEdited` — UI 行的 📌 渲染依赖 in-memory DTO 的 `is_pinned`
-        字段,而 in-memory DTO 不会自动从 storage 同步(每次 `replace_message`
-        都靠 MessageEdited 触发)。republish 走完整 DTO re-fetch 保证 UI 拿到
-        最新值。
-
-        与 reactions 的 "不 republish" 区别:reactions 走 detail panel 单独
-        订阅,而 pin 只走 LIVE 行的 📌 图标 — 没有 detail panel 兜底,
-        必须 republish。
-        """
-        try:
-            await self.storage.update_message_pin(
-                event.channel_id,
-                event.telegram_msg_id,
-                event.is_pinned,
-            )
-            # 重新从 storage 拉完整 DTO(落库可能改变其它字段,虽然本方法
-            # 只动 is_pinned;为防 schema 漂移,re-fetch 是稳妥做法)。
-            updated = await self.storage.get_message(
-                event.channel_id,
-                event.telegram_msg_id,
-            )
-            if updated is not None:
-                await self.bus.publish(MessageEdited(message=updated))
-            log.debug(
-                "pin updated: channel=%s msg=%s pinned=%s",
-                event.channel_id,
-                event.telegram_msg_id,
-                event.is_pinned,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("update pin failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.pin",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _handle_channel_metadata(
-        self,
-        event: ChannelMetadataChanged,
-    ) -> None:
-        """2026-08-27 v1.4.0 PR #14:频道元数据增量更新落库。
-
-        `updateChannel` 推时 `channel_id` 已就绪,直接落库;`updateSupergroup`
-        推时只有 `supergroup_id`,需通过 username 反查 channel_id
-        (storage 现存 — InMemory/Jsonl/Postgres/Mongo 都按 username 找)。
-
-        2026-09-04 v1.6.4:同时透传 4 个 spammer 过滤字段
-        (`is_verified` / `is_scam` / `is_fake` / `has_protected_content`)。
-        `None` 字段保持现有 partial-update 语义(不动该列)。
-        """
-        try:
-            if event.channel_id == 0 and event.supergroup_id is not None:
-                # supergroup_id → username(由 storage 反查)。无图源,
-                # 实际生效路径:username 相同 → 找到 channel → 落库。
-                # 这里走简单策略:用 storage.list_channels() 扫描找匹配的
-                # username。生产可加索引;MVP 接受 O(N) 扫。
-                # v1.4.0 MVP:仅 username 不为 None 时反查。
-                if event.username:
-                    for c in await self.storage.list_channels():
-                        if c.username == event.username:
-                            await self.storage.update_channel_metadata(
-                                c.id,
-                                title=event.title,
-                                username=event.username,
-                                member_count=event.member_count,
-                                # 2026-09-04 v1.6.4:4 个 spammer 字段,
-                                # partial-update 语义由 storage 抽象保证
-                                is_verified=event.is_verified,
-                                is_scam=event.is_scam,
-                                is_fake=event.is_fake,
-                                has_protected_content=event.has_protected_content,
-                            )
-                            log.debug(
-                                "channel metadata updated via supergroup: "
-                                "channel=%s member_count=%s",
-                                c.id,
-                                event.member_count,
-                            )
-                            return
-                # 没找到匹配 username → 静默(可能 TDLib 推了陌生 supergroup)
-                return
-            if event.channel_id == 0:
-                return  # 无 channel_id 又无 username,跳过
-            await self.storage.update_channel_metadata(
-                event.channel_id,
-                title=event.title,
-                username=event.username,
-                member_count=event.member_count,
-                # 2026-09-04 v1.6.4:4 个 spammer 字段
-                is_verified=event.is_verified,
-                is_scam=event.is_scam,
-                is_fake=event.is_fake,
-                has_protected_content=event.has_protected_content,
-            )
-            log.debug(
-                "channel metadata updated: channel=%s title=%r username=%r "
-                "member_count=%s verified=%s scam=%s fake=%s has_protected=%s",
-                event.channel_id,
-                event.title,
-                event.username,
-                event.member_count,
-                event.is_verified,
-                event.is_scam,
-                event.is_fake,
-                event.has_protected_content,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("handle ChannelMetadataChanged failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.channel_metadata",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _handle_channel_title_changed(
-        self,
-        event: ChannelTitleChanged,
-    ) -> None:
-        """2026-09-03 v1.6.0 PR #Q2:`updateChatTitle` → 落库 title。
-
-        UI 端 `ChannelListCard` 同时订阅此事件实时刷卡片;此处只负责
-        storage 持久化。不存在 channel 时 idempotent 不抛(TDLib 偶发对
-        陈年 chat 推 metadata update,落库时机晚于本 update)。
-        """
-        try:
-            await self.storage.update_channel_metadata(event.channel_id, title=event.new_title)
-            log.debug(
-                "channel title updated: channel=%s new_title=%r",
-                event.channel_id,
-                event.new_title,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("handle ChannelTitleChanged failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.channel_title",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _handle_channel_photo_changed(
-        self,
-        event: ChannelPhotoChanged,
-    ) -> None:
-        """2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` → 落库 photo_local_key。
-
-        `event.local_path`:
-        - 非空 str → 头像本地缓存路径,落库覆盖旧值
-        - 空字符串 `""` → 头像被删,**显式**写 NULL 进 storage
-        - None → 不动字段(等价于其他字段 None 语义;COALESCE 兜底)
-
-        三态区分让 TDLib 推送「删头像」与「不动头像」可被观测。
-        UI 端 `ChannelListCard` 订阅此事件实时刷图标。
-        """
-        try:
-            if event.local_path is None:
-                # None = 「不动」(与既有 partial update None 语义对齐)
-                log.debug("channel photo no-op: channel=%s", event.channel_id)
-                return
-            # 非 None(包含空串):显式写真值。
-            # 空串 "" → 视为「头像被删」→ 写 NULL;非空 → 写真路径。
-            photo_to_set: str | None = event.local_path if event.local_path else None
-            await self.storage.update_channel_metadata(
-                event.channel_id, photo_local_key=photo_to_set
-            )
-            log.debug(
-                "channel photo updated: channel=%s local_path=%r -> %r",
-                event.channel_id,
-                event.local_path,
-                photo_to_set,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("handle ChannelPhotoChanged failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.channel_photo",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
-    async def _handle_connection_state(
-        self,
-        event: ConnectionStateChanged,
-    ) -> None:
-        """2026-08-27 v1.4.0 PR #14:reconnect → 立即触发 backfill,不等 30s tick。
-
-        state=`ready` 时 kick `_backfill_all_subscribed`,并设 `_skip_next_tick`
-        避免 tick 紧接着又跑一次造成回拉重复。
-        """
-        if event.state != "ready":
-            return
-        try:
-            log.info("connection ready — kicking immediate backfill")
-            self._skip_next_tick = True
-            await self._backfill_all()
-        except Exception as e:  # noqa: BLE001
-            log.exception("immediate backfill on reconnect failed: %s", e)
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="monitor.backfill_kick",
-                    message=str(e),
-                    exception=e,
-                )
-            )
-
     # ---- helpers ----
 
     # 2026-08-25 PR #3:删除 `_count_media_with_object_key` — 由
@@ -1031,248 +413,3 @@ class MonitorService:
         在 `_download_worker` 同步下 — 见 download_thumb。
         """
         return None
-
-
-# ---------- 后台下载器(可选,生产需要时可启动) ----------
-
-
-class MediaDownloader:
-    """按 telegram_file_id 异步下载原文件入 ObjectStore,然后回写 DB 的 object_key。
-
-    REVIEW M2.1 真实现:之前 `download_one` 返回 None,FULL 模式下用户**下不到任何
-    原文件**,只是元数据 + 缩略图 + 一个空 key。现在:
-      - 入参:`media: MediaDTO`(含 `telegram_file_id` / `file_size` / `mime_type`)
-      - 行为:`client.download_file(file_id)` 拿 bytes → `objects.put` → 返
-        **更新过的** `MediaDTO`(`object_key` / `object_backend` / `file_size` 已填,
-        `download_status=DONE`)
-      - 失败**不抛也不返 None**,而是返回 `download_status=FAILED` +
-        `download_error=<原因>` 的 MediaDTO —— 原因可落库、UI 可见(用户不再
-        只能从日志猜"有记录无文件"是为什么)。
-
-    边界(全部 → FAILED + 原因):
-      - `telegram_file_id` 缺失 → "无 telegram_file_id"
-      - `media.file_size > max_bytes` → "超过单文件上限"
-      - `download_file` 返 None(超时 / 无数据)→ "下载失败/超时"
-      - 实际下载 bytes > max_bytes(大小未知场景 hard cap)→ "实际大小超过上限"
-      - `objects.put` 异常 → "对象存储写入失败: ..."
-    """
-
-    def __init__(
-        self,
-        client: TelegramClient,
-        storage: StorageRepository,
-        objects: ObjectStore,
-        *,
-        max_bytes: int = 200_000_000,
-    ) -> None:
-        """`max_bytes` = 单文件硬上限(0 = 无限制,默认 200 MB)。"""
-        self.client = client
-        self.storage = storage
-        self.objects = objects
-        self.max_bytes = max_bytes
-
-    @staticmethod
-    def make_key(media: MediaDTO, suffix: str = "") -> str:
-        """生成稳定的对象 key:`media/<sha256[:16]>.<ext><suffix>`(内容寻址)。"""
-        h = hashlib.sha256((media.telegram_file_id or media.file_name or "").encode()).hexdigest()[
-            :16
-        ]
-        ext = (media.file_name or "").split(".")[-1] if media.file_name else "bin"
-        return f"media/{h}.{ext}{suffix}"
-
-    @staticmethod
-    def make_thumb_key(thumb_fid: str, ext: str = "jpg") -> str:
-        """2026-09-29:缩略图内容寻址 key `thumb/<sha256[:16]>.<ext>`(跟原图命名对称)。"""
-        h = hashlib.sha256(thumb_fid.encode()).hexdigest()[:16]
-        return f"thumb/{h}.{ext}"
-
-    async def download_one(
-        self,
-        msg_pk: int,
-        media: MediaDTO,
-        *,
-        force: bool = False,
-        progress_callback=None,
-    ) -> MediaDTO:
-        """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
-
-        skip-if-stored 顺序(2026-08-24):
-          1) storage 已有同 `telegram_file_id` 的 DONE media → 拷字段,不发 TDLib 请求
-          2) ObjectStore 已有同 `make_key(media)` → 视为已下载,补 object_key / backend
-          3) 两个都 miss → 走原下载流程
-
-        `force=True` 时跳过 #1 + #2(2026-08-24 Media Manager retry 路径用):用户
-        显式要求「重新尝试」,即使已下载也再发 TDLib 请求覆盖。调用方有责任
-        先 `objects.delete(old_key)` 清理旧 bytes,否则写入会覆盖。
-
-        `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
-        `await cb(downloaded: int, total: int | None)`,透传给
-        `client.download_file`;skip-if-stored 命中时**不**调(没进度可报)。
-        默认 None = 不上报(老调用方零改动)。
-
-        成功:`object_key` / `object_backend` / `file_size` 已填,`download_status=DONE`;
-        失败:`download_status=FAILED` + `download_error`(原因可持久化 / UI 展示),
-        不抛异常。`msg_pk` 仅用于日志(消息主键,出问题时定位上下文)。
-        """
-
-        def failed(reason: str) -> MediaDTO:
-            log.warning(
-                "skip media msg_pk=%s %s: %s",
-                msg_pk,
-                media.file_name or media.telegram_file_id or media.type.value,
-                reason,
-            )
-            return dataclasses.replace(
-                media,
-                download_status=MediaDownloadStatus.FAILED,
-                download_error=reason,
-            )
-
-        fid = media.telegram_file_id
-        if not fid:
-            log.debug("skip media msg_pk=%s: no telegram_file_id", msg_pk)
-            return failed("无 telegram_file_id")
-
-        # 跳过 #1:storage 已有同 file_id 的成功下载 → 拷字段,不发 TDLib 请求
-        # `force=True`(retry)时跳过 — 用户显式要求重试,即使 prior 已存也走原下载。
-        if not force:
-            prior = await self.storage.find_media_by_file_id(fid)
-            if (
-                prior is not None
-                and prior.download_status == MediaDownloadStatus.DONE
-                and prior.object_key
-            ):
-                log.debug(
-                    "skip media msg_pk=%s: storage hit (fid=%s key=%s)",
-                    msg_pk,
-                    fid,
-                    prior.object_key,
-                )
-                return dataclasses.replace(
-                    media,
-                    download_status=MediaDownloadStatus.DONE,
-                    download_error=None,
-                    object_key=prior.object_key,
-                    object_backend=prior.object_backend,
-                    file_size=prior.file_size,
-                )
-
-        # 跳过 #2:ObjectStore 已有该 key → 视为已下载,补字段
-        # `force=True` 同样跳过。
-        key = self.make_key(media)
-        if not force and await self.objects.exists(key):
-            log.debug(
-                "skip media msg_pk=%s: objectstore hit (key=%s)",
-                msg_pk,
-                key,
-            )
-            return dataclasses.replace(
-                media,
-                download_status=MediaDownloadStatus.DONE,
-                download_error=None,
-                object_key=key,
-                object_backend=self.objects.backend_name,
-                file_size=media.file_size,
-            )
-
-        if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
-            return failed(f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节")
-        data = await self.client.download_file(fid, progress_callback=progress_callback)
-        if data is None:
-            return failed("下载超时或未返回数据")
-        # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)
-        if self.max_bytes and len(data) > self.max_bytes:
-            return failed(f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节")
-        meta = ObjectMeta(
-            content_type=media.mime_type,
-            size=len(data),
-        )
-        try:
-            await self.objects.put(key, data, meta)
-        except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
-            return failed(f"对象存储写入失败: {e}")
-        # 返新 MediaDTO:保留原字段,只覆盖 object_key / object_backend / file_size
-        # 与下载状态。dataclasses.replace 比 `__dict__` 解构更稳(保留 frozen /
-        # __post_init__ 等),这里 MediaDTO 是普通 dataclass,replace() 同样适用。
-        return dataclasses.replace(
-            media,
-            download_status=MediaDownloadStatus.DONE,
-            download_error=None,
-            object_key=key,
-            object_backend=self.objects.backend_name,
-            file_size=len(data),
-        )
-
-    async def download_thumb(
-        self,
-        msg_pk: tuple[int, int],
-        media: MediaDTO,
-    ) -> ThumbnailDTO | None:
-        """2026-09-29:缩略图独立下载 — 入 ObjectStore `thumb/<sha256>.<ext>`
-        prefix + 返 ThumbnailDTO 让 caller 落 `thumbnails` 表。
-
-        - 入参 `msg_pk = (channel_id, telegram_msg_id)` — 关联键三元组前两条;
-          `media_idx` 来自 caller(同消息内 media 索引)
-        - 行为:`client.download_file(thumb_fid)` → `objects.put(thumb_key)` →
-          返回 ThumbnailDTO(DONE);失败 → 返回 FAILED 状态的 ThumbnailDTO
-        - 无 `media.thumbnail_telegram_file_id` → 返 None(caller 不落库)
-
-        与 `download_one` 契约一致:不抛。`msg_pk` 仅日志用。
-        """
-        if not media.thumbnail_telegram_file_id:
-            return None
-
-        def failed(reason: str) -> ThumbnailDTO:
-            log.warning(
-                "skip thumb msg_pk=%s/%s %s: %s",
-                msg_pk[0],
-                msg_pk[1],
-                media.file_name or media.telegram_file_id or media.type.value,
-                reason,
-            )
-            return ThumbnailDTO(
-                channel_id=msg_pk[0],
-                telegram_msg_id=msg_pk[1],
-                media_idx=-1,  # caller 必须在外部覆盖;此处仅兜底
-                telegram_thumb_file_id=media.thumbnail_telegram_file_id,
-                download_status=MediaDownloadStatus.FAILED,
-                download_error=reason,
-            )
-
-        try:
-            data = await self.client.download_file(media.thumbnail_telegram_file_id)
-        except Exception as e:  # noqa: BLE001
-            return failed(f"下载缩略图异常: {e}")
-        if data is None:
-            return failed("下载缩略图超时或未返回数据")
-        # 单文件上限继承 main 的 200MB — thumbs 通常 <10KB,几乎不触发;但
-        # 防御恶意/异常大文件把桶占满。
-        if self.max_bytes and len(data) > self.max_bytes:
-            return failed(f"缩略图 {len(data):,} 字节超过单文件上限")
-        # 2026-09-29:内容寻址 thumb key(跟 main key 命名对称),`make_thumb_key`
-        # 复用 main 的 sha16 ext 规则。
-        ext = (media.mime_type or "").split("/")[-1] if media.mime_type else "jpg"
-        # mime 不可信(/jpeg/.jpg/没值),与 history 兼容默认 .jpg
-        if ext not in ("jpg", "jpeg", "png", "webp"):
-            ext = "jpg"
-        thumb_key = self.make_thumb_key(media.thumbnail_telegram_file_id, ext)
-        meta = ObjectMeta(
-            content_type=media.mime_type or "image/jpeg",
-            size=len(data),
-        )
-        try:
-            await self.objects.put(thumb_key, data, meta)
-        except Exception as e:  # noqa: BLE001
-            return failed(f"对象存储写入缩略图失败: {e}")
-        return ThumbnailDTO(
-            channel_id=msg_pk[0],
-            telegram_msg_id=msg_pk[1],
-            media_idx=-1,  # caller 覆盖
-            object_key=thumb_key,
-            object_backend=self.objects.backend_name,
-            file_size=len(data),
-            mime_type=meta.content_type,
-            sha256=hashlib.sha256(data).hexdigest(),
-            download_status=MediaDownloadStatus.DONE,
-            telegram_thumb_file_id=media.thumbnail_telegram_file_id,
-        )

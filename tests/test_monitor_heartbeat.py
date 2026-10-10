@@ -29,7 +29,10 @@ async def test_monitor_heartbeat_logs_when_stream_idle(monitor, client, caplog) 
 
     monitor._HEARTBEAT_INTERVAL = 0.1  # type: ignore[assignment]
     monitor.set_whitelist([100])
-    with caplog.at_level(logging.INFO, logger="tgmonitor.core.monitor.service"):
+    # 2026-10-10 v1.12.x:heartbeat logger 从 `tgmonitor.core.monitor.service`
+    # 改成 `tgmonitor.core.monitor.orchestrator`(plan-batch2 目标 2 mixin 拆提
+    # 后的真模块名)。`caplog` 默认捕获 root 子树,所以这里显式声明新 logger。
+    with caplog.at_level(logging.INFO, logger="tgmonitor.core.monitor.orchestrator"):
         await monitor.start()
         try:
             # 等 2 个周期确保 heartbeat 被记到(wait_for vs 裸 sleep 0.25 — 实测
@@ -54,7 +57,9 @@ async def test_monitor_logs_update_received_and_stored(
     """
 
     monitor.set_whitelist([100])
-    with caplog.at_level(logging.DEBUG, logger="tgmonitor.core.monitor.service"):
+    # 2026-10-10 v1.12.x:orchestrator 拆提后,update-received DEBUG 日志从
+    # service.py 转到 orchestrator.py 模块(logger 名跟着变)。
+    with caplog.at_level(logging.DEBUG, logger="tgmonitor.core.monitor.orchestrator"):
         await monitor.start()
         try:
             await client.simulate_incoming(make_message(channel_id=100, msg_id=1, text="hi"))
@@ -84,7 +89,8 @@ async def test_monitor_heartbeat_logs_when_stream_active(monitor, client, bus) -
     caplog_records: list[str] = []
     handler = logging.Handler()
     handler.emit = lambda r: caplog_records.append(r.getMessage())
-    logger = logging.getLogger("tgmonitor.core.monitor.service")
+    # 2026-10-10 v1.12.x:heartbeat logger 从 service 改 orchestrator。
+    logger = logging.getLogger("tgmonitor.core.monitor.orchestrator")
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     try:
