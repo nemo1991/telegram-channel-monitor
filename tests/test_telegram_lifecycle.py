@@ -960,8 +960,15 @@ def test_factory_builds_real_client_when_credentials_present(
 
 
 def test_conn_state_map_covers_lifecycle_keys() -> None:
-    """`_CONN_STATE_MAP` 覆盖 TDLib 全部连接状态 @type(漏一个状态栏就停摆)。"""
-    keys = set(tdc._CONN_STATE_MAP.keys())
+    """`_CONN_STATE_MAP` 覆盖 TDLib 全部连接状态 @type(漏一个状态栏就停摆)。
+
+    2026-10-10 v1.12.x plan-batch2 目标 3 step 1:`_CONN_STATE_MAP` 从
+    `tdlib_client.py` 搬到 `tdlib_events.py`(events 子系统唯一用到它,
+    connection state handler 转换 TDLib `connectionStateXxx` → 业务字符串)。
+    """
+    from tgmonitor.core.telegram.tdlib_events import _CONN_STATE_MAP
+
+    keys = set(_CONN_STATE_MAP.keys())
     expected = {
         "connectionStateWaitingForNetwork",
         "connectionStateConnecting",
@@ -993,7 +1000,10 @@ async def test_connection_state_publishes_event(settings, bus, stub_tdlib_init) 
         update = TDLibObject.from_dict(
             {"@type": "updateConnectionState", "state": {"@type": "connectionStateReady"}}
         )
-        await client._on_connection_state(client, update)
+        # 2026-10-10 v1.12.x plan-batch2 目标 3 step 1:`_on_connection_state`
+        # 抽到 `EventsHandler` composition delegate,通过 `client._events._on_xxx`
+        # 调(同 tdlib_client 之前直接调等效,只是 wire 路径走 delegate)。
+        await client._events._on_connection_state(client, update)
         await bus.flush()
         assert any(e.state == "ready" for e in captured)
 

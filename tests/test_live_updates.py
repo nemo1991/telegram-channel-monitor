@@ -102,7 +102,7 @@ async def test_on_new_message_pushes_to_subscribed_stream(
 
         # 直接调 handler(等价于 tdlib_json receive loop 收到 updateNewMessage)
         update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=42, text="hello world"))
-        await client._on_new_message(client, update)
+        await client._events._on_new_message(client, update)
 
         # 200ms 内 stream 应该能拿到
         try:
@@ -158,7 +158,7 @@ async def test_monitor_service_publishes_message_received(
 
     # 调 _on_new_message — 应该推到 stream → _handle → bus.publish
     update = _FakeUpdateNewMessage(_FakeMsg(chat_id=100, msg_id=1, text="live update test"))
-    await client._on_new_message(client, update)
+    await client._events._on_new_message(client, update)
 
     try:
         await asyncio.wait_for(done.wait(), timeout=1.0)
@@ -212,7 +212,7 @@ async def test_on_new_message_skips_non_whitelisted_channel(
 
     # 频道 200 不在白名单
     update = _FakeUpdateNewMessage(_FakeMsg(chat_id=200, msg_id=1, text="ignored"))
-    await client._on_new_message(client, update)
+    await client._events._on_new_message(client, update)
 
     # 等够长让 _run 有机会处理(确认它不会发)
     await asyncio.sleep(0.3)
