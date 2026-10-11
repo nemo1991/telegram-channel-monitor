@@ -166,6 +166,8 @@ class FormSection:
         self._form = form
         self._widgets = {}
         self._actions = {}
+        # 把 self 挂到 groupbox 上,find_form_row 反向找 (单测 + settings_page 都用)
+        gb.setProperty("_section", self)
 
         for fdef in self.fields:
             widget = _build_field_widget(fdef, form)
@@ -288,15 +290,15 @@ def find_form_row(page: QWidget, key: str) -> tuple[QGroupBox, int] | None:
     """跨整个 SettingsPage 找 key 对应的 (groupbox, row_index)。
 
     复刻原 settings_page._find_form_row 行为:遍历 page.findChildren(QGroupBox),
-    检查每个 groupbox 的 `_widgets` 字典(FormSection 内部用),返回第一个
-    匹配项的 (group, row_index)。
+    每个 groupbox 持有一个 `_section` FormSection 引用(由 build() 写入
+    `setProperty("_section", self)`),返回第一个匹配项的 (group, row_index)。
 
-    **不在 FormSection 上用 dict 持有 key 的话,fallback 走 row label text
-    匹配** — 但 FormSection 已统一持有 `_widgets`,所以不写 fallback。
+    跨 group 隔离:仅当 groupbox 自己挂了 _section 才考虑;否则跳过,
+    避免误中别的 group 里的同名 label。
     """
     for gb in page.findChildren(QGroupBox):
-        section = getattr(gb, "_section", None)
-        if section is None or not isinstance(section, FormSection):
+        section = gb.property("_section")
+        if not isinstance(section, FormSection):
             continue
         for idx, fdef in enumerate(section.fields):
             if fdef.key == key:
