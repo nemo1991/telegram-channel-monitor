@@ -154,8 +154,9 @@ class MainWindow(QMainWindow):
         self.act_show = cast(QAction, menu["act_show"])
         self.act_quit = cast(QAction, menu["act_quit"])
         self._tray = self._assembler.build_tray()
-        self._wire_events()
-        self._wire_theme_change_signal()
+        # 2026-10-12 plan-batch3-1.5:_wire_events 40 LOC + _wire_theme_change_signal
+        # 4 LOC 抽到 UiAssembler.wire_events;MainWindow 编排只剩 1 行调。
+        self._assembler.wire_events()
         self._refresh_state()
         self._vm.bootstrap_ui()
         self._setup_controllers()
@@ -610,17 +611,6 @@ class MainWindow(QMainWindow):
         """切换浅色/暗色主题 — 委托 `ThemeController`。(2026-10-01 v1.12.x)"""
         self._theme_ctrl.toggle()
 
-    def _wire_theme_change_signal(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:ThemeManager.theme_changed → nav_bar 重画。
-
-        监听 ThemeManager 的全局 signal(SYSTEM 态 OS 切色时
-        `_on_system_scheme_changed` 也会 emit)— nav bar / channel panel
-        按新主题重 tint,免得 OS 切色后图标颜色 stale。
-        """
-        from tgmonitor.ui.theme import ThemeManager
-
-        ThemeManager._instance().theme_changed.connect(self._on_theme_changed)
-
     def _on_theme_changed(self) -> None:
         """2026-08-30 v1.5.0 PR #A5:ThemeManager 主题变 → UI 同步 — 委托 controller。"""
         self._theme_ctrl.on_theme_changed()
@@ -636,48 +626,6 @@ class MainWindow(QMainWindow):
         保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
         """
         self._lifecycle_ctrl.copy_current_message_text()
-
-    # ======================== ViewModel 事件绑定 ========================
-
-    def _wire_events(self) -> None:
-        # 2026-10-04 plan 阶段 3.3:VM message_received / message_edited /
-        # message_interactions_changed → `MessageStreamController`(signal wire
-        # 在 `_setup_controllers`,避免提前引用 `_message_stream_ctrl`)。
-        # EventBus `MessageDeleted` 也改在 `_setup_controllers` 段订阅。
-        # 2026-10-04 plan 阶段 3.3:VM media_downloaded / media_retried /
-        # media_deleted → `MediaActionsController`(signal wire 在
-        # `_setup_controllers`,避免提前引用 `_media_actions_ctrl`)。
-        # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
-        # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
-        self._vm.media_download_progress.connect(self.media_manager.on_download_progress)
-        # 2026-10-09 v1.12.x:VM login/conn/error wire 挪到 `_wire_signals` 阶段
-        # (原 `_wire_events` 早于 `_setup_controllers`,controller 还未实例化)。
-        self._vm.channels_changed.connect(self._refresh_state)
-        self._vm.export_done.connect(self._on_export_done)
-        self._vm.settings_changed.connect(self._on_settings_changed)
-        # 2026-09-25 v1.8.x:同步/导出进度 → 状态栏左侧活动指示器。
-        # 之前 sync_progress / export_progress 只绑 dialog,MainWindow 不感知,
-        # 现在多连一份到 _on_sync_progress / _on_export_progress — 不影响
-        # dialog(dialog 自己接的 signal 仍生效,Qt signal 多订阅互不干扰)。
-        self._vm.sync_progress.connect(self._on_sync_progress)
-        self._vm.sync_done.connect(self._on_sync_done)
-        self._vm.export_progress.connect(self._on_export_progress)
-        # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
-        # vm.search_messages(...) 完成后 emit `message_search_results(list[MessageDTO])`,
-        # MainWindow 接到直接 `set_messages` 替换视图(覆盖原有 LIVE 流)。
-        self._vm.message_search_results.connect(self.live_view.set_messages)
-        # Media Manager 转发(2026-08-24)
-        self._vm.media_list_loaded.connect(self.media_manager.on_media_loaded)
-        self._vm.media_reconcile_done.connect(self.media_manager.on_reconcile_done)
-        # 按频道批量删除反馈(2026-08-25 PR #4)
-        self._vm.channel_cleared.connect(self.media_manager.on_channel_cleared)
-        # 缩略图 VM signal — 直接绑 widget(2026-08-25 PR #1)
-        self.media_manager.set_view_model(self._vm)
-
-        # 2026-10-09 v1.12.x:`AppStateController` 5 个 wire 全部挪到
-        # `_wire_signals` 阶段(原 `_wire_events` 早于 `_setup_controllers`,
-        # controller 还未实例化):VM login/conn/error + EventBus login +
-        # status_bar._bell.bell_clicked + NotificationRequested。
 
     # ======================== 槽 ========================
 

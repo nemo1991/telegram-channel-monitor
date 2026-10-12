@@ -330,3 +330,54 @@ class UiAssembler:
         # 敏感:避免 wire_signals 提前引用 `_live_selection_ctrl` 触发
         # AttributeError,同 SearchController 模式)。
         mw._selection_toolbar.clear_clicked.connect(mw.live_view.clear_selection)
+
+    def wire_events(self) -> None:
+        """ViewModel + ThemeManager 事件绑定(原 `MainWindow._wire_events` 40 LOC + `_
+        wire_theme_change_signal` 4 LOC)。
+
+        5 大类:
+        - VM download progress → media_manager
+        - VM channels / export / settings / sync / 搜索 → MainWindow 槽
+        - VM media_list / reconcile / channel_cleared → media_manager
+        - VM media_downloaded / media_retry / media_deleted → MediaActionsController
+          (signal wire 在 `_setup_controllers`,避免提前引用 `_media_actions_ctrl`)
+        - ThemeManager.theme_changed → MainWindow._on_theme_changed
+
+        注释里记录的「提前引用 controller 触发 AttributeError」约束:搜索 / 多选
+        / message_stream 等依赖 controller 的连接**仍在** `_setup_controllers`
+        完成(本方法只接管不依赖 controller 的连接)。
+        """
+        mw = self._mw
+
+        # ---- VM signal → media_manager ----
+        # 2026-09-01 v1.5.1 PR #B3:下载进度反馈 — VM signal → media_manager
+        # 直接刷新对应 row 的「已下载 X / Y (Z%)」文字。
+        mw._vm.media_download_progress.connect(mw.media_manager.on_download_progress)
+        # Media Manager 转发(2026-08-24)
+        mw._vm.media_list_loaded.connect(mw.media_manager.on_media_loaded)
+        mw._vm.media_reconcile_done.connect(mw.media_manager.on_reconcile_done)
+        # 按频道批量删除反馈(2026-08-25 PR #4)
+        mw._vm.channel_cleared.connect(mw.media_manager.on_channel_cleared)
+        # 缩略图 VM signal — 直接绑 widget(2026-08-25 PR #1)
+        mw.media_manager.set_view_model(mw._vm)
+
+        # ---- VM signal → MainWindow 内部槽 ----
+        # 2026-10-09 v1.12.x:VM login/conn/error wire 挪到 wire_signals 阶段
+        # (原 wire_events 早于 _setup_controllers,controller 还未实例化)。
+        mw._vm.channels_changed.connect(mw._refresh_state)
+        mw._vm.export_done.connect(mw._on_export_done)
+        mw._vm.settings_changed.connect(mw._on_settings_changed)
+        # 2026-09-25 v1.8.x:同步/导出进度 → 状态栏左侧活动指示器。
+        mw._vm.sync_progress.connect(mw._on_sync_progress)
+        mw._vm.sync_done.connect(mw._on_sync_done)
+        mw._vm.export_progress.connect(mw._on_export_progress)
+        # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
+        mw._vm.message_search_results.connect(mw.live_view.set_messages)
+
+        # ---- ThemeManager signal → MainWindow ----
+        # 2026-08-30 v1.5.0 PR #A5:ThemeManager.theme_changed → nav_bar 重画。
+        # SYSTEM 态 OS 切色时 `_on_system_scheme_changed` 也会 emit —
+        # nav bar / channel panel 按新主题重 tint。
+        from tgmonitor.ui.theme import ThemeManager
+
+        ThemeManager._instance().theme_changed.connect(mw._on_theme_changed)
