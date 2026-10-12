@@ -533,49 +533,8 @@ class MainWindow(QMainWindow):
         self.status_bar = cast(StatusBar, widgets["status_bar"])
         self._media_refresh_debounce = cast(QTimer, widgets["media_refresh_debounce"])
         self.setCentralWidget(cast(QWidget, widgets["central"]))
-        self._wire_signals()
-
-    def _wire_signals(self) -> None:
-        """2026-10-04 plan 阶段 3.1:集中所有信号连接(原 `_build_ui` 后半段)。
-
-        5 大类:
-        - nav / header / search bar / theme → MainWindow 内部槽
-        - Dashboard / ChannelWidget → 业务回调
-        - MediaManagerWidget → vm 或本地回调
-        - MessageView / MessageDetail → selection + 详情
-        - SelectionToolbar + 详情顶部按钮 → 批量动作入口
-        """
-        # ---- 信号连接 ----
-        self.nav.current_changed.connect(self.stack.setCurrentIndex)
-        # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
-        self.nav.current_changed.connect(self._on_nav_changed)
-        self.header.btn_logout.clicked.connect(self._on_logout_clicked)
-        self.header.btn_action.clicked.connect(self._on_header_action)
-        # 2026-10-04 plan 阶段 3.3:搜索信号连接在 `_setup_controllers` 里
-        # 完成(controller 实例化之后立即连),避免 _wire_signals 提前引用
-        # `_search_ctrl` 触发 AttributeError。
-        self.header.btn_theme.clicked.connect(self._on_theme_toggle)
-
-        # Dashboard 快速操作
-        self.dashboard.on_refresh = self._on_refresh_channels
-        self.dashboard.on_export = self._on_export
-        self.dashboard.on_sync_all = self._on_sync_all_channels
-
-        # ChannelWidget 信号
-        self.channel_panel.btn_refresh.clicked.connect(self._on_refresh_channels)
-        self.channel_panel.sync_requested.connect(self._on_sync_requested)
-
-        # MessageView → MessageDetail(点击消息显示详情)
-        self.live_view.message_selected.connect(self.message_detail.show_message)
-
-        # 2026-09-08 v1.7.0:多选浮层 + 详情顶部 3 按钮 — 走同一 selection
-        # 入口。toolbar 默认 hidden,count>0 时 show 并更新计数 label;
-        # count=0 时 hide(selectionCleared 也走同一槽,toolbar.clear 复用)。
-        # 2026-10-04 plan 阶段 3.3:全部委托 `LiveSelectionController`,实际
-        # 连接在 `_setup_controllers` 完成(controller 实例化后立即连,顺序
-        # 敏感:避免 `_wire_signals` 提前引用 `_live_selection_ctrl` 触发
-        # AttributeError,同 `SearchController` 模式)。
-        self._selection_toolbar.clear_clicked.connect(self.live_view.clear_selection)
+        # 2026-10-12 plan-batch3-1.4:_wire_signals 41 LOC 抽到 UiAssembler。
+        self._assembler.wire_signals()
 
     def _show_and_raise(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.show_and_raise`。

@@ -283,3 +283,50 @@ class UiAssembler:
         # 阶段(原 `_build_tray` 早于 `_setup_controllers`,controller 还未
         # 实例化)。TrayIcon 内部仍订一份做系统通知;此处补订做状态栏兜底。
         return tray
+
+    def wire_signals(self) -> None:
+        """集中所有信号连接(原 `MainWindow._wire_signals`,2026-10-04 plan 阶段 3.1)。
+
+        5 大类:
+        - nav / header / search bar / theme → MainWindow 内部槽
+        - Dashboard / ChannelWidget → 业务回调
+        - MediaManagerWidget → vm 或本地回调
+        - MessageView / MessageDetail → selection + 详情
+        - SelectionToolbar + 详情顶部按钮 → 批量动作入口
+
+        搜索 / 多选 等「依赖 controller」的连接**留在** `_setup_controllers` 完成
+        (避免提前引用 `_search_ctrl` / `_live_selection_ctrl` 触发 AttributeError,
+        同 SearchController / LiveSelectionController 模式)。
+        """
+        mw = self._mw
+        # ---- 信号连接 ----
+        mw.nav.current_changed.connect(mw.stack.setCurrentIndex)
+        # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
+        mw.nav.current_changed.connect(mw._on_nav_changed)
+        mw.header.btn_logout.clicked.connect(mw._on_logout_clicked)
+        mw.header.btn_action.clicked.connect(mw._on_header_action)
+        # 2026-10-04 plan 阶段 3.3:搜索信号连接在 `_setup_controllers` 里
+        # 完成(controller 实例化之后立即连),避免 wire_signals 提前引用
+        # `_search_ctrl` 触发 AttributeError。
+        mw.header.btn_theme.clicked.connect(mw._on_theme_toggle)
+
+        # Dashboard 快速操作
+        mw.dashboard.on_refresh = mw._on_refresh_channels
+        mw.dashboard.on_export = mw._on_export
+        mw.dashboard.on_sync_all = mw._on_sync_all_channels
+
+        # ChannelWidget 信号
+        mw.channel_panel.btn_refresh.clicked.connect(mw._on_refresh_channels)
+        mw.channel_panel.sync_requested.connect(mw._on_sync_requested)
+
+        # MessageView → MessageDetail(点击消息显示详情)
+        mw.live_view.message_selected.connect(mw.message_detail.show_message)
+
+        # 2026-09-08 v1.7.0:多选浮层 + 详情顶部 3 按钮 — 走同一 selection
+        # 入口。toolbar 默认 hidden,count>0 时 show 并更新计数 label;
+        # count=0 时 hide(selectionCleared 也走同一槽,toolbar.clear 复用)。
+        # 2026-10-04 plan 阶段 3.3:全部委托 `LiveSelectionController`,实际
+        # 连接在 `_setup_controllers` 完成(controller 实例化后立即连,顺序
+        # 敏感:避免 wire_signals 提前引用 `_live_selection_ctrl` 触发
+        # AttributeError,同 SearchController 模式)。
+        mw._selection_toolbar.clear_clicked.connect(mw.live_view.clear_selection)
