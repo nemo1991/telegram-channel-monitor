@@ -41,6 +41,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -51,6 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tgmonitor.core.events import QuitRequested
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
@@ -60,6 +62,7 @@ from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
+from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 if TYPE_CHECKING:
     from tgmonitor.ui.main_window import MainWindow
@@ -223,3 +226,60 @@ class UiAssembler:
         """编排入口 —— plan-batch3 目标 1 step 1.5 落地。"""
         msg = "assemble() is not yet wired — see plan-batch3-1.2~1.5"
         raise NotImplementedError(msg)
+
+    def build_menu(self) -> dict[str, object]:
+        """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
+
+        原 `MainWindow._build_menu`(31 LOC)body 整体搬过来。`act_show` /
+        `act_quit` 由 MainWindow 显式赋值给 self 属性(ShortcutController
+        热重载 setShortcut 走 `main_window.act_X`)。`act_pause` 是
+        lambda-bound,不需要持久属性。
+
+        Returns:
+            dict[str, object] — key → QAction 引用:act_show / act_pause /
+            act_quit + menu_bar 引用。
+        """
+        menu_bar = self._mw.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+        act_show = QAction(self._mw.tr("显示主窗口"), self._mw)
+        act_show.setShortcut(QKeySequence("Ctrl+0"))
+        act_show.triggered.connect(self._mw._show_and_raise)
+        file_menu.addAction(act_show)
+        file_menu.addSeparator()
+        act_pause = QAction(self._mw.tr("暂停监听"), self._mw)
+        act_pause.triggered.connect(
+            lambda: self._mw.app.bus.publish_threadsafe(
+                self._mw.loop, QuitRequested(pause=True)
+            )
+        )
+        file_menu.addAction(act_pause)
+        act_quit = QAction(self._mw.tr("退出"), self._mw)
+        act_quit.setShortcut(QKeySequence("Ctrl+Q"))
+        act_quit.triggered.connect(self._mw._quit_app)
+        file_menu.addAction(act_quit)
+
+        return {
+            "menu_bar": menu_bar,
+            "act_show": act_show,
+            "act_pause": act_pause,
+            "act_quit": act_quit,
+        }
+
+    def build_tray(self) -> TrayIcon:
+        """系统托盘图标(2026-08-30 v1.5.0 PR #A4)。
+
+        原 `MainWindow._build_tray`(15 LOC)body 整体搬过来。`isSystemTrayAvailable()`
+        假时(offscreen / Linux 无 indicator)— tray 仍创建(订阅 handler 内部
+        no-op),但 `is_active=False`,closeEvent 不进入 minimize-to-tray 分支,
+        直接走 shutdown。
+
+        Returns:
+            TrayIcon — MainWindow 显式赋值给 `self._tray`。
+        """
+        tray = TrayIcon(self._mw, self._mw.app)
+        if tray.is_active:
+            tray.show()
+        # 2026-10-09 v1.12.x:NotificationRequested 订阅挪到 `_wire_signals`
+        # 阶段(原 `_build_tray` 早于 `_setup_controllers`,controller 还未
+        # 实例化)。TrayIcon 内部仍订一份做系统通知;此处补订做状态栏兜底。
+        return tray

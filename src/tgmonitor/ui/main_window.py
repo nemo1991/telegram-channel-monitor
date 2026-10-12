@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QMainWindow,
     QStackedWidget,
@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (
 from tgmonitor.core.events import (
     LoginStateChanged,
     NotificationRequested,
-    QuitRequested,
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.controllers import (
@@ -84,7 +83,6 @@ from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.status_bar import StatusBar
-from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -149,8 +147,13 @@ class MainWindow(QMainWindow):
         # dict → self 属性赋值 + setCentralWidget。
         self._assembler = UiAssembler(self)
         self._build_ui()
-        self._build_menu()
-        self._build_tray()
+        # 2026-10-12 plan-batch3-1.3:_build_menu 31 LOC + _build_tray 15 LOC
+        # 抽到 UiAssembler。act_show / act_quit 仍是 self. 属性(ShortcutController
+        # 热重载 setShortcut 走 `main_window.act_X`,无 widget 抽象层可走)。
+        menu = self._assembler.build_menu()
+        self.act_show = cast(QAction, menu["act_show"])
+        self.act_quit = cast(QAction, menu["act_quit"])
+        self._tray = self._assembler.build_tray()
         self._wire_events()
         self._wire_theme_change_signal()
         self._refresh_state()
@@ -201,9 +204,9 @@ class MainWindow(QMainWindow):
 
         self._vm = MonitorViewModel(app, monitor, loop)
         self._shutdown_cb: ShutdownCb | None = None
-        # 2026-08-30 v1.5.0 PR #A4:TrayIcon 实例。`is_active=False` 时
-        # (offscreen / Linux 无 indicator)closeEvent 不进入 minimize-to-tray。
-        self._tray: TrayIcon | None = None
+        # 2026-08-30 v1.5.0 PR #A4:TrayIcon 实例,line 157 `_assembler.build_tray()`
+        # 装配(`TrayIcon` 类型,永非 None)。`is_active=False` 时(offscreen /
+        # Linux 无 indicator)closeEvent 不进入 minimize-to-tray。
         # 2026-08-30 PR #A4:tray「退出」→ VM 收到 QuitRequested → emit
         # `quit_requested` signal → 此 handler → 真退出 qt_app.quit。
         self._vm.quit_requested.connect(self._on_vm_quit_requested)
@@ -573,51 +576,6 @@ class MainWindow(QMainWindow):
         # 敏感:避免 `_wire_signals` 提前引用 `_live_selection_ctrl` 触发
         # AttributeError,同 `SearchController` 模式)。
         self._selection_toolbar.clear_clicked.connect(self.live_view.clear_selection)
-
-    def _build_menu(self) -> None:
-        """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
-
-        「暂停监听」对应 tray menu 同名动作 — 留作 v1.5.1,本 PR 行为同
-        tray 一致(发 QuitRequested(pause=True),目前无订阅者,只 log)。
-        「退出」走 `qt_app.quit()` → aboutToQuit 触发 setQuitOnLastWindowClosed
-        之前的 `window.close()`,此时 `_truly_quit=True` 已置,closeEvent
-        不会再 minimize-to-tray,直接走 shutdown。
-
-        2026-09-07 v1.6.9:`act_show` / `act_quit` 改成 self. 属性(原局部变量),
-        让 `_bind_shortcuts` 能 reload `setShortcut()`。`setShortcut()` 初始
-        值仍是硬编码默认值,稍后 `_wire_shortcuts()` 调一次覆盖成 Settings
-        实际值(默认 = 硬编码,所以行为不变)。
-        """
-        menu_bar = self.menuBar()
-        file_menu = menu_bar.addMenu("&File")
-        self.act_show = QAction(self.tr("显示主窗口"), self)
-        self.act_show.setShortcut(QKeySequence("Ctrl+0"))
-        self.act_show.triggered.connect(self._show_and_raise)
-        file_menu.addAction(self.act_show)
-        file_menu.addSeparator()
-        act_pause = QAction(self.tr("暂停监听"), self)
-        act_pause.triggered.connect(
-            lambda: self.app.bus.publish_threadsafe(self.loop, QuitRequested(pause=True))
-        )
-        file_menu.addAction(act_pause)
-        self.act_quit = QAction(self.tr("退出"), self)
-        self.act_quit.setShortcut(QKeySequence("Ctrl+Q"))
-        self.act_quit.triggered.connect(self._quit_app)
-        file_menu.addAction(self.act_quit)
-
-    def _build_tray(self) -> None:
-        """系统托盘图标(2026-08-30 v1.5.0 PR #A4)。
-
-        `isSystemTrayAvailable()` 假时(offscreen / Linux 无 indicator)— `_tray`
-        仍创建(订阅 handler 内部 no-op),但 `is_active=False`,closeEvent
-        不进入 minimize-to-tray 分支,直接走 shutdown。
-        """
-        self._tray = TrayIcon(self, self.app)
-        if self._tray.is_active:
-            self._tray.show()
-        # 2026-10-09 v1.12.x:NotificationRequested 订阅挪到 `_wire_signals`
-        # 阶段(原 `_build_tray` 早于 `_setup_controllers`,controller 还未
-        # 实例化)。TrayIcon 内部仍订一份做系统通知;此处补订做状态栏兜底。
 
     def _show_and_raise(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.show_and_raise`。
