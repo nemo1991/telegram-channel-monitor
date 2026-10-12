@@ -59,17 +59,14 @@ from tgmonitor.core.dto import (
     SyncResult,
 )
 from tgmonitor.core.events import (
-    ErrorOccurred,
     EventBus,
     MessageEdited,
-    MonitoringPaused,
-    MonitoringResumed,
     SettingsChanged,
 )
 from tgmonitor.core.media_service import MediaService
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.objectstore.factory import build_object_store
-from tgmonitor.core.settings_store import SettingsDiff, diff_settings, update_env_paused
+from tgmonitor.core.settings_store import SettingsDiff, diff_settings
 from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.subscription_service import SubscriptionService
@@ -233,60 +230,14 @@ class AppService:
         set_storage(self, value)
 
     async def bootstrap(self) -> tuple[str, str | None]:
-        """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
+        """应用启动调一次:session 有效直接 ready,无效走 login — 详见 `_lifecycle.bootstrap`。
 
-        返回 (state, detail)。
-
-        401 加密 key 错误 → rotate + rebuild client + 再 start;client swap
-        留在此方法(影响 `AppService.client`,AuthService 不该碰)。
-
-        注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
-        现在所有「订阅真理」都走 `storage.list_subscribed_channels()` —
-        详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
-
-        2026-09-04 v1.6.6:paused-startup 时 (`_is_paused=True`) 直接返
-        `("ready", None)` 不连 TDLib — 正常路径由 `app.py:_setup_then_show`
-        gate 跳过 `monitor.start()` + `bootstrap()` 整个不进 paused-startup。
-        本 guard 是 belt-and-suspenders:兜底直接调 `bootstrap()` 的边缘场景(
-        测试 / 未来扩展),避免在 paused 状态走 TDLib 连接(client.state 仍
-        "uninit" 是 explicit,UI 渲染依赖 `is_paused` 不是 client.state)。
+        401 encryption key 错误 → rotate + rebuild client + 再 start;
+        client swap 影响 `AppService.client`,AuthService 不该碰。
         """
-        if self._is_paused:
-            log.info("bootstrap: already paused, returning ready without client.start()")
-            return "ready", None
+        from tgmonitor.core.app_service._lifecycle import bootstrap as _bootstrap
 
-        try:
-            state, detail = await self.client.start()
-        except Exception as e:  # noqa: BLE001
-            await self.bus.publish(ErrorOccurred(source="bootstrap", message=str(e), exception=e))
-            return "error", str(e)
-        # 如果 start 失败 + 检测到 401 → 让底层的 nuke_and_rebuild 接管,
-        # rotate 加密 key + 重建 client + 再 start 一次
-        if state == "error" and detail and "encryption key" in detail:
-            log.warning("bootstrap: 401 detected — rotating key and rebuilding client")
-            await self.client.nuke_and_rebuild(rotate_key=True)
-            from tgmonitor.core.telegram.factory import build_telegram_client
-
-            await self.client.close()
-            self.client = build_telegram_client(
-                self.settings,
-                use_fake=False,
-                event_bus=self.bus,
-            )
-            # client swap 后必须重建 SubscriptionService(它持有旧 client)
-            self._sub = SubscriptionService(self.bus, self.client, self.storage)
-            # AuthService 持旧 client 引用,重建
-            self.auth = AuthService(self.bus, self.client, self.settings)
-            state, detail = await self.client.start()
-        # client 端已经 publish 过 LoginStateChanged,这里只 fail-safe 再发一次终态
-        if state == "error":
-            await self.bus.publish(
-                ErrorOccurred(
-                    source="bootstrap",
-                    message=detail or "start failed",
-                )
-            )
-        return state, detail
+        return await _bootstrap(self)
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """委托给 `AuthService.submit_phone`(2026-08-03 微切抽出,统一失败路径)。"""
@@ -392,20 +343,16 @@ class AppService:
         return s
 
     async def start_monitor(self) -> None:
-        """订阅 client 的实时更新并消费(MonitorService 的细节后续接入)。"""
-        if self._running:
-            return
-        self._running = True
+        """订阅 client 的实时更新并消费 — 详见 `_lifecycle.start_monitor`。"""
+        from tgmonitor.core.app_service._lifecycle import start_monitor as _start_monitor
+
+        await _start_monitor(self)
 
     async def stop_monitor(self) -> None:
-        """停 monitor + 关所有 update stream;幂等。"""
-        self._running = False
-        for s in self._update_streams:
-            try:
-                await s.aclose()
-            except Exception:  # noqa: BLE001
-                pass
-        self._update_streams.clear()
+        """停 monitor + 关所有 update stream;幂等 — 详见 `_lifecycle.stop_monitor`。"""
+        from tgmonitor.core.app_service._lifecycle import stop_monitor as _stop_monitor
+
+        await _stop_monitor(self)
 
     # ---------- 暂停 / 恢复(2026-09-03 v1.6.1)----------
 
@@ -431,82 +378,24 @@ class AppService:
         _cancel(self)
 
     async def pause_monitor(self, source: str = "tray") -> None:
-        """2026-09-03 v1.6.1:暂停监听 — 断 TDLib + 取消 in-flight 下载。
+        """2026-09-03 v1.6.1:暂停监听 — 详见 `_lifecycle.pause_monitor`。
 
-        流程:
-        1. `monitor.stop()` — 取消 download_task + 关 update stream
-           (download_task 取消会把队列里 PENDING + 进行中 IN_PROGRESS 都 cancel)
-        2. `client.stop()` — TDLib 完整断开,释放 fd + 内存
-        3. `_is_paused = True` + 发 `MonitoringPaused` 事件
-
-        幂等:已 paused 时再调 no-op。`_running` 仍保持 True(暂停 ≠ 退出),
-        resume 走 `resume_monitor()` 走同一份 _running 状态。
+        流程: monitor.stop() → client.stop() → _is_paused=True → .env 持久化 → MonitoringPaused 事件。
+        幂等:已 paused 时 no-op。
         """
-        if self._is_paused:
-            log.debug("pause_monitor: already paused, no-op")
-            return
-        log.info("pause_monitor: source=%s", source)
-        if self.monitor is not None:
-            try:
-                await self.monitor.stop()
-            except Exception:  # noqa: BLE001
-                log.exception("pause_monitor: monitor.stop failed")
-        try:
-            await self.client.stop()
-        except Exception:  # noqa: BLE001
-            log.exception("pause_monitor: client.stop failed")
-        self._is_paused = True
-        # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=true)—失败 log.warning 不抛,
-        # 内存态已正确,UI 正常;.env 写失败下次重启回退到旧值,可接受退化。
-        if self.env_path is not None:
-            try:
-                update_env_paused(self.env_path, True)
-            except Exception:  # noqa: BLE001
-                log.exception("pause_monitor: failed to persist paused state to .env")
-        await self.bus.publish(MonitoringPaused(source=source))
+        from tgmonitor.core.app_service._lifecycle import pause_monitor as _pause_monitor
+
+        await _pause_monitor(self, source=source)
 
     async def resume_monitor(self, source: str = "tray") -> None:
-        """2026-09-03 v1.6.1:恢复监听 — 重启 TDLib + 重建 monitor。
+        """2026-09-03 v1.6.1:恢复监听 — 详见 `_lifecycle.resume_monitor`。
 
-        流程:
-        1. `client.start()` — 重新走 authorization 状态机(已 login 的 session
-           会秒过,冷启动走 phone/code/password)
-        2. `monitor.start()` — 重订阅 TDLib update stream + 启动 download worker
-        3. `_is_paused = False` + 发 `MonitoringResumed` 事件
-
-        幂等:已 resumed 时再调 no-op。
-
-        2026-09-04 v1.6.6:client.start 失败时**不**改 .env,保留 paused 状态
-        让用户重试(resume 失败而 .env 写 resumed 会导致下次启动误以为已恢复,
-        实际上 client 没连 — 不一致更糟)。写顺序:in-memory flip 先于 .env 写
-        (失败仅 log,内存态正确;下次重启回退 .env 旧值,可接受退化)。
+        流程: client.start() → monitor.start() → _is_paused=False → .env 持久化 → MonitoringResumed 事件。
+        幂等:未 paused 时 no-op。client.start 失败保留 paused 状态。
         """
-        if not self._is_paused:
-            log.debug("resume_monitor: not paused, no-op")
-            return
-        log.info("resume_monitor: source=%s", source)
-        try:
-            await self.client.start()
-        except Exception:  # noqa: BLE001
-            log.exception("resume_monitor: client.start failed")
-            # 启动失败仍尝试重建 monitor + 发 Resumed 事件让 UI 复位?
-            # — 失败时**不**发 Resumed,保持 paused 状态让用户重试
-            return
-        if self.monitor is not None:
-            try:
-                await self.monitor.start()
-            except Exception:  # noqa: BLE001
-                log.exception("resume_monitor: monitor.start failed")
-        self._is_paused = False
-        # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=false)—失败保留 paused=True 内存态,
-        # 避免 .env 说 resumed 但实际 client.start 失败的不一致(只在内存 flip 成功
-        # 后写 — 上面 client.start 已成功才走到这里)。
-        if self.env_path is not None:
-            try:
-                update_env_paused(self.env_path, False)
-            except Exception:  # noqa: BLE001
-                log.exception("resume_monitor: failed to persist paused state to .env")
-        await self.bus.publish(MonitoringResumed(source=source))
+        from tgmonitor.core.app_service._lifecycle import resume_monitor as _resume_monitor
+
+        await _resume_monitor(self, source=source)
 
     # ---------- 导出(由 ExportService 提供实现)— 每次新建轻量 svc ----------
 
@@ -805,37 +694,15 @@ class AppService:
     # ---------- 关闭 ----------
 
     async def shutdown(self) -> None:
-        """app exit — 停 monitor + 关 client / storage / objects(顺序敏感)。
+        """app exit — 停 monitor + 关 client / storage / objects — 详见 `_lifecycle.shutdown`。
 
-        2026-08-30 PR #A2 hotfix:不再清空 self._sub / self._media 引用 —
-        它们是构造时必建,与 facade 同生命周期,置 None 反而让 mypy 在后续
-        方法(若被误调)报 union-attr。shutdown 后整个 facade 随 app 销毁,
-        GC 时一起回收。子 service 持旧 storage/objects 引用也无害
-        (close() 后该引用已不可用,但 facade 已不再有调用入口)。
-
-        2026-09-22 v1.8.x:**分阶段超时** — 之前整条 `_shutdown_async` 共用
-        `app.py:416` 外层 5s wait_for,任何一段 hang(尤其 `client.close()` 走
-        tdlib_json 内部 CFRunLoop,macOS 偶发卡)就会让整链被强 cancel,
-        TDLib 子进程没 join、storage 连接没 close → 下次启动触发 401 →
-        `nuke_and_rebuild` 重建 session → 用户被踢回登录。改为每阶段独立
-        短超时,任一超时只 log 不上抛,继续往下走(原则:尽力清,不卡死)。
-        `monitor.stop()` 内部已有 2s 自带超时(参见 service.py:200-228),
-        这里不再包。
+        2026-09-22 v1.8.x:分阶段超时(每段独立 wait_for),任一超时只 log
+        不上抛(原则:尽力清,不卡死)。client.close() 偶发 hang(macOS
+        CFRunLoop 卡) 给 2s hard timeout。
         """
-        await self.stop_monitor()
-        # 关 TelegramClient — tdlib_json 走 CFRunLoop (macOS) / eventfd+IOCP
-        # (Linux/Windows),偶发 hang 给 2s hard timeout,失败仅 log。
-        try:
-            await asyncio.wait_for(self.client.close(), timeout=2.0)
-        except TimeoutError:
-            log.error(
-                "client.close() 超时(2s)— TDLib thread 可能残留,下次启动若 401 "
-                "会走 nuke_and_rebuild 重建 session"
-            )
-        except Exception:  # noqa: BLE001
-            log.exception("client.close() failed")
-        await self.storage.close()
-        await self.objects.close()
+        from tgmonitor.core.app_service._lifecycle import shutdown as _shutdown
+
+        await _shutdown(self)
 
     # ---------- 热重载 ----------
 
