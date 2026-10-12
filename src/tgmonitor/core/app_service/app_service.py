@@ -205,18 +205,15 @@ class AppService:
 
     @objects.setter
     def objects(self, value: ObjectStore | None) -> None:
-        """swap 时同步给 MediaService(否则 _media._objects 仍指向旧 backend)。
+        """swap 时同步给 MediaService — 委托 `_backend_sync.set_objects`。
 
         触发场景:
         - 测试 `app.objects = fake_s3`
         - reconfigure / _rebuild_objects 末尾 `self.objects = new_objects`
         """
-        if value is None:
-            # 历史兼容:`aclose()` 后可置 None。MediaService 同步保留旧引用
-            # (它会随 facade 一起销毁),不写回 None 避免触发 _media._objects 类型不匹配。
-            return
-        self._objects = value
-        self._media._objects = value  # noqa: SLF001 — explicit sync contract
+        from tgmonitor.core.app_service._backend_sync import set_objects
+
+        set_objects(self, value)
 
     @property
     def storage(self) -> StorageRepository:
@@ -225,15 +222,10 @@ class AppService:
 
     @storage.setter
     def storage(self, value: StorageRepository) -> None:
-        """swap 时同步给 SubscriptionService + MediaService(否则子 service 仍指向旧 storage)。
+        """swap 时同步给 SubscriptionService + MediaService — 委托 `_backend_sync.set_storage`。"""
+        from tgmonitor.core.app_service._backend_sync import set_storage
 
-        触发场景:
-        - 测试 `app.storage = fake_repo`
-        - reconfigure / _rebuild_storage 末尾 `self.storage = new_storage`
-        """
-        self._storage = value
-        self._sub._storage = value  # noqa: SLF001 — explicit sync contract
-        self._media._storage = value  # noqa: SLF001 — explicit sync contract
+        set_storage(self, value)
 
     async def bootstrap(self) -> tuple[str, str | None]:
         """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
