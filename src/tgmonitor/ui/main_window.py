@@ -38,18 +38,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
     QMainWindow,
-    QSplitter,
     QStackedWidget,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -78,6 +73,7 @@ from tgmonitor.ui.controllers import (
 )
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.shutdown import run_shutdown_coro_sync
+from tgmonitor.ui.ui_assembler import UiAssembler
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
@@ -87,6 +83,7 @@ from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
+from tgmonitor.ui.widgets.status_bar import StatusBar
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 if TYPE_CHECKING:
@@ -146,6 +143,11 @@ class MainWindow(QMainWindow):
 
         resolved_env_path: Path = env_path or (_user_data_dir() / ".env")
         self._setup_core(app, monitor, loop, resolved_env_path, objects_error)
+        # 2026-10-12 plan-batch3-1.2:UiAssembler 装配 central widget +
+        # 5 page + status bar + debounce。原 `MainWindow._build_central_widget`
+        # 115 LOC body 整体搬到 `UiAssembler.build_central`,这里只做 widget
+        # dict → self 属性赋值 + setCentralWidget。
+        self._assembler = UiAssembler(self)
         self._build_ui()
         self._build_menu()
         self._build_tray()
@@ -507,125 +509,28 @@ class MainWindow(QMainWindow):
         """2026-10-04 plan 阶段 3.1:拆 `_build_central_widget` + `_wire_signals` 两段。
 
         本方法只做编排,装配细节见两个私有方法。
+
+        2026-10-12 plan-batch3-1.2:`_build_central_widget` 抽到 `UiAssembler.build_central`,
+        本方法只做 widget dict → self 属性赋值 + setCentralWidget + 调 `_wire_signals`。
         """
-        self._build_central_widget()
+        widgets = self._assembler.build_central()
+        # UiAssembler.build_central() 返 `dict[str, object]`(整体 schema 边界),
+        # 每个 widget 实际类型在 assembler 内部已 typing 完整。MainWindow 端 cast
+        # 一次即可,不必引入 TypedDict(plan-batch3-1.2 决策)。
+        self.nav = cast(VerticalNavBar, widgets["nav"])
+        self.header = cast(HeaderBar, widgets["header"])
+        self.stack = cast(QStackedWidget, widgets["stack"])
+        self._selection_toolbar = cast(SelectionToolbar, widgets["selection_toolbar"])
+        self.live_view = cast(MessageView, widgets["live_view"])
+        self.message_detail = cast(MessageDetail, widgets["message_detail"])
+        self.dashboard = cast(DashboardWidget, widgets["dashboard"])
+        self.channel_panel = cast(ChannelWidget, widgets["channel_panel"])
+        self.media_manager = cast(MediaManagerWidget, widgets["media_manager"])
+        self.settings_page = cast(SettingsPage, widgets["settings_page"])
+        self.status_bar = cast(StatusBar, widgets["status_bar"])
+        self._media_refresh_debounce = cast(QTimer, widgets["media_refresh_debounce"])
+        self.setCentralWidget(cast(QWidget, widgets["central"]))
         self._wire_signals()
-
-    def _build_central_widget(self) -> None:
-        """装配 central widget + 5 个 stacked page + status bar + 2 个 debounce timer。
-
-        2026-10-04 plan 阶段 3.1:从原 `_build_ui` 拆出。装配关系复杂,信号
-        连接全部留在 `_wire_signals`。
-        """
-        central = QWidget()
-        root = QHBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # ---- 左: 导航栏 ----
-        self.nav = VerticalNavBar()
-        root.addWidget(self.nav)
-
-        # ---- 右: 头栏 + 内容 + 状态栏 ----
-        right = QWidget()
-        right.setObjectName("contentArea")
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
-
-        # 紧凑头栏
-        self.header = HeaderBar()
-        right_layout.addWidget(self.header)
-
-        # QStackedWidget 内容页
-        self.stack = QStackedWidget()
-        self.stack.setFrameShape(QFrame.NoFrame)
-
-        # 0: 实时流(MessageView + MessageDetail 横向并排)
-        # 2026-09-08 v1.7.0:LIVE 顶部增加 _SelectionToolbar(默认 hidden,
-        # 多选 >0 才 show)。从单层 QHBoxLayout → QVBoxLayout 嵌套:
-        # 上 toolbar / 下 body(QSplitter[live_view, message_detail])。
-        # 2026-09-14 v1.7.5 PR #4 (P0-H):QHBoxLayout → QSplitter,用户可拖
-        # 详情面板宽度自由(原 280-420 锁死)。splitter 比例 2:1(live 占大头)。
-        live_page = QWidget()
-        live_layout = QVBoxLayout(live_page)
-        live_layout.setContentsMargins(0, 0, 0, 0)
-        live_layout.setSpacing(0)
-        self._selection_toolbar = SelectionToolbar()
-        self._selection_toolbar.setVisible(False)
-        live_layout.addWidget(self._selection_toolbar)
-        body = QSplitter(Qt.Horizontal)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setHandleWidth(1)
-        body.setChildrenCollapsible(False)  # 防止用户拖到极窄被隐
-        self.live_view = MessageView()
-        self.message_detail = MessageDetail()
-        body.addWidget(self.live_view)
-        body.addWidget(self.message_detail)
-        body.setStretchFactor(0, 2)  # live 优先占 2/3
-        body.setStretchFactor(1, 1)  # detail 占 1/3
-        body.setSizes([800, 400])  # 启动默认(800px wide → 详情 400)
-        live_layout.addWidget(body, 1)
-        self.stack.addWidget(live_page)
-
-        # 1: 大盘
-        self.dashboard = DashboardWidget(self.app, self.monitor, loop=self.loop)
-        self.stack.addWidget(self.dashboard)
-
-        # 2: 频道
-        channels_page = QWidget()
-        ch_layout = QVBoxLayout(channels_page)
-        ch_layout.setContentsMargins(16, 16, 16, 16)
-        ch_layout.setSpacing(12)
-        ch_title = QLabel(self.tr("频道管理"))
-        ch_title.setObjectName("pageTitle")
-        ch_layout.addWidget(ch_title)
-        self.channel_panel = ChannelWidget(self.app, self.loop)
-        ch_layout.addWidget(self.channel_panel, 1)
-        self.stack.addWidget(channels_page)
-
-        # 3: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
-        media_page = QWidget()
-        media_layout = QVBoxLayout(media_page)
-        media_layout.setContentsMargins(0, 0, 0, 0)
-        media_layout.setSpacing(0)
-        self.media_manager = MediaManagerWidget()
-        media_layout.addWidget(self.media_manager)
-        self.stack.addWidget(media_page)
-
-        # 4: 设置
-        self.settings_page = SettingsPage(self.app, self.loop, self.env_path)
-        self.stack.addWidget(self.settings_page)
-
-        self.stack.setCurrentIndex(0)
-        right_layout.addWidget(self.stack, 1)
-
-        # 自定义状态栏(2026-10-01 v1.11.x 组件化重构) — 替代 Qt QStatusBar,
-        # 9 个子组件(LEFT 5 + RIGHT 4)由 `StatusBar` widget 自管;MainWindow
-        # 只做 1 行装配 + 后续 signal 绑 setter。
-        from tgmonitor.ui.widgets.status_bar import StatusBar
-
-        self.status_bar = StatusBar(
-            self.app,
-            self._vm,
-            objects_error=self._objects_error,
-            parent=self,
-        )
-
-        # Media Manager 批量删除 debounce(2026-09-28 fix):100 条连续 MediaDeleted
-        # 只刷一次 widget。timer 放在 MainWindow 上,与 StatusBar 解耦。
-        # 2026-10-04 plan 阶段 3.3:`timeout` 连接移到 `_setup_controllers`,
-        # 跟 `MediaActionsController.flush_media_refresh_pending` 接。
-
-        self._media_refresh_debounce = QTimer(self)
-        self._media_refresh_debounce.setSingleShot(True)
-        self._media_refresh_debounce.setInterval(100)
-
-        # 启动提示 — 替代旧 `status_bar.showMessage(self.tr("就绪"))`
-        self.status_bar.show_message(self.tr("就绪"), 3000)
-
-        root.addWidget(right, 1)
-        self.setCentralWidget(central)
 
     def _wire_signals(self) -> None:
         """2026-10-04 plan 阶段 3.1:集中所有信号连接(原 `_build_ui` 后半段)。
