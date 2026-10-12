@@ -61,13 +61,9 @@ from tgmonitor.core.dto import (
 from tgmonitor.core.events import (
     EventBus,
     MessageEdited,
-    SettingsChanged,
 )
 from tgmonitor.core.media_service import MediaService
 from tgmonitor.core.objectstore.base import ObjectStore
-from tgmonitor.core.objectstore.factory import build_object_store
-from tgmonitor.core.settings_store import SettingsDiff, diff_settings
-from tgmonitor.core.storage.factory import build_storage
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.subscription_service import SubscriptionService
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
@@ -707,202 +703,24 @@ class AppService:
     # ---------- 热重载 ----------
 
     async def reconfigure(self, new_settings: Settings) -> None:
-        """用新 settings 重建 storage / objects(不重建 TelegramClient)。
+        """用新 settings 重建 storage / objects — 详见 `_reconfigure.reconfigure`。
 
-        Telegram 凭据(api_id/api_hash/phone)若变化,needs_relogin=True(UI 引导登出登入);
-        proxy / session_dir 若变化,needs_restart=True(TdlibClient 构造参数,运行时
-        不重建,UI 提示需重启生效 — 2026-08-18,此前纯代理/会话目录变更 diff 判
-        无变化直接 return,UI 却弹「已保存并热重载」,属假成功)。
-
-        流程(2026-08-03 微切,2026-08-18 加后端同步 + needs_restart):
-          1. `diff_settings` 算 needs_relogin / storage_changed / objects_changed /
-             client_changed
-          2. 无变化 → return
-          3. storage 优先(在 hot path)→ `_rebuild_storage`
-          4. objects → `_rebuild_objects`(2026-08-18 起**无条件**跑 — 见下)
-          5. 把新 storage/objects/settings 同步给 monitor(含重建下载器 +
-             重载白名单)、重建 channel_sync — 否则热重载切 PG 不生效
-          6. 重建 SubscriptionService / MediaService(它们持旧 storage / objects)
-          7. publish `SettingsChanged` + 提交新 settings
-
-        `_rebuild_objects` 无条件执行的背景:之前只在 `objects_changed` 时重建
-        校验,若坏的对象存储配置已躺在 .env、本轮保存恰好没改对象存储字段,
-        diff 判 objects 未变 → 跳过校验 → 静默通过,直到写 media 才报
-        `S3 API Requests must be made to API port`。现在只要有任何设置变化
-        (含纯凭据 / 纯代理变化),都真实 connect 校验一次对象存储,失败上抛、
-        settings 不提交。
+        2026-10-12 plan-batch3 step 2.5:实现下放至 `_reconfigure.reconfigure`,
+        facade 端 1 行 thin delegate。公共方法签名 1:1 保留 — UI 现有调用面零变化。
         """
-        diff = diff_settings(self.settings, new_settings)
-        if not diff.changed:
-            return  # 无变化
+        from tgmonitor.core.app_service._reconfigure import reconfigure as _reconfigure
 
-        new_settings.ensure_dirs()
-
-        if diff.storage_changed:
-            await self._rebuild_storage(new_settings)
-        # 无条件校验对象存储(配置即使没变也真实 connect 校验)
-        await self._rebuild_objects(new_settings)
-
-        # 5) 把新后端同步给所有持引用者 —— reconfigure 只换 AppService 自己
-        # 的引用时,monitor / MediaDownloader 仍持旧 storage,实时 / 补拉消息
-        # 继续写旧库,用户看到"切 PG 没生效,重启才生效"(2026-08-18 修)。
-        if self.monitor is not None:
-            await self.monitor.update_backends(
-                self.storage,
-                self.objects,
-                new_settings,
-            )
-            # 2026-08-24:reconfigure 后 monitor 重建了 MediaDownloader(新
-            # storage / objects / max_bytes),同步给 self.downloader 让 sync
-            # 也用新实例。policy 变化同样需要 — 直接拿新 settings 字段。
-            self.downloader = self.monitor.downloader
-        from tgmonitor.core.channel_sync import ChannelSyncService
-
-        self.channel_sync = ChannelSyncService(
-            self.bus,
-            self.client,
-            self.storage,
-            downloader=self.downloader,
-            objects=self.objects,
-            media_policy=new_settings.media_policy,
-        )
-
-        # 6) 重建子 service(它们持旧 storage / objects 引用,必须跟着切)
-        self._sub = SubscriptionService(self.bus, self.client, self.storage)
-        self._media = MediaService(
-            self.bus,
-            self.storage,
-            self.objects,
-            downloader=self.downloader,
-        )
-
-        # 7) 提交新 settings + 事件
-        self.settings = new_settings
-        # AuthService 持旧 settings 引用的话,_check_credentials 预检用旧凭据
-        # (2026-08-18:reconfigure 后重建,消除引用不一致)
-        self.auth = AuthService(self.bus, self.client, new_settings)
-        await self.bus.publish(
-            SettingsChanged(
-                what=_what_label(diff),
-                new_settings=new_settings,
-                needs_relogin=diff.needs_relogin,
-                needs_restart=diff.client_changed,  # proxy / session_dir 变更需重启生效
-            )
-        )
-
-    async def _rebuild_storage(self, new_settings: Settings) -> None:
-        """切换 storage:**先建新库**(connect + init_schema)成功后才关旧库。
-
-        失败时异常上抛(`reconfigure` 中止、settings 不提交),且旧 storage
-        保持可用 — 不能"先关后建":新库连不上时旧存储已 close,monitor 会
-        写进已关闭的 store,数据静默丢失(2026-08-13 修,PG 连不上时的表现)。
-        """
-        self._reconfiguring = True
-        try:
-            new_storage = build_storage(new_settings)
-            try:
-                await new_storage.connect()
-                await new_storage.init_schema()
-            except BaseException:
-                # 新库未就绪:关掉已建连接再上抛,不留泄漏;旧 storage 不动
-                try:
-                    await new_storage.close()
-                except Exception:  # noqa: BLE001
-                    log.exception("关闭未就绪的新 storage 失败")
-                raise
-            # 新库就绪后才关旧库并替换;关旧库失败只 log,不影响切换
-            try:
-                await self.storage.close()
-            except Exception as e:  # noqa: BLE001
-                log.warning("关闭旧 storage 失败: %s", e)
-            self.storage = new_storage
-            # 2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #C 收尾:之前
-            # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
-            # cache 做 union,会把 unsubscribed 旧频道错误标记为"已订"。
-            # `AppService._subscribed` cache 已整体删除,真理 = storage。
-            # VM 通过 `list_subscribed_channels()` 在 init_schema 之后
-            # 重新拉一遍,自动同步到 monitor / channel_widget。
-            # 触发路径:`reconfigure` 末尾 `await self.bus.publish(
-            # SettingsChanged(..., needs_relogin=False))` → VM 的
-            # `_on_settings_changed` slot 会重新走 bootstrap。
-        finally:
-            self._reconfiguring = False
-
-    async def _rebuild_objects(self, new_settings: Settings) -> None:
-        """切换 objectstore:先建新、成功后关旧(与 `_rebuild_storage` 同语义)。
-
-        `connect()` 失败(如 S3 端点 / 凭据 / 权限错)异常上抛,reconfigure
-        中止、settings 不提交、旧 objectstore 保持可用;新建连接被关闭不留泄漏
-        (2026-08-18,与 _rebuild_storage 对齐)。
-        """
-        new_objects = build_object_store(new_settings)
-        try:
-            await new_objects.connect()
-        except BaseException:
-            try:
-                await new_objects.close()
-            except Exception:  # noqa: BLE001
-                log.exception("关闭未就绪的新 objectstore 失败")
-            raise
-        try:
-            await self.objects.close()
-        except Exception as e:  # noqa: BLE001
-            log.warning("关闭旧 objectstore 失败: %s", e)
-        self.objects = new_objects
+        await _reconfigure(self, new_settings)
 
     async def validate_backends(self, new_settings: Settings) -> None:
-        """仅校验后端连通性,**不切换运行时** — 供「仅保存到 .env」按钮用。
+        """仅校验后端连通性,**不切换运行时** — 详见 `_reconfigure.validate_backends`。
 
-        storage:connect → init_schema → close;objectstore:connect → close。
-        任一失败上抛,调用方据此放弃落盘 .env;成功时 `self.storage` /
-        `self.objects` 完全不受影响。校验中新建的连接失败即关闭,不留泄漏
-        (与 `_rebuild_storage` / `_rebuild_objects` 同一套失败清理语义)。
+        供「仅保存到 .env」按钮调用:storage:connect → init_schema → close;
+        objectstore:connect → close。任一失败上抛,调用方据此放弃落盘 .env;
+        成功时 `self.storage` / `self.objects` 完全不受影响。校验中新建
+        的连接失败即关闭,不留泄漏(与 `_rebuild_storage` / `_rebuild_objects`
+        同一套失败清理语义)。
         """
-        new_settings.ensure_dirs()
+        from tgmonitor.core.app_service._reconfigure import validate_backends as _validate
 
-        new_storage = build_storage(new_settings)
-        try:
-            await new_storage.connect()
-            await new_storage.init_schema()
-        except BaseException:
-            try:
-                await new_storage.close()
-            except Exception:  # noqa: BLE001
-                log.exception("关闭校验用的 storage 失败")
-            raise
-        try:
-            await new_storage.close()
-        except Exception as e:  # noqa: BLE001
-            log.warning("关闭校验用的 storage 失败: %s", e)
-
-        new_objects = build_object_store(new_settings)
-        try:
-            await new_objects.connect()
-        except BaseException:
-            try:
-                await new_objects.close()
-            except Exception:  # noqa: BLE001
-                log.exception("关闭校验用的 objectstore 失败")
-            raise
-        try:
-            await new_objects.close()
-        except Exception as e:  # noqa: BLE001
-            log.warning("关闭校验用的 objectstore 失败: %s", e)
-
-
-def _what_label(diff: SettingsDiff) -> str:
-    """`SettingsChanged.what` 字段标签(给 UI 分类显示)。
-
-    优先级:storage+objectstore > storage > objectstore > client > credentials
-    (client 单独成立时是纯 proxy / session_dir 变化,storage/objects 都没碰;
-    credentials 单独成立时是纯凭据变化)。
-    """
-    if diff.storage_changed and diff.objects_changed:
-        return "storage+objectstore"
-    if diff.storage_changed:
-        return "storage"
-    if diff.objects_changed:
-        return "objectstore"
-    if diff.client_changed:
-        return "client"
-    return "credentials"
+        await _validate(self, new_settings)

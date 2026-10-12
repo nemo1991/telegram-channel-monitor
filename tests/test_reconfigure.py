@@ -153,7 +153,7 @@ async def test_reconfigure_storage_failure_keeps_old_storage(
     app = AppService(bus, client, storage, objects, s1)
 
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_storage",
+        "tgmonitor.core.app_service._reconfigure.build_storage",
         lambda settings: _BrokenStorage(),
     )
     s2 = _settings(
@@ -191,7 +191,7 @@ async def test_reconfigure_storage_init_schema_failure_closes_new(
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
 
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_storage",
+        "tgmonitor.core.app_service._reconfigure.build_storage",
         lambda settings: _InitFailsStorage(),
     )
     s2 = _settings(tmp_path, db_backend=DBBackend.POSTGRES, db_dsn="postgresql://x")
@@ -236,7 +236,7 @@ async def test_reconfigure_objectstore_failure_keeps_old_objects(
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
 
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_object_store",
+        "tgmonitor.core.app_service._reconfigure.build_object_store",
         lambda settings: _BrokenObjects(),
     )
     s2 = _settings(
@@ -290,7 +290,7 @@ async def test_reconfigure_validates_objects_even_when_objects_unchanged(
             type(self).closed = True
 
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_object_store",
+        "tgmonitor.core.app_service._reconfigure.build_object_store",
         lambda settings: _Broken(),
     )
     s2 = _settings(tmp_path, api_id=2)  # 仅凭据变化,对象存储字段未变
@@ -350,7 +350,7 @@ async def test_validate_backends_failure_raises_keeps_runtime(
             type(self).closed = True
 
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_storage",
+        "tgmonitor.core.app_service._reconfigure.build_storage",
         lambda settings: _BrokenStorage(),
     )
     s2 = _settings(tmp_path, db_backend=DBBackend.POSTGRES, db_dsn="postgresql://x")
@@ -400,7 +400,7 @@ async def test_reconfigure_syncs_backends_to_monitor(
     await new_storage.connect()
     await new_storage.set_channel_subscribed(100, True)
     monkeypatch.setattr(
-        "tgmonitor.core.app_service.app_service.build_storage",
+        "tgmonitor.core.app_service._reconfigure.build_storage",
         lambda settings: new_storage,
     )
 
