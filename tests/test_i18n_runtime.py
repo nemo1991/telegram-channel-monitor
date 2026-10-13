@@ -32,16 +32,23 @@ from tgmonitor.i18n import install_translator
 
 
 def test_settings_lang_default_is_zh_cn(monkeypatch: pytest.MonkeyPatch) -> None:
-    """2026-09-07 v1.6.8:Settings.lang 默认 zh_CN,中文用户零配置。"""
+    """2026-09-07 v1.6.8:Settings.lang 默认 zh_CN,中文用户零配置。
+
+    2026-10-12 plan-batch3 目标 3 step 3.2:显式 `_env_file=None` 隔离本机 .env,
+    避免旧版 `TG_DB_BACKEND=jsonl` 触发 pydantic ValidationError 阻断本 test。
+    """
     monkeypatch.delenv("TG_LANG", raising=False)
-    s = Settings()
+    s = Settings(_env_file=None)  # noqa: SLF001
     assert s.lang == "zh_CN"
 
 
 def test_settings_lang_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TG_LANG=en_US → Settings.lang == 'en_US'。"""
+    """TG_LANG=en_US → Settings.lang == 'en_US'。
+
+    2026-10-12 plan-batch3 目标 3 step 3.2:同上,`_env_file=None` 隔离本机 .env。
+    """
     monkeypatch.setenv("TG_LANG", "en_US")
-    s = Settings()
+    s = Settings(_env_file=None)  # noqa: SLF001
     assert s.lang == "en_US"
 
 

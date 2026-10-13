@@ -736,10 +736,14 @@ class SettingsPage(QWidget):
     # ============================================================
 
     def _on_db_backend_changed(self) -> None:
-        is_jsonl = self.cmb_db.currentData() == DBBackend.JSONL
-        # DSN 行:postgres/mongo 时显示,jsonl 时隐藏
+        # 2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 后端已删,`DBBackend.JSONL` 不存在;
+        # 用 `getattr` 兜底,让 is_jsonl 永远 False — DSN 永远显、db_root 永远隐,
+        # 等同 step 3.4 终态(那时 `db_root` 字段、JSONL 选项、显隐逻辑一并删)。
+        jsonl_marker = getattr(DBBackend, "JSONL", None)
+        is_jsonl = self.cmb_db.currentData() == jsonl_marker
+        # DSN 行:postgres/mongo 时显示,jsonl 时隐藏(jsonl 已删,永远显)
         self._set_field_visible("db_dsn", not is_jsonl)
-        # 目录行:jsonl 时显示
+        # 目录行:jsonl 时显示(jsonl 已删,永远隐 — db_root 字段在 step 3.4 删)
         self._set_field_visible("db_root", is_jsonl)
 
     def _on_os_backend_changed(self) -> None:

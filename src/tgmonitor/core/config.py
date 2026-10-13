@@ -17,11 +17,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DBBackend(str, Enum):
-    """消息仓储后端选择。"""
+    """消息仓储后端选择。
+
+    2026-10-12 plan-batch3 目标 3:JSONL 后端已删除,只保留 Postgres / Mongo。
+    若 .env 仍设 `TG_DB_BACKEND=jsonl`,pydantic 校验时即抛
+    `ValidationError: Input should be 'postgres' or 'mongo'`,启动期拦截。
+    """
 
     POSTGRES = "postgres"
     MONGO = "mongo"
-    JSONL = "jsonl"  # 文件:每频道一个 .jsonl(轻量,无需 DB 服务)
 
 
 class ObjectStoreBackend(str, Enum):
@@ -81,10 +85,14 @@ class Settings(BaseSettings):
     tdlib_verbosity: int = Field(default=0, ge=0, le=1023)
 
     # ---- 数据库后端 ----
-    # 默认 JSONL:开箱即用,无需任何 DB 服务
-    db_backend: DBBackend = Field(default=DBBackend.JSONL)
+    # 默认 POSTGRES:plan-batch3 目标 3(2026-10-12)删 JSONL 后,POSTGRES 变首选项
+    # (跟 1.0.x 时代 JSONL 默认的"开箱即用"行为相反 — 现在首次启动需先起 PG,
+    # 行为变化在 CHANGELOG + .env.example 里写明)
+    db_backend: DBBackend = Field(default=DBBackend.POSTGRES)
     db_dsn: str = Field(default="postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor")
-    db_root: Path = Field(default_factory=lambda: _user_data_dir() / "messages")  # jsonl 用
+    # 历史字段,2026-10-12 删 JSONL 后不再使用;保留只为兼容旧 .env,step 3.3
+    # 联动 `settings_store.EditableSettings.db_root` / `settings_page` 一并删。
+    db_root: Path = Field(default_factory=lambda: _user_data_dir() / "messages")  # noqa: ARG003  # legacy: 删 JSONL 后无 consumer
 
     # ---- 对象存储后端 ----
     # 默认 FOLDER:两级分片,文件多时不慢;亦可改 local(平铺)
@@ -171,13 +179,15 @@ class Settings(BaseSettings):
     key_show_window: str = Field(default="", description="show main window shortcut")
 
     def ensure_dirs(self) -> None:
-        """确保本地目录存在(仅在本地 backend / session 落盘时调用)。"""
+        """确保本地目录存在(仅在本地 backend / session 落盘时调用)。
+
+        2026-10-12 plan-batch3 目标 3:JSONL 后端删除,`db_root` 不再 mkdir;
+        该字段保留(默认值)直到 step 3.3 联动 settings_store/settings_page 一并删。
+        """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.data_root.mkdir(parents=True, exist_ok=True)
         if self.objectstore_backend in (ObjectStoreBackend.LOCAL, ObjectStoreBackend.FOLDER):
             self.objectstore_root.mkdir(parents=True, exist_ok=True)
-        if self.db_backend == DBBackend.JSONL:
-            self.db_root.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def for_test(cls, **overrides) -> Settings:
@@ -187,7 +197,10 @@ class Settings(BaseSettings):
         - `_env_file=None`(不读 .env)
         - api_id=1, api_hash="x"*32, phone="+10000000000"
         - session_dir / data_root / db_root / objectstore_root 用 tempfile.mkdtemp
-        - media_policy=METADATA / db_backend=JSONL / objectstore_backend=LOCAL
+        - media_policy=METADATA / db_backend=POSTGRES / objectstore_backend=LOCAL
+          (2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,默认切到 POSTGRES;
+          测试若需真连 PG 应 `monkeypatch` build_storage 拦截,见
+          `tests/test_reconfigure.py` 3 处 reconfigure test)
 
         `overrides` 优先级最高。`ensure_dirs()` 已被调用。
 
@@ -205,7 +218,7 @@ class Settings(BaseSettings):
             phone="+10000000000",
             session_dir=base / "session",
             data_root=base,
-            db_root=base / "messages",
+            db_root=base / "messages",  # legacy: 删 JSONL 后无 consumer,留兼容旧 .env
             objectstore_root=base / "media",
         )
         defaults.update(overrides)
