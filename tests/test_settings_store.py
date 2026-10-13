@@ -118,7 +118,7 @@ def test_editable_to_settings_roundtrip():
         session_dir="./s",
         db_backend="mongo",  # 2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,改 mongo
         db_dsn="",
-        db_root="./m",  # 留 step 3.3(EditableSettings 字段删除时一并删)
+        # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删
         objectstore_backend="folder",
         objectstore_root="./o",
         objectstore_endpoint="",
@@ -142,8 +142,10 @@ def test_editable_to_settings_roundtrip():
 def _settings(**kw) -> Settings:
     """最小可工作 Settings(default 全相同)。
 
-    2026-10-12 plan-batch3 目标 3 step 3.2:`db_backend` 默认从 JSONL 切到 POSTGRES;
-    `db_root` 字段 Settings 仍接受(留兼容旧 .env),step 3.3 联动 EditableSettings 一并删。
+    2026-10-12 plan-batch3 目标 3:
+    - step 3.2:`db_backend` 默认从 JSONL 切到 POSTGRES
+    - step 3.3:db_root 字段从 EditableSettings 删;Settings.db_root 仍
+      接受(留兼容旧 .env)但本 helper 不再生成默认值
     """
     base = dict(
         api_id=1,
@@ -152,7 +154,6 @@ def _settings(**kw) -> Settings:
         session_dir=Path("/tmp/s"),
         db_backend=DBBackend.POSTGRES,
         db_dsn="",
-        db_root=Path("/tmp/m"),
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=Path("/tmp/o"),
         media_policy=MediaPolicy.METADATA,
@@ -181,8 +182,9 @@ def test_diff_settings_credentials_trigger_relogin():
 
 
 def test_diff_settings_storage_change():
-    old = _settings(db_root=Path("/tmp/m1"))
-    new = _settings(db_root=Path("/tmp/m2"))
+    # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删,改测 db_dsn 变化触发 storage_changed
+    old = _settings(db_dsn="postgresql://a")
+    new = _settings(db_dsn="postgresql://b")
     d = diff_settings(old, new)
     assert d.storage_changed is True
     assert d.needs_relogin is False

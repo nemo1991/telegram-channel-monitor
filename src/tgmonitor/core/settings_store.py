@@ -88,7 +88,13 @@ def write_env_file(env: EnvFile, path: Path) -> None:
 
 
 def settings_to_pairs(s: Settings) -> dict[str, str]:
-    """Settings → .env 字段 dict(供 UI 编辑后写回)。"""
+    """Settings → .env 字段 dict(供 UI 编辑后写回)。
+
+    2026-10-12 plan-batch3 目标 3 step 3.3:`TG_DB_ROOT` 字段不再序列化(原
+    jsonl 后端专属,2026-10-12 删 JSONL 后无 consumer)。`Settings.db_root`
+    字段仍保留(默认 `_user_data_dir() / messages`),只为兼容老用户 .env;
+    step 3.4 联动 settings_page 删 FormSection `db_root` 字段。
+    """
     return {
         "TG_API_ID": str(s.api_id),
         "TG_API_HASH": s.api_hash,
@@ -97,7 +103,6 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_PROXY": s.proxy or "",
         "TG_DB_BACKEND": s.db_backend.value,
         "TG_DB_DSN": s.db_dsn,
-        "TG_DB_ROOT": str(s.db_root),
         "TG_OBJECTSTORE_BACKEND": s.objectstore_backend.value,
         "TG_OBJECTSTORE_ROOT": str(s.objectstore_root),
         "TG_OBJECTSTORE_ENDPOINT": s.objectstore_endpoint or "",
@@ -172,7 +177,9 @@ class EditableSettings:
 
     db_backend: str = "postgres"  # DBBackend.value
     db_dsn: str = ""
-    db_root: str = "./data/messages"  # jsonl 用
+    # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段删除 — 原 jsonl 后端
+    # 专属,2026-10-12 删 JSONL 后无 consumer。Settings.db_root 仍保留默认
+    # (`_user_data_dir() / messages`)只为兼容老用户 .env,UI 不再编辑/显示。
 
     objectstore_backend: str = "local"
     objectstore_root: str = "./data/media"
@@ -232,7 +239,6 @@ class EditableSettings:
             session_dir=str(s.session_dir),
             db_backend=s.db_backend.value,
             db_dsn=s.db_dsn,
-            db_root=str(s.db_root),
             objectstore_backend=s.objectstore_backend.value,
             objectstore_root=str(s.objectstore_root),
             objectstore_endpoint=s.objectstore_endpoint or "",
@@ -302,7 +308,6 @@ class EditableSettings:
             session_dir=Path(self.session_dir),
             db_backend=DBBackend(self.db_backend),
             db_dsn=self.db_dsn,
-            db_root=Path(self.db_root),
             objectstore_backend=ObjectStoreBackend(self.objectstore_backend),
             objectstore_root=Path(self.objectstore_root),
             objectstore_endpoint=self.objectstore_endpoint or None,
@@ -381,7 +386,8 @@ class SettingsDiff:
 
     字段:
       needs_relogin: api_id / api_hash / phone 之一变化(Telegram 凭据)
-      storage_changed: db_backend / db_dsn / db_root 之一变化
+      storage_changed: db_backend / db_dsn 之一变化(2026-10-12 plan-batch3
+        目标 3 step 3.3:db_root 字段已删,不再列入 diff)
       objects_changed: objectstore_* 字段之一变化
       client_changed: proxy / session_dir 之一变化(TdlibClient 构造参数,运行时
         不重建 client,需重启生效 — 2026-08-18 新增,此前纯代理/会话目录变更
@@ -415,8 +421,8 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
         old.api_id != new.api_id or old.api_hash != new.api_hash or old.phone != new.phone
     )
     storage_changed = (
-        old.db_backend != new.db_backend or old.db_dsn != new.db_dsn or old.db_root != new.db_root
-    )
+        old.db_backend != new.db_backend or old.db_dsn != new.db_dsn
+    )  # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 已删,不再 diff
     objects_changed = (
         old.objectstore_backend != new.objectstore_backend
         or old.objectstore_root != new.objectstore_root

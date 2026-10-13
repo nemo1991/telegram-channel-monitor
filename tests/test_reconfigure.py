@@ -50,8 +50,9 @@ async def test_reconfigure_storage_swap(tmp_path: Path, monkeypatch: pytest.Monk
     client = FakeTelegramClient()
     app = AppService(bus, client, storage, objects, s1)
 
-    # 触发:同样后端但不同 db_root → 应触发 storage_changed,引用换成新实例
-    s2 = _settings(tmp_path, db_root=tmp_path / "m2")
+    # 触发:同样后端但不同 db_dsn → 应触发 storage_changed,引用换成新实例
+    # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删,改 db_dsn 触发 storage 重建
+    s2 = _settings(tmp_path, db_dsn="postgresql://new-host/db")
     s2.ensure_dirs()
     seen: list[SettingsChanged] = []
     bus.subscribe(SettingsChanged, lambda e: seen.append(e))
@@ -62,7 +63,7 @@ async def test_reconfigure_storage_swap(tmp_path: Path, monkeypatch: pytest.Monk
     await app.reconfigure(s2)
     assert isinstance(app.storage, InMemoryRepository)
     assert id(app.storage) != storage_id
-    assert app.settings.db_root == s2.db_root
+    assert app.settings.db_dsn == s2.db_dsn
     assert seen and seen[0].what == "storage"
     assert seen[0].needs_relogin is False
 
@@ -334,7 +335,7 @@ async def test_validate_backends_ok_does_not_swap_runtime(
         lambda settings: FolderObjectStore(root=settings.objectstore_root),
     )
 
-    s2 = _settings(tmp_path, db_root=tmp_path / "m2", objectstore_root=tmp_path / "o2")
+    s2 = _settings(tmp_path, db_dsn="postgresql://other", objectstore_root=tmp_path / "o2")
     s2.ensure_dirs()
     await app.validate_backends(s2)
 
@@ -410,7 +411,8 @@ async def test_reconfigure_syncs_backends_to_monitor(
     app = AppService(bus, client, storage, objects, s1, monitor=monitor)
 
     # 新 storage 预置订阅频道 100 — 模拟切到的 PG 里已有的订阅真理
-    s2 = _settings(tmp_path, db_root=tmp_path / "m2")
+    # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删,改 db_dsn 触发 storage 重建
+    s2 = _settings(tmp_path, db_dsn="postgresql://other")
     s2.ensure_dirs()
     new_storage = InMemoryRepository()
     await new_storage.connect()
@@ -538,13 +540,13 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
 
     验证路径:
       1. 旧 storage 有 3 频道:A subscribed、B unsubscribed、C subscribed
-      2. reconfigure 切到新 storage(空 db_root)
+      2. reconfigure 切到新 storage(空 db,2026-10-12 step 3.3 后 db_root 字段已删)
       3. 新 storage 调 `list_subscribed_channels()` → 仅 [A, C],无 B
     """
     from tgmonitor.core.dto import ChannelDTO
 
     # 旧 storage:3 频道(A subscribed / B unsubscribed / C subscribed)
-    s1 = _settings(tmp_path, db_root=tmp_path / "m1")
+    s1 = _settings(tmp_path, db_dsn="postgresql://old")
     s1.ensure_dirs()
     bus = EventBus()
     storage = InMemoryRepository()
@@ -567,7 +569,7 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     )
 
     # 切到新 storage(空目录)
-    s2 = _settings(tmp_path, db_root=tmp_path / "m2")
+    s2 = _settings(tmp_path, db_dsn="postgresql://new")
     s2.ensure_dirs()
     await app.reconfigure(s2)
 
@@ -583,8 +585,11 @@ async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DRIFT #C 边界:reconfigure 后新 storage 完全为空 → 已订列表 = []。"""
-    s1 = _settings(tmp_path, db_root=tmp_path / "m1")
+    """DRIFT #C 边界:reconfigure 后新 storage 完全为空 → 已订列表 = []。
+
+    2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删,改 db_dsn 触发 storage 重建。
+    """
+    s1 = _settings(tmp_path, db_dsn="postgresql://empty1")
     s1.ensure_dirs()
     bus = EventBus()
     storage = InMemoryRepository()
@@ -598,7 +603,7 @@ async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
         lambda settings: InMemoryRepository(),
     )
 
-    s2 = _settings(tmp_path, db_root=tmp_path / "m2_empty")
+    s2 = _settings(tmp_path, db_dsn="postgresql://empty2")
     s2.ensure_dirs()
     await app.reconfigure(s2)
 
