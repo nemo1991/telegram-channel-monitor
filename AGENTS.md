@@ -38,7 +38,7 @@ UI(PySide6 widgets/viewmodels)
 core(app_service 门面 + 领域服务)
   │  只依赖:StorageRepository / ObjectStore / TelegramClient / Exporter 四套抽象
   ▼
-存储(postgres_repo / mongo_repo / jsonl_store) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
+存储(postgres_repo / mongo_repo) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
 ```
 
 - **`core/` 禁止 import PySide6 / qasync** — 保持领域逻辑与 UI 框架解耦,可离线单测。
@@ -61,7 +61,7 @@ core(app_service 门面 + 领域服务)
 | `core/telegram/` | TDLib 封装:`tdlib_client` / `tdlib_channels` / `tdlib_messages` / `tdlib_proxy` / `tdlib_errors` / `factory`;`unconfigured.py` 是凭据缺失时 factory 返回的占位 client(启动不崩);`fake_client.py` 是测试用假客户端 |
 | `core/monitor/service.py` | MonitorService:白名单监听 + 幂等落库 + 断线退避重连(1s→30s);MediaDownloader 单文件 200MB 上限 |
 | `core/channel_sync/service.py` | 手动全量同步:`chat_delay_ms` / `page_delay_ms` 节流,支持断点续拉 |
-| `core/storage/` | repository ABC + postgres_repo / mongo_repo / jsonl_store + 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
+| `core/storage/` | repository ABC + postgres_repo / mongo_repo + 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
 | `core/objectstore/` | base ABC + local_store(平铺)/ folder_store(两级分片)/ s3_store + factory,默认 **FOLDER** |
 | `core/export/` | base 注册表 `EXPORTERS` + `@exporter` 装饰器 + json/csv/markdown/html + 流式导出 service |
 | `cli/` | argparse 子命令(sync / monitor);裸 `asyncio.run()` 事件循环,无 PySide6。CLI 路径在 `__main__.py` argv 分流后调,永不 import `app` |
@@ -93,7 +93,7 @@ core(app_service 门面 + 领域服务)
 > - **Python 3.13** — 由 uv 自动装(`uv python list`),不依赖系统 Python
 > - **编译 libtdjson 需**:macOS `brew install cmake gperf openssl@3`;Linux `apt install cmake gperf libssl-dev zlib1g-dev build-essential`;Windows vcpkg + VS C++ 工具链(CI 的 windows-latest 自带)
 > - macOS 跑 PySide6 无需额外系统库(wheel 自带);Linux 打包才需要 appimagetool / rsvg-convert
-> - 可选 DB/S3 后端(extra)非运行必需;不装也能用默认 JSONL + Local 存储
+> - 可选 DB/S3 后端(extra)非运行必需;不装也能用默认 Postgres + Folder 存储
 
 ```bash
 # 编译 TDLib 引擎 libtdjson(首次 clone 后必跑;二进制被 gitignore,需自编译)

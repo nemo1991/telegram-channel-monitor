@@ -16,7 +16,7 @@ JSON / CSV / Markdown / HTML 导出。
 ## ✨ 特性
 
 - 🧩 **UI 与 core 严格分离** — UI 只依赖 `AppService` 门面 + `EventBus` + DTO
-- 🗄️ **多数据库后端** — PostgreSQL / MongoDB / JSONL(默认,无需 DB 服务)
+- 🗄️ **多数据库后端** — PostgreSQL(默认) / MongoDB
 - 📦 **多对象存储后端** — 本地平铺 / 本地两级分片(默认) / S3(AWS / MinIO / 阿里 OSS)
 - 🔌 **官方 TDLib 集成** — 自编译 libtdjson + ctypes 绑定(`tdlib_json` 子项目,零第三方依赖)
 - 📤 **多格式导出** — JSON / CSV / Markdown / HTML,后台流式,大消息量不占内存
@@ -57,7 +57,7 @@ TG_PHONE=+8613800000000
 |---|---|
 | `TG_API_ID` / `TG_API_HASH` | Telegram 应用凭据([my.telegram.org](https://my.telegram.org/apps)) |
 | `TG_PHONE` | 登录手机号(含国家区号) |
-| `TG_DB_BACKEND` | `postgres` \| `mongo` \| `jsonl`(默认,无需 DB 服务) |
+| `TG_DB_BACKEND` | `postgres`(默认) \| `mongo` |
 | `TG_DB_DSN` | 数据库连接串 |
 | `TG_OBJECTSTORE_BACKEND` | `local` \| `folder`(默认,两级分片) \| `s3` |
 | `TG_OBJECTSTORE_ROOT` | 本地对象存储根目录 |
@@ -78,7 +78,7 @@ UI (PySide6)
 core(领域服务)
   │  只依赖:StorageRepository / ObjectStore / TelegramClient / Exporter 四套抽象
   ▼
-存储(postgres/mongo/jsonl) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
+存储(postgres/mongo) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
 ```
 
 - **`core/` 禁止 import PySide6** — 领域逻辑与 UI 解耦,可离线单测
@@ -116,7 +116,7 @@ gitignore):macOS / Linux 用 `scripts/build_libtdjson.sh`,Windows 用
 tgmonitor/
 ├── .env                   # 配置
 ├── session/               # TDLib session
-├── messages/              # JSONL 存储(默认后端)
+├── messages/              # Postgres 数据库目录(messages / media / channels 表)
 └── media/                 # 本地对象存储(local / folder)
 ```
 
