@@ -38,7 +38,7 @@
 
 走 settings_page 原 `_find_form_row` + `_set_form_row_visible` 逻辑
 (findChildren(QGroupBox) 隔离)— 抽到本模块,settings_page 直接调
-`self._storage.set_visible("db_dsn", not is_jsonl)` 即可。
+`self._storage.set_visible("os_endpoint", not is_local)` 即可。
 """
 
 from __future__ import annotations
@@ -90,8 +90,8 @@ class FieldDef:
     `label` / `placeholder` / `tooltip` 由 caller 传**已 tr() 过的字串**
     (保持 i18n context "SettingsPage",不让 lupdate 抽到 form_section)。
 
-    `visible_when` 是 key→bool 条件(例如 `{"is_jsonl": True}` →
-    只在 JSONL 时显示);`set_visible` 走本模块隔离逻辑,不会跨 group 误隐藏。
+    `visible_when` 是 key→bool 条件(例如 `{"is_local": True}` →
+    只在本地后端时显示);`set_visible` 走本模块隔离逻辑,不会跨 group 误隐藏。
     """
 
     key: str

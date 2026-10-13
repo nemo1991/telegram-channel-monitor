@@ -960,8 +960,7 @@ class PostgresRepository(StorageRepository):
         外键引用 `channels.id`,但 monitor 路径可能先收到消息、再调
         `sync_channels`(频道元数据从 TDLib 拉到 storage 有时延)— 若调用方
         未显式 `upsert_channel`,PG 会抛 `ForeignKeyViolationError`。
-        InMemoryRepository(2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,
-        之前 JsonlFileStore 也隐式建频道)都隐式建频道
+        InMemoryRepository 都隐式建频道
         (id + title="#<id>"),本实现对齐:INSERT 前 `ON CONFLICT DO NOTHING`
         保底,绝不覆盖调用方已 upsert 的完整 metadata。
         """
@@ -979,11 +978,10 @@ class PostgresRepository(StorageRepository):
             else None
         )
         async with self._pool.acquire() as conn, conn.transaction():
-            # 隐式频道占位 — 与 InMemoryRepository 对齐(2026-10-12 plan-batch3
-            # 目标 3 step 3.1:Jsonl 已删)。
+            # 隐式频道占位 — 与 InMemoryRepository 对齐。
             # 用最小字段占位(`title=#<id>`),已有频道(完整 metadata)不动。
             # 显式 subscribed=FALSE 而非依赖列默认值:旧库 `ALTER TABLE ... DEFAULT
-            # TRUE` 迁移可能让 placeholder 错标已订阅,与 InMemory/Jsonl 语义
+            # TRUE` 迁移可能让 placeholder 错标已订阅,与 InMemory 语义
             # (ChannelDTO.is_subscribed=False) 不一致。
             await conn.execute(
                 """
@@ -1201,7 +1199,7 @@ class PostgresRepository(StorageRepository):
         tag_only: bool = False,
         pinned_only: bool = False,
     ) -> list[MessageDTO]:
-        """按时间升序 + id 升序(与 Mongo / JSONL 对齐);media 二次查询拼回。
+        """按时间升序 + id 升序(与 Mongo 对齐);media 二次查询拼回。
 
         `channel_ids` 走 ANY($1::bigint[]);`limit` = 最近 N 条(倒序取前 N
         后在内存反转为升序,LIMIT 在 SQL 层)。
@@ -1252,7 +1250,7 @@ class PostgresRepository(StorageRepository):
             )
             params.append(like)
             params.append(like)
-        # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 jsonl/mongo 语义一致)。
+        # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 InMemory / Mongo 语义一致)。
         order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
         sql = "SELECT * FROM messages WHERE " + " AND ".join(where) + f" ORDER BY {order_by}"
         if limit is not None:
@@ -1378,12 +1376,12 @@ class PostgresRepository(StorageRepository):
         sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
         nulls_clause = " NULLS LAST" if nulls_last else ""
         # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
-        # `media` 表没有该列(JSONL 用 enumerate、Mongo 用 `$unwind
-        # includeArrayIndex`,都运行时生成;PG 的 PR #3 把 media 拆成独立表
-        # 时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY m.id
-        # ORDER BY me.id) - 1` 按 me.id(BIGSERIAL,等价于 save_message 的
-        # INSERT 顺序)在每条 message 内部从 0 起编。与 Jsonl enumerate /
-        # Mongo unwind 顺序三者对齐,UI `(channel_id, telegram_msg_id,
+        # `media` 表没有该列(Mongo 用 `$unwind includeArrayIndex`、
+        # InMemory 用 enumerate,都运行时生成;PG 的 PR #3 把 media 拆成
+        # 独立表时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY
+        # m.id ORDER BY me.id) - 1` 按 me.id(BIGSERIAL,等价于 save_message
+        # 的 INSERT 顺序)在每条 message 内部从 0 起编。与 InMemory enumerate
+        # / Mongo unwind 顺序对齐,UI `(channel_id, telegram_msg_id,
         # media_idx)` 三元组定位语义不变。
         sql = [
             "SELECT m.*, me.id AS media_id, me.type AS media_type,",

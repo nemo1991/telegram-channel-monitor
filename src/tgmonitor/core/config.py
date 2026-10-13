@@ -85,13 +85,12 @@ class Settings(BaseSettings):
     tdlib_verbosity: int = Field(default=0, ge=0, le=1023)
 
     # ---- 数据库后端 ----
-    # 默认 POSTGRES:plan-batch3 目标 3(2026-10-12)删 JSONL 后,POSTGRES 变首选项
-    # (跟 1.0.x 时代 JSONL 默认的"开箱即用"行为相反 — 现在首次启动需先起 PG,
-    # 行为变化在 CHANGELOG + .env.example 里写明)
+    # 默认 POSTGRES:删 JSONL 后端后的首选项。首次启动需先起 PG 实例,
+    # 行为变化在 CHANGELOG + .env.example 里写明。
     db_backend: DBBackend = Field(default=DBBackend.POSTGRES)
     db_dsn: str = Field(default="postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor")
-    # 历史字段,2026-10-12 删 JSONL 后不再使用;保留只为兼容旧 .env,step 3.3
-    # 联动 `settings_store.EditableSettings.db_root` / `settings_page` 一并删。
+    # 历史字段,删 JSONL 后不再使用;保留只为兼容旧 .env。`EditableSettings`
+    # 与 settings_page 都不再编辑/显示此字段。
     db_root: Path = Field(default_factory=lambda: _user_data_dir() / "messages")  # noqa: ARG003  # legacy: 删 JSONL 后无 consumer
 
     # ---- 对象存储后端 ----
@@ -181,8 +180,8 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。
 
-        2026-10-12 plan-batch3 目标 3:JSONL 后端删除,`db_root` 不再 mkdir;
-        该字段保留(默认值)直到 step 3.3 联动 settings_store/settings_page 一并删。
+        `db_root` 字段保留(默认 JSONL 时代的 `messages` 子目录),但
+        不再 mkdir — JSONL 后端删除后,`db_root` 仅作 legacy 兼容旧 .env。
         """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.data_root.mkdir(parents=True, exist_ok=True)
@@ -198,8 +197,8 @@ class Settings(BaseSettings):
         - api_id=1, api_hash="x"*32, phone="+10000000000"
         - session_dir / data_root / db_root / objectstore_root 用 tempfile.mkdtemp
         - media_policy=METADATA / db_backend=POSTGRES / objectstore_backend=LOCAL
-          (2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,默认切到 POSTGRES;
-          测试若需真连 PG 应 `monkeypatch` build_storage 拦截,见
+          (删 JSONL 后端后默认切到 POSTGRES;测试若需真连 PG 应
+          `monkeypatch` build_storage 拦截,见
           `tests/test_reconfigure.py` 3 处 reconfigure test)
 
         `overrides` 优先级最高。`ensure_dirs()` 已被调用。
@@ -218,7 +217,7 @@ class Settings(BaseSettings):
             phone="+10000000000",
             session_dir=base / "session",
             data_root=base,
-            db_root=base / "messages",  # legacy: 删 JSONL 后无 consumer,留兼容旧 .env
+            db_root=base / "messages",  # legacy: 删 JSONL 后无 consumer,仅兼容旧 .env
             objectstore_root=base / "media",
         )
         defaults.update(overrides)

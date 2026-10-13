@@ -107,7 +107,7 @@ class MediaDTO:
 
     二进制存于 ObjectStore,DB 只存 `object_key` + `backend` 引用。
     缩略图独立存于 ObjectStore `thumb/` 顶层 prefix + storage `thumbnails`
-    子表 / 子 collection / 子 jsonl,通过 `thumbnail_telegram_file_id` 按需重
+    子表 / 子 collection,通过 `thumbnail_telegram_file_id` 按需重
     下;**不在 MediaDTO 上平铺 thumb 字段**(2026-09-29 拆分 — 旧
     `thumb_key` / `thumb_backend` 写死 `"local"` 且从未真下载,留作死引用
     误导读路径)。
@@ -157,7 +157,7 @@ class ThumbnailDTO:
     状态)。文件大小 / sha256 / mime 各算。
 
     跨边界:UI / VM / Exporter 只传 ThumbnailDTO,不传 ORM 行 / TDLib 原生。
-    持久化:三后端(POSTGRES / MONGO / JSONL)各自存,关联键保证 1:1。
+    持久化:两后端(POSTGRES / MONGO)各自存,关联键保证 1:1。
     """
 
     channel_id: int

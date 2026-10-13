@@ -127,7 +127,7 @@ class DeleteMixin:
                 continue
             try:
                 # 2026-08-25 PR #3:refcount 下沉到 storage 后端
-                # (SQL count / Mongo aggregate / InMemory / Jsonl 顺序扫)。
+                # (SQL count / Mongo aggregate / InMemory 顺序扫)。
                 n = await self.storage.count_media_by_object_key(key)
             except Exception:  # noqa: BLE001
                 log.exception("count media by key failed: %s", key)

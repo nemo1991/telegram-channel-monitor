@@ -144,7 +144,7 @@ class EventHandlerMixin:
 
         `updateChannel` 推时 `channel_id` 已就绪,直接落库;`updateSupergroup`
         推时只有 `supergroup_id`,需通过 username 反查 channel_id
-        (storage 现存 — InMemory/Jsonl/Postgres/Mongo 都按 username 找)。
+        (storage 现存 — InMemory/Postgres/Mongo 都按 username 找)。
 
         2026-09-04 v1.6.4:同时透传 4 个 spammer 过滤字段
         (`is_verified` / `is_scam` / `is_fake` / `has_protected_content`)。

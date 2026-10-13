@@ -248,8 +248,8 @@ class SettingsPage(QWidget):
     def _build_storage(self, root: QVBoxLayout) -> None:
         """💾 消息存储 — DB 后端 + DSN。
 
-        2026-10-12 plan-batch3 目标 3 step 3.4:JSONL 后端已删,`db_root` 字段
-        (原 JSONL 目录)不再需要;`db_dsn` 永远显(POSTGRES / MONGO 都用 DSN)。
+        删 JSONL 后端后,`db_root` 字段(原 JSONL 目录)不再需要;
+        `db_dsn` 永远显(POSTGRES / MONGO 都用 DSN)。
         显隐逻辑 `_on_db_backend_changed` 整个方法删,后端切不再有字段变化。
         """
         s = FormSection(
@@ -725,9 +725,9 @@ class SettingsPage(QWidget):
     # ============================================================
     # 后端切换显隐 — 用 form_section.find_form_row 走跨 group 隔离
     # ============================================================
-    # 2026-10-12 plan-batch3 目标 3 step 3.4:JSONL 后端已删,DB 后端切
-    # (POSTGRES ↔ MONGO)不再有字段显隐变化(都用 DSN),`_on_db_backend_changed`
-    # 整个方法删除。OS 后端切仍需(本地/S3 字段互斥),保留 `_on_os_backend_changed`。
+    # DB 后端切(POSTGRES ↔ MONGO)不再有字段显隐变化(都用 DSN),
+    # `_on_db_backend_changed` 整个方法删除。OS 后端切仍需(本地/S3 字段
+    # 互斥),保留 `_on_os_backend_changed`。
 
     def _on_os_backend_changed(self) -> None:
         is_local = self.cmb_os.currentData() in (

@@ -91,7 +91,7 @@ def combo_field(
     cmb = _NoWheelComboBox()
     # 禁用滚轮切换选中项:设置页在 QScrollArea 里,滚轮经过下拉框会无意识地
     # 改掉「数据库后端 / 对象存储后端」等配置,保存后静默覆盖 .env(2026-08-18
-    # 实测:PG 配置被滚成 JSONL)。用户想改后端应显式点开下拉选择。
+    # 实测:PG / Mongo 配置被滚错切)。用户想改后端应显式点开下拉选择。
     for opt in options:
         if isinstance(opt, tuple):
             data, display_text = opt

@@ -2,10 +2,8 @@
 
 实现类**懒加载**:只 import 用户实际选中的那个,避免装 Postgres 时被强制拉 motor(或反过来)。
 
-2026-10-12 plan-batch3 目标 3 step 3.1:删除 JSONL 后端支持。`build_storage`
-只接受 POSTGRES / MONGO,若 settings 仍带 `DBBackend.JSONL` 启动期
-`DBBackend.JSONL` 已被 `config.py` 校验拦截(详见 `Settings.validate` 改动),
-此处兜底 `raise ValueError`。
+`build_storage` 只接受 POSTGRES / MONGO;`config.py` 校验阶段会拒绝
+`DBBackend.JSONL` 等未知值,此处兜底 `raise ValueError`。
 """
 
 from __future__ import annotations
@@ -26,5 +24,5 @@ def build_storage(settings: Settings) -> StorageRepository:
         return MongoRepository(dsn=settings.db_dsn, database="tgmonitor")
     raise ValueError(
         f"unknown db backend: {settings.db_backend!r} "
-        f"(plan-batch3 目标 3 后已不再支持 JSONL,请改 postgres 或 mongo)"
+        f"(仅支持 postgres 或 mongo)"
     )

@@ -548,12 +548,10 @@ class MongoRepository(StorageRepository):
         用 `db.counters` 集合 + `findAndModify` `$inc` 原子自增;与 Postgres
         BIGSERIAL / InMemoryRepository in-memory counter 等价语义。
 
-        2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身替代。
-
         修前:`_id` 用 Mongo 默认 ObjectId,`int(str(ObjectId))` 永远
         ValueError(实测 mongomock_motor 24-char hex)。这条路径在生产
         永远炸 — 任何 save_message 调用都不能走通。本 PR 改用 int 计数,
-        让 Mongo 与 PG / JSONL 主键语义对齐。
+        让 Mongo 与 PG / InMemory 主键语义对齐。
         """
         doc = await self.db.counters.find_one_and_update(
             {"_id": "message_id"},
@@ -566,8 +564,6 @@ class MongoRepository(StorageRepository):
     async def save_message(self, message: MessageDTO) -> int:
         """幂等 upsert;**显式 int 主键**(PR #A7 改:`_id` 是 int 计数,不再是
         ObjectId)— 与 Postgres / InMemoryRepository 主键语义对齐。
-
-        2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身替代。
 
         `message.id` 若已存在(调用方先填):复用,不再分配新计数器。否则
         调 `_next_message_id()` 拿新值。`upsert=True` 时若 (channel_id,
@@ -611,7 +607,7 @@ class MongoRepository(StorageRepository):
         # (`mongomock_motor: After applying the update, the (immutable)
         # field '_id' was found to have been altered`)。`$setOnInsert` 只在
         # 真的 insert 时生效,update 时复用旧 _id — 与 PG `ON CONFLICT DO
-        # NOTHING` / JSONL `replace` 等价语义。
+        # NOTHING` / InMemory `dict 覆写` 等价语义。
         result = await self.db.messages.find_one_and_update(
             {"channel_id": message.channel_id, "telegram_msg_id": message.telegram_msg_id},
             {
@@ -732,11 +728,11 @@ class MongoRepository(StorageRepository):
         tag_only: bool = False,
         pinned_only: bool = False,
     ) -> list[MessageDTO]:
-        """按 (date ASC, _id ASC) 排序 — 与 Postgres / JSONL 对齐;`$in` 走 channel_ids。
+        """按 (date ASC, _id ASC) 排序 — 与 Postgres 对齐;`$in` 走 channel_ids。
 
         `limit` = 最近 N 条(倒序取前 N 后在内存反转为升序)。
         `offset` (v1.4.0 PR #12):从尾部跳过 offset 条再取 limit — 与
-        Postgres / JSONL 一致;大 offset 下 `$skip` 是 O(N),docstring
+        Postgres 一致;大 offset 下 `$skip` 是 O(N),docstring
         写明建议收窄 date 过滤。
 
         `search` (v1.5.1 PR #B2):`$or` 匹配 text 或 media.file_name 子串,
@@ -771,7 +767,7 @@ class MongoRepository(StorageRepository):
                 {"media.file_name": {"$regex": pattern, "$options": "i"}},
             ]
         if limit is not None:
-            # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres / JSONL 对齐)。
+            # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 Postgres 对齐)。
             # v1.4.0 PR #12:`offset > 0` 时先 `$skip offset` 再 `$limit limit`。
             cursor = (
                 self.db.messages.find(q).sort([("date", -1), ("_id", -1)]).skip(offset).limit(limit)

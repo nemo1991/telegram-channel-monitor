@@ -54,7 +54,6 @@ class StorageRepository(ABC):
         各 backend 实现:
         - Postgres:`information_schema.columns` 查表 + 列类型
         - Mongo:`list_indexes()` 检查期望唯一索引
-        - JSONL:扫所有消息文件,检测 nullable int 字段是否被存成 str
         """
         ...
 
@@ -162,7 +161,7 @@ class StorageRepository(ABC):
         """2026-09-08 v1.7.0:批量删单频道 N 条消息。
 
         不存在不抛(idempotent)。子 media 通过各后端固有机制清理
-        (Postgres FK CASCADE / Mongo sub-doc / JSONL 行内联)。
+        (Postgres FK CASCADE / Mongo sub-doc / InMemory 内联)。
         """
         ...
 
@@ -217,7 +216,7 @@ class StorageRepository(ABC):
         实现要点:
         - Postgres:`GROUP BY channel_id` 单 SELECT + JOIN media
         - Mongo:`$match + $group` aggregate pipeline
-        - InMemory / Jsonl:扫订阅 channel 一次,聚合 4 个 count
+        - InMemory:扫订阅 channel 一次,聚合 4 个 count
         - 缺失 channel_id 在返 dict 里**不**存在(调用方按需 default zero)
 
         大 channel_ids 列表(>1000)性能:Postgres `channel_id = ANY($1)`
@@ -262,7 +261,7 @@ class StorageRepository(ABC):
         tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
 
         分页:`offset` 跳过 N 条;`limit` 限制返数。MVP 阶段各后端实现可简化
-        (InMemory / Jsonl 顺序扫 + slice;Postgres / Mongo 用 SQL/aggregate 偏移)。
+        (InMemory 顺序扫 + slice;Postgres / Mongo 用 SQL/aggregate 偏移)。
         """
         ...
 
@@ -279,7 +278,7 @@ class StorageRepository(ABC):
         但不带 sort/limit/offset。供分页 UI 显示 "total"。
 
         各后端实现要点:
-        - InMemory / Jsonl:复用 list_media 的 filter helper,只数不取
+        - InMemory:复用 list_media 的 filter helper,只数不取
         - Postgres:同样 JOIN,去掉 ORDER/LIMIT/OFFSET,换 `SELECT count(*)`
         - Mongo:独立 aggregate,同 match 条件但无 `$sort`/`$skip`/`$limit`,
           末尾 `$count`
@@ -291,7 +290,7 @@ class StorageRepository(ABC):
         """同 `object_key` 引用次数(2026-08-25 PR #3)— refcount 用。
 
         应用层 `_count_media_with_object_key` 在此 PR 删除,改调本方法。
-        Postres/Mongo 用 SQL/aggregate count,O(1);InMemory/Jsonl 走顺序扫
+        Postres/Mongo 用 SQL/aggregate count,O(1);InMemory 走顺序扫
         (与原来应用层实现一致)。
         """
         ...
@@ -308,8 +307,8 @@ class StorageRepository(ABC):
 
     # ---- 缩略图(2026-09-29 独立存储) ----
     # 关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组 — 与父
-    # `MessageDTO.media[media_idx]` 1:1。三后端各自存:PG `thumbnails`
-    # 表,JSONL `thumbnails.jsonl` 文件,Mongo `thumbnails` collection。
+    # `MessageDTO.media[media_idx]` 1:1。各后端各自存:PG `thumbnails`
+    # 表,Mongo `thumbnails` collection,InMemory 内嵌 `thumbnails` dict。
     # ObjectStore 端 key 走独立顶层 prefix `thumb/<sha256>.<ext>`,跟
     # `media/<sha256>.<ext>` 平行。
 
@@ -344,7 +343,7 @@ class StorageRepository(ABC):
     ) -> None:
         """删 thumb 行;不存在不抛(idempotent)。
 
-        调用方:PG `delete_message` 走 FK CASCADE 自动调(JSONL / Mongo 没
+        调用方:PG `delete_message` 走 FK CASCADE 自动调(Mongo / InMemory 没
         FK 概念,各自在 `delete_message` 内手工调本方法级联)。
         """
         ...

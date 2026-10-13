@@ -90,9 +90,9 @@ def write_env_file(env: EnvFile, path: Path) -> None:
 def settings_to_pairs(s: Settings) -> dict[str, str]:
     """Settings → .env 字段 dict(供 UI 编辑后写回)。
 
-    2026-10-12 plan-batch3 目标 3 step 3.3:`TG_DB_ROOT` 字段不再序列化(原
-    jsonl 后端专属,2026-10-12 删 JSONL 后无 consumer)。`Settings.db_root`
-    字段仍保留(默认 `_user_data_dir() / messages`),只为兼容老用户 .env;
+    `TG_DB_ROOT` 字段不再序列化(原 JSONL 后端专属,删 JSONL 后无
+    consumer)。`Settings.db_root` 字段仍保留(默认 `_user_data_dir() / messages`),
+    只为兼容老用户 .env;
     step 3.4 联动 settings_page 删 FormSection `db_root` 字段。
     """
     return {
@@ -177,9 +177,9 @@ class EditableSettings:
 
     db_backend: str = "postgres"  # DBBackend.value
     db_dsn: str = ""
-    # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段删除 — 原 jsonl 后端
-    # 专属,2026-10-12 删 JSONL 后无 consumer。Settings.db_root 仍保留默认
-    # (`_user_data_dir() / messages`)只为兼容老用户 .env,UI 不再编辑/显示。
+    # db_root 字段已删除 — 原 JSONL 后端专属,删 JSONL 后无 consumer。
+    # `Settings.db_root` 仍保留默认(`_user_data_dir() / messages`),
+    # 只为兼容老用户 .env,UI 不再编辑/显示。
 
     objectstore_backend: str = "local"
     objectstore_root: str = "./data/media"
