@@ -246,7 +246,12 @@ class SettingsPage(QWidget):
         self.btn_test_proxy.clicked.connect(self._on_test_proxy)
 
     def _build_storage(self, root: QVBoxLayout) -> None:
-        """💾 消息存储 — DB 后端 + DSN / JSONL 目录(后端切时显隐)。"""
+        """💾 消息存储 — DB 后端 + DSN。
+
+        2026-10-12 plan-batch3 目标 3 step 3.4:JSONL 后端已删,`db_root` 字段
+        (原 JSONL 目录)不再需要;`db_dsn` 永远显(POSTGRES / MONGO 都用 DSN)。
+        显隐逻辑 `_on_db_backend_changed` 整个方法删,后端切不再有字段变化。
+        """
         s = FormSection(
             title=self.tr("💾 消息存储 (Database)"),
             fields=(
@@ -262,25 +267,11 @@ class SettingsPage(QWidget):
                     label=self.tr("DSN:"),
                     placeholder="postgresql://user:pass@host/db",
                 ),
-                FieldDef(
-                    key="db_root",
-                    kind=FieldKind.PATH,
-                    label=self.tr("JSONL 目录:"),
-                    placeholder=str(_user_data_dir() / "messages"),
-                    on_default=lambda: self._set_default(self.in_db_root, "messages"),
-                    default_tooltip=self.tr("恢复为 platform-native 默认目录"),
-                ),
             ),
         )
         gb = s.build(self)
         root.addWidget(gb)
         self._sections.append(s)
-        self.cmb_db = s._widgets["db_backend"]
-        self.in_db_dsn = s._widgets["db_dsn"]
-        self.in_db_root = s._widgets["db_root"]
-        # 后端切换显隐
-        self.cmb_db.currentIndexChanged.connect(self._on_db_backend_changed)
-        self._on_db_backend_changed()
 
     def _build_objectstore(self, root: QVBoxLayout) -> None:
         """📁 对象存储 — 后端 + 本地目录 / S3 凭据(后端切时显隐)。"""
@@ -734,17 +725,9 @@ class SettingsPage(QWidget):
     # ============================================================
     # 后端切换显隐 — 用 form_section.find_form_row 走跨 group 隔离
     # ============================================================
-
-    def _on_db_backend_changed(self) -> None:
-        # 2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 后端已删,`DBBackend.JSONL` 不存在;
-        # 用 `getattr` 兜底,让 is_jsonl 永远 False — DSN 永远显、db_root 永远隐,
-        # 等同 step 3.4 终态(那时 `db_root` 字段、JSONL 选项、显隐逻辑一并删)。
-        jsonl_marker = getattr(DBBackend, "JSONL", None)
-        is_jsonl = self.cmb_db.currentData() == jsonl_marker
-        # DSN 行:postgres/mongo 时显示,jsonl 时隐藏(jsonl 已删,永远显)
-        self._set_field_visible("db_dsn", not is_jsonl)
-        # 目录行:jsonl 时显示(jsonl 已删,永远隐 — db_root 字段在 step 3.4 删)
-        self._set_field_visible("db_root", is_jsonl)
+    # 2026-10-12 plan-batch3 目标 3 step 3.4:JSONL 后端已删,DB 后端切
+    # (POSTGRES ↔ MONGO)不再有字段显隐变化(都用 DSN),`_on_db_backend_changed`
+    # 整个方法删除。OS 后端切仍需(本地/S3 字段互斥),保留 `_on_os_backend_changed`。
 
     def _on_os_backend_changed(self) -> None:
         is_local = self.cmb_os.currentData() in (
@@ -813,7 +796,9 @@ class SettingsPage(QWidget):
             session_dir=str(collected.get("session_dir", "")).strip() or str(ud / "session"),
             db_backend=collected.get("db_backend", DBBackend.POSTGRES),
             db_dsn=str(collected.get("db_dsn", "")).strip(),
-            db_root=str(collected.get("db_root", "")).strip() or str(ud / "messages"),
+            # 2026-10-12 plan-batch3 目标 3 step 3.4:db_root 字段已删,
+            # EditableSettings.to_settings() 不再传 db_root=Path(...),
+            # Settings.db_root 走 pydantic default_factory 兜底。
             objectstore_backend=collected.get("os_backend", ObjectStoreBackend.LOCAL),
             objectstore_root=str(collected.get("os_root", "")).strip() or str(ud / "media"),
             objectstore_endpoint=str(collected.get("os_endpoint", "")).strip(),
@@ -864,7 +849,8 @@ class SettingsPage(QWidget):
             # storage
             "db_backend": s.db_backend,
             "db_dsn": s.db_dsn or "",
-            "db_root": str(s.db_root),
+            # 2026-10-12 plan-batch3 目标 3 step 3.4:db_root 字段已删,
+            # UI 不再编辑/显示
             # objectstore
             "os_backend": s.objectstore_backend,
             "os_root": str(s.objectstore_root),
