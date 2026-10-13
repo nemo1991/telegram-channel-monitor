@@ -13,7 +13,6 @@ from tgmonitor.core.events import EventBus, SettingsChanged
 from tgmonitor.core.monitor.service import MediaDownloader, MonitorService
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
-from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
@@ -22,10 +21,15 @@ def _settings(tmp: Path, **kw) -> Settings:
 
     `tmp` 给 db_root / objectstore_root 等具体路径;`Settings.for_test`
     默认用 mkdtemp,但这里 caller 已有 tmp_path 想要复用,故保留 `tmp`。
+
+    2026-10-12 plan-batch3 目标 3 step 3.1:DBBackend.JSONL 已删(等 step 3.2
+    从 enum 移除),默认改 POSTGRES + 假 DSN。涉及 reconfigure 切 storage 的
+    test 用 `monkeypatch.setattr("build_storage", lambda s: InMemoryRepository())`
+    拦截,避免真连 PG。
     """
     base = dict(
-        db_backend=DBBackend.JSONL,
-        db_dsn="",
+        db_backend=DBBackend.POSTGRES,
+        db_dsn="postgresql://test:test@localhost:5432/test",
         db_root=tmp / "m",
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=tmp / "o",
@@ -34,26 +38,31 @@ def _settings(tmp: Path, **kw) -> Settings:
     return Settings.for_test(**base)
 
 
-async def test_reconfigure_storage_jsonl_to_jsonl(tmp_path: Path):
-    # 初始:JSONL + folder
+async def test_reconfigure_storage_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # 初始:InMemory + folder
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
+    storage_id = id(storage)
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     client = FakeTelegramClient()
     app = AppService(bus, client, storage, objects, s1)
 
-    # 触发:同样 JSONL 但换目录 → 应触发 storage_changed
+    # 触发:同样后端但不同 db_root → 应触发 storage_changed,引用换成新实例
     s2 = _settings(tmp_path, db_root=tmp_path / "m2")
     s2.ensure_dirs()
     seen: list[SettingsChanged] = []
     bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_storage",
+        lambda settings: InMemoryRepository(),
+    )
     await app.reconfigure(s2)
-    assert isinstance(app.storage, JsonlFileStore)
-    assert app.storage._root == s2.db_root
+    assert isinstance(app.storage, InMemoryRepository)
+    assert id(app.storage) != storage_id
+    assert app.settings.db_root == s2.db_root
     assert seen and seen[0].what == "storage"
     assert seen[0].needs_relogin is False
 
@@ -145,8 +154,7 @@ async def test_reconfigure_storage_failure_keeps_old_storage(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     client = FakeTelegramClient()
@@ -184,8 +192,7 @@ async def test_reconfigure_storage_init_schema_failure_closes_new(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -229,8 +236,7 @@ async def test_reconfigure_objectstore_failure_keeps_old_objects(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -274,8 +280,7 @@ async def test_reconfigure_validates_objects_even_when_objects_unchanged(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -305,16 +310,29 @@ async def test_reconfigure_validates_objects_even_when_objects_unchanged(
     assert app.settings is s1
 
 
-async def test_validate_backends_ok_does_not_swap_runtime(tmp_path: Path):
+async def test_validate_backends_ok_does_not_swap_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """validate_backends:校验通过时 self.storage / self.objects 原样不动。"""
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    # 2026-10-12 plan-batch3 目标 3 step 3.1:DBBackend 改 POSTGRES 默认,
+    # 必须用 monkeypatch 拦截 build_storage / build_object_store,避免真连 PG。
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_storage",
+        lambda settings: InMemoryRepository(),
+    )
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_object_store",
+        lambda settings: FolderObjectStore(root=settings.objectstore_root),
+    )
 
     s2 = _settings(tmp_path, db_root=tmp_path / "m2", objectstore_root=tmp_path / "o2")
     s2.ensure_dirs()
@@ -334,8 +352,7 @@ async def test_validate_backends_failure_raises_keeps_runtime(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -378,8 +395,7 @@ async def test_reconfigure_syncs_backends_to_monitor(
     s1 = _settings(tmp_path)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     client = FakeTelegramClient()
@@ -463,8 +479,7 @@ async def test_reconfigure_proxy_change_publishes_needs_restart(tmp_path: Path):
     s1 = _settings(tmp_path, proxy=None)
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -487,8 +502,7 @@ async def test_reconfigure_session_dir_change_publishes_needs_restart(tmp_path: 
     s1 = _settings(tmp_path, session_dir=tmp_path / "s1")
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -517,6 +531,7 @@ async def test_reconfigure_session_dir_change_publishes_needs_restart(tmp_path: 
 
 async def test_reconfigure_storage_does_not_promote_unsubscribed(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DRIFT #C 回归:reconfigure 后,旧 storage 里 `is_subscribed=False`
     的频道不应出现在新 storage 的「已订」视图里。
@@ -532,8 +547,7 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     s1 = _settings(tmp_path, db_root=tmp_path / "m1")
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     await storage.init_schema()
     await storage.upsert_channel(ChannelDTO(id=111, title="A", username="a", kind="channel"))
     await storage.upsert_channel(ChannelDTO(id=222, title="B", username="b", kind="channel"))
@@ -544,6 +558,13 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    # 2026-10-12 plan-batch3 目标 3 step 3.1:_settings 改 POSTGRES 默认,
+    # 必须 monkeypatch build_storage 拦截,避免真连 PG。
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_storage",
+        lambda settings: InMemoryRepository(),
+    )
 
     # 切到新 storage(空目录)
     s2 = _settings(tmp_path, db_root=tmp_path / "m2")
@@ -560,16 +581,22 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
 
 async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DRIFT #C 边界:reconfigure 后新 storage 完全为空 → 已订列表 = []。"""
     s1 = _settings(tmp_path, db_root=tmp_path / "m1")
     s1.ensure_dirs()
     bus = EventBus()
-    storage = JsonlFileStore(root=s1.db_root)
-    await storage.connect()
+    storage = InMemoryRepository()
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
+
+    # 2026-10-12 plan-batch3 目标 3 step 3.1:见上 — 拦截 build_storage。
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_storage",
+        lambda settings: InMemoryRepository(),
+    )
 
     s2 = _settings(tmp_path, db_root=tmp_path / "m2_empty")
     s2.ensure_dirs()

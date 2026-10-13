@@ -1,8 +1,11 @@
 """`InMemoryRepository` 测试替身 — 2026-08-31 v1.5.0 PR #A6。
 
 从 tests/conftest.py 抽出(原 397-394 行,共 360+ 行实现)。
-实现与 `JsonlFileStore` 语义对齐(隐式建频道 / fid 索引 /
+实现与 Postgres / Mongo 语义对齐(隐式建频道 / fid 索引 /
 offset+limit 反向取),`StorageRepository` ABC 完整实现。
+
+2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 是唯一的 in-process
+替身,继续作为默认 storage fixture。
 """
 
 from __future__ import annotations
@@ -200,7 +203,7 @@ class InMemoryRepository(StorageRepository):
         return message.id
 
     def _find_done_by_fid(self, telegram_file_id: str) -> MediaDTO | None:
-        """与 JsonlFileStore 同步(2026-08-24):返第一个同 fid 且 DONE+object_key 的 media。"""
+        """返第一个同 fid 且 DONE+object_key 的 media(2026-08-24 行为契约)。"""
         for m in self.messages.values():
             for med in m.media:
                 if (

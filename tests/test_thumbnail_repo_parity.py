@@ -1,9 +1,11 @@
-"""2026-09-29:缩略图独立表三后端 parity。
+"""2026-09-29:缩略图独立表多后端 parity。
 
-策略(跟 `test_storage_backends_parity_introspect.py` 同模板):
+策略(2026-10-12 plan-batch3 目标 3 step 3.1 更新):
 - `InMemoryRepository`(in-process 替身,基准)
-- `JsonlFileStore`(同步文件持久化)
 - `MongoRepository` + `mongomock_motor`(in-process 模拟真 Mongo)
+
+Jsonl 已删(2026-10-12 plan-batch3 目标 3 step 3.1)。三后端 → 两后端,
+parametrize 简化为 `["inmem", "mongo"]`。
 
 PG 真集在 `tests/integration/test_pg_repo_parity.py` 单独覆盖
 (需要 testcontainers,Docker 不可用时自动 skip)。
@@ -14,7 +16,7 @@ PG 真集在 `tests/integration/test_pg_repo_parity.py` 单独覆盖
 - `delete_thumbnail` 不存在不抛(idempotent)
 - `list_thumbnails_for_message` 按 media_idx ASC 排序
 - `count_thumbnails_by_object_key` 跨消息聚合
-- 三后端行为一致(无 race / 顺序差异)
+- 两后端行为一致(无 race / 顺序差异)
 """
 
 from __future__ import annotations
@@ -27,26 +29,17 @@ from mongomock_motor import AsyncMongoMockClient
 
 from tests.fixtures._in_memory_repository import InMemoryRepository
 from tgmonitor.core.dto import MediaDownloadStatus, ThumbnailDTO
-from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 from tgmonitor.core.storage.mongo_repo import MongoRepository
 from tgmonitor.core.storage.repository import StorageRepository
 
 # ---- fixtures ----
+# 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,parametrize 简化为
+# `["inmem", "mongo"]`;`jsonl_repo` fixture 一并移除。
 
 
 @pytest_asyncio.fixture
 async def inmem_repo() -> AsyncIterator[InMemoryRepository]:
     yield InMemoryRepository()
-
-
-@pytest_asyncio.fixture
-async def jsonl_repo(tmp_path) -> AsyncIterator[JsonlFileStore]:
-    repo = JsonlFileStore(root=tmp_path / "jsonl")
-    await repo.connect()
-    try:
-        yield repo
-    finally:
-        await repo.close()
 
 
 @pytest_asyncio.fixture
@@ -61,13 +54,11 @@ async def mongo_repo() -> AsyncIterator[MongoRepository]:
         await repo.close()
 
 
-@pytest.fixture(params=["inmem", "jsonl", "mongo"])
-def repo(request, inmem_repo, jsonl_repo, mongo_repo) -> StorageRepository:
-    """2026-09-29:三后端 parametrize — 所有 thumb 测试统一覆盖。"""
+@pytest.fixture(params=["inmem", "mongo"])
+def repo(request, inmem_repo, mongo_repo) -> StorageRepository:
+    """2026-10-12 plan-batch3 目标 3 step 3.1:两后端 parametrize(InMemory + Mongo)。"""
     if request.param == "inmem":
         return inmem_repo
-    if request.param == "jsonl":
-        return jsonl_repo
     return mongo_repo
 
 
@@ -171,7 +162,7 @@ async def test_count_by_object_key(repo: StorageRepository) -> None:
 async def test_delete_message_cascades_thumb(repo: StorageRepository) -> None:
     """2026-09-29:delete_message 同时清掉该消息的所有 thumb(应用级 cascade)。
 
-    PG 还有 FK ON DELETE CASCADE 兜底;Jsonl / Mongo / InMemory 全走
+    PG 还有 FK ON DELETE CASCADE 兜底;Mongo / InMemory 全走
     application-level cascade(无 schema 强约束)。
     """
     # 多 thumb

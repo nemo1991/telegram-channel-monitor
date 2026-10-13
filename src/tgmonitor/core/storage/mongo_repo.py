@@ -546,7 +546,9 @@ class MongoRepository(StorageRepository):
         """2026-08-31 v1.5.0 PR #A7:原子计数器 — 给新消息分配 int 主键。
 
         用 `db.counters` 集合 + `findAndModify` `$inc` 原子自增;与 Postgres
-        BIGSERIAL / JsonlFileStore in-memory counter 等价语义。
+        BIGSERIAL / InMemoryRepository in-memory counter 等价语义。
+
+        2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身替代。
 
         修前:`_id` 用 Mongo 默认 ObjectId,`int(str(ObjectId))` 永远
         ValueError(实测 mongomock_motor 24-char hex)。这条路径在生产
@@ -563,7 +565,9 @@ class MongoRepository(StorageRepository):
 
     async def save_message(self, message: MessageDTO) -> int:
         """幂等 upsert;**显式 int 主键**(PR #A7 改:`_id` 是 int 计数,不再是
-        ObjectId)— 与 Postgres / JsonlFileStore 主键语义对齐。
+        ObjectId)— 与 Postgres / InMemoryRepository 主键语义对齐。
+
+        2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身替代。
 
         `message.id` 若已存在(调用方先填):复用,不再分配新计数器。否则
         调 `_next_message_id()` 拿新值。`upsert=True` 时若 (channel_id,

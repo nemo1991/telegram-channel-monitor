@@ -2,8 +2,8 @@
 
 按域拆分原 tests/conftest.py(542 行)为多个子模块:
   - `_settings.py`       : `settings` fixture
-  - `_storage.py`        : `InMemoryRepository` 测试替身 + `JsonlFileStore` 工厂 +
-                           `repo_backend` parametrize(inmemory + jsonl)
+  - `_storage.py`        : `InMemoryRepository` 测试替身 + `repo_backend` parametrize
+                           (2026-10-12 plan-batch3 目标 3 step 3.1:仅 `inmemory`,Jsonl 已删)
   - `_objectstore.py`    : `objectstore` fixture(LocalObjectStore)
   - `_bus_client.py`     : `bus` / `client` fixtures(EventBus + FakeTelegramClient)
   - `_factories.py`      : `make_message` / `make_photo` 测试数据工厂

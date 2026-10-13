@@ -334,17 +334,21 @@ def test_message_gift():
 # ============================================================
 
 
-async def test_sticker_emoji_roundtrip_jsonl(tmp_path):
-    """emoji 字段必须经 jsonl_store 完整往返 — 不丢字段,不被改默认值。"""
-    from tgmonitor.core.storage.jsonl_store import JsonlFileStore
+async def test_sticker_emoji_roundtrip_via_inmemory():
+    """emoji 字段必须经 InMemory 替身完整往返 — 不丢字段,不被改默认值。
 
-    store = JsonlFileStore(tmp_path)
-    await store.connect()
-    # 构造一个 sticker 媒体消息
+    2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删;InMemory 替身同语义验证
+    sticker emoji 字段不丢。JSON 序列化细节(Jsonl 落盘格式)由 PG / Mongo
+    backend unit test 覆盖。
+    """
     from datetime import datetime
 
+    from tests.conftest import InMemoryRepository
     from tgmonitor.core.dto import MediaDTO, MessageDTO
 
+    store = InMemoryRepository()
+    await store.connect()
+    # 构造一个 sticker 媒体消息
     msg = MessageDTO(
         id=0,
         channel_id=100,
@@ -368,14 +372,8 @@ async def test_sticker_emoji_roundtrip_jsonl(tmp_path):
         ],
     )
     await store.save_message(msg)
-    # 验证文件里有 emoji
-    import json
 
-    raw = (tmp_path / "messages" / "100.jsonl").read_text(encoding="utf-8").strip()
-    record = json.loads(raw)
-    assert record["media"][0]["emoji"] == "😀"
-
-    # 读回
+    # 读回 — InMemory 替身,DTO 字段原值保留
     got = await store.get_message(100, 42)
     assert got is not None
     assert got.media[0].emoji == "😀"

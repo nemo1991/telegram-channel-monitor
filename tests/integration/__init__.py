@@ -1,10 +1,13 @@
 """集成测试包 — 2026-08-31 v1.5.0 PR #A7。
 
 目的:覆盖真后端(Postgres / Mongo)的 parity 行为 —
-`tests/test_storage_backends.py` 长期只覆盖 InMemory + JsonlFileStore 两
-后端,PostgresRepository / MongoRepository 的 `list_media` /
+`tests/test_storage_backends.py` 长期只覆盖 InMemory 替身,
+PostgresRepository / MongoRepository 的 `list_media` /
 `aggregate_per_channel` / `find_media_by_file_id` 真实路径只在生产
 环境触发,**没有 contract 一致性保证**。
+
+2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身继续作为
+默认 storage 替身;Postgres / Mongo parity 验证在本 integration 包跑真后端。
 
 策略(asymmetry):
 - **Postgres**:testcontainers 启动真 PG 服务(Docker required);跑真 SQL,

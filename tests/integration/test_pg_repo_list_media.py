@@ -11,7 +11,7 @@ message + 3 media,验证:
 1. `list_media()` 不抛,返回 3 行
 2. `media_idx` ∈ {0, 1, 2} 严格按 INSERT 顺序
 3. filter / sort 仍生效
-4. 与 Jsonl `_filter_media_rows` 返回的 media_idx 一致(后端语义对齐)
+4. 与 InMemory `_filter_media_rows` 返回的 media_idx 一致(后端语义对齐)
 
 跑:`uv run pytest -m integration tests/integration/test_pg_repo_list_media.py -v`
 """
@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.fixtures._in_memory_repository import InMemoryRepository
 from tgmonitor.core.dto import (
     ChannelDTO,
     MediaDownloadStatus,
@@ -31,7 +32,6 @@ from tgmonitor.core.dto import (
     SortDir,
     SortKey,
 )
-from tgmonitor.core.storage.jsonl_store import JsonlFileStore
 from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -247,17 +247,18 @@ async def test_list_media_sort_by_size_desc_nulls_last(
     assert rows[1][2].file_size == 100
 
 
-async def test_list_media_consistent_with_jsonl(
+async def test_list_media_consistent_with_inmemory(
     pg_repo: PostgresRepository,
-    tmp_path,
 ) -> None:
-    """PG 与 Jsonl 同一组数据 → list_media 返回的 (msg, media_idx, media) 顺序一致。
+    """PG 与 InMemory 同一组数据 → list_media 返回的 (msg, media_idx, media) 顺序一致。
 
     后端语义对齐是修复的核心目标(UI Media Manager 渲染靠
     `(channel_id, telegram_msg_id, media_idx)` 三元组定位)。
-    """
-    from tgmonitor.core.events import EventBus
 
+    2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,改 InMemory 替身比对
+    media_idx 顺序一致性;InMemory 是同 StorageRepository 抽象的另一实现,
+    parity 验证有效。
+    """
     ch = ChannelDTO(id=700, title="T7")
     photos = [
         _photo("alpha"),
@@ -269,23 +270,22 @@ async def test_list_media_consistent_with_jsonl(
     await pg_repo.upsert_channel(ch)
     await pg_repo.save_message(_mk_msg(700, 1, photos))
 
-    # Jsonl 侧
-    EventBus()  # Jsonl store 持引用即可,本测试不订阅
-    jsonl = JsonlFileStore(tmp_path / "jsonl")
-    await jsonl.connect()
-    await jsonl.init_schema()
-    await jsonl.upsert_channel(ch)
-    await jsonl.save_message(_mk_msg(700, 1, photos))
+    # InMemory 替身侧
+    in_mem = InMemoryRepository()
+    await in_mem.connect()
+    await in_mem.init_schema()
+    await in_mem.upsert_channel(ch)
+    await in_mem.save_message(_mk_msg(700, 1, photos))
 
     pg_rows = await pg_repo.list_media()
-    jl_rows = await jsonl.list_media()
+    im_rows = await in_mem.list_media()
 
     # 都应返 3 行,media_idx 顺序 [0, 1, 2]
-    assert [r[1] for r in pg_rows] == [r[1] for r in jl_rows] == [0, 1, 2]
-    # file_name 顺序也应一致(Jsonl enumerate 顺序 = PG `ORDER BY me.id` 顺序)
+    assert [r[1] for r in pg_rows] == [r[1] for r in im_rows] == [0, 1, 2]
+    # file_name 顺序也应一致(InMemory enumerate 顺序 = PG `ORDER BY me.id` 顺序)
     pg_names = [r[2].file_name for r in pg_rows]
-    jl_names = [r[2].file_name for r in jl_rows]
-    assert pg_names == jl_names == ["alpha.jpg", "beta.jpg", "gamma.jpg"]
+    im_names = [r[2].file_name for r in im_rows]
+    assert pg_names == im_names == ["alpha.jpg", "beta.jpg", "gamma.jpg"]
 
 
 async def test_count_media_returns_correct_total(
