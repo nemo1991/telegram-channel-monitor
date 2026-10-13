@@ -89,11 +89,15 @@ def test_stats_label_format(qapp: QApplication) -> None:
 
 
 def test_backend_label_default(qapp: QApplication) -> None:
-    """未设置时显示「DB:— OS:—」占位。"""
+    """未设置时显示「DB:— OS:—」占位。
+
+    2026-10-12 plan-batch3 目标 3 step 3.5:JSONL 后端已删,test 用 "mongo"
+    替代 — 测的是 set_backend_label 透传,跟具体后端名无关。
+    """
     label = _BackendLabel()
     assert "DB" in label.text()
-    label.set_label("DB=jsonl, ObjectStore=folder")
-    assert "jsonl" in label.text()
+    label.set_label("DB=mongo, ObjectStore=folder")
+    assert "mongo" in label.text()
     assert "folder" in label.text()
     label.deleteLater()
 
@@ -425,9 +429,11 @@ def test_status_bar_setters_delegate(qapp: QApplication) -> None:
     assert "5" in stats.text()  # type: ignore[union-attr]
     assert "10" in stats.text()  # type: ignore[union-attr]
 
-    sb.set_backend_label("DB=jsonl, ObjectStore=folder")
+    sb.set_backend_label(
+        "DB=mongo, ObjectStore=folder"
+    )  # 2026-10-12 plan-batch3 目标 3 step 3.5:jsonl→mongo
     backend = sb.findChild(_BackendLabel)
-    assert "jsonl" in backend.text()  # type: ignore[union-attr]
+    assert "mongo" in backend.text()  # type: ignore[union-attr]
 
     sb.set_last_message_time(datetime.now(UTC))
     last = sb.findChild(_LastMessageLabel)

@@ -330,7 +330,8 @@ def test_message_gift():
 
 
 # ============================================================
-# 持久化 roundtrip — sticker emoji 写入 jsonl 后能读回
+# 持久化 roundtrip — sticker emoji 写入 storage 后能读回
+# 2026-10-12 plan-batch3 目标 3:JSONL 已删,改走 InMemoryRepository
 # ============================================================
 
 
