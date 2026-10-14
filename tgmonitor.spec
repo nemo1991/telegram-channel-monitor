@@ -15,10 +15,10 @@ Cross-platform:
     — 运行时走 `importlib.resources.files()`,destination 分别对应
     `<bundle>/tgmonitor/resources/` 与 `<bundle>/tgmonitor/ui/resources/`,
     `icons/` 等子目录必须原样保留(否则 Windows 启动即报 nav_live.svg 缺失)。
-  - core/storage/schema.sql — 单文件(非目录),走 datas 单文件条目,
-    destination 必须是 `tgmonitor/core/storage/`(与 postgres_repo.py 的
-    `Path(__file__).parent / "schema.sql"` 定位一致);漏掉则配置 PG 后
-    init_schema() 直接 FileNotFoundError(v1.0.12 Windows 产物报错根因)。
+  - ~~core/storage/schema.sql~~ 2026-10-12 plan-batch3 目标 3 step 3.1 删除
+    文件并 inline 到 `postgres_repo.py:SCHEMA_SQL` 字符串,免去冷启动
+    `Path(__file__).parent / "schema.sql"` 路径解析(frozen 下 __file__ 不可靠)。
+    spec 不再单独打包 schema.sql。
 
 关键 spec 写法(踩过的坑):
   - EXE 必须 `exclude_binaries=True`,只输出 bootloader + scripts
@@ -71,13 +71,9 @@ from PyInstaller.utils.hooks import collect_data_files
 
 datas += collect_data_files("tdlib_json")
 
-# schema.sql 是单文件,不走目录递归;PyInstaller datas 支持 (file, dest_dir),
-# 目标目录必须与 postgres_repo.py 的 `Path(__file__).parent / "schema.sql"` 一致。
-_SCHEMA_SQL = _SPEC_DIR / "src/tgmonitor/core/storage/schema.sql"
-if _SCHEMA_SQL.is_file():
-    datas.append((str(_SCHEMA_SQL), "tgmonitor/core/storage"))
-else:
-    print(f"[spec] WARNING: 缺失 schema.sql {_SCHEMA_SQL}")
+# 2026-10-12 plan-batch3 目标 3 step 3.1:`schema.sql` 已删,SQL inline 到
+# `postgres_repo.py:SCHEMA_SQL` 字符串,frozen 启动直接 `await conn.execute(SCHEMA_SQL)`。
+# spec 不再需要 copy 一个不存在的单文件。
 
 # tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports。
 # aioboto3(S3 对象存储)例外:它通过 `session.client("s3")` 用**字符串
