@@ -437,9 +437,30 @@ class InMemoryRepository(StorageRepository):
 
         这里用 method 不复用 Jsonl 的私有 helper 是因为 conftest 是测试
         fixture,跨模块引用私有名比较脆弱。
-        """
-        reverse = sort_dir == SortDir.DESC
 
+        2026-10-14 v1.12.2 fix:原 `reverse=sort_dir==DESC` 写法让 Python sort
+        把整个 tuple 反向(含 tie-breaker),导致 DESC 模式 tie-breaker 变成
+        `(msg_id ASC, idx DESC)`,跟 Postgres `ORDER BY ... DESC, m.id DESC,
+        media_idx ASC`(tie-breaker 不跟 primary 反)不一致。改成分支 key:
+        - DESC:DATE 用 `(date, msg_id, -idx)`,reverse=True → `(date DESC, msg_id DESC, idx ASC)` 与 PG 对齐
+        - DESC:SIZE/STATUS 用原始 value,reverse=True → `value DESC`(不要 negation 套娃,会翻回升序)
+        - ASC:DATE key `(date, -msg_id, idx)`,无 reverse → tie-breaker `(msg_id DESC, idx ASC)`
+        """
+        if sort_dir == SortDir.DESC:
+
+            def _key(row: tuple[MessageDTO, int, MediaDTO]):
+                msg, idx, med = row
+                if sort == SortKey.DATE:
+                    return (msg.date, int(msg.id), -idx)
+                if sort == SortKey.SIZE:
+                    return (med.file_size or 0,)
+                if sort == SortKey.STATUS:
+                    return med.download_status.value
+                return (msg.date, int(msg.id), -idx)
+
+            return sorted(rows, key=_key, reverse=True)
+
+        # ASC:tie-breaker `(msg_id DESC, idx ASC)` 显式进 key
         def _key(row: tuple[MessageDTO, int, MediaDTO]):
             msg, idx, med = row
             if sort == SortKey.DATE:
@@ -447,10 +468,10 @@ class InMemoryRepository(StorageRepository):
             if sort == SortKey.SIZE:
                 return (med.file_size or 0,)
             if sort == SortKey.STATUS:
-                return (med.download_status.value,)
+                return med.download_status.value
             return (msg.date, -int(msg.id), idx)
 
-        return sorted(rows, key=_key, reverse=reverse)
+        return sorted(rows, key=_key)
 
     async def count_media_by_object_key(self, object_key: str) -> int:
         """2026-08-25 PR #3:refcount — 顺序扫 messages 数同 object_key。"""
