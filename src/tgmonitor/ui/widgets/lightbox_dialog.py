@@ -282,8 +282,12 @@ class LightboxDialog(QDialog):
 
         # 切 item 前先清旧媒体(防 decoder / animation timer dangling)
         self._stop_active_player()
+        self._sync_current_data_for_save()
+        self._dispatch_render_by_kind()
+        self._finalize_render()
 
-        # v1.6.10:同步当前 idx 对应的 bytes(save-as 用)
+    def _sync_current_data_for_save(self) -> None:
+        """v1.6.10:同步当前 idx 对应的 bytes(save-as 用)。"""
         if isinstance(self._data, list):
             if 0 <= self._idx < len(self._data):
                 self._current_data = self._data[self._idx]
@@ -294,6 +298,8 @@ class LightboxDialog(QDialog):
         else:
             self._current_data = None
 
+    def _dispatch_render_by_kind(self) -> None:
+        """item.kind 三态分发(image/gif/video/空 item fallback)。"""
         item = self._all_items[self._idx]
         # 2026-09-09 v1.7.2:记录当前 kind — play/pause 按钮按 kind 路由到 QMovie / QMediaPlayer。
         self._current_kind = item.kind
@@ -311,6 +317,8 @@ class LightboxDialog(QDialog):
             self._canvas.setText(self.tr("(image unavailable)"))
             self._update_zoom_label()
 
+    def _finalize_render(self) -> None:
+        """v1.6.10:按当前 kind / data 启灰工具栏按钮 + 2026-09-09 v1.7.2 刷 ▶/⏸ 按钮图标。"""
         # v1.6.10:按当前 kind / data 启灰工具栏按钮
         self._update_button_states()
         # 2026-09-09 v1.7.2:刷新 ▶/⏸ 按钮图标(切图后状态可能变)。
@@ -349,19 +357,26 @@ class LightboxDialog(QDialog):
         self._movie = QMovie(buf)
         self._movie.setFormat(b"gif")
         if not self._movie.isValid():
-            log.warning("Lightbox: QMovie.isValid()=False, falling back to first frame")
-            self._movie = None
-            buf.close()
-            pix = QPixmap()
-            if pix.loadFromData(ba, b"GIF"):
-                self._apply_scaled_pixmap(pix)
-            else:
-                self._show_unavailable()
-            self._update_zoom_label()
+            self._fallback_gif_to_first_frame(ba, buf)
             return
         self._canvas.setMovie(self._movie)
         self._movie.start()
         # GIF 不支持缩放(动画逐帧 dec)— zoom label 仍显示但固定 100%
+        self._update_zoom_label()
+
+    def _fallback_gif_to_first_frame(self, ba: QByteArray, buf: QBuffer) -> None:
+        """QMovie 构造失败时降级到第一帧(QPixmap.loadFromData)+ 清 _movie 引用。
+
+        成功:缩放首帧;失败:走 _show_unavailable 黑屏提示。
+        """
+        log.warning("Lightbox: QMovie.isValid()=False, falling back to first frame")
+        self._movie = None
+        buf.close()
+        pix = QPixmap()
+        if pix.loadFromData(ba, b"GIF"):
+            self._apply_scaled_pixmap(pix)
+        else:
+            self._show_unavailable()
         self._update_zoom_label()
 
     def _show_unavailable(self) -> None:
@@ -386,22 +401,29 @@ class LightboxDialog(QDialog):
             return
 
         try:
-            self._video_widget = QVideoWidget(self)
-            self._player = QMediaPlayer(self)
-            self._player.setVideoOutput(self._video_widget)
-            self._player.setSource(QUrl.fromLocalFile(tmp_path))
-            self._player.errorOccurred.connect(self._on_video_error)  # noqa: F821 — Qt slot
-            # 把 _canvas 替换成 _video_widget — layout 接管
-            outer = self.layout()
-            assert outer is not None
-            outer.replaceWidget(self._canvas, self._video_widget)
-            self._video_widget.show()
-            self._player.play()
+            self._attach_video_to_canvas(tmp_path)
         except Exception:  # noqa: BLE001 — QMediaPlayer 构造 / signal connect 都可能 throw
             log.warning("Lightbox: QMediaPlayer setup failed", exc_info=True)
             self._show_video_fallback()
 
         self._update_zoom_label()
+
+    def _attach_video_to_canvas(self, tmp_path: str) -> None:
+        """QVideoWidget + QMediaPlayer 配对,setSource + errorOccurred + 替换 _canvas。
+
+        抛异常由 caller `_render_video` 的 try/except 兜底走 fallback。
+        """
+        self._video_widget = QVideoWidget(self)
+        self._player = QMediaPlayer(self)
+        self._player.setVideoOutput(self._video_widget)
+        self._player.setSource(QUrl.fromLocalFile(tmp_path))
+        self._player.errorOccurred.connect(self._on_video_error)  # noqa: F821 — Qt slot
+        # 把 _canvas 替换成 _video_widget — layout 接管
+        outer = self.layout()
+        assert outer is not None
+        outer.replaceWidget(self._canvas, self._video_widget)
+        self._video_widget.show()
+        self._player.play()
 
     def _on_video_error(self, *args: object) -> None:
         """2026-09-04 v1.6.7:`QMediaPlayer.errorOccurred` 信号 handler。
@@ -476,6 +498,12 @@ class LightboxDialog(QDialog):
         严格顺序:stop → 解绑 widget → deleteLater → 清引用。否则
         decoder 后台线程 / animation timer 会触发已销毁 widget 抛 RuntimeError。
         """
+        self._stop_qmovie()
+        self._stop_qmedia_player()
+        self._restore_canvas_from_video()
+
+    def _stop_qmovie(self) -> None:
+        """停 QMovie(GIF 动画)+ 解绑 _canvas 上的 QMovie,清 _movie 引用。"""
         if self._movie is not None:
             try:
                 self._movie.stop()
@@ -487,6 +515,9 @@ class LightboxDialog(QDialog):
             except RuntimeError:  # pragma: no cover
                 pass
             self._movie = None
+
+    def _stop_qmedia_player(self) -> None:
+        """停 QMediaPlayer(MP4 视频)+ setSource(QUrl()) 解绑,清 _player 引用。"""
         if self._player is not None:
             try:
                 self._player.stop()
@@ -497,6 +528,12 @@ class LightboxDialog(QDialog):
             except RuntimeError:  # pragma: no cover
                 pass
             self._player = None
+
+    def _restore_canvas_from_video(self) -> None:
+        """video widget hide + 放回 _canvas + deleteLater,清 _video_widget;顺带停 slideshow timer。
+
+        2026-09-09 v1.7.2:切图 / 关闭前停幻灯片 timer,防 close 后 timer 仍 firing。
+        """
         if self._video_widget is not None:
             self._video_widget.hide()
             # 把 _canvas 放回 layout(if it was replaced by video widget)
@@ -506,7 +543,6 @@ class LightboxDialog(QDialog):
             self._video_widget.setParent(None)
             self._video_widget.deleteLater()
             self._video_widget = None
-        # 2026-09-09 v1.7.2:切图 / 关闭前停幻灯片 timer,防 close 后 timer 仍 firing。
         if self._slideshow_active:
             self._slideshow_timer.stop()
 
