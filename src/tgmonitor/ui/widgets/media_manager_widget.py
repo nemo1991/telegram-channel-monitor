@@ -276,92 +276,135 @@ class MediaManagerWidget(QWidget):
         """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search🔍] [◀ Page N/M ▶] [Refresh]。"""
         hbox = QHBoxLayout()
         hbox.setSpacing(8)
-
-        self.cmb_channel = QComboBox()
-        self.cmb_channel.setMinimumWidth(160)
-        self.cmb_channel.addItem(self.tr("全部频道"), None)
-        hbox.addWidget(self.cmb_channel)
-
-        self.cmb_type = QComboBox()
-        self.cmb_type.setMinimumWidth(120)
-        self.cmb_type.addItem(self.tr("全部类型"), None)
-        for mt in MediaType:
-            self.cmb_type.addItem(mt.value, mt)
-        hbox.addWidget(self.cmb_type)
-
-        self.cmb_status = QComboBox()
-        self.cmb_status.setMinimumWidth(120)
-        self.cmb_status.addItem(self.tr("全部状态"), None)
-        for st in MediaDownloadStatus:
-            self.cmb_status.addItem(st.value, st)
-        hbox.addWidget(self.cmb_status)
-
+        hbox.addWidget(self._build_channel_filter())
+        hbox.addWidget(self._build_type_filter())
+        hbox.addWidget(self._build_status_filter())
         # 2026-08-25 v1.3.0 PR #6:排序键 + 方向 + 分页 — 与 storage.list_media 的
         # sort / sort_dir / offset 透传
-        self.cmb_sort = QComboBox()
-        self.cmb_sort.setMinimumWidth(110)
-        self.cmb_sort.setToolTip(self.tr("排序键"))
+        hbox.addWidget(self._build_sort_filter())
+        hbox.addWidget(self._build_dir_filter())
+        hbox.addWidget(self._build_search_box(), 1)
+        # 2026-08-25 v1.3.0 PR #6:分页导航 — 由 VM payload 的 total 计算 page count
+        hbox.addWidget(self._build_prev_button())
+        hbox.addWidget(self._build_page_label())
+        hbox.addWidget(self._build_next_button())
+        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语都覆盖
+        hbox.addWidget(self._build_refresh_button())
+        return hbox
+
+    def _build_channel_filter(self) -> QComboBox:
+        """顶部 Channel ▼ — index 0 = None 占位('All Channels')。"""
+        cmb = QComboBox()
+        cmb.setMinimumWidth(160)
+        cmb.addItem(self.tr("全部频道"), None)
+        self.cmb_channel = cmb
+        return cmb
+
+    def _build_type_filter(self) -> QComboBox:
+        """顶部 Type ▼ — index 0 = None 占位,后续枚举所有 MediaType。"""
+        cmb = QComboBox()
+        cmb.setMinimumWidth(120)
+        cmb.addItem(self.tr("全部类型"), None)
+        for mt in MediaType:
+            cmb.addItem(mt.value, mt)
+        self.cmb_type = cmb
+        return cmb
+
+    def _build_status_filter(self) -> QComboBox:
+        """顶部 Status ▼ — index 0 = None 占位,后续枚举所有 MediaDownloadStatus。"""
+        cmb = QComboBox()
+        cmb.setMinimumWidth(120)
+        cmb.addItem(self.tr("全部状态"), None)
+        for st in MediaDownloadStatus:
+            cmb.addItem(st.value, st)
+        self.cmb_status = cmb
+        return cmb
+
+    def _build_sort_filter(self) -> QComboBox:
+        """2026-08-25 v1.3.0 PR #6:排序键 — index 0..N 一一对应 SortKey 枚举顺序。"""
+        cmb = QComboBox()
+        cmb.setMinimumWidth(110)
+        cmb.setToolTip(self.tr("排序键"))
         for sk in SortKey:
             label = {
                 "date": self.tr("日期"),
                 "size": self.tr("大小"),
                 "status": self.tr("状态"),
             }[sk.value]
-            self.cmb_sort.addItem(label, sk)
-        hbox.addWidget(self.cmb_sort)
+            cmb.addItem(label, sk)
+        self.cmb_sort = cmb
+        return cmb
 
-        self.cmb_dir = QComboBox()
-        self.cmb_dir.setMinimumWidth(90)
-        self.cmb_dir.setToolTip(self.tr("排序方向"))
-        # 显式按 DESC, ASC 顺序加入,index 0 = DESC(DATE 的"最新优先"
-        # 是 v1.2.0 既有行为;SortDir 枚举的 .value 字典序是 ASC 在前,但
-        # UI 默认走 DESC)。
+    def _build_dir_filter(self) -> QComboBox:
+        """排序方向 — 显式按 DESC, ASC 顺序(index 0 = DESC 是 v1.2.0 既有行为)。
+
+        SortDir 枚举的 .value 字典序是 ASC 在前,但 UI 默认走 DESC。
+        """
+        cmb = QComboBox()
+        cmb.setMinimumWidth(90)
+        cmb.setToolTip(self.tr("排序方向"))
         for sd in (SortDir.DESC, SortDir.ASC):
             label = self.tr("↓ 降序") if sd == SortDir.DESC else self.tr("↑ 升序")
-            self.cmb_dir.addItem(label, sd)
-        hbox.addWidget(self.cmb_dir)
+            cmb.addItem(label, sd)
+        self.cmb_dir = cmb
+        return cmb
 
-        self.edit_search = QLineEdit()
-        self.edit_search.setPlaceholderText(self.tr("搜索文件名…"))
-        self.edit_search.setClearButtonEnabled(True)
-        self.edit_search.setMinimumWidth(220)
-        hbox.addWidget(self.edit_search, 1)
+    def _build_search_box(self) -> QLineEdit:
+        """文件名搜索框 — 300ms debounce 由 _wire_filter 串接。"""
+        edit = QLineEdit()
+        edit.setPlaceholderText(self.tr("搜索文件名…"))
+        edit.setClearButtonEnabled(True)
+        edit.setMinimumWidth(220)
+        self.edit_search = edit
+        return edit
 
-        # 2026-08-25 v1.3.0 PR #6:分页导航 — 由 VM payload 的 total 计算 page count
-        self.btn_prev = QPushButton("◀")
-        self.btn_prev.setCursor(Qt.PointingHandCursor)
-        self.btn_prev.setFixedWidth(32)
-        self.btn_prev.setToolTip(self.tr("上一页"))
-        self.btn_prev.clicked.connect(self._on_page_prev)
-        hbox.addWidget(self.btn_prev)
+    def _build_prev_button(self) -> QPushButton:
+        """2026-08-25 v1.3.0 PR #6:分页上一页按钮。"""
+        btn = QPushButton("◀")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedWidth(32)
+        btn.setToolTip(self.tr("上一页"))
+        btn.clicked.connect(self._on_page_prev)
+        self.btn_prev = btn
+        return btn
 
-        self.lbl_page = QLabel("1 / 1")
-        self.lbl_page.setMinimumWidth(60)
-        self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hbox.addWidget(self.lbl_page)
+    def _build_page_label(self) -> QLabel:
+        """2026-08-25 v1.3.0 PR #6:分页指示 label,初值 "1 / 1"。"""
+        lbl = QLabel("1 / 1")
+        lbl.setMinimumWidth(60)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_page = lbl
+        return lbl
 
-        self.btn_next = QPushButton("▶")
-        self.btn_next.setCursor(Qt.PointingHandCursor)
-        self.btn_next.setFixedWidth(32)
-        self.btn_next.setToolTip(self.tr("下一页"))
-        self.btn_next.clicked.connect(self._on_page_next)
-        hbox.addWidget(self.btn_next)
+    def _build_next_button(self) -> QPushButton:
+        """2026-08-25 v1.3.0 PR #6:分页下一页按钮。"""
+        btn = QPushButton("▶")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedWidth(32)
+        btn.setToolTip(self.tr("下一页"))
+        btn.clicked.connect(self._on_page_next)
+        self.btn_next = btn
+        return btn
 
-        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语都覆盖
-        self.btn_refresh = QPushButton(self.tr("🔄 刷新"))
-        self.btn_refresh.setCursor(Qt.PointingHandCursor)
-        self.btn_refresh.setToolTip(self.tr("重新载入媒体列表(F5)"))
-        self.btn_refresh.clicked.connect(self.refresh_requested.emit)
-        hbox.addWidget(self.btn_refresh)
-
-        return hbox
+    def _build_refresh_button(self) -> QPushButton:
+        """2026-09-11 v1.7.5:刷新按钮 — 走 self.tr() 让 en_US / zh_CN 双语都覆盖。"""
+        btn = QPushButton(self.tr("🔄 刷新"))
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(self.tr("重新载入媒体列表(F5)"))
+        btn.clicked.connect(self.refresh_requested.emit)
+        self.btn_refresh = btn
+        return btn
 
     def _build_toolbar(self) -> QVBoxLayout:
         """[Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans] + status label。"""
         vbox = QVBoxLayout()
         vbox.setSpacing(6)
+        vbox.addLayout(self._build_action_buttons())
+        vbox.addWidget(self._build_status_label())
+        return vbox
 
-        # 操作行
+    def _build_action_buttons(self) -> QHBoxLayout:
+        """底部 action 行 — 8 个按钮 + 1 个 checkbox + 1 个 stretch + prune。"""
         actions = QHBoxLayout()
         actions.setSpacing(8)
 
@@ -432,15 +475,15 @@ class MediaManagerWidget(QWidget):
         self.btn_prune.clicked.connect(self.prune_requested.emit)
         actions.addWidget(self.btn_prune)
 
-        vbox.addLayout(actions)
+        return actions
 
-        # status 行
-        self.lbl_status = QLabel(self.tr("加载中…"))
-        self.lbl_status.setObjectName("mediaManagerStatus")
-        self.lbl_status.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        vbox.addWidget(self.lbl_status)
-
-        return vbox
+    def _build_status_label(self) -> QLabel:
+        """底部 status label — 渲染统计(_render_list 更新)+ on_channel_cleared 反馈。"""
+        lbl = QLabel(self.tr("加载中…"))
+        lbl.setObjectName("mediaManagerStatus")
+        lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.lbl_status = lbl
+        return lbl
 
     # ---- filter 联动 ----
 
@@ -651,10 +694,7 @@ class MediaManagerWidget(QWidget):
 
     def _render_list(self) -> None:
         """清空 list → 按 rows 重建 item + 自绘 widget;更新 status label。"""
-        self.list.clear()
-        self._last_keys = []
-        self._thumb_labels.clear()  # 旧 label 全部失效
-        self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
+        self._reset_list_for_render()
 
         total_bytes = 0
         count_done = 0
@@ -693,6 +733,17 @@ class MediaManagerWidget(QWidget):
         # 缩略图加载(2026-08-25 PR #1):只有 PHOTO/VIDEO + DONE 才值得加载;
         # audio/document/sticker 等保持 emoji。先查 LRU,命中直接 setPixmap,
         # miss 再触发 vm.load_thumbnail 异步。
+        self._maybe_load_all_thumbs()
+
+    def _reset_list_for_render(self) -> None:
+        """重渲前清空 list + 三个 row 容器,避免旧 label 跨渲染持有引用。"""
+        self.list.clear()
+        self._last_keys = []
+        self._thumb_labels.clear()  # 旧 label 全部失效
+        self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
+
+    def _maybe_load_all_thumbs(self) -> None:
+        """2026-08-25 PR #1:每行触发缩略图处理(LRU 命中即时 setPixmap,miss 异步)。"""
         for row in self._rows:
             self._maybe_load_thumb_for_row(*row)
 
@@ -777,12 +828,19 @@ class MediaManagerWidget(QWidget):
         hbox = QHBoxLayout(w)
         hbox.setContentsMargins(8, 4, 8, 4)
         hbox.setSpacing(8)
+        self._build_thumb_cell(hbox, med, key)
+        self._build_meta_cells(hbox, msg, med, key)
+        self._build_action_buttons_in_row(hbox, med, key)
+        self._apply_row_hover_style(w)
+        return w
 
-        # 缩略图列(2026-08-25 PR #1)— 64×64,初始显 emoji,
-        # VM 异步加载完后 setPixmap 替换。失败/非图保持 emoji。
-        # 2026-08-31 v1.5.0 PR #A8:可点击 — 图片类(photo/animation/sticker)
-        # DONE 时设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;
-        # 非图 / 未下载保持默认箭头 + 不响应。
+    def _build_thumb_cell(self, hbox: QHBoxLayout, med: MediaDTO, key: _RowKey) -> None:
+        """缩略图列(2026-08-25 PR #1)— 40×40,初始显 emoji,VM 异步加载完后 setPixmap 替换。
+
+        2026-08-31 v1.5.0 PR #A8:可点击 — 图片类(photo/animation/sticker) DONE 时
+        设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;非图 / 未下
+        载保持默认箭头 + 不响应。
+        """
         thumb = QLabel(_MEDIA_ICONS.get(med.type, "📎"))
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
@@ -799,6 +857,18 @@ class MediaManagerWidget(QWidget):
             )
         hbox.addWidget(thumb)
 
+    def _build_meta_cells(
+        self,
+        hbox: QHBoxLayout,
+        msg: MessageDTO,
+        med: MediaDTO,
+        key: _RowKey,
+    ) -> None:
+        """5 列元数据:channel / msg id+type / filename(扩展) / size / status。
+
+        2026-09-01 v1.5.1 PR #B3:status 列 label 存到 self._status_labels,
+        on_download_progress 事件按 _RowKey 定位行 + setText。
+        """
         # channel name(优先 known_channels,否则 #channel_id)
         ch = self._known_channels.get(msg.channel_id)
         ch_label = ch.display if ch else f"#{msg.channel_id}"
@@ -827,11 +897,10 @@ class MediaManagerWidget(QWidget):
         lbl_size.setStyleSheet("color: #777;")
         hbox.addWidget(lbl_size)
 
-        # status
+        # status(2026-09-01 v1.5.1 PR #B3:扩宽到 80px 容纳「X / Y (Z%)」进度文字)
         status_text = _STATUS_TEXT.get(med.download_status, "?")
         lbl_status = QLabel(status_text)
-        lbl_status.setFixedWidth(80)  # 2026-09-01 v1.5.1 PR #B3:扩宽
-        # 到 80px 容纳「X / Y (Z%)」进度文字(原来 24px 只够 emoji)。
+        lbl_status.setFixedWidth(80)
         lbl_status.setAlignment(Qt.AlignCenter)
         if med.download_status == MediaDownloadStatus.FAILED:
             lbl_status.setStyleSheet("color: #c0392b;")
@@ -842,16 +911,29 @@ class MediaManagerWidget(QWidget):
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
             # 2026-09-01 v1.5.1 PR #B3:下载中状态颜色,跟 PENDING 区分
             lbl_status.setStyleSheet("color: #2980b9;")
-        # 2026-09-01 v1.5.1 PR #B3:行映射存下来,on_download_progress
-        # 收到 MediaDownloadProgress 事件时按 _RowKey 定位行 + setText。
         self._status_labels[key] = lbl_status
         hbox.addWidget(lbl_status)
 
-        # Open 按钮 — DONE 才可点
+    def _build_action_buttons_in_row(
+        self,
+        hbox: QHBoxLayout,
+        med: MediaDTO,
+        key: _RowKey,
+    ) -> None:
+        """行内 5 个 action 按钮:Open / Reveal / Copy / Retry / Delete。
+
+        - Open / Reveal / Copy:DONE 才可点
+          - 2026-08-27 v1.4.0 PR #16:S3 后端下 Reveal 自动 disable(S3 无本地路径)
+        - Retry:FAILED 才可点
+        - Delete:总是可点
+        """
+        is_done = med.download_status == MediaDownloadStatus.DONE
+
+        # Open
         btn_open = QPushButton("Open")
         btn_open.setFixedHeight(26)
         btn_open.setCursor(Qt.PointingHandCursor)
-        btn_open.setEnabled(med.download_status == MediaDownloadStatus.DONE)
+        btn_open.setEnabled(is_done)
         btn_open.clicked.connect(
             lambda _checked=False, k=key: self.open_requested.emit(
                 k.channel_id,
@@ -861,12 +943,10 @@ class MediaManagerWidget(QWidget):
         )
         hbox.addWidget(btn_open)
 
-        # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 — 仅 DONE 媒体可点。
-        # S3 后端下 Reveal 自动 disable(S3 无本地路径);Copy 仍可用(URI 复制)。
+        # Reveal
         btn_reveal = QPushButton("Reveal")
         btn_reveal.setFixedHeight(26)
         btn_reveal.setCursor(Qt.PointingHandCursor)
-        is_done = med.download_status == MediaDownloadStatus.DONE
         btn_reveal.setEnabled(is_done)
         btn_reveal.clicked.connect(
             lambda _checked=False, k=key: self.reveal_requested.emit(
@@ -877,6 +957,7 @@ class MediaManagerWidget(QWidget):
         )
         hbox.addWidget(btn_reveal)
 
+        # Copy
         btn_copy = QPushButton("Copy")
         btn_copy.setFixedHeight(26)
         btn_copy.setCursor(Qt.PointingHandCursor)
@@ -890,7 +971,7 @@ class MediaManagerWidget(QWidget):
         )
         hbox.addWidget(btn_copy)
 
-        # Retry 按钮 — FAILED 才可点
+        # Retry
         btn_retry = QPushButton("Retry")
         btn_retry.setFixedHeight(26)
         btn_retry.setCursor(Qt.PointingHandCursor)
@@ -904,7 +985,7 @@ class MediaManagerWidget(QWidget):
         )
         hbox.addWidget(btn_retry)
 
-        # Delete 按钮 — 总是可点
+        # Delete(总是可点)
         btn_delete = QPushButton("Delete")
         btn_delete.setFixedHeight(26)
         btn_delete.setCursor(Qt.PointingHandCursor)
@@ -917,12 +998,12 @@ class MediaManagerWidget(QWidget):
         )
         hbox.addWidget(btn_delete)
 
-        # hover 高亮
+    def _apply_row_hover_style(self, w: QWidget) -> None:
+        """行 hover 高亮 — QSS 透明底 + hover 浅蓝。"""
         w.setStyleSheet(
             "QWidget#mediaRow { background: transparent; }"
             "QWidget#mediaRow:hover { background: #f5f7fb; }"
         )
-        return w
 
     # ---- 内部:选中 / 批量 ----
 
