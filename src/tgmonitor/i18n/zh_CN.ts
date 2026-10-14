@@ -1434,11 +1434,6 @@ S            切换幻灯片自动播放
         <translation>DSN:</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="218"/>
-        <source>JSONL 目录:</source>
-        <translation>JSONL 目录:</translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="232"/>
         <source>📁 对象存储 (ObjectStore)</source>
         <translation>📁 对象存储 (ObjectStore)</translation>

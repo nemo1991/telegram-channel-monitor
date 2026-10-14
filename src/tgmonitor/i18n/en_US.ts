@@ -1469,11 +1469,6 @@ New messages will appear here in real time.</translation>
         <translation>DSN:</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="218"/>
-        <source>JSONL 目录:</source>
-        <translation>JSONL directory:</translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="232"/>
         <source>📁 对象存储 (ObjectStore)</source>
         <translation>📁 Object Storage</translation>
