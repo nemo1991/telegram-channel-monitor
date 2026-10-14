@@ -157,10 +157,28 @@ class LightboxDialog(QDialog):
         source_title: str | None = None,  # v1.6.10:QFileDialog 默认文件名
     ) -> None:
         super().__init__(parent)
+        self._init_media_state(pixmaps, items, current, data, source_title, fallback_fn)
+        self._init_window_appearance()
+        self._init_content_layout(title)
+        # 底部工具栏(v1.6.10)— 默认隐藏,鼠标移动触发 _show_bar
+        self._build_control_bar()
+        # 初始渲染
+        self._render_current()
 
-        # ---- 媒体列表(items 优先,否则 pixmaps) ----
-        # 2026-09-04 v1.6.7:`_all_items` 是新主存;`_all_pixmaps` 保留作
-        # 兼容属性(21 个老测试用 `dlg._all_pixmaps == [...]` 断言)。
+    def _init_media_state(
+        self,
+        pixmaps: Sequence[QPixmap] | None,
+        items: Sequence[MediaItem] | None,
+        current: int,
+        data: bytes | list[bytes] | None,
+        source_title: str | None,
+        fallback_fn: Callable[[], None] | None,
+    ) -> None:
+        """媒体列表 + 缩放/旋转/player/slideshow 等 14 个 self 状态字段初始化。
+
+        2026-09-04 v1.6.7:`_all_items` 是新主存;`_all_pixmaps` 保留作兼容属性
+        (21 个老测试用 `dlg._all_pixmaps == [...]` 断言)。
+        """
         if items is not None:
             self._all_items: list[MediaItem] = list(items)
             self._all_pixmaps: list[QPixmap] = [
@@ -193,14 +211,15 @@ class LightboxDialog(QDialog):
         )
         self._source_title = source_title
 
-        # ---- 窗口外观 ----
-        # Frameless + 始终置顶 + 工具窗口(任务栏不出现条目);半透背景由 stylesheet 实现
+    def _init_window_appearance(self) -> None:
+        """Frameless + 始终置顶 + 工具窗口(任务栏不出现条目);半透背景由 stylesheet 实现。"""
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setModal(True)
         self.setStyleSheet("LightboxDialog { background-color: rgba(0, 0, 0, 220); }")
 
-        # ---- 内容布局 ----
+    def _init_content_layout(self, title: str) -> None:
+        """外层 QFrame + 居中画布 + 缩放 hint + 工具栏插槽。"""
         # 外层 QFrame 提供可读背景(避免全透字串);内嵌 QLabel 居中
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -230,12 +249,6 @@ class LightboxDialog(QDialog):
         )
         self._zoom_label.setFixedHeight(24)
         outer.addWidget(self._zoom_label)
-
-        # 底部工具栏(v1.6.10)— 默认隐藏,鼠标移动触发 _show_bar
-        self._build_control_bar()
-
-        # 初始渲染
-        self._render_current()
 
     # ---- 公有 API ----
 
@@ -689,6 +702,19 @@ class LightboxDialog(QDialog):
         静默淡出。视觉风格延续 `_zoom_label` 的半透黑底白字(避免引入
         stylesheet 二套体系)。
         """
+        self._init_control_bar_frame()
+        self._init_control_buttons()
+        self._wire_control_buttons()
+        self._init_bar_opacity_and_timer()
+        # 把 control_bar 加进 outer layout,align bottom-center。stretch=0
+        # 不抢画布空间;_canvas(stretch=1)撑满中间区域
+        outer = self.layout()
+        assert outer is not None
+        outer.addWidget(self._control_bar)
+        outer.setAlignment(self._control_bar, Qt.AlignBottom | Qt.AlignHCenter)
+
+    def _init_control_bar_frame(self) -> None:
+        """QFrame + stylesheet + QHBoxLayout 容器,设半透黑底白字风格。"""
         self._control_bar = QFrame(self)
         self._control_bar.setStyleSheet(
             "QFrame { background-color: rgba(0, 0, 0, 180); border-radius: 6px; }"
@@ -701,6 +727,8 @@ class LightboxDialog(QDialog):
         bar.setContentsMargins(12, 6, 12, 6)
         bar.setSpacing(4)
 
+    def _init_control_buttons(self) -> None:
+        """建 9 个按钮(prev/next/zoom_out/zoom_in/rotate/play_pause/slideshow/save/close)+ 布局。"""
         self._btn_prev = self._make_btn("‹", self.tr("上一张"))
         self._btn_next = self._make_btn("›", self.tr("下一张"))
         self._btn_zoom_out = self._make_btn("−", self.tr("缩小"))
@@ -714,6 +742,8 @@ class LightboxDialog(QDialog):
         self._btn_save = self._make_btn("⤓", self.tr("另存为…"))
         self._btn_close = self._make_btn("✕", self.tr("关闭"))
 
+        bar = self._control_bar.layout()
+        assert isinstance(bar, QHBoxLayout)
         bar.addWidget(self._btn_prev)
         bar.addWidget(self._btn_next)
         bar.addSpacing(16)
@@ -727,6 +757,8 @@ class LightboxDialog(QDialog):
         bar.addWidget(self._btn_save)
         bar.addWidget(self._btn_close)
 
+    def _wire_control_buttons(self) -> None:
+        """9 个按钮 clicked/toggled 信号接 handler。"""
         self._btn_prev.clicked.connect(lambda: self._step_index(-1))
         self._btn_next.clicked.connect(lambda: self._step_index(+1))
         self._btn_zoom_out.clicked.connect(self._zoom_out)
@@ -737,8 +769,12 @@ class LightboxDialog(QDialog):
         self._btn_save.clicked.connect(self._save_current)
         self._btn_close.clicked.connect(self.accept)
 
-        # 底部居中 — 用独立 QHBoxLayout 加一层 stretch wrapper 比较啰嗦,
-        # 直接 fixed bottom + adjustSize + 在 resizeEvent 里 move 居中
+    def _init_bar_opacity_and_timer(self) -> None:
+        """QGraphicsOpacityEffect 通道(避开 QFrame 在父 dialog 内 setWindowOpacity 无效的坑)+ 2s 淡出 QTimer。
+
+        底部居中 — 用独立 QHBoxLayout 加一层 stretch wrapper 比较啰嗦,
+        直接 fixed bottom + adjustSize + 在 resizeEvent 里 move 居中。
+        """
         self._control_bar.hide()
         # QFrame 在父 dialog 内不是独立 window → setWindowOpacity 无效。
         # 用 QGraphicsOpacityEffect 走 widget 的 graphics effect 通道。
@@ -746,13 +782,6 @@ class LightboxDialog(QDialog):
         self._bar_opacity_effect.setOpacity(0.0)
         self._control_bar.setGraphicsEffect(self._bar_opacity_effect)
         self._control_bar.adjustSize()
-
-        # 把 control_bar 加进 outer layout,align bottom-center。stretch=0
-        # 不抢画布空间;_canvas(stretch=1)撑满中间区域
-        outer = self.layout()
-        assert outer is not None
-        outer.addWidget(self._control_bar)
-        outer.setAlignment(self._control_bar, Qt.AlignBottom | Qt.AlignHCenter)
 
         # 2s 不动 → 淡出
         self._hide_timer = QTimer(self)
