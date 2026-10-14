@@ -208,4 +208,3 @@ async def test_in_mem_search_returns_messages_from_unsubscribed_channel(
     # 200 频道有 1 条消息(从 fixture 看)
     assert len(rows2) >= 1, f"已退订频道 200 的历史消息应仍可查,got {len(rows2)} rows"
     assert all(r.channel_id == 200 for r in rows2)
-

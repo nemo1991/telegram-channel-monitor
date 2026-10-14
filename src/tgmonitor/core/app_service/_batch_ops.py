@@ -83,9 +83,7 @@ def _compute_rate(app: AppService, processed: int) -> tuple[float, float]:
     return elapsed, rate
 
 
-async def _publish_batch_progress(
-    app: AppService, op: str, processed: int, total: int
-) -> None:
+async def _publish_batch_progress(app: AppService, op: str, processed: int, total: int) -> None:
     """2026-09-11 v1.7.4:发布 BatchProgress,自动加 elapsed_seconds / rate_per_second。
 
     facade 改 helper 后 5 处循环内的 BatchProgress(...) 调改为
@@ -229,9 +227,7 @@ async def mark_messages_read(app: AppService, items: list[tuple[int, int]]) -> i
     return success
 
 
-async def forward_messages(
-    app: AppService, items: list[tuple[int, int]], to_chat_id: int
-) -> int:
+async def forward_messages(app: AppService, items: list[tuple[int, int]], to_chat_id: int) -> int:
     """2026-09-09 v1.7.2:批量转发 — 走 TG client.forwardMessages。
 
     `items` 是 `(from_cid, mid)` 对;按 from_cid group,各走
@@ -419,9 +415,7 @@ async def add_reaction(
     return success
 
 
-async def remove_reaction(
-    app: AppService, items: list[tuple[int, int]], emoji: str
-) -> int:
+async def remove_reaction(app: AppService, items: list[tuple[int, int]], emoji: str) -> int:
     """2026-09-09 v1.7.2:批量取消 emoji 回应 — 走 TG client.remove_reaction。
 
     2026-09-10 v1.7.3:支持 cancel_current_batch(同 add_reaction 模式)。

@@ -579,6 +579,7 @@ class MonitorViewModel(QObject):
         → emit thumbnail_loaded。失败(None bytes / 非图像格式)on_success 拿到
         None,UI 端保持 emoji 不变。
         """
+
         def _on_success(data: object) -> None:
             if not isinstance(data, (bytes, bytearray)) or not data:
                 return

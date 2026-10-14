@@ -22,7 +22,4 @@ def build_storage(settings: Settings) -> StorageRepository:
         from tgmonitor.core.storage.mongo_repo import MongoRepository
 
         return MongoRepository(dsn=settings.db_dsn, database="tgmonitor")
-    raise ValueError(
-        f"unknown db backend: {settings.db_backend!r} "
-        f"(仅支持 postgres 或 mongo)"
-    )
+    raise ValueError(f"unknown db backend: {settings.db_backend!r} (仅支持 postgres 或 mongo)")

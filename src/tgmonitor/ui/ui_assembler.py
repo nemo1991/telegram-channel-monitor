@@ -248,9 +248,7 @@ class UiAssembler:
         file_menu.addSeparator()
         act_pause = QAction(self._mw.tr("暂停监听"), self._mw)
         act_pause.triggered.connect(
-            lambda: self._mw.app.bus.publish_threadsafe(
-                self._mw.loop, QuitRequested(pause=True)
-            )
+            lambda: self._mw.app.bus.publish_threadsafe(self._mw.loop, QuitRequested(pause=True))
         )
         file_menu.addAction(act_pause)
         act_quit = QAction(self._mw.tr("退出"), self._mw)
