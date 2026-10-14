@@ -5,6 +5,112 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.12.2] - 2026-10-14
+
+主题:**存储后端精简(产品决策:删除 jsonl)+ god class 拆解**(25 commit,
+纯重构 + 1 项用户可见 API 变化)。v1.12.1 后聚焦两条主线:
+
+1. **删 JSONL 文件存储**(产品决策)— 跨 PG/Mongo 内部重构风险主因。
+2. **plan-batch3+4+5 god class 拆解** — `core/app_service` / `ui/main_window`
+   / `ui/widgets/{media_manager_widget,lightbox_dialog}` / `viewmodels/monitor_vm`
+   五个高 LOC 单文件全部拆完,后续 plan 不再重提。
+
+### 重大变化(用户级可见)
+
+- **JSONL 存储后端被移除**。`.env` 设 `TG_DB_BACKEND=jsonl` 启动直接报错,
+  提示「jsonl 已废弃,改用 postgres 或 mongo」。`Settings.db_root` 字段、
+  settings_page storage section 的 JSONL 选项和 `db_root` 字段、`channel_file.py`
+  整体、`expected_schema.py` + `schema.sql` 均删除。运行时只保留 Postgres /
+  Mongo / InMemory(test 替身)3 个后端。
+- settings_page storage section 的「jsonl 目录」字段隐显逻辑(`_on_db_backend_changed`)
+  整方法删除 — 该逻辑无意义(DB_ROOT 不再存在)。
+
+### 重构(纯内部,零行为变化)
+
+#### plan-batch3-1:main_window UiAssembler 抽提装配(5 commit)
+
+- `src/tgmonitor/ui/ui_assembler.py` 新建,接管 `_build_central_widget` /
+  `_build_menu` / `_build_tray` / `_wire_signals` / `_wire_events` 共 258 LOC。
+  MainWindow `__init__` 改为 `assembler.assemble()` + 显式 `self.X = widgets["Y"]`,
+  单文件 982 → ~864 LOC。
+
+#### plan-batch3-2:AppService 拆 facade + 5 plain module(5 commit)
+
+- `core/app_service.py` 1457 → 726 LOC,拆 5 个 plain module:
+  - `_backend_sync.py`(~30 LOC)— `_set_backend` 同步 setter,消 SLF001
+  - `_media_actions.py`(~140 LOC)— retry_media + reveal_media + 16 个单转发 thin
+  - `_batch_ops.py`(~440 LOC)— 7 batch + cancel + 4 ETA + _chunks
+  - `_lifecycle.py`(~250 LOC)— bootstrap + pause/resume + shutdown
+  - `_reconfigure.py`(~265 LOC)— reconfigure + _rebuild_* + validate_backends
+- mutable state ownership 走 `app.X` 引用,跟 plan-batch2 monitor/service.py 同构
+- 47 公共 method 签名保留,`test_app_service_facade.py` 6 contract test 守门
+
+#### plan-batch3-3:删除 jsonl_store(7 commit)
+
+- `src/tgmonitor/core/storage/jsonl_store.py`(1,285 LOC)+ `channel_file.py` +
+  `expected_schema.py` + `schema.sql` 全删
+- `core/storage/factory.py` 去掉 jsonl dispatch,只留 PG/Mongo
+- `core/config.py` `DBBackend` enum 去除 `JSONL` 值
+- `core/settings_store.py` `EditableSettings.db_root` 字段去除,
+  `settings_to_pairs` / `to_settings` / `validate` 同步去 jsonl 相关逻辑
+- `tests/test_jsonl_store.py` 删除,新增 `tests/test_storage_backends_parity_mongo.py`
+  (~400 LOC) 用 mongomock 补 parity 守门
+- `tests/test_storage_backends.py` jsonl parametrize 改 `["inmemory", "postgres", "mongo"]`
+- AGENTS.md / .env.example / README.md / i18n .ts 全部同步去 jsonl
+
+#### plan-batch4:i18n .ts 死翻译 + src 注释/文案 jsonl 引用清理(2 commit)
+
+- `src/tgmonitor/i18n/{zh_CN,en_US}.ts` 删 JSONL 目录相关死 message block
+  (zh_CN.ts 2107→2102 + en_US.ts 2142→2137 = 10 行净减,.qm 净减 1 translation)
+- src 各文件「JSONL」注释 / 文案 / docstring 全部清理
+- AGENTS.md / .env.example / README.md 同步去 jsonl 引用
+
+#### plan-batch5-1:monitor_vm load_thumbnail 顶层化(1 commit)
+
+- `src/tgmonitor/ui/viewmodels/monitor_vm.py` 函数内 lazy import
+  `from tgmonitor.ui.widgets.thumbnail_cache import render_pixmap`
+  提升到顶层,所有调用点直接用 `render_pixmap`。
+
+#### plan-batch5-2:media_manager_widget 拆 17 sub-helper(1 commit)
+
+- `src/tgmonitor/ui/widgets/media_manager_widget.py` 1,061 → 1,142 LOC(+81
+  docstring + 模板开销),4 大方法拆 17 sub-helper:
+  - `_build_filter_bar` → 10 个子函数(channel / type / status / sort / dir
+    filter + search box + 翻页 + refresh 按钮)
+  - `_build_toolbar` → action buttons + status label
+  - `_build_row_widget` → thumb cell + meta cells + action buttons + hover style
+  - `_render_list` → reset list + maybe load all thumbs
+
+#### plan-batch5-3:lightbox_dialog 拆 15 sub-helper(2 commit)
+
+- `src/tgmonitor/ui/widgets/lightbox_dialog.py` 924 → 989 LOC,6 大方法拆 15
+  sub-helper:
+  - `__init__` → `_init_media_state` / `_init_window_appearance` /
+    `_init_content_layout`
+  - `_build_control_bar` → `_init_control_bar_frame` / `_init_control_buttons` /
+    `_wire_control_buttons` / `_init_bar_opacity_and_timer`
+  - `_render_current` → `_sync_current_data_for_save` /
+    `_dispatch_render_by_kind` / `_finalize_render`
+  - `_stop_active_player` → `_stop_qmovie` / `_stop_qmedia_player` /
+    `_restore_canvas_from_video`
+  - `_render_gif` → `_fallback_gif_to_first_frame`
+  - `_render_video` → `_attach_video_to_canvas`
+
+### 测试
+
+- 1550 passed, 65 skipped(已知 Qt offscreen paint path race 隔离),3 xfailed
+  (strict=False 已知 race),0 failed,0 error
+- ruff check + ruff format --check 全绿(266 files)
+- mypy 8 入口矩阵全绿(core/monitor 8 + core/storage 6 + core/export 10 +
+  core/objectstore 6 + core/telegram 12 + ui 55 + app.py 1 + src catch-all 126
+  source files)
+
+### 升级提示
+
+- 现有用户:`.env` 如有 `TG_DB_BACKEND=jsonl` 需改成 `TG_DB_BACKEND=postgres`
+  或 `mongo`。JSONL 目录(`db_root`)无意义字段直接删除。
+- UI 用户:无可见变化。
+
 ## [1.12.1] - 2026-10-03
 
 主题:**CI test 基建修复**(纯测试,零行为变化)。v1.12.0 后 GH Actions
