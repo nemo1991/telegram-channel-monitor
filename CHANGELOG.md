@@ -106,12 +106,13 @@
   与 PG `ORDER BY ... DESC, m.id DESC, media_idx ASC` 对齐;SIZE/STATUS 直
   接传 value,reverse=True 翻成 DESC,不再 negation 套娃。本地 integration
   test(testcontainers PG)8/8 + 全 storage 89/89 复绿。
-- **`tests/test_login_dialog.py::test_submit_email_invokes_app_and_unlocks` 加
-  `xfail(strict=False)`** — Windows + PySide6 6.11 offscreen 已知 race:
-  `_wait_until + qapp.processEvents()` 跨 thread asyncio 触发 GC 时偶发 segfault
-  (plan-batch2 v1.12.1 已记)。本地 macOS / Linux 真机仍过,GH Actions
-  windows-latest 触发,`strict=False` 让 race 真修完时此 xfail 自然消失,
-  不阻塞 CI。
+- **`tests/test_login_dialog.py::test_submit_email_invokes_app_and_unlocks` 改
+  `@pytest.mark.skipif(sys.platform == "win32", ...)`** — Windows + PySide6 6.11
+  offscreen 已知 race:`_wait_until + qapp.processEvents()` 跨 thread asyncio 触发
+  GC 时偶发 SIGSEGV(plan-batch2 v1.12.1 已记)。本地 macOS / Linux 真机仍过,GH Actions
+  windows-latest 触发。`xfail(strict=False)` 拦不住 native segfault(进程级崩溃,
+  pytest 拿不到 Python exception),改 `skipif` 让 windows runner 完全不跑,根因
+  修复留给 v1.12.3 后续版本。
 
 ### 测试
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -212,13 +213,14 @@ def test_registration_required_state_shows_reg_page(qapp, qloop):
     assert "注册" in dlg.status_label.text()
 
 
-@pytest.mark.xfail(
-    strict=False,
+@pytest.mark.skipif(
+    sys.platform == "win32",
     reason=(
         "Windows + PySide6 6.11 offscreen 已知 race:`_wait_until + qapp.processEvents()` "
-        "跨 thread asyncio 触发 GC 时偶发 segfault(plan-batch2 v1.12.1 已记)。"
+        "跨 thread asyncio 触发 GC 时偶发 SIGSEGV(plan-batch2 v1.12.1 已记)。"
         "本地 Qt 6.11+ macOS 真机 + Linux 真机仍过;GH Actions windows-latest 触发。"
-        "race 真修完时此 xfail 自然消失。"
+        "xfail 拦不住 native segfault,改 skipif 让 windows runner 完全不跑。"
+        "race 真修完时此 skip 自然消失。"
     ),
 )
 def test_submit_email_invokes_app_and_unlocks(qapp, qloop):
