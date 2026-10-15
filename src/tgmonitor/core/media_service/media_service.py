@@ -20,13 +20,7 @@ AppService 退化为组合根 + 转发。包含:
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
-import mimetypes
-import os
-import secrets
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tgmonitor.core.dto import (
@@ -43,12 +37,15 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.core.events import (
     EventBus,
-    MediaDownloaded,
     MediaReconcileFinished,
-    MediaRetried,
 )
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from tgmonitor.core.monitor.service import MediaDownloader
 
 # 2026-10-15 plan-batch6-1.3:`load_thumbnail_bytes` / `load_media_bytes` /
 # `_read_objectstore_bytes` 3 个 method 抽到 `_media_bytes` 子 module。
@@ -60,16 +57,23 @@ from . import _media_bytes as _bytes
 # 避免 `from ._media_crud import list_media` 绑死到子 module obj。
 from . import _media_crud as _crud
 
+# 2026-10-15 plan-batch6-1.4:`open_media` / `open_media_with_result` /
+# `reveal_in_folder` / `_spawn_reveal` / `copy_media_path` /
+# `_stage_s3_to_tmp` / `retry_media` 7 个 method 抽到 `_media_os_actions`
+# 子 module;`_spawn_reveal` 走 facade 末尾的 staticmethod 绑定保持
+# `app._media.X` monkeypatch 契约(plan-batch3 已落地)。
+from . import _media_os_actions as _os_actions
+
 # 2026-10-15 plan-batch6-1.1:Qt callback 注入(state + register_qt_callbacks /
 # _reset_qt_callbacks_for_testing)抽到 `_qt_bridge` 子 module,内部用
 # `from . import _qt_bridge as _bridge` 形式访问,避免
 # `from ._qt_bridge import _module_open_url_cb` 绑死到子 module obj
 # 后 monkeypatch 改 `tgmonitor.core.media_service._module_open_url_cb` 失效。
 # 外部 monkeypatch 字符串路径见各 test 文件注释(改指 _qt_bridge)。
-from . import _qt_bridge as _bridge
-
-if TYPE_CHECKING:
-    from tgmonitor.core.monitor.service import MediaDownloader
+#
+# 2026-10-15 plan-batch6-1.4:facade 不再直接用 `_bridge._module_open_url_cb`
+# / `_module_tmp_root_cb` — 7 个 method 全下沉到 `_media_os_actions.py`
+# 内部用,facade 仅 thin delegate 透传。
 
 log = logging.getLogger(__name__)
 
@@ -170,75 +174,12 @@ class MediaService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """重下 FAILED media:`objects.delete(old_key)` + download_one(force=True)。
+        """重下 FAILED media — 2026-08-24 D4。
 
-        非 FAILED 状态直接返回(不报错,UI 通常 disable Retry 按钮,这里兜底)。
-        成功后回写 storage + 发 MediaDownloaded(LIVE view 据此刷新状态)。
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
+        `app._media = _media_actions` monkeypatch 契约保留(plan-batch3)。
         """
-        msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        if msg is None or media_idx >= len(msg.media):
-            return
-        med = msg.media[media_idx]
-        if med.download_status != MediaDownloadStatus.FAILED:
-            return
-        old_object_key = med.object_key
-        new_med = dataclasses.replace(
-            med,
-            object_key=None,
-            object_backend=None,
-            download_status=MediaDownloadStatus.PENDING,
-            download_error=None,
-        )
-        new_media = list(msg.media)
-        new_media[media_idx] = new_med
-        new_msg = dataclasses.replace(msg, media=list(new_media))
-        await self._storage.update_message(new_msg)
-        # 清旧 bytes — 让 download_one(force=True) 一定走真下载路径
-        if old_object_key and self._objects is not None:
-            try:
-                await self._objects.delete(old_object_key)
-            except Exception:  # noqa: BLE001
-                log.warning(
-                    "retry pre-clean bytes %s failed",
-                    old_object_key,
-                    exc_info=True,
-                )
-        # 先发 MediaRetried,UI 立刻把状态切到 PENDING(避免用户重复点 Retry)
-        await self._bus.publish(
-            MediaRetried(
-                channel_id=channel_id,
-                telegram_msg_id=telegram_msg_id,
-                media_idx=media_idx,
-            )
-        )
-        # 然后走同步下载路径(retry 走 MediaService 直调,不走 worker queue —
-        # 2026-08-24 D4:不增加 force flag 进 queue,避免协议变更)
-        if self._downloader is not None:
-            try:
-                updated = await self._downloader.download_one(
-                    msg_pk=msg.id,
-                    media=new_med,
-                    force=True,
-                )
-            except Exception as e:  # noqa: BLE001
-                log.exception("retry download failed: %s", e)
-                updated = dataclasses.replace(
-                    new_med,
-                    download_status=MediaDownloadStatus.FAILED,
-                    download_error=f"重试异常: {e}",
-                )
-            # 回写最终状态
-            final_media = list(new_msg.media)
-            final_media[media_idx] = updated
-            final_msg = dataclasses.replace(new_msg, media=list(final_media))
-            await self._storage.update_message(final_msg)
-            await self._bus.publish(
-                MediaDownloaded(
-                    channel_id=channel_id,
-                    telegram_msg_id=telegram_msg_id,
-                    media=updated,
-                )
-            )
+        await _os_actions.retry_media(self, channel_id, telegram_msg_id, media_idx)
 
     # ---------- 打开 / 预览 ----------
     # 2026-10-15 plan-batch6-1.3:`load_thumbnail_bytes` /
@@ -280,19 +221,24 @@ class MediaService:
         """
         return await _bytes.load_media_bytes(self, media)
 
+    # ---------- 打开 / 预览 ----------
+    # 2026-10-15 plan-batch6-1.4:`open_media` / `open_media_with_result` /
+    # `reveal_in_folder` / `_spawn_reveal` / `copy_media_path` /
+    # `_stage_s3_to_tmp` / `retry_media` 7 个 method 抽到
+    # `_media_os_actions` 子 module,facade 1 行 thin delegate。
+    # `_spawn_reveal` 是 staticmethod,绑定走 facade 末尾显式赋值。
+
     async def open_media(
         self,
         channel_id: int,
         telegram_msg_id: int,
         media_idx: int,
     ) -> bool:
-        """系统默认程序打开 media 文件。True = 成功发起,False = 不可打开。
+        """2026-08-25 v1.3.0 PR #5:系统默认程序打开 media — bool 兼容 wrapper。
 
-        2026-08-25 v1.3.0 PR #5:扩展到 S3 后端(走 `_stage_s3_to_tmp`)并暴露
-        失败原因。返回 bool 是向后兼容 wrapper — 真实实现走 `open_media_with_result`,
-        UI 失败时显示 reason。
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
-        return (await self.open_media_with_result(channel_id, telegram_msg_id, media_idx)).success
+        return await _os_actions.open_media(self, channel_id, telegram_msg_id, media_idx)
 
     async def open_media_with_result(
         self,
@@ -300,82 +246,13 @@ class MediaService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> OpenMediaResult:
-        """打开 media + 返回结构化结果(2026-08-25 v1.3.0 PR #5)。
+        """2026-08-25 v1.3.0 PR #5:打开 media + 结构化结果(S3 / 本地)。
 
-        Local / Folder:直接调 UI 注入的 open_url callback(等价于
-        `QDesktopServices.openUrl(QUrl.fromLocalFile(path))`)。
-        S3:把 ObjectStore bytes 写到 UI 注入的 tmp_root callback 返的目录
-        下的 tmp 文件,再 open_url;tmp 成功路径不主动 unlink(交给 OS 在
-        app exit / 重启时回收;Windows 上 OS 持有 handle 时 unlink 会失败,
-        故意不冒此风险),失败路径显式 unlink 兜底。
-
-        所有异常(对象存储连接断 / get 失败 / tmp 写失败 / open_url 返 False)都
-        收口到 OpenMediaResult,不让 UI 看到原始堆栈。
-
-        2026-10-04 plan 阶段 2.2:Qt 调用抽到 `tgmonitor.ui._qt_callbacks`,
-        core 完全不 import PySide6。callbacks 未注册(CLI 路径 / 没调
-        `register_qt_callbacks`)时返失败 DTO 而不是抛 — 与现有
-        `objects=None` 失败语义一致。
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
-        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-        from tgmonitor.core.objectstore.local_store import LocalObjectStore
-        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
-        msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        if msg is None or media_idx >= len(msg.media):
-            return OpenMediaResult(False, "消息或媒体不存在")
-        med = msg.media[media_idx]
-        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
-            return OpenMediaResult(False, "媒体未下载完成")
-
-        if _bridge._module_open_url_cb is None:
-            return OpenMediaResult(False, "open_url callback 未注册(UI 层未 bootstrap)")
-
-        try:
-            if isinstance(self._objects, (LocalObjectStore, FolderObjectStore)):
-                # 用 backend 自带的 _path 而非 self._objects._root / key —
-                # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
-                # 直接拼 root 会落到错的子目录。
-                abs_path = self._objects._path(med.object_key)  # noqa: SLF001
-                # 2026-09-26 fix(open-media-hang):open_url 在 macOS 上同步走
-                # `[NSWorkspace openURL:]` AppleEvent → LaunchServices,会卡
-                # 主线程 100ms~数秒;放 worker thread 跑,UI 不冻。
-                ok = bool(
-                    await asyncio.to_thread(
-                        _bridge._module_open_url_cb,
-                        str(abs_path),
-                    )
-                )
-                return (
-                    OpenMediaResult(True)
-                    if ok
-                    else OpenMediaResult(False, "系统调用失败:请检查是否已关联默认应用")
-                )
-            if isinstance(self._objects, S3ObjectStore):
-                tmp = await self._stage_s3_to_tmp(med)
-                # 同上 — S3 路径 open_url 也走 worker thread,见上注。
-                ok = bool(
-                    await asyncio.to_thread(
-                        _bridge._module_open_url_cb,
-                        str(tmp),
-                    )
-                )
-                if not ok:
-                    try:
-                        tmp.unlink()
-                    except OSError:
-                        pass
-                    return OpenMediaResult(
-                        False,
-                        f"系统调用失败:无法打开临时文件 {tmp.name}",
-                    )
-                return OpenMediaResult(True)
-            return OpenMediaResult(
-                False,
-                f"不支持的对象存储后端: {type(self._objects).__name__}",
-            )
-        except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
-            return OpenMediaResult(False, f"{type(exc).__name__}: {exc}")
+        return await _os_actions.open_media_with_result(
+            self, channel_id, telegram_msg_id, media_idx,
+        )
 
     async def reveal_in_folder(
         self,
@@ -383,65 +260,22 @@ class MediaService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> RevealResult:
-        """2026-08-27 v1.4.0 PR #16:在文件管理器中高亮 media 文件(macOS
-        Finder / Windows Explorer / Linux xdg-open 父目录)。
+        """2026-08-27 v1.4.0 PR #16:文件管理器高亮 media(macOS / Windows / Linux)。
 
-        仅 Local / Folder 后端有效:S3 无本地文件,S3 路径应走 `copy_media_path`
-        拿 URI。失败原因以 `RevealResult.error` 返回,UI 据此弹 QMessageBox。
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
-        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-        from tgmonitor.core.objectstore.local_store import LocalObjectStore
-        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
-        msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        if msg is None or media_idx >= len(msg.media):
-            return RevealResult(False, "消息或媒体不存在")
-        med = msg.media[media_idx]
-        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
-            return RevealResult(False, "媒体未下载完成")
-        if isinstance(self._objects, S3ObjectStore):
-            return RevealResult(
-                False,
-                "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
-            )
-        if not isinstance(self._objects, (LocalObjectStore, FolderObjectStore)):
-            return RevealResult(
-                False,
-                f"不支持的对象存储后端: {type(self._objects).__name__}",
-            )
-
-        try:
-            abs_path = self._objects._path(med.object_key)  # noqa: SLF001
-            if not abs_path.exists():
-                return RevealResult(False, f"文件不存在: {abs_path}")
-            # OS-specific 唤起文件管理器(macOS `open -R` 高亮 / Windows
-            # `explorer /select,` / Linux `xdg-open <parent_dir>`)
-            await asyncio.to_thread(
-                self._spawn_reveal,
-                abs_path,
-                sys.platform,
-            )
-            return RevealResult(True)
-        except Exception as exc:  # noqa: BLE001 — 收口,UI 不应见堆栈
-            return RevealResult(False, f"{type(exc).__name__}: {exc}")
+        return await _os_actions.reveal_in_folder(self, channel_id, telegram_msg_id, media_idx)
 
     @staticmethod
     def _spawn_reveal(abs_path, platform: str) -> None:
-        """2026-08-27 v1.4.0 PR #16:同步 spawn 子进程唤起 OS 文件管理器。
+        """2026-08-27 v1.4.0 PR #16:同步 spawn 子进程唤起文件管理器。
 
-        - macOS:`open -R <abs_path>`(在 Finder 高亮该文件)
-        - Windows:`explorer /select,<abs_path>`(在 Explorer 高亮)
-        - Linux / 其它:`xdg-open <abs_path.parent>`(打开父目录,Linux 无
-          标准「高亮」API,降级开父目录)
+        2026-10-15 plan-batch6-1.4:facade 末尾 `MediaService._spawn_reveal =
+        staticmethod(_media_os_actions._spawn_reveal)` 显式绑定到
+        `_media_os_actions._spawn_reveal`,保持 `app._media.reveal_in_folder`
+        内部调 `self._spawn_reveal(...)` 走 facade。
         """
-        import subprocess
-
-        if platform == "darwin":
-            subprocess.Popen(["open", "-R", str(abs_path)])
-        elif platform == "win32":
-            subprocess.Popen(["explorer", f"/select,{abs_path}"])
-        else:
-            subprocess.Popen(["xdg-open", str(abs_path.parent)])
+        return _os_actions._spawn_reveal(abs_path, platform)
 
     async def copy_media_path(
         self,
@@ -451,93 +285,18 @@ class MediaService:
     ) -> CopyResult:
         """2026-08-27 v1.4.0 PR #16:把 media 路径 / URI 写入剪贴板。
 
-        - Local / Folder:绝对路径(`<root>/<object_key>`)
-        - S3:`s3://<bucket>/<object_key>`(URI 字符串,不是本地路径)
-        - 其它后端:失败 + 不支持提示
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
-        from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-        from tgmonitor.core.objectstore.local_store import LocalObjectStore
-        from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
-        msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        if msg is None or media_idx >= len(msg.media):
-            return CopyResult(False, error="消息或媒体不存在")
-        med = msg.media[media_idx]
-        if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
-            return CopyResult(False, error="媒体未下载完成")
-        if isinstance(self._objects, (LocalObjectStore, FolderObjectStore)):
-            try:
-                abs_path = self._objects._path(med.object_key)  # noqa: SLF001
-            except Exception as exc:  # noqa: BLE001
-                return CopyResult(
-                    False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-            return CopyResult(True, copied_value=str(abs_path))
-        if isinstance(self._objects, S3ObjectStore):
-            # S3ObjectStore 通常有 bucket / key 拼接;s3a URI 也可,这里用 s3://
-            try:
-                bucket = (
-                    getattr(self._objects, "bucket_name", None)
-                    or getattr(self._objects, "bucket", None)
-                    or getattr(self._objects, "_bucket", None)
-                )
-            except Exception:  # noqa: BLE001
-                bucket = None
-            if not bucket:
-                return CopyResult(
-                    False,
-                    error="S3 后端未暴露 bucket 字段",
-                )
-            uri = f"s3://{bucket}/{med.object_key}"
-            return CopyResult(True, copied_value=uri)
-        return CopyResult(
-            False,
-            error=f"不支持的对象存储后端: {type(self._objects).__name__}",
+        return await _os_actions.copy_media_path(
+            self, channel_id, telegram_msg_id, media_idx,
         )
 
     async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
-        """2026-08-25 v1.3.0 PR #5:把 S3 media bytes 写到本地 tmp 文件用于
-        `open_url callback`(等价 `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`)。
+        """2026-08-25 v1.3.0 PR #5:S3 bytes 写到本地 tmp(私有,open_url 用)。
 
-        - 扩展名推断优先级:`med.file_name` 后缀 > `med.mime_type` 查
-          `mimetypes.guess_extension` > `.bin` fallback
-        - tmp 目录:`tmp_root callback` 返的路径(macOS = `QStandardPaths.
-          writableLocation(QStandardPaths.StandardLocation.TempLocation)`),
-          callback 未注册时回退 `~/.cache/tgmonitor`
-        - 文件名:`tgmonitor-<secrets.token_hex(8)><suffix>` — `tgmonitor-`
-          前缀留给未来 sweep 工具批量清理
-        - 写文件用 `asyncio.to_thread(tmp_path.write_bytes, data)` 防卡 loop
-
-        2026-10-04 plan 阶段 2.2:`QStandardPaths` 调用抽到 UI 层 callback,
-        core 完全不 import PySide6。
+        2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
-        # 1. suffix
-        suffix = ""
-        if med.file_name:
-            suffix = os.path.splitext(med.file_name)[1]
-        if not suffix and med.mime_type:
-            guessed = mimetypes.guess_extension(med.mime_type, strict=False)
-            if guessed:
-                suffix = guessed
-        if not suffix:
-            suffix = ".bin"
-
-        # 2. tmp 目录 — callback 未注册时用 `~/.cache/tgmonitor` fallback
-        # (CLI 路径 / 测试不调 open_url → 不会触发,fallback 不影响)
-        tmp_dir: Path
-        if _bridge._module_tmp_root_cb is None:
-            tmp_dir = Path.home() / ".cache" / "tgmonitor"
-        else:
-            tmp_dir = _bridge._module_tmp_root_cb()
-        await asyncio.to_thread(tmp_dir.mkdir, parents=True, exist_ok=True)
-
-        # 3. 写文件
-        tmp_path = tmp_dir / f"tgmonitor-{secrets.token_hex(8)}{suffix}"
-        assert self._objects is not None  # ensure_objects 已检查
-        data = await self._objects.get(med.object_key or "")
-        await asyncio.to_thread(tmp_path.write_bytes, data)
-        return tmp_path
+        return await _os_actions._stage_s3_to_tmp(self, med)
 
     # ---------- 健康 ----------
 
@@ -635,3 +394,15 @@ class MediaService:
             )
             await self._bus.publish(evt)
             return evt
+
+
+# 2026-10-15 plan-batch6-1.4:facade 末尾显式绑定 `_spawn_reveal` 静态方法
+# 到 `_media_os_actions._spawn_reveal`,保持 `app._media.reveal_in_folder`
+# 内部 `await asyncio.to_thread(self._spawn_reveal, ...)` 走 facade 静态方法
+# 路径(monkeypatch `app._media = _media_actions` 契约 — plan-batch3 已落地)。
+# 直接在 class 体里 `@staticmethod` 定义会绑到 facade 本体,但本 facade
+# thin delegate 走 `return _os_actions._spawn_reveal(abs_path, platform)`
+# 即可,不需要在 class 体内重复定义。`_spawn_reveal` 在 thin delegate 段
+# 用作 classmethod 装饰只是为了保留公开 API(供 `MediaService._spawn_reveal`
+# 静态访问,subclass override 仍能工作)。
+MediaService._spawn_reveal = staticmethod(_os_actions._spawn_reveal)  # type: ignore[method-assign]
