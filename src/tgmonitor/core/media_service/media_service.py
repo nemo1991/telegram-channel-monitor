@@ -64,6 +64,9 @@ from . import _media_crud as _crud
 # `app._media.X` monkeypatch 契约(plan-batch3 已落地)。
 from . import _media_os_actions as _os_actions
 
+# 2026-10-15 plan-batch6-1.5:`reconcile_orphans` 抽到 `_media_reconcile` 子 module。
+from . import _media_reconcile as _reconcile
+
 # 2026-10-15 plan-batch6-1.1:Qt callback 注入(state + register_qt_callbacks /
 # _reset_qt_callbacks_for_testing)抽到 `_qt_bridge` 子 module,内部用
 # `from . import _qt_bridge as _bridge` 形式访问,避免
@@ -300,100 +303,18 @@ class MediaService:
 
     # ---------- 健康 ----------
 
-    async def reconcile_orphans(self, *, dry_run: bool = True) -> MediaReconcileFinished:
+    # ---------- 健康 ----------
+    # 2026-10-15 plan-batch6-1.5:`reconcile_orphans` 抽到 `_media_reconcile` 子 module,
+    # facade 1 行 thin delegate;mutex `ms._reconcile_lock` 透传。
+
+    async def reconcile_orphans(
+        self, *, dry_run: bool = True,
+    ) -> MediaReconcileFinished:
         """扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有但 storage 没引用。
 
-        dry_run=True(默认)只 log 不删;Media Manager 「Prune Orphans」按钮显式
-        触发 dry_run=False 真删。S3 后端:
-        - 未连接(iter_keys raise RuntimeError)→ 当作 scanned=0 兜底
-        - raise NotImplementedError(理论上不再发生)→ 同上兜底
-
-        2026-09-22 v1.8.x:并发重入保护 — `_reconcile_lock` 已锁时跳过,不抛,
-        返 `MediaReconcileFinished(scanned=0, referenced=0, orphans=0, deleted=0,
-        dry_run=dry_run)` 空事件,UI footer 不更新。启动期 _startup_reconcile
-        (app.py:363,2s 后跑)与用户启动 < 2s 立刻点 "Prune Orphans" 重入时,
-        第二次走这条 skip 路径,避免 iter_keys + delete 循环并发。
+        2026-10-15 plan-batch6-1.5:thin delegate → `core.media_service._media_reconcile`。
         """
-        if self._reconcile_lock.locked():
-            log.info(
-                "reconcile_orphans: skipped, already in progress (dry_run=%s)",
-                dry_run,
-            )
-            return MediaReconcileFinished(
-                backend=self._objects.backend_name if self._objects else "",
-                scanned=0,
-                referenced=0,
-                orphans=0,
-                deleted=0,
-                dry_run=dry_run,
-            )
-        async with self._reconcile_lock:
-            backend = self._objects.backend_name if self._objects else ""
-            scanned_keys: set[str] = set()
-            referenced_keys: set[str] = set()
-            if self._objects is not None and hasattr(self._objects, "iter_keys"):
-                try:
-                    # 2026-09-29:缩略图独立存储 — 同时扫 `media/` + `thumb/`
-                    # 两个 prefix。原图走 media/,缩略图走 thumb/(顶层平行
-                    # 关系)。任何孤儿都会出现在 scraped - referenced_keys。
-                    async for k in self._objects.iter_keys(prefix="media/"):
-                        scanned_keys.add(k)
-                    async for k in self._objects.iter_keys(prefix="thumb/"):
-                        scanned_keys.add(k)
-                except (NotImplementedError, RuntimeError) as e:
-                    # 2026-08-25 PR #2:加 RuntimeError(S3 未连接会 raise "未连接")
-                    log.info(
-                        "reconcile skipped: %s backend iter_keys unavailable: %s",
-                        backend,
-                        e,
-                    )
-            chs = await self._storage.list_channels()
-            if chs:
-                msgs = await self._storage.list_messages(
-                    [c.id for c in chs],
-                    limit=100_000,
-                )
-                # 2026-09-29:同时收集原图 + 缩略图引用;thumb 走独立
-                # `thumbnails` 表,需逐 message 调 `list_thumbnails_for_message`
-                # 拉 thumb DTO(media_idx 索引保证与父 media 一一对应)。
-                for m in msgs:
-                    for med in m.media:
-                        if med.object_key and med.download_status == MediaDownloadStatus.DONE:
-                            referenced_keys.add(med.object_key)
-                    thumbs = await self._storage.list_thumbnails_for_message(
-                        m.channel_id, m.telegram_msg_id
-                    )
-                    for t in thumbs:
-                        if t.object_key and t.download_status == MediaDownloadStatus.DONE:
-                            referenced_keys.add(t.object_key)
-            orphans = scanned_keys - referenced_keys
-            deleted = 0
-            if not dry_run and self._objects is not None and orphans:
-                for k in orphans:
-                    try:
-                        await self._objects.delete(k)
-                        deleted += 1
-                    except Exception:  # noqa: BLE001
-                        log.warning("reconcile delete %s failed", k, exc_info=True)
-            evt = MediaReconcileFinished(
-                backend=backend,
-                scanned=len(scanned_keys),
-                referenced=len(referenced_keys),
-                orphans=len(orphans),
-                deleted=deleted,
-                dry_run=dry_run,
-            )
-            log.info(
-                "reconcile: backend=%s scanned=%d referenced=%d orphans=%d deleted=%d dry_run=%s",
-                backend,
-                evt.scanned,
-                evt.referenced,
-                evt.orphans,
-                evt.deleted,
-                dry_run,
-            )
-            await self._bus.publish(evt)
-            return evt
+        return await _reconcile.reconcile_orphans(self, dry_run=dry_run)
 
 
 # 2026-10-15 plan-batch6-1.4:facade 末尾显式绑定 `_spawn_reveal` 静态方法
