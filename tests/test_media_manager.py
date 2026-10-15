@@ -519,7 +519,7 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
 ) -> None:
     """S3 后端成功路径:get_object 拉 bytes → 写 tmp → openUrl 返 True。
 
-    monkeypatch 掉 core 的 `_module_open_url_cb` callback 抓调用 +
+    monkeypatch 掉 core 的 `_qt_bridge._module_open_url_cb` callback 抓调用 +
     强返 True,然后断言:
     1) get_object 调了一次(走 S3 client)
     2) open_url callback 调了一次,参数是 tmp 文件 path
@@ -535,7 +535,7 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     openurl_calls: list[str] = []
 
     monkeypatch.setattr(
-        "tgmonitor.core.media_service._module_open_url_cb",
+        "tgmonitor.core.media_service._qt_bridge._module_open_url_cb",
         lambda path: openurl_calls.append(path) or True,
     )
 
@@ -576,7 +576,7 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
     fake._client_obj.set_data(b"data")
 
     monkeypatch.setattr(
-        "tgmonitor.core.media_service._module_open_url_cb",
+        "tgmonitor.core.media_service._qt_bridge._module_open_url_cb",
         lambda _path: False,
     )
 
@@ -871,7 +871,7 @@ async def test_open_media_with_result_does_not_block_event_loop(
         return True
 
     monkeypatch.setattr(
-        "tgmonitor.core.media_service._module_open_url_cb",
+        "tgmonitor.core.media_service._qt_bridge._module_open_url_cb",
         slow_open,
     )
 
@@ -911,7 +911,7 @@ async def test_open_media_invokes_openurl_off_main_thread(
         return True
 
     monkeypatch.setattr(
-        "tgmonitor.core.media_service._module_open_url_cb",
+        "tgmonitor.core.media_service._qt_bridge._module_open_url_cb",
         record,
     )
     main_tid = threading.get_ident()

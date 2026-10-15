@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from tgmonitor.core.media_service import register_qt_callbacks
+from tgmonitor.core.media_service._qt_bridge import register_qt_callbacks
 
 log = logging.getLogger(__name__)
 

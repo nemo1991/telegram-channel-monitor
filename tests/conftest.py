@@ -153,9 +153,10 @@ def _reset_qt_callbacks_per_test():
     保证每个 test 看到 None callback — 不想看到上一个 test 注入的回调。
 
     默认 callback 是 None,需要真 Qt 行为的 test 自己 monkeypatch
-    `tgmonitor.core.media_service._module_open_url_cb` / `_module_tmp_root_cb`。
+    `tgmonitor.core.media_service._qt_bridge._module_open_url_cb` /
+    `_module_tmp_root_cb`。
     """
-    from tgmonitor.core.media_service import _reset_qt_callbacks_for_testing
+    from tgmonitor.core.media_service._qt_bridge import _reset_qt_callbacks_for_testing
 
     _reset_qt_callbacks_for_testing()
     yield
