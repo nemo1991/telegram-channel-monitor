@@ -50,6 +50,10 @@ from tgmonitor.core.events import (
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
 
+# 2026-10-15 plan-batch6-1.3:`load_thumbnail_bytes` / `load_media_bytes` /
+# `_read_objectstore_bytes` 3 个 method 抽到 `_media_bytes` 子 module。
+from . import _media_bytes as _bytes
+
 # 2026-10-15 plan-batch6-1.2:`list_media` / `delete_media` /
 # `preview_delete_by_channel` / `delete_by_channel` 4 个 method 抽到
 # `_media_crud` 子 module;`ms.X` 引用走 module attr(同 _bridge 模式),
@@ -237,6 +241,9 @@ class MediaService:
             )
 
     # ---------- 打开 / 预览 ----------
+    # 2026-10-15 plan-batch6-1.3:`load_thumbnail_bytes` /
+    # `load_media_bytes` / `_read_objectstore_bytes` 3 个 method 抽到
+    # `_media_bytes` 子 module,facade 1 行 thin delegate。
 
     async def load_thumbnail_bytes(
         self,
@@ -246,103 +253,32 @@ class MediaService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> bytes | None:
-        """读 media 的缩略图 bytes — UI 渲染缩略图用(2026-08-25 PR #1)。
+        """2026-08-25 PR #1:UI 渲染缩略图 — 走 thumb 表(2026-09-29)。
 
-        2026-09-29:缩略图独立存储 — 从 `thumbnails` 表拿 thumb DTO(关联键
-        `channel_id + msg_id + media_idx` 三元组);原图 `object_key` 仅作
-        fallback(thumb 表找不到 / FAILED / DNE 时)。
-
-        退化仅在主图已 DONE 时走;PENDING/FAILED 早返 None 让 UI 走 emoji 占位。
-        `channel_id` 必须由 caller 提供(MediaDTO 自身不持 channel_id,保持
-        跨边界薄)。
-
-        设计取舍:
-        - 全量读 bytes 不流式 — 缩略图一般 ≤ 50KB,本地 FS / S3 都是单次
-          GET;流式 (open_read iterator) 在这里收益小于代码复杂度。
-        - 不调 LRU 缓存(进程内 UI 层做,service 层不持 Qt 状态)。
-        - 用 `objects.open_read(key)` 而非 `get(key)` — 接口统一,Local /
-          Folder 后端都用 BytesIO;失败时仍走 try/except 兜底。
+        2026-10-15 plan-batch6-1.3:thin delegate → `core.media_service._media_bytes`。
         """
-        if media.download_status != MediaDownloadStatus.DONE:
-            return None
-        if self._objects is None:
-            return None
-        # 2026-09-29:从独立 thumbnails 表拿 thumb;找不到 → fallback 到主图。
-        thumb = await self._storage.get_thumbnail(channel_id, telegram_msg_id, media_idx)
-        if thumb is not None:
-            if thumb.download_status != MediaDownloadStatus.DONE:
-                return None
-            if not thumb.object_key or not thumb.object_backend:
-                return None
-            return await self._read_objectstore_bytes(thumb.object_backend, thumb.object_key)
-        # fallback:没 thumb 行 → 尝试主图(老数据兼容,新代码永远有 thumb 表行)
-        if not media.object_backend or not media.object_key:
-            return None
-        return await self._read_objectstore_bytes(media.object_backend, media.object_key)
+        return await _bytes.load_thumbnail_bytes(
+            self,
+            media,
+            channel_id=channel_id,
+            telegram_msg_id=telegram_msg_id,
+            media_idx=media_idx,
+        )
 
     async def _read_objectstore_bytes(self, backend: str, key: str) -> bytes | None:
-        """从 ObjectStore 读全量 bytes;任何异常返 None。日志 DEBUG 而非
-        WARNING — thumb 读 miss 是合法状态(thumb FAILED/DNE 时不再 read),
-        NOT org-conf(2026-09-29 之前 WARNING 噪音让 Media Manager 每次重画
-        都刷日志)。
+        """2026-10-15 plan-batch6-1.3:thin delegate → `core.media_service._media_bytes`。
+
+        facade 保留该私有 helper 是给 `media_service` 内部少数 historical
+        caller(暂未发现,留 facade 兼容后续扩展)。
         """
-        objects = self._objects
-        if objects is None:
-            return None
-        try:
-            stream = await objects.open_read(key)
-        except Exception:  # noqa: BLE001
-            log.debug("load_thumbnail_bytes miss: backend=%s key=%s", backend, key)
-            return None
-        try:
-            data = stream.read()
-        finally:
-            try:
-                stream.close()
-            except Exception:  # noqa: BLE001
-                pass
-        return data
+        return await _bytes._read_objectstore_bytes(self, backend, key)
 
     async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
-        """读 media **原图** bytes — Lightbox 全屏预览用(2026-08-31 v1.5.0 PR #A8)。
+        """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览原图。
 
-        与 `load_thumbnail_bytes` 区别:**不优先 thumb_key**,只读 `object_key`
-        原图(thumb 90×90 太小,Lightbox 显示会糊)。仅 DONE + 有 objectstore 时
-        才读;任何异常返 None。
-
-        设计取舍:
-        - 全量读 bytes(同 thumbnail)— 单图通常 ≤ 30MB,本地 FS / S3 都是
-          单次 GET;流式读 QtQPixmap 不支持(只能 in-memory decode)
-        - GIF / WebP / JPEG / PNG 都原样返回,Qt QPixmap.loadFromData 自动识别
+        2026-10-15 plan-batch6-1.3:thin delegate → `core.media_service._media_bytes`。
         """
-        if media.download_status != MediaDownloadStatus.DONE:
-            return None
-        if self._objects is None:
-            return None
-        backend = media.object_backend
-        if not backend:
-            return None
-        key = media.object_key
-        if not key:
-            return None
-        try:
-            stream = await self._objects.open_read(key)
-            try:
-                data = stream.read()
-            finally:
-                try:
-                    stream.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            return data
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "load_media_bytes failed: backend=%s key=%s",
-                backend,
-                key,
-                exc_info=True,
-            )
-            return None
+        return await _bytes.load_media_bytes(self, media)
 
     async def open_media(
         self,
