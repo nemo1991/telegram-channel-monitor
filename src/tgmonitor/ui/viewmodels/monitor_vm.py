@@ -48,7 +48,6 @@ from tgmonitor.core.events import (
     SettingsChanged,
 )
 from tgmonitor.ui.async_bridge import run_coro
-from tgmonitor.ui.thumbnail import render_pixmap
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -115,9 +114,12 @@ class MonitorViewModel(QObject):
     # 按频道批量删除完成(2026-08-25 PR #4)— payload (channel_id, deleted_count)
     channel_cleared = Signal(int, int)
     # 缩略图加载完成(2026-08-25 PR #1)— payload (channel_id, telegram_msg_id,
-    # media_idx, QPixmap)。bytes → QPixmap 已在 qasync 主线程做,QPixmap 跨信号
-    # 安全(Qt metatype 自带);UI 收到直接 setPixmap。
-    thumbnail_loaded = Signal(int, int, int, object)
+    # media_idx, bytes)。2026-10-15 plan-batch6-2:VM 退回纯 EventBus+signal
+    # 适配器,QPixmap 渲染下沉到 widget 端(media_manager_widget._on_thumbnail_loaded
+    # 自行调 `render_pixmap(bytes)`);信号 payload 改 `bytes` 后,Qt metatype
+    # `QByteArray` 跨线程安全,VM 不再越界做 Qt 像素渲染(plan-batch3 误记
+    # 「已修」,实测架构层 leak 没动)。
+    thumbnail_loaded = Signal(int, int, int, bytes)
     # 打开媒体失败(2026-08-25 v1.3.0 PR #5)— payload
     # (channel_id, telegram_msg_id, media_idx, reason)
     open_media_failed = Signal(int, int, int, str)
@@ -322,7 +324,10 @@ class MonitorViewModel(QObject):
         if not isinstance(e, ChannelSubscribed) or e.channel is None:
             return
         self.known_channels[e.channel.id] = e.channel
-        self.monitor.add_to_whitelist(e.channel.id)
+        # 2026-10-15 plan-batch6-2 副产物:走 AppService facade 转发
+        # 到 MonitorService 内部 WhitelistMixin(sync),不再绕过 facade 直调
+        # `self.monitor.add_to_whitelist(cid)`。
+        self.app.add_to_whitelist(e.channel.id)
         self.channels_changed.emit()
         # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅 stats_changed
         self.stats_changed.emit((len(self.known_channels), self._message_count))
@@ -330,7 +335,8 @@ class MonitorViewModel(QObject):
     async def _on_channel_unsubscribed(self, e: Event) -> None:
         if not isinstance(e, ChannelUnsubscribed):
             return
-        self.monitor.remove_from_whitelist(e.channel_id)
+        # 2026-10-15 plan-batch6-2 副产物:同上,走 facade。
+        self.app.remove_from_whitelist(e.channel_id)
         # 2026-09-29:Media Manager combo 走 storage 真理,unsub 后立即
         # 从 known_channels 清掉 — 下次 channels_changed → set_known_channels
         # 不再显示这个频道。不必等下次 refresh_subscribed_channels 同步。
@@ -583,10 +589,13 @@ class MonitorViewModel(QObject):
         def _on_success(data: object) -> None:
             if not isinstance(data, (bytes, bytearray)) or not data:
                 return
-            pix = render_pixmap(bytes(data))
-            if pix is None:
-                return
-            self.thumbnail_loaded.emit(channel_id, telegram_msg_id, media_idx, pix)
+            # 2026-10-15 plan-batch6-2:VM 不再做 QPixmap 渲染 — payload
+            # 改 `bytes`,widget 端 `_on_thumbnail_loaded` 自行调
+            # `render_pixmap(bytes)` 生成 QPixmap,符合「VM 是 EventBus+signal
+            # 适配器,不依赖 Qt 像素层」的分层约束。
+            self.thumbnail_loaded.emit(
+                channel_id, telegram_msg_id, media_idx, bytes(data),
+            )
 
         async def _go() -> object:
             # media 是弱类型 object — VM 接口稳定,不依赖 DTO 强类型

@@ -279,6 +279,25 @@ class AppService:
         """转发 SubscriptionService.unsubscribe_channel。"""
         await self._sub.unsubscribe_channel(channel_id)
 
+    # 2026-10-15 plan-batch6-2 副产物:VM 之前绕过 facade 直调
+    # `self.monitor.add_to_whitelist(cid)`(L325) / `self.monitor.remove_from_whitelist(cid)`
+    # (L333) — 违反「UI 只走 AppService facade + DTO」分层。补 2 个 sync 转发
+    # 到 MonitorService 内部 WhitelistMixin(白名单热路径 set 操作,无 await),
+    # 同步签名跟原 WhitelistMixin.add_to_whitelist 一致,VM 改走 `self.app`。
+    def add_to_whitelist(self, channel_id: int) -> None:
+        """转发 MonitorService(WhitelistMixin).add_to_whitelist — sync。
+
+        白名单操作在 `bootstrap()` 完成后调,`self.monitor` 必非 None;
+        加 assert 让 mypy 满意 + 启动期退化路径显式报错。
+        """
+        assert self.monitor is not None
+        self.monitor.add_to_whitelist(channel_id)
+
+    def remove_from_whitelist(self, channel_id: int) -> None:
+        """转发 MonitorService(WhitelistMixin).remove_from_whitelist — sync。"""
+        assert self.monitor is not None
+        self.monitor.remove_from_whitelist(channel_id)
+
     async def list_messages(
         self,
         channel_ids: list[int] | None = None,

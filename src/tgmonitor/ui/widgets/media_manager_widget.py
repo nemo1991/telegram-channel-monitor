@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -54,7 +53,7 @@ from tgmonitor.core.dto import (
     SortDir,
     SortKey,
 )
-from tgmonitor.ui.thumbnail import ThumbnailCache, cache_key_for
+from tgmonitor.ui.thumbnail import ThumbnailCache, cache_key_for, render_pixmap
 
 log = logging.getLogger(__name__)
 
@@ -566,13 +565,21 @@ class MediaManagerWidget(QWidget):
         channel_id: int,
         telegram_msg_id: int,
         media_idx: int,
-        pix: object,
+        data: bytes,
     ) -> None:
-        """VM.thumbnail_loaded → 找行 + 写 LRU + setPixmap。
+        """VM.thumbnail_loaded → 渲染 QPixmap + 找行 + 写 LRU + setPixmap。
+
+        2026-10-15 plan-batch6-2:VM signal payload 改 `bytes`(Qt metatype
+        `QByteArray` 跨线程安全);QPixmap 渲染下沉到 widget 端,VM 退回
+        纯 EventBus+signal 适配器,符合「UI 只走 AppService facade + DTO,
+        VM 不做 Qt 像素渲染」的分层约束。
 
         row 已不在 list(被删/重渲)→ 仍写 LRU,下次同样 key 命中。
         """
-        if not isinstance(pix, QPixmap):
+        if not data:
+            return
+        pix = render_pixmap(data)
+        if pix is None:
             return
         key = _RowKey(channel_id, telegram_msg_id, media_idx)
         # 1) 写 LRU
