@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QListView,
 )
 
-from tgmonitor.core.dto import MediaDTO, MessageDTO, ReactionDTO
+from tgmonitor.core.dto import MessageDTO
 
 # 2026-10-15 plan-batch7-A:MessageItemDelegate 已在 message_item_delegate.py
 # 独立定义,主类用 `from tgmonitor.ui.widgets.message_item_delegate import
@@ -71,12 +71,21 @@ from tgmonitor.ui.widgets.message_list_model_format import (  # re-export  # noq
     _format_meta_icons,
 )
 
+# 2026-10-16 plan-batch7 目标 3 commit B:14 thin delegate 抽到
+# `message_view_api_mixin.py`;主类改多继承 `MessageViewAPIMixin, QListView`。
+# 14 method:append / set_messages / set_channel_titles / set_filter /
+# remove_row / clear_view / replace_message / update_media_status /
+# refresh_reactions / dto_by_key / row_of_key / count / _format。
+# set_messages 内部 14 LOC filter re-apply 块抽到 mixin 文件
+# module-level `_reapply_filter_if_active(model)`(mixin 不触碰 model 私有字段)。
+from tgmonitor.ui.widgets.message_view_api_mixin import MessageViewAPIMixin
+
 # ============================================================
 # MessageView — QListView 子类
 # ============================================================
 
 
-class MessageView(QListView):
+class MessageView(MessageViewAPIMixin, QListView):
     """实时消息流 — QListView + MessageListModel + MessageItemDelegate。
 
     2026-09-02 v1.5.3 PR #D1:从 QListWidget 子类改为 QListView + 自定义
@@ -172,118 +181,11 @@ class MessageView(QListView):
         # rowsInserted → 检查 scroll position 决定是否 +1 + 显示(浮条逻辑)
         self._model.rowsInserted.connect(self._on_row_inserted_floating)
 
-    # ---- 公开 API(全部保留) ----
-
-    def append(self, m: MessageDTO) -> None:
-        """实时追加一条 — 委托 model。"""
-        self._model.append(m)
-
-    def set_messages(self, messages: list[MessageDTO]) -> None:
-        """VM 搜索结果批量替换 — 与 `clear_view` + 多次 `append` 等价。
-
-        `messages` 通常按 date ASC 从 storage 拉回 — 正常顺序逐条 `append()`,
-        最新一条最后 append → `append` 走 `model.append` 的 `beginInsertRows(0,0)`
-        自然落到 row 0(newest-first),与 LIVE 流约定一致。**不要 reversed** ——
-        反向迭代会让最旧消息最后 append → 顶到 row 0,顺序颠倒。
-
-        race 处理:live `MessageReceived` 在 `set_messages` 期间到达 → 落到
-        `_index_of` 表已存在的 key 上,`append()` 的「已存在替换」分支
-        正确处理(替换 text 不增 row)。这是预期行为。
-
-        空列表 = 清空视图 + `_index_of` 表(同 `clear_view()`)。
-
-        2026-09-15 v1.7.5 PR #9:整批替换只 emit 1 次 `modelReset`,避免
-        `clear_view() + reset(...)` 双 reset 带来的 2 次 signal + 2 次
-        delegate cache 清。
-        """
-        # 2026-09-14 v1.7.5 PR #5 (P0-I):set_messages 是批量替换,清空浮条计数
-        self.clear_new_msg_counter()
-        # 2026-09-15 v1.7.5 PR #9:单次 reset(new=[] 也能正确清空;model.reset
-        # 已分支处理空列表)。`model.reset` 接受按 list 顺序存储,而 view 是
-        # newest-first(top=row 0 是最新),所以 caller 给 messages 是 date ASC
-        # (newest-last)→ caller 调 reversed 传入。详细见 _model.reset。
-        self._model.reset(list(reversed(messages)) if messages else [])
-        # 截断后 apply 现有 filter(set_messages 整批替换,apply 一次省心)
-        # 2026-09-14 v1.7.5 PR #8:apply 当前完整 filter state(text + 3 元数据)。
-        if (
-            self._model._filter_text
-            or self._model._favorite_only
-            or self._model._tag_only
-            or self._model._pinned_only
-        ):
-            self._model.set_filter(
-                self._model._filter_text,
-                favorite_only=self._model._favorite_only,
-                tag_only=self._model._tag_only,
-                pinned_only=self._model._pinned_only,
-            )
-
-    def set_channel_titles(self, titles: dict[int, str]) -> None:
-        """外部注入频道 id → title 映射 — 委托 model。"""
-        self._model.set_channel_titles(titles)
-
-    def set_filter(
-        self,
-        text: str = "",
-        *,
-        favorite_only: bool = False,
-        tag_only: bool = False,
-        pinned_only: bool = False,
-    ) -> None:
-        """过滤 LIVE 流 — 文本 + 3 元数据维度(2026-09-14 v1.7.5 PR #8)。
-
-        向后兼容:旧调用 `set_filter(text)` 仍能工作(元数据维度默认 False)。
-        """
-        self._model.set_filter(
-            text,
-            favorite_only=favorite_only,
-            tag_only=tag_only,
-            pinned_only=pinned_only,
-        )
-
-    def remove_row(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删一行 — 委托 model。"""
-        self._model.remove_by_key(channel_id, telegram_msg_id)
-
-    def clear_view(self) -> None:
-        """清空列表 — model reset + empty overlay 显示。"""
-        self._model.reset([])
-
-    def replace_message(self, msg: MessageDTO) -> None:
-        """编辑事件触发 — 委托 model。"""
-        self._model.replace_message(msg)
-
-    def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
-        """异步下载结束回调 — 委托 model。"""
-        self._model.update_media_status(channel_id, telegram_msg_id, media)
-
-    def refresh_reactions(
-        self,
-        channel_id: int,
-        telegram_msg_id: int,
-        reactions: list[ReactionDTO] | None,
-    ) -> None:
-        """2026-09-11 v1.7.4:TDLib push reactions 变化 → 局部刷新一行。
-
-        详见 `MessageListModel.refresh_reactions`(调用同方法)。
-        """
-        self._model.refresh_reactions(channel_id, telegram_msg_id, reactions)
-
-    def dto_by_key(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
-        """2026-09-11 v1.7.4:按 (cid, mid) 拿当前 DTO 引用 — 给详情面板同步 reactions 用。
-
-        返回 LIVE 模型里那个对象(可变引用) — 详情面板拿到后 view 自己
-        `show_message(dto)` 重建;若不存在返回 None(已被截断 / 不在 LIVE 视图)。
-        """
-        return self._model.dto_by_key(channel_id, telegram_msg_id)
-
-    def row_of_key(self, channel_id: int, telegram_msg_id: int) -> int | None:
-        """2026-09-17 PR 2:按 (cid, mid) 拿当前 row,不存在返 None。"""
-        return self._model.row_of_key(channel_id, telegram_msg_id)
-
-    def count(self) -> int:
-        """行数 — 兼容 QListWidget.count()。"""
-        return self._model.rowCount()
+    # ---- 公开 API(14 thin delegate 已抽到 MessageViewAPIMixin,mixin 在多继承首位) ----
+    # 见 widgets/message_view_api_mixin.py:append / set_messages / set_channel_titles
+    # / set_filter / remove_row / clear_view / replace_message /
+    # update_media_status / refresh_reactions / dto_by_key / row_of_key /
+    # count / _format。
 
     def current_message(self) -> MessageDTO | None:
         """2026-09-02 v1.5.3 PR #D1:`main_window._copy_current_message_text` 用。
@@ -294,10 +196,6 @@ class MessageView(QListView):
         if not idx.isValid():
             return None
         return self._model.data(idx, MessageListModel.DtoRole)
-
-    def _format(self, m: MessageDTO) -> str:
-        """shim — 既有测试 `view._format(m)` 走这里(内部调 model._format)。"""
-        return self._model._format(m)
 
     # ---- 内部 ----
 
