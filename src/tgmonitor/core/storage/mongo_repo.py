@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Mapping
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -24,6 +24,7 @@ from tgmonitor.core.dto import (
     SortKey,
     ThumbnailDTO,
 )
+from tgmonitor.core.storage import _channels_mongo as _channels
 from tgmonitor.core.storage import _lifecycle_mongo as _lifecycle
 from tgmonitor.core.storage import _user_meta_mongo as _user_meta
 from tgmonitor.core.storage.repository import StorageRepository
@@ -34,6 +35,8 @@ from tgmonitor.core.storage.schema_report import SchemaReport
 # `_MEDIA_SORT_FIELD` 7 个 helper 留本文件(其它职责依赖),后续 commit 1.3~1.6
 # 跟着对应子 module 走。`_escape_regex` 也在本文件(只 list_messages 用)。
 # 2026-10-16 plan-batch8-1.2:5 个 user_meta method 下沉到 `_user_meta_mongo.py`。
+# 2026-10-16 plan-batch8-1.3:11 个 channel + meta method + `_doc_to_channel` 下沉到
+# `_channels_mongo.py`。
 
 
 def _media_status(value: object | None) -> MediaDownloadStatus:
@@ -124,30 +127,6 @@ def _doc_to_thumb(d: dict[str, Any]) -> ThumbnailDTO:
         download_status=_media_status(d.get("download_status")),
         download_error=d.get("download_error"),
         telegram_thumb_file_id=d.get("telegram_thumb_file_id"),
-    )
-
-
-def _doc_to_channel(d: dict[str, Any]) -> ChannelDTO:
-    # 2026-08-31 v1.5.0 PR #A7:channels._id 是 int(沿用 int 主键,与 PG 对齐),
-    # 不再 ObjectId 强转。
-    return ChannelDTO(
-        id=int(d["_id"]),
-        title=d["title"],
-        username=d.get("username"),
-        kind=d.get("kind", "channel"),
-        member_count=d.get("member_count"),
-        created_at=d.get("created_at"),
-        # 旧文档没 subscribed → True(保留"存即订"语义)
-        is_subscribed=bool(d.get("subscribed", True)),
-        last_synced_at=d.get("last_synced_at"),
-        # 2026-09-03 v1.6.0 PR #Q2:Mongo schema-less,旧 doc 无此字段 → None
-        photo_local_key=d.get("photo_local_key"),
-        # 2026-09-04 v1.6.4:spammer 过滤 UI 用;Mongo schema-less,
-        # 旧 doc 无此 4 字段 → 兜底 False,UI 不显示徽标
-        is_verified=bool(d.get("is_verified", False)),
-        is_scam=bool(d.get("is_scam", False)),
-        is_fake=bool(d.get("is_fake", False)),
-        has_protected_content=bool(d.get("has_protected_content", False)),
     )
 
 
@@ -280,57 +259,15 @@ class MongoRepository(StorageRepository):
         """2026-09-09 v1.7.2:按 `tag` 精确匹配查询 — thin delegate → `_user_meta_mongo`."""
         return await _user_meta.list_by_tag(self, tag)
 
-    # ---- 频道 ----
+    # ---- 频道(2026-10-16 plan-batch8-1.3) ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
-        """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
-
-        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
-        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
-        """
-        doc = {
-            "_id": channel.id,
-            "title": channel.title,
-            "username": channel.username,
-            "kind": channel.kind,
-            "member_count": channel.member_count,
-            "created_at": channel.created_at,
-            "first_seen_at": datetime.now(UTC),
-            "subscribed": channel.is_subscribed,
-            "last_synced_at": channel.last_synced_at,
-            "photo_local_key": channel.photo_local_key,
-            "is_verified": channel.is_verified,
-            "is_scam": channel.is_scam,
-            "is_fake": channel.is_fake,
-            "has_protected_content": channel.has_protected_content,
-        }
-        await self.db.channels.update_one({"_id": channel.id}, {"$set": doc}, upsert=True)
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.upsert_channel(self, channel)
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
-        """只更元数据字段;subscribed 保持旧值。
-
-        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
-        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
-        """
-        await self.db.channels.update_one(
-            {"_id": channel.id},
-            {
-                "$set": {
-                    "title": channel.title,
-                    "username": channel.username,
-                    "kind": channel.kind,
-                    "member_count": channel.member_count,
-                    "created_at": channel.created_at,
-                    "last_synced_at": channel.last_synced_at,
-                    "photo_local_key": channel.photo_local_key,
-                    "is_verified": channel.is_verified,
-                    "is_scam": channel.is_scam,
-                    "is_fake": channel.is_fake,
-                    "has_protected_content": channel.has_protected_content,
-                }
-            },
-            upsert=True,
-        )
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.upsert_channel_metadata(self, channel)
 
     async def update_channel_metadata(
         self,
@@ -345,93 +282,51 @@ class MongoRepository(StorageRepository):
         is_fake: bool | None = None,
         has_protected_content: bool | None = None,
     ) -> None:
-        """2026-08-27 v1.4.0 PR #14:Mongo `$set` 子集 — 只在传入字段上 $set,
-        缺省 None 字段不进 dict(保留旧值)。0 rows matched 是合法的
-        (TDLib 偶发对陈年 channel 推 metadata update)。
-
-        2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
-        2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
-        """
-        update: dict[str, Any] = {}
-        if title is not None:
-            update["title"] = title
-        if username is not None:
-            update["username"] = username
-        if member_count is not None:
-            update["member_count"] = member_count
-        if photo_local_key is not None:
-            update["photo_local_key"] = photo_local_key
-        if is_verified is not None:
-            update["is_verified"] = is_verified
-        if is_scam is not None:
-            update["is_scam"] = is_scam
-        if is_fake is not None:
-            update["is_fake"] = is_fake
-        if has_protected_content is not None:
-            update["has_protected_content"] = has_protected_content
-        if not update:
-            return
-        await self.db.channels.update_one(
-            {"_id": channel_id},
-            {"$set": update},
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.update_channel_metadata(
+            self,
+            channel_id,
+            title=title,
+            username=username,
+            member_count=member_count,
+            photo_local_key=photo_local_key,
+            is_verified=is_verified,
+            is_scam=is_scam,
+            is_fake=is_fake,
+            has_protected_content=has_protected_content,
         )
 
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
-        """只设订阅标志;频道未建档时 upsert 一条 stub(后续会被 metadata 覆盖)。"""
-        await self.db.channels.update_one(
-            {"_id": channel_id},
-            {
-                "$set": {
-                    "subscribed": subscribed,
-                    # 首次建档时给个 title,后续会被 metadata 覆盖
-                    "title": f"#{channel_id}",
-                }
-            },
-            upsert=True,
-        )
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.set_channel_subscribed(self, channel_id, subscribed)
 
     async def list_channels(self) -> list[ChannelDTO]:
-        """所有频道(按 _id 升序);含未订阅的。"""
-        cursor = self.db.channels.find().sort("_id", 1)
-        return [_doc_to_channel(d) async for d in cursor]
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.list_channels(self)
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        """只返 subscribed=True 的频道(按 _id 升序);供 MonitorService 喂白名单。"""
-        cursor = self.db.channels.find({"subscribed": True}).sort("_id", 1)
-        return [_doc_to_channel(d) async for d in cursor]
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.list_subscribed_channels(self)
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
-        """单频道;不存在返 None。"""
-        d = await self.db.channels.find_one({"_id": channel_id})
-        return _doc_to_channel(d) if d else None
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.get_channel(self, channel_id)
 
     async def delete_channel(self, channel_id: int) -> None:
-        """删频道 + 级联删 messages(media 是 messages 的子文档,无需单独清)。"""
-        await self.db.channels.delete_one({"_id": channel_id})
-        # 级联删消息(messages.media 子文档内嵌,无需单独 media 集合操作)
-        await self.db.messages.delete_many({"channel_id": channel_id})
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.delete_channel(self, channel_id)
 
     async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
-        """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
-        d = await self.db.messages.find_one(
-            {"channel_id": channel_id},
-            sort=[("telegram_msg_id", -1)],
-            projection={"telegram_msg_id": 1},
-        )
-        return int(d["telegram_msg_id"]) if d else None
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.get_max_telegram_msg_id(self, channel_id)
 
     async def get_meta(self, key: str) -> str | None:
-        """全局单值元数据;不存在返 None。"""
-        d = await self.db.meta.find_one({"_id": key})
-        return d.get("value") if d else None
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.get_meta(self, key)
 
     async def set_meta(self, key: str, value: str) -> None:
-        """upsert 语义:`update_one` + `upsert=True` 覆盖。"""
-        await self.db.meta.update_one(
-            {"_id": key},
-            {"$set": {"value": value}},
-            upsert=True,
-        )
+        """thin delegate → `_channels_mongo`."""
+        return await _channels.set_meta(self, key, value)
 
     # ---- 消息 ----
 
