@@ -309,7 +309,13 @@ class MessageView(QListView):
     # ---- v1.7.0 多选 + 右键菜单 ----
 
     def selected_messages(self) -> list[tuple[int, int]]:
-        """返 `[(channel_id, telegram_msg_id), ...]` — 按 row 顺序。"""
+        """返 `[(channel_id, telegram_msg_id), ...]` — 按 row 顺序。
+
+        2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.selected_messages` —
+        无 controller 时本地 fallback(fixture / 单测未 attach 路径)。
+        """
+        if self._live_actions is not None:
+            return self._live_actions.selected_messages()
         out: list[tuple[int, int]] = []
         sel_model = self.selectionModel()
         if sel_model is None:
@@ -321,10 +327,21 @@ class MessageView(QListView):
         return out
 
     def selection_count(self) -> int:
+        """2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.selection_count` —
+        无 controller 时本地 fallback。
+        """
+        if self._live_actions is not None:
+            return self._live_actions.selection_count()
         sel_model = self.selectionModel()
         return len(sel_model.selectedRows()) if sel_model is not None else 0
 
     def clear_selection(self) -> None:
+        """2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.clear_selection` —
+        无 controller 时本地 fallback。
+        """
+        if self._live_actions is not None:
+            self._live_actions.clear_selection()
+            return
         sel_model = self.selectionModel()
         if sel_model is not None:
             sel_model.clear()
