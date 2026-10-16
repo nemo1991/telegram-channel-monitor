@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from tgmonitor.core.storage.postgres_repo import EXPECTED_SCHEMA, EXPECTED_TABLES
+from tgmonitor.core.storage._lifecycle_pg import EXPECTED_SCHEMA, EXPECTED_TABLES
 from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 
 
