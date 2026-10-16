@@ -26,8 +26,6 @@ signal / `_seen` / `count()` / `MAX_ITEMS`,`main_window._copy_current_message_te
 
 from __future__ import annotations
 
-from collections import deque
-from datetime import UTC
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 2026-10-15 plan-batch7-C-α:循环 import 防护 — controller
@@ -38,11 +36,7 @@ if TYPE_CHECKING:  # 2026-10-15 plan-batch7-C-α:循环 import 防护 — contro
     from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 
 from PySide6.QtCore import (
-    QAbstractListModel,
     QModelIndex,
-    QObject,
-    QPersistentModelIndex,
-    Qt,
     Signal,
 )
 
@@ -54,7 +48,7 @@ from PySide6.QtWidgets import (
     QListView,
 )
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ReactionDTO
+from tgmonitor.core.dto import MediaDTO, MessageDTO, ReactionDTO
 
 # 2026-10-15 plan-batch7-A:MessageItemDelegate 已在 message_item_delegate.py
 # 独立定义,主类用 `from tgmonitor.ui.widgets.message_item_delegate import
@@ -62,442 +56,20 @@ from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, Reacti
 # 静态检查。
 # 2026-10-15 plan-batch7-B:空 overlay + 浮条已搬到 message_empty_overlay.py
 # 独立 widget,主类不再 import empty_hint / QPushButton / QLabel(仅 widget 用)。
-from tgmonitor.ui.widgets.reaction_format import format_reactions_short
-
+# 2026-10-16 plan-batch7 目标 2:MessageListModel 拆 5 mixin 落到
+# `message_list_model_*.py` 5 个文件,本文件 re-export 保 backward compat;
+# `format_reactions_short` / `deque` / `UTC` 3 个仅 model 用,view 端不再 import。
 # ============================================================
-# MessageListModel — QAbstractListModel 子类 + 业务方法
+# 2026-10-16 plan-batch7 目标 2:MessageListModel 拆 5 mixin
+# (Base + Storage + Mutation + Filter + Format),落到
+# `message_list_model.py` 主类 + 4 mixin 各自独立文件。本文件 re-export
+# 保 `from tgmonitor.ui.widgets.message_view import MessageListModel`
+# 既有 import 路径零改动。
 # ============================================================
-
-
-def _format_meta_icons(m: MessageDTO) -> str:
-    """2026-09-10 v1.7.3:把 ★ / 🏷 / 📝 / 📌 拼成一行字符串;无 metadata 返空串。
-
-    顺序固定:★ → 🏷 → 📝 → 📌(★ 最重要,放最前;📌 server-side state 放最后)。
-    tags 用 `,` 分隔(与 LIVE 行 hover / MessageDetail 一致);notes 超过
-    30 字符截断加 `…`(行高可控,避免 100 字备注撑爆单行)。
-
-    2026-09-11 v1.7.4:reactions 拼到末尾(`🔥 5  👍 3`)— 由
-    MessageInteractionsChanged event 触发本地刷新,实时性受限于 TDLib
-    `updateMessageInteractionInfo` 推送(bots-only `updateMessageReactions`
-    user client 不收)。
-    """
-    parts: list[str] = []
-    if m.is_favorite:
-        parts.append("★")
-    if m.tags:
-        parts.append(f"🏷{','.join(m.tags)}")
-    if m.notes:
-        snippet = m.notes if len(m.notes) <= 30 else m.notes[:30] + "…"
-        parts.append(f"📝{snippet}")
-    if m.is_pinned:
-        parts.append("📌")
-    if m.reactions:
-        rx = format_reactions_short(m.reactions, max_show=3, mark_chosen=False)
-        if rx:
-            parts.append(rx)
-    return " ".join(parts)
-
-
-class MessageListModel(QAbstractListModel):
-    """消息列表 model — DTO list + _seen dict + filter state + channel_titles。
-
-    2026-09-02 v1.5.3 PR #D1:`QListWidgetItem` 内部存储 → 真实 Qt model,
-    delegate 按需 paint。**对外通过 role 协议暴露数据**:`data(idx, role)`
-    按 role 返 DTO / msg_id / hidden flag / formatted 富文本 / has_media。
-    """
-
-    DtoRole = Qt.UserRole + 1
-    MsgIdRole = Qt.UserRole + 2
-    HiddenRole = Qt.UserRole + 3
-    FormattedRole = Qt.UserRole + 4
-    HasMediaRole = Qt.UserRole + 5
-
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        # 2026-09-15 v1.7.5 PR #9 perf:deque 替 list,O(1) head-insert + O(1) tail pop。
-        # `deque[i]` 索引是 O(1) 均摊,可直接当 list 用。appendleft 给最新消息落 row 0
-        # (newest-first 语义),`deque.pop()`(tail side)给 `_truncate_tail` 删最旧。
-        self._items: deque[MessageDTO] = deque()
-        # key → row(`_items` 物理位置 = 逻辑 row,newest 在 0)
-        self._index_of: dict[tuple[int, int], int] = {}
-        # 2026-09-15 v1.7.5 PR #9 perf:FormattedRole 缓存。`_format()` 涉及
-        # datetime.astimezone + strftime + 多 f-string,每个 paint 触发 60+ 次。
-        # 缓存 keyed on (cid, mid),数据变更时由 model 显式 pop(详见各
-        # mutation 方法的 `_format_cache.pop(...)`)。
-        self._format_cache: dict[tuple[int, int], str] = {}
-        # 2026-09-03 v1.5.4 PR #P1 已删:`_row_to_key` 反向索引。2026-09-15
-        # PR #9 改成 deque 后,`_items[last]` 拿 key 已是 O(1),无需 mirror 索引 —
-        # 维护成本降低,append 路径去掉 O(N log N) sort + O(N) shift,降为
-        # 单纯 O(N) `_index_of` bump(bump 仍是 O(N),因为所有现有 row index +1)
-        # + O(1) deque.appendleft / O(1) deque.pop(头/尾插入删除都是常数时间)。
-        self._channel_titles: dict[int, str] = {}
-        self._filter_text: str = ""
-        # 2026-09-14 v1.7.5 PR #8:3 个用户元数据过滤维度(AND 语义)。
-        self._favorite_only: bool = False
-        self._tag_only: bool = False
-        self._pinned_only: bool = False
-        # 2026-09-15 v1.7.5 PR #9 perf:`set_messages` / `clear_view` 走
-        # `reset()` 时整批消息换新 → delegate 的 `_doc_cache` / `_size_hint_cache`
-        # 失效。否则 paint 命中过期的 (cid, mid) → 显示老消息文本。
-        # 调用方(MessageView.__init__)注入;默认 None = 单测无 delegate。
-        self._delegate: MessageItemDelegate | None = None
-
-    # ---- Qt model 接口 ----
-
-    def rowCount(  # noqa: N802 — Qt override
-        self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()
-    ) -> int:
-        if parent.isValid():
-            return 0
-        return len(self._items)
-
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        row = index.row()
-        if row < 0 or row >= len(self._items):
-            return None
-        m = self._items[row]
-        if role == self.DtoRole:
-            return m
-        if role == self.MsgIdRole:
-            return m.telegram_msg_id
-        if role == self.HasMediaRole:
-            return bool(m.has_media)
-        if role == self.HiddenRole:
-            return not self._matches(m)
-        if role == self.FormattedRole or role == Qt.DisplayRole:
-            # 2026-09-15 v1.7.5 PR #9 perf:FormattedRole 缓存 — paint 热路径
-            # 避免每帧重 _format(datetime.astimezone + 8 个 f-string)。
-            # Cache 由 mutation 路径(replace / update_media_status /
-            # refresh_reactions / append-dedup / remove / reset)显式 invalidate。
-            key = (m.channel_id, m.telegram_msg_id)
-            cached = self._format_cache.get(key)
-            if cached is not None:
-                return cached
-            result = self._format(m)
-            self._format_cache[key] = result
-            return result
-        return None
-
-    def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
-        if not index.isValid():
-            return Qt.NoItemFlags
-        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
-
-    # ---- 业务接口(给 MessageView 调) ----
-
-    def append(self, m: MessageDTO) -> None:
-        """实时追加一条 — 已存在替换,否则插入头部(newest-first)。
-
-        2026-09-15 v1.7.5 PR #9 perf:`deque.appendleft` 替 `list.insert(0)` 拿到
-        O(1) head-insert(原 list.insert(0) 是 O(N) Python element shift)。
-        `_index_of` bump 仍是 O(N)(所有现有 row 索引 +1),但去掉了 `_row_to_key`
-        O(N log N) sort + O(N) shift — 单条 append 总开销从 O(N log N) 降到 O(N)。
-        """
-        key = (m.channel_id, m.telegram_msg_id)
-        if key in self._index_of:
-            # 已存在 — 文本可能更新(edit),替换那一行
-            row = self._index_of[key]
-            self._items[row] = m  # deque 支持 __setitem__
-            self._format_cache.pop(key, None)  # PR #9:失效缓存
-            idx = self.index(row, 0)
-            self.dataChanged.emit(
-                idx,
-                idx,
-                [self.DtoRole, self.FormattedRole, self.HiddenRole, self.HasMediaRole],
-            )
-            return
-        # 插入头部 — O(1) via deque.appendleft
-        self.beginInsertRows(QModelIndex(), 0, 0)
-        self._items.appendleft(m)
-        # _index_of 全部 +1(现有 row 都向后挪 1)— O(N) bump
-        for k in self._index_of:
-            self._index_of[k] += 1
-        self._index_of[key] = 0
-        self.endInsertRows()
-        # MAX_ITEMS 截断(尾部删,走 O(1) deque.pop())
-        while len(self._items) > MessageView.MAX_ITEMS:
-            self._truncate_tail()
-
-    def _truncate_tail(self) -> None:
-        """删尾部一行(物理位置 len-1 = 最旧)— 不需要 _index_of shift。
-
-        newest-first 布局:`_items[0]` = newest(刚 appendleft 进来的),
-        `_items[len-1]` = oldest。MAX_ITEMS 超限要砍最旧 = 删 row len-1。
-        删最末 row 不影响其他 row 的 index(`_index_of` 存的值不变)。
-        """
-        if not self._items:
-            return
-        last = len(self._items) - 1
-        self.beginRemoveRows(QModelIndex(), last, last)
-        # O(1) 拿 key:最旧的在 `_items[last]`(deque[-1] 也是 O(1))。
-        oldest = self._items[last]
-        removed_key = (oldest.channel_id, oldest.telegram_msg_id)
-        del self._index_of[removed_key]
-        self._format_cache.pop(removed_key, None)  # PR #9:失效缓存
-        self._items.pop()  # O(1) deque tail pop — 删最末 row
-        self.endRemoveRows()
-
-    def remove_by_key(self, channel_id: int, telegram_msg_id: int) -> None:
-        """按 (channel_id, telegram_msg_id) 删一行 — 找不到 idempotent。
-
-        2026-09-15 PR #9:deque 不支持 `del d[i]`,改用 slice rebuild。仍是 O(N),
-        但 remove_by_key 不是热路径(MessageDeleted 频率低)。
-        """
-        key = (channel_id, telegram_msg_id)
-        row = self._index_of.pop(key, None)
-        if row is None:
-            return
-        self.beginRemoveRows(QModelIndex(), row, row)
-        # 重建 deque 跳过 `row` 位 — O(N)
-        self._items = deque(m for i, m in enumerate(self._items) if i != row)
-        self._format_cache.pop(key, None)  # PR #9:失效缓存
-        # row > row 的 entry -1
-        for k in self._index_of:
-            if self._index_of[k] > row:
-                self._index_of[k] -= 1
-        self.endRemoveRows()
-
-    def reset(self, messages: list[MessageDTO]) -> None:
-        """整批替换(给 set_messages / clear_view 用)— atomic reset。
-
-        `messages` 按 date ASC 传入(latest 在末尾)— model 保持传入顺序,
-        caller 负责保证 newest-last。**不要 reversed** —— 反向迭代会让
-        最旧消息顶到 row 0,顺序颠倒(同 v1.5.2 PR #B5 set_messages 语义)。
-
-        2026-09-15 v1.7.5 PR #9:`_items` 改 deque,`_row_to_key` 删,
-        `_format_cache` 全清(`messages` 列表里的 key 集合变了),
-        并通知 delegate 清 `_doc_cache` / `_size_hint_cache`。
-        """
-        self.beginResetModel()
-        self._items = deque(messages)
-        self._index_of = {(m.channel_id, m.telegram_msg_id): i for i, m in enumerate(self._items)}
-        self._format_cache.clear()  # PR #9:cache 全清(消息集合可能全换)
-        # PR #9:delegate cache 全清 — 旧 (cid, mid) 文档 + sizeHint 都失效。
-        if self._delegate is not None:
-            self._delegate.clear_caches()
-        # MAX_ITEMS 截断(尾部删,不走 beginRemoveRows 因为已在 resetModel 中)
-        while len(self._items) > MessageView.MAX_ITEMS:
-            self._truncate_tail_inplace()
-        self.endResetModel()
-
-    def set_delegate(self, delegate: MessageItemDelegate | None) -> None:
-        """PR #9:注入 delegate 引用 — `reset()` 时通知其清 cache。
-
-        `MessageView.__init__` 里 model 与 delegate 都建好后调用一次。
-        单测里没 delegate 时可保持 None,不影响行为。
-        """
-        self._delegate = delegate
-
-    def _truncate_tail_inplace(self) -> None:
-        """reset 中用 — 不走 beginRemoveRows/endRemoveRows(已在 resetModel 中)。
-
-        PR #9:对应 `_truncate_tail`,但省略 Qt signal。`_items.pop()` 删最旧。
-        """
-        if not self._items:
-            return
-        oldest = self._items[len(self._items) - 1]
-        removed_key = (oldest.channel_id, oldest.telegram_msg_id)
-        del self._index_of[removed_key]
-        self._format_cache.pop(removed_key, None)
-        self._items.pop()  # O(1) deque tail pop — 删最旧
-
-    def set_filter(
-        self,
-        text: str = "",
-        *,
-        favorite_only: bool = False,
-        tag_only: bool = False,
-        pinned_only: bool = False,
-    ) -> None:
-        """设过滤条件 — 所有 row 的 HiddenRole 变化 → emit dataChanged。
-
-        向后兼容:旧调用 `set_filter(text)` 仍能用(默认 favorite/tag/pinned=False)。
-
-        2026-09-14 v1.7.5 PR #8:加 favorite/tag/pinned 3 个 bool kwarg(AND
-        语义)。SearchBar ★/🏷/📌 toggle 状态走这条路径 — 即时 narrow LIVE
-        流已加载消息,无 IO。`search_messages` 异步路径另走 storage 服务端过滤。
-        """
-        self._filter_text = text.strip().lower()
-        self._favorite_only = favorite_only
-        self._tag_only = tag_only
-        self._pinned_only = pinned_only
-        if self.rowCount() == 0:
-            return
-        top = self.index(0, 0)
-        bottom = self.index(self.rowCount() - 1, 0)
-        self.dataChanged.emit(top, bottom, [self.HiddenRole])
-
-    def set_channel_titles(self, titles: dict[int, str]) -> None:
-        """设 channel_titles + FormattedRole 全部失效(影响 head 频道名)。
-
-        PR #9:channel titles 影响每行的 head 频道名 → 全表 FormattedRole 都失效,
-        缓存全清。
-        """
-        self._channel_titles = dict(titles)
-        self._format_cache.clear()  # PR #9:全表失效
-        if self.rowCount() == 0:
-            return
-        top = self.index(0, 0)
-        bottom = self.index(self.rowCount() - 1, 0)
-        self.dataChanged.emit(top, bottom, [self.FormattedRole])
-
-    def replace_message(self, msg: MessageDTO) -> None:
-        """编辑事件:按 key 找 row,重 format + 重检 filter。"""
-        key = (msg.channel_id, msg.telegram_msg_id)
-        row = self._index_of.get(key)
-        if row is None:
-            # 罕见:编辑事件先于 new message 到达 — 当新增处理
-            self.append(msg)
-            return
-        self._items[row] = msg
-        self._format_cache.pop(key, None)  # PR #9:失效缓存
-        idx = self.index(row, 0)
-        self.dataChanged.emit(
-            idx,
-            idx,
-            [self.DtoRole, self.FormattedRole, self.HiddenRole, self.HasMediaRole],
-        )
-
-    def update_media_status(self, channel_id: int, telegram_msg_id: int, media: MediaDTO) -> None:
-        """异步下载结束回调:更新 DTO.media + 重 format。"""
-        key = (channel_id, telegram_msg_id)
-        row = self._index_of.get(key)
-        if row is None:
-            return
-        dto = self._items[row]
-        for i, med in enumerate(dto.media):
-            if med is media or (
-                media.telegram_file_id and med.telegram_file_id == media.telegram_file_id
-            ):
-                dto.media[i] = media
-                break
-        self._format_cache.pop(key, None)  # PR #9:失效缓存
-        idx = self.index(row, 0)
-        self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
-
-    def refresh_reactions(
-        self,
-        channel_id: int,
-        telegram_msg_id: int,
-        reactions: list[ReactionDTO] | None,
-    ) -> None:
-        """2026-09-11 v1.7.4:TDLib `MessageInteractionsChanged` 触发 — 局部刷新一行 reactions。
-
-        TDLib `updateMessageReactions` 是 bots-only,user client 收不到 —
-        本方法依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),
-        服务端推送策略决定实时性。
-
-        Args:
-            channel_id:目标消息频道。
-            telegram_msg_id:目标消息 id。
-            reactions:新 reactions 列表(`None` 表示服务端「无变化」,
-                直接忽略,避免无谓 refresh)。
-        """
-        if reactions is None:
-            return
-        row = self._index_of.get((channel_id, telegram_msg_id))
-        if row is None:
-            return
-        # MessageDTO 是 mutable dataclass,直接赋值即可。
-        self._items[row].reactions = list(reactions) if reactions else None
-        self._format_cache.pop((channel_id, telegram_msg_id), None)  # PR #9:失效缓存
-        idx = self.index(row, 0)
-        self.dataChanged.emit(idx, idx, [self.DtoRole, self.FormattedRole])
-
-    def dto_by_key(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
-        """2026-09-11 v1.7.4:按 (cid, mid) 拿当前 DTO 引用 — 不存在返 None。"""
-        row = self._index_of.get((channel_id, telegram_msg_id))
-        if row is None:
-            return None
-        return self._items[row]
-
-    def row_of_key(self, channel_id: int, telegram_msg_id: int) -> int | None:
-        """2026-09-17 PR 2:按 (cid, mid) 拿当前 row — 不存在返 None。
-
-        测试 / 外部代码用这个查 row,不再穿透 `_index_of` 私有 dict。
-        """
-        return self._index_of.get((channel_id, telegram_msg_id))
-
-    def row_values(self) -> set[int]:
-        """2026-09-17 PR 2:返当前所有 row 的集合 — 测试验「row 是连续 0..N」用。
-
-        `_index_of.values()` 的公开只读别名;不要拿这个 list 来寻址 O(1)
-        (仍走 `row_of_key`)。
-        """
-        return set(self._index_of.values())
-
-    # ---- 过滤 / 格式化工具 ----
-
-    def _matches(self, m: MessageDTO) -> bool:
-        """匹配规则:text + favorite + tag + pinned(AND 语义 — 任一不满足就 False)。
-
-        2026-09-14 v1.7.5 PR #8:filter state 走 self 上的 4 个字段:
-        `_filter_text` / `_favorite_only` / `_tag_only` / `_pinned_only`。
-        `_filter_text` 空 = 不参与 AND(只过滤元数据);元数据字段 False
-        = 不参与 AND。
-        """
-        if self._favorite_only and not m.is_favorite:
-            return False
-        if self._tag_only and not m.tags:
-            return False
-        if self._pinned_only and not m.is_pinned:
-            return False
-        text = self._filter_text
-        if not text:
-            return True
-        if m.text and text in m.text.lower():
-            return True
-        if m.author and text in m.author.lower():
-            return True
-        title = self._channel_titles.get(m.channel_id, "")
-        if title and text in title.lower():
-            return True
-        return str(m.telegram_msg_id) == text or text.lstrip("#") == str(m.telegram_msg_id)
-
-    def _format(self, m: MessageDTO) -> str:
-        # 本地时区显示;m.date 是 **aware UTC**(来自 dto.py 默认工厂
-        # `datetime.now(UTC)`,或 _map_message 的 `datetime.fromtimestamp(ts, UTC)`)。
-        # 如果 m.date 没 tzinfo(从旧版本反序列化),fallback attach UTC tzinfo,
-        # 然后 astimezone() 转本地;否则 astimezone() 把 naive 当成本地时间,
-        # 不做时区转换。
-        if m.date:
-            dt_utc = m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC)
-            dt_local = dt_utc.astimezone()
-            dt = dt_local.strftime("%H:%M:%S")
-        else:
-            dt = "[?]"
-        # 频道名:有 title 用 title,没有用 #id 回退
-        title = self._channel_titles.get(m.channel_id)
-        ch_label = f"[{title}]" if title else f"[#{m.channel_id}]"
-        # msg_id:在频道内的消息 id(Telegram 原始),不是 DB 自增
-        msg_id = m.telegram_msg_id
-        head = f"⏱ {dt}  {ch_label}  #{msg_id}"
-        if m.author:
-            head += f"  👤 {m.author}"
-        # 2026-09-10 v1.7.3:用户元数据 / pin 图标行 — ★ 收藏 / 🏷tags / 📝notes 截断
-        # / 📌 pin。与 v1.7.2 metadata 字段配套:v1.7.2 加了字段但没渲染,本版本补
-        # 上。用户右键 ★ 后行立即显示 ★(无需 reload)。
-        meta_icons = _format_meta_icons(m)
-        if meta_icons:
-            head += "  " + meta_icons
-        body = m.text or ""
-        if m.has_media:
-            parts = []
-            for med in m.media:
-                label = med.type.value
-                # 下载状态标记:⏳ 下载中 / ❌ 失败 / ✓ 已下载(PENDING 不加后缀)
-                if med.download_status == MediaDownloadStatus.DOWNLOADING:
-                    label += "⏳"
-                elif med.download_status == MediaDownloadStatus.FAILED:
-                    label += "❌"
-                elif med.download_status == MediaDownloadStatus.DONE:
-                    label += "✓"
-                parts.append(label)
-            body += f"  📎 {','.join(parts)}"
-        return f"{head}\n  {body}"
-
+from tgmonitor.ui.widgets.message_list_model import MessageListModel  # re-export
+from tgmonitor.ui.widgets.message_list_model_format import (  # re-export  # noqa: F401
+    _format_meta_icons,
+)
 
 # ============================================================
 # MessageView — QListView 子类
@@ -514,9 +86,10 @@ class MessageView(QListView):
     count / MAX_ITEMS / _format),内部 model + delegate 换皮。
     """
 
-    MAX_ITEMS = (
-        10000  # 2026-09-03 v1.5.4 PR #P1:实验性 bump(原 1000,CHANGELOG v1.5.3 PR #D1 已埋钩子)
-    )
+    # 2026-09-03 v1.5.4 PR #P1:实验性 bump(原 1000,CHANGELOG v1.5.3 PR #D1 已埋钩子)
+    # 2026-10-16 plan-batch7 目标 2:语义搬到 MessageListModel(主类,容量上限属 model)。
+    # view 端加 alias 保 test_message_view.py L575 等老引用零改动。
+    MAX_ITEMS = MessageListModel.MAX_ITEMS
 
     # 用户点击一条消息 → emit MessageDTO 给详情面板(message_selected
     # 是 `currentRowChanged` signal,不在 plan-batch7-C-α 8 Signal 范围)
