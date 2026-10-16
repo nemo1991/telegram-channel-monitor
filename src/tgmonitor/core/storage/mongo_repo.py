@@ -25,6 +25,7 @@ from tgmonitor.core.dto import (
     ThumbnailDTO,
 )
 from tgmonitor.core.storage import _lifecycle_mongo as _lifecycle
+from tgmonitor.core.storage import _user_meta_mongo as _user_meta
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import SchemaReport
 
@@ -32,6 +33,7 @@ from tgmonitor.core.storage.schema_report import SchemaReport
 # `_thumb_to_doc` / `_doc_to_thumb` / `_doc_to_channel` / `_doc_to_message` /
 # `_MEDIA_SORT_FIELD` 7 个 helper 留本文件(其它职责依赖),后续 commit 1.3~1.6
 # 跟着对应子 module 走。`_escape_regex` 也在本文件(只 list_messages 用)。
+# 2026-10-16 plan-batch8-1.2:5 个 user_meta method 下沉到 `_user_meta_mongo.py`。
 
 
 def _media_status(value: object | None) -> MediaDownloadStatus:
@@ -256,38 +258,27 @@ class MongoRepository(StorageRepository):
         """`db.command("ping")` 探活 — thin delegate → `_lifecycle_mongo`."""
         return await _lifecycle.ping(self)
 
-    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+    # ---- 用户元数据(2026-09-09 v1.7.2,2026-10-16 plan-batch8-1.2) ----
 
     async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
-        """2026-09-09 v1.7.2:单条设 `is_favorite`。不存在消息 idempotent 不抛。"""
-        await self.db.messages.update_one(
-            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
-            {"$set": {"is_favorite": value}},
-        )
+        """2026-09-09 v1.7.2:单条设 `is_favorite` — thin delegate → `_user_meta_mongo`."""
+        return await _user_meta.set_favorite(self, channel_id, telegram_msg_id, value)
 
     async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
-        """2026-09-09 v1.7.2:单条覆盖式设 `tags`。idempotent 同上。"""
-        await self.db.messages.update_one(
-            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
-            {"$set": {"tags": tags}},
-        )
+        """2026-09-09 v1.7.2:单条覆盖式设 `tags` — thin delegate → `_user_meta_mongo`."""
+        return await _user_meta.set_tags(self, channel_id, telegram_msg_id, tags)
 
     async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
-        """2026-09-09 v1.7.2:单条覆盖式设 `notes`。idempotent 同上。"""
-        await self.db.messages.update_one(
-            {"channel_id": channel_id, "telegram_msg_id": telegram_msg_id},
-            {"$set": {"notes": notes}},
-        )
+        """2026-09-09 v1.7.2:单条覆盖式设 `notes` — thin delegate → `_user_meta_mongo`."""
+        return await _user_meta.set_notes(self, channel_id, telegram_msg_id, notes)
 
     async def list_favorites(self) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:列所有 `is_favorite=True` 消息,按 date DESC。"""
-        cursor = self.db.messages.find({"is_favorite": True}).sort("date", -1)
-        return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
+        """2026-09-09 v1.7.2:列所有 `is_favorite=True` 消息 — thin delegate → `_user_meta_mongo`."""
+        return await _user_meta.list_favorites(self)
 
     async def list_by_tag(self, tag: str) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询(`$in` 走数组包含),按 date DESC。"""
-        cursor = self.db.messages.find({"tags": tag}).sort("date", -1)
-        return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
+        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询 — thin delegate → `_user_meta_mongo`."""
+        return await _user_meta.list_by_tag(self, tag)
 
     # ---- 频道 ----
 

@@ -29,6 +29,7 @@ from tgmonitor.core.dto import (
     ThumbnailDTO,
 )
 from tgmonitor.core.storage import _lifecycle_pg as _lifecycle
+from tgmonitor.core.storage import _user_meta_pg as _user_meta
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import SchemaReport
 
@@ -36,8 +37,10 @@ log = logging.getLogger(__name__)
 
 # 2026-10-16 plan-batch8-1.1:`SCHEMA_SQL` / `EXPECTED_SCHEMA` / `EXPECTED_TABLES`
 # 与 6 个 lifecycle method 下沉到 `_lifecycle_pg.py`,facade 改 1 行 thin
-# delegate。其它职责(频道 / 消息 / 媒体 / 缩略图 / 用户元数据)留在本
-# 文件,后续 commit 1.2~1.6 逐步下沉。
+# delegate。
+# 2026-10-16 plan-batch8-1.2:5 个 user_meta method 下沉到 `_user_meta_pg.py`。
+# 其它职责(频道 / 消息 / 媒体 / 缩略图)留本文件,后续 commit 1.3~1.6
+# 逐步下沉。
 
 
 # 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
@@ -228,80 +231,27 @@ class PostgresRepository(StorageRepository):
         """SELECT 1 探活 — thin delegate → `_lifecycle_pg`."""
         return await _lifecycle.ping(self)
 
-    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+    # ---- 用户元数据(2026-09-09 v1.7.2,2026-10-16 plan-batch8-1.2) ----
 
     async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
-        """2026-09-09 v1.7.2:单条设 `is_favorite`。不存在消息 idempotent 不抛。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE messages
-                SET is_favorite = $3
-                WHERE channel_id = $1 AND telegram_msg_id = $2
-                """,
-                channel_id,
-                telegram_msg_id,
-                value,
-            )
+        """2026-09-09 v1.7.2:单条设 `is_favorite` — thin delegate → `_user_meta_pg`."""
+        return await _user_meta.set_favorite(self, channel_id, telegram_msg_id, value)
 
     async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
-        """2026-09-09 v1.7.2:单条覆盖式设 `tags`(TEXT[])。idempotent 同上。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE messages
-                SET tags = $3::text[]
-                WHERE channel_id = $1 AND telegram_msg_id = $2
-                """,
-                channel_id,
-                telegram_msg_id,
-                tags,
-            )
+        """2026-09-09 v1.7.2:单条覆盖式设 `tags` — thin delegate → `_user_meta_pg`."""
+        return await _user_meta.set_tags(self, channel_id, telegram_msg_id, tags)
 
     async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
-        """2026-09-09 v1.7.2:单条覆盖式设 `notes`(TEXT)。idempotent 同上。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE messages
-                SET notes = $3
-                WHERE channel_id = $1 AND telegram_msg_id = $2
-                """,
-                channel_id,
-                telegram_msg_id,
-                notes,
-            )
+        """2026-09-09 v1.7.2:单条覆盖式设 `notes` — thin delegate → `_user_meta_pg`."""
+        return await _user_meta.set_notes(self, channel_id, telegram_msg_id, notes)
 
     async def list_favorites(self) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:列所有 `is_favorite=TRUE` 消息,按 date DESC。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM messages
-                WHERE is_favorite = TRUE
-                ORDER BY date DESC
-                """
-            )
-        # 跨频道;media 不带(轻量路径)
-        return [_row_to_message(row, []) for row in rows]
+        """2026-09-09 v1.7.2:列所有 `is_favorite=TRUE` 消息 — thin delegate → `_user_meta_pg`."""
+        return await _user_meta.list_favorites(self)
 
     async def list_by_tag(self, tag: str) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询,按 date DESC。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM messages
-                WHERE $1 = ANY(tags)
-                ORDER BY date DESC
-                """,
-                tag,
-            )
-        return [_row_to_message(row, []) for row in rows]
+        """2026-09-09 v1.7.2:按 `tag` 精确匹配查询 — thin delegate → `_user_meta_pg`."""
+        return await _user_meta.list_by_tag(self, tag)
 
     # ---- 频道 ----
 
