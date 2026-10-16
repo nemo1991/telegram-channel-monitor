@@ -171,6 +171,8 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
         window_title_setter=MagicMock(name="window_title_setter"),
         quit_app=MagicMock(name="quit_app"),
         live_view=MagicMock(name="live_view"),
+        # 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ctx
+        live_actions=MagicMock(name="live_actions"),
         message_detail=MagicMock(name="message_detail"),
         media_manager=win.media_manager,
         selection_toolbar=MagicMock(name="selection_toolbar"),

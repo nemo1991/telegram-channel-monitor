@@ -209,10 +209,14 @@ def test_v175_media_bg_uses_palette_not_hardcoded() -> None:
 
     改走 palette.brush(QPalette.AlternateBase) — 主题切换不破皮。
     用 AST 检查类内赋值(避开 docstring/comment)。
+
+    2026-10-15 plan-batch7-A:MessageItemDelegate 已抽到独立 module
+    `message_item_delegate.py`,本 test 改读该文件(原 message_view.py
+    找 AST + 字符串检查 delegate 渲染逻辑已不适用)。
     """
     import ast
 
-    src = Path("src/tgmonitor/ui/widgets/message_view.py").read_text(encoding="utf-8")
+    src = Path("src/tgmonitor/ui/widgets/message_item_delegate.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     # 找 MessageItemDelegate 类定义
     for node in ast.walk(tree):

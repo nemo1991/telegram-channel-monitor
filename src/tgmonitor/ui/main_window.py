@@ -70,6 +70,7 @@ from tgmonitor.ui.controllers import (
     ThemeController,
     TrayController,
 )
+from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 from tgmonitor.ui.ui_assembler import UiAssembler
@@ -236,6 +237,15 @@ class MainWindow(QMainWindow):
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(300)
 
+        # 2026-10-15 plan-batch7-C-α:LiveActionsController(QObject)持
+        # view 单 forward dep,8 Signal(selection_count_changed /
+        # selection_messages_changed / export_requested / delete_requested /
+        # mark_read_requested / favorite_requested / tags_requested /
+        # notes_requested)+ 右键菜单 6 动作 + selectionModel().selectionChanged
+        # emit 整体从这里装配。view._live_actions 同步注入。
+        self.live_actions: LiveActionsController = LiveActionsController(self.live_view)
+        self.live_view._live_actions = self.live_actions
+
         # ======================== 6 controller 装配(2026-10-01 v1.12.x) ========================
         # 复杂 4 个(live_selection / media_actions / search / message_stream)
         # 留 main_window.py 自身。
@@ -251,6 +261,11 @@ class MainWindow(QMainWindow):
             window_title_setter=self.setWindowTitle,
             quit_app=self._quit_app,
             live_view=self.live_view,
+            # 2026-10-15 plan-batch7-C-α:LiveActionsController(QObject)—
+            # 8 Signal + 右键菜单 + 选区广播从 MessageView 抽出,公开
+            # API 锁由 controller 持有;`live_view._live_actions` 也同步
+            # 注入,view.contextMenuEvent 转发到 controller。
+            live_actions=self.live_actions,
             message_detail=self.message_detail,
             media_manager=self.media_manager,
             selection_toolbar=self._selection_toolbar,
@@ -311,21 +326,27 @@ class MainWindow(QMainWindow):
         # `_last_live_selection` 共享 state。
         self._live_selection_ctrl = LiveSelectionController(self._ctx)
         # ---- LIVE 多选 signal wire(顺序敏感:controller 先实例化) ----
+        # 2026-10-15 plan-batch7-C-α:8 Signal 全在 LiveActionsController
+        # 上,wire 从 self.live_view.X 改 self.live_actions.X。
         # selection state
-        self.live_view.selection_count_changed.connect(
+        self.live_actions.selection_count_changed.connect(
             self._live_selection_ctrl.on_selection_count_changed
         )
-        self.live_view.selection_messages_changed.connect(
+        self.live_actions.selection_messages_changed.connect(
             self._live_selection_ctrl.on_selection_messages_changed
         )
         # 右键菜单 6 入口(带 items)
-        self.live_view.export_requested.connect(self._live_selection_ctrl.on_live_export)
-        self.live_view.delete_requested.connect(self._live_selection_ctrl.on_live_delete)
-        self.live_view.mark_read_requested.connect(self._live_selection_ctrl.on_live_mark_read)
+        self.live_actions.export_requested.connect(self._live_selection_ctrl.on_live_export)
+        self.live_actions.delete_requested.connect(self._live_selection_ctrl.on_live_delete)
+        self.live_actions.mark_read_requested.connect(
+            self._live_selection_ctrl.on_live_mark_read
+        )
         # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
-        self.live_view.favorite_requested.connect(self._live_selection_ctrl.on_live_favorite)
-        self.live_view.tags_requested.connect(self._live_selection_ctrl.on_live_tags)
-        self.live_view.notes_requested.connect(self._live_selection_ctrl.on_live_notes)
+        self.live_actions.favorite_requested.connect(
+            self._live_selection_ctrl.on_live_favorite
+        )
+        self.live_actions.tags_requested.connect(self._live_selection_ctrl.on_live_tags)
+        self.live_actions.notes_requested.connect(self._live_selection_ctrl.on_live_notes)
         # toolbar 6 按钮(读 controller 内部 _last_live_selection)
         self._selection_toolbar.export_clicked.connect(
             self._live_selection_ctrl.on_live_export_selected

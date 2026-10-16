@@ -28,6 +28,14 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import UTC
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 2026-10-15 plan-batch7-C-α:循环 import 防护 — controller
+    # 文件顶部 `from message_view import MessageListModel` 已触发本 module
+    # 加载,运行时 view 不直接 import controller(只 type annotation),
+    # MainWindow / fixture 显式 `from tgmonitor.ui.controllers.live_actions_controller
+    # import LiveActionsController` 后通过 `view._live_actions = ctl(view)` 注入。
+    from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -41,11 +49,9 @@ from PySide6.QtCore import (
 # 2026-10-15 plan-batch7-A:QPalette / QTextDocument / QStyledItemDelegate /
 # QStyleOptionViewItem 4 个仅 delegate 用,delegate 已搬到 message_item_delegate.py
 # 独立 module,主文件不再 import。
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
-    QMenu,
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ReactionDTO
@@ -512,20 +518,17 @@ class MessageView(QListView):
         10000  # 2026-09-03 v1.5.4 PR #P1:实验性 bump(原 1000,CHANGELOG v1.5.3 PR #D1 已埋钩子)
     )
 
-    # 用户点击一条消息 → emit MessageDTO 给详情面板
+    # 用户点击一条消息 → emit MessageDTO 给详情面板(message_selected
+    # 是 `currentRowChanged` signal,不在 plan-batch7-C-α 8 Signal 范围)
     message_selected = Signal(object)
 
-    # 2026-09-08 v1.7.0:多选 + 右键菜单 + 顶部 toolbar 联动信号
-    selection_count_changed = Signal(int)
-    selection_messages_changed = Signal(list)  # list[(cid, mid)]
-    export_requested = Signal(list)  # 右键「导出」触发
-    delete_requested = Signal(list)  # 右键 / toolbar「删除」触发
-    mark_read_requested = Signal(list)  # 右键 / toolbar「标记已读」触发
-    # 2026-09-09 v1.7.2:用户元数据 — favorite / tags / notes 单条入口。
-    # payload (channel_id, telegram_msg_id);右键菜单触发。
-    favorite_requested = Signal(int, int, bool)  # cid, mid, new_value
-    tags_requested = Signal(int, int)
-    notes_requested = Signal(int, int)
+    # 2026-10-15 plan-batch7-C-α:8 Signal(selection_count_changed /
+    # selection_messages_changed / export_requested / delete_requested /
+    # mark_read_requested / favorite_requested / tags_requested /
+    # notes_requested)整体搬到 `LiveActionsController(QObject)`,
+    # 公开 API 锁由 controller 持有。view contextMenuEvent 转发到
+    # controller,持 `_live_actions: LiveActionsController | None` 引用
+    # (MainWindow 启动时注入,fixture / 测试也可显式 attach)。
 
     def __init__(self) -> None:
         """初始化 model + delegate + channel_titles + filter + empty overlay。"""
@@ -550,10 +553,14 @@ class MessageView(QListView):
         # 点击 → 取 DTO → emit
         self.clicked.connect(self._on_clicked)
 
-        # 2026-09-08 v1.7.0:selection 变化 → emit 信号给 toolbar
-        sel_model = self.selectionModel()
-        if sel_model is not None:
-            sel_model.selectionChanged.connect(self._on_selection_changed)
+        # 2026-10-15 plan-batch7-C-α:`selectionChanged` → 信号 emit
+        # 整体搬到 LiveActionsController,view 不再监听
+        # selectionModel().selectionChanged(由 controller 自己接)。
+
+        # 2026-10-15 plan-batch7-C-α:LiveActionsController 由 MainWindow
+        # 启动时注入,默认 None。fixture / 测试可显式 attach
+        # (`view._live_actions = LiveActionsController(view)`)。
+        self._live_actions: LiveActionsController | None = None
 
         # 2026-10-15 plan-batch7-B:空 overlay + 浮条已抽到 MessageEmptyOverlay
         # widget,主类通过 setter API(set_state / set_messages_count /
@@ -749,70 +756,27 @@ class MessageView(QListView):
         if sel_model is not None:
             sel_model.clear()
 
-    def _on_selection_changed(self, *_args: object) -> None:
-        """selectionChanged → emit 计数 + 选中消息列表给上层。"""
-        cnt = self.selection_count()
-        self.selection_count_changed.emit(cnt)
-        self.selection_messages_changed.emit(self.selected_messages())
+    # ---- 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ----
+
+    @property
+    def live_actions(self):
+        """2026-10-15 plan-batch7-C-α:公开 getter 给 LiveActionsController
+        (QObject)— 持 8 Signal + 右键菜单 + 选区广播。MainWindow 启动时
+        注入,默认 None。测试 fixture 可显式 attach。
+        """
+        return self._live_actions
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt API
-        """2026-09-08 v1.7.0:右键菜单 — 3 动作(导出 / 删除 / 标记已读)。
+        """2026-09-08 v1.7.0:右键菜单 — thin delegate 给 LiveActionsController。
 
-        空选区时仍可弹(用于「全选 / 清除」子集场景);0 选菜单项
-        `setEnabled(False)`。
+        2026-10-15 plan-batch7-C-α:右键菜单 6 动作(导出 / 删除 / 标记已读 /
+        收藏 / 标签 / 备注)构造逻辑整体搬到 controller,view 仅转发
+        event.globalPos() 给 controller.show_context_menu。
+        `_live_actions` 未注入时(测试 fixture 默认)no-op。
         """
-        menu = QMenu(self)
-        count = self.selection_count()
-        sel = self.selected_messages()
-
-        act_export = QAction(self.tr("导出…"), menu)
-        act_export.setEnabled(count >= 1)
-        act_export.triggered.connect(lambda: self.export_requested.emit(sel))
-        menu.addAction(act_export)
-        menu.addSeparator()
-
-        act_delete = QAction(self.tr("删除"), menu)
-        act_delete.setEnabled(count >= 1)
-        act_delete.triggered.connect(lambda: self.delete_requested.emit(sel))
-        menu.addAction(act_delete)
-        menu.addSeparator()
-
-        act_read = QAction(self.tr("标记已读"), menu)
-        act_read.setEnabled(count >= 1)
-        act_read.triggered.connect(lambda: self.mark_read_requested.emit(sel))
-        menu.addAction(act_read)
-
-        # 2026-09-09 v1.7.2:用户元数据菜单 — 单条才允许。
-        menu.addSeparator()
-        act_fav = QAction(self.tr("★ 收藏 / 取消收藏"), menu)
-        # 元数据操作要求恰好 1 条;多选时禁用,避免歧义。
-        act_fav.setEnabled(count == 1)
-        if count == 1:
-            current = sel[0] if sel else None
-            if current is not None:
-                cid, mid = current[0], current[1]
-                act_fav.triggered.connect(
-                    lambda: self.favorite_requested.emit(
-                        cid, mid, not getattr(current, "is_favorite", False)
-                    )
-                )
-        menu.addAction(act_fav)
-
-        act_tags = QAction(self.tr("🏷 设置标签…"), menu)
-        act_tags.setEnabled(count == 1)
-        if count == 1 and sel:
-            cid, mid = sel[0][0], sel[0][1]
-            act_tags.triggered.connect(lambda: self.tags_requested.emit(cid, mid))
-        menu.addAction(act_tags)
-
-        act_notes = QAction(self.tr("📝 设置备注…"), menu)
-        act_notes.setEnabled(count == 1)
-        if count == 1 and sel:
-            cid, mid = sel[0][0], sel[0][1]
-            act_notes.triggered.connect(lambda: self.notes_requested.emit(cid, mid))
-        menu.addAction(act_notes)
-
-        menu.exec_(event.globalPos())
+        if self._live_actions is None:
+            return
+        self._live_actions.show_context_menu(event.globalPos())
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
         """窗口尺寸变 → widget 覆盖 view 整个区域 + overlay/浮条重定位。"""

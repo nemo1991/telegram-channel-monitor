@@ -7,6 +7,10 @@
 - selected_messages() / selection_count() helper 正确
 - clear_selection() 清空选择
 - 右键菜单触发 export_requested / delete_requested / mark_read_requested
+
+2026-10-15 plan-batch7-C-α:8 Signal 整体搬到 LiveActionsController,
+test 改用 `view.live_actions.X.connect(...)` + fixture 显式 attach
+controller(view 默认 _live_actions=None,contextMenuEvent no-op)。
 """
 
 from __future__ import annotations
@@ -16,17 +20,20 @@ from PySide6.QtCore import QItemSelectionModel, QPoint
 from PySide6.QtWidgets import QAbstractItemView
 
 from tgmonitor.core.dto import MessageDTO
+from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 from tgmonitor.ui.widgets.message_view import MessageView
 
 
 @pytest.fixture
 def view_with_messages(qapp) -> MessageView:
-    """建一个 MessageView + 注入 5 条消息。"""
+    """建一个 MessageView + 注入 5 条消息 + LiveActionsController。"""
     view = MessageView()
     msgs = [
         MessageDTO(id=i, channel_id=1, telegram_msg_id=100 + i, text=f"msg{i}") for i in range(1, 6)
     ]
     view.set_messages(msgs)
+    # 2026-10-15 plan-batch7-C-α:fixture 显式 attach controller
+    view._live_actions = LiveActionsController(view)
     return view
 
 
@@ -47,7 +54,7 @@ def test_selection_count_emits_on_change(view_with_messages: MessageView) -> Non
     """Ctrl+Click 选 2 条 → selection_count_changed(2) emit。"""
     view = view_with_messages
     counts: list[int] = []
-    view.selection_count_changed.connect(counts.append)
+    view.live_actions.selection_count_changed.connect(counts.append)
 
     sm = view.selectionModel()
     assert sm is not None
@@ -61,7 +68,7 @@ def test_selection_messages_emits_pairs(view_with_messages: MessageView) -> None
     """selection_messages_changed 携带 (cid, mid) 列表 — 多条按选中顺序。"""
     view = view_with_messages
     pairs: list = []
-    view.selection_messages_changed.connect(pairs.append)
+    view.live_actions.selection_messages_changed.connect(pairs.append)
 
     sm = view.selectionModel()
     assert sm is not None
@@ -111,7 +118,7 @@ def test_right_click_menu_triggers_export_signal(view_with_messages: MessageView
     _select_row(sm, view, 0)
 
     exports: list = []
-    view.export_requested.connect(exports.append)
+    view.live_actions.export_requested.connect(exports.append)
 
     # 模拟右键菜单事件 — 通过 monkeypatch menu.exec_ 拿 QPoint
     from PySide6.QtWidgets import QMenu
@@ -156,8 +163,8 @@ def test_right_click_menu_triggers_delete_and_mark_read(view_with_messages: Mess
 
     deletes: list = []
     reads: list = []
-    view.delete_requested.connect(deletes.append)
-    view.mark_read_requested.connect(reads.append)
+    view.live_actions.delete_requested.connect(deletes.append)
+    view.live_actions.mark_read_requested.connect(reads.append)
 
     from PySide6.QtWidgets import QMenu
 
