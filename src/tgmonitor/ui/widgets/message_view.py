@@ -46,7 +46,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
     QMenu,
-    QPushButton,
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, ReactionDTO
@@ -55,7 +54,8 @@ from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO, Reacti
 # 独立定义,主类用 `from tgmonitor.ui.widgets.message_item_delegate import
 # MessageItemDelegate` 走 re-export(见文件末尾),import 顺序保留空一格便于
 # 静态检查。
-from tgmonitor.ui.widgets.form_row import empty_hint
+# 2026-10-15 plan-batch7-B:空 overlay + 浮条已搬到 message_empty_overlay.py
+# 独立 widget,主类不再 import empty_hint / QPushButton / QLabel(仅 widget 用)。
 from tgmonitor.ui.widgets.reaction_format import format_reactions_short
 
 # ============================================================
@@ -555,33 +555,41 @@ class MessageView(QListView):
         if sel_model is not None:
             sel_model.selectionChanged.connect(self._on_selection_changed)
 
-        # 空状态占位(默认显示,首条消息到达自动隐藏)
-        # 2026-09-14 v1.7.5 PR #5 (P0-L):三态 overlay — 未订阅 / 搜索无结果 / LIVE 空
-        self._empty_overlay = empty_hint(
-            icon="💬",
-            title="暂无消息",
-            hint="先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
-            parent=self,
-        )
-        self._empty_overlay.raise_()
-        self._refresh_empty_state()
-        # 2026-09-14 v1.7.5 PR #5 (P0-L):默认 state — MainWindow 在登录后
-        # 通过 `live_view.set_empty_state(...)` 切到对应 overlay。
-        self._empty_state = "no_subscribed"
-        # model 行数变化时刷新 overlay
-        self._model.rowsInserted.connect(self._refresh_empty_state)
-        self._model.rowsRemoved.connect(self._refresh_empty_state)
-        self._model.modelReset.connect(self._refresh_empty_state)
-        # 2026-09-14 v1.7.5 PR #5 (P0-I):新消息浮条 — 用户在浏览旧消息时,
-        # 有新 LIVE 消息到达且不在 scroll top → 显示「N 条新消息 ↓」浮动按钮。
-        # 点 → scrollToTop + 隐藏。
-        self._new_msg_count: int = 0
-        self._floating_btn = QPushButton(self.tr("0 条新消息 ↓"), self)
-        self._floating_btn.setObjectName("floatingNewMsgBtn")
-        self._floating_btn.setCursor(Qt.PointingHandCursor)
-        self._floating_btn.hide()
-        self._floating_btn.clicked.connect(self._on_floating_btn_clicked)
-        # rowsInserted → 检查 scroll position 决定是否 +1 + 显示
+        # 2026-10-15 plan-batch7-B:空 overlay + 浮条已抽到 MessageEmptyOverlay
+        # widget,主类通过 setter API(set_state / set_messages_count /
+        # update_for_row_count / reposition)通信,不再直接持 widget 内部
+        # 状态(单一 owner 在 widget)。
+        # 2026-09-14 v1.7.5 PR #5 (P0-L + P0-I):三态 overlay + 新消息浮条 —
+        # 未订阅 / 搜索无结果 / LIVE 空 + 「N 条新消息 ↓」浮动按钮。
+        self._empty_overlay_widget = MessageEmptyOverlay(parent=self)
+        # 2026-10-15 plan-batch7-B:widget 自身 setGeometry 覆盖整个 view —
+        # MessageEmptyOverlay 内 empty_hint 默认 sizeHint 在 size=0 parent
+        # 里不显示(QWidget 不渲染 size=0 子 widget),必须让 widget 自身
+        # 至少与 view 同大,`reposition(w, h)` 计算的居中位置才生效。
+        # 原 message_view 的 empty_hint 显式 `setGeometry(x, y, hint_w,
+        # hint_h)` 给 overlay 本体,不依赖 parent 渲染;widget 嵌套后
+        # empty_hint 改在 widget 内,需 widget 自身先有 geometry。
+        self._empty_overlay_widget.setGeometry(self.rect())
+        # 2026-10-15 plan-batch7-B:backward compat — 测试 fixture 直接读
+        # `view._empty_overlay.isHidden()`,代理到 widget 内部 overlay
+        # 引用,避免 4 个 test 改路径(test_empty_overlay_shown_when_no_messages
+        # / test_empty_overlay_hidden_after_first_append /
+        # test_empty_overlay_reappears_after_clear / test_message_view_empty
+        # 视觉回归黄金图比对)。
+        self._empty_overlay = self._empty_overlay_widget._empty_overlay
+        self._empty_overlay_widget.floating_clicked.connect(self.scrollToTop)
+        # 2026-10-15 plan-batch7-B:widget 自身 raise_ 到 view 顶部 Z-order
+        # — widget 内部 empty_hint raise_ 只到 widget,widget 自身需主动
+        # raise_ 到 view(parent)才能让 empty_hint 渲染在列表之上。
+        # 原 message_view L566 `_empty_overlay.raise_()` 的等价行为。
+        self._empty_overlay_widget.raise_()
+        # 默认 state — MainWindow 登录后通过 `live_view.set_empty_state(...)`
+        # 切到对应 overlay(原 `_empty_state` 字段由 widget 自己持)。
+        # model 行数变化时刷新 overlay + 浮条
+        self._model.rowsInserted.connect(self._on_row_count_changed)
+        self._model.rowsRemoved.connect(self._on_row_count_changed)
+        self._model.modelReset.connect(self._on_row_count_changed)
+        # rowsInserted → 检查 scroll position 决定是否 +1 + 显示(浮条逻辑)
         self._model.rowsInserted.connect(self._on_row_inserted_floating)
 
     # ---- 公开 API(全部保留) ----
@@ -806,103 +814,53 @@ class MessageView(QListView):
 
         menu.exec_(event.globalPos())
 
-    def _refresh_empty_state(self, *_args) -> None:
-        """count() == 0 → 显示 overlay,else 隐藏。
-
-        signal 回调签名兼容 `rowsInserted(parent, first, last)` /
-        `rowsRemoved(parent, first, last)` / `modelReset()`,所以接 *args。
-        """
-        self._empty_overlay.setVisible(self.count() == 0)
-        self._empty_overlay.raise_()
-
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        """窗口尺寸变 → overlay 重新居中(视觉重心偏上 1/3 高度)。"""
+        """窗口尺寸变 → widget 覆盖 view 整个区域 + overlay/浮条重定位。"""
         super().resizeEvent(event)
-        hint_size = self._empty_overlay.sizeHint()
-        x = max(0, (self.width() - hint_size.width()) // 2)
-        y = max(0, self.height() // 3 - hint_size.height() // 2)
-        self._empty_overlay.setGeometry(x, y, hint_size.width(), hint_size.height())
-        self._empty_overlay.raise_()
-        # 2026-09-14 v1.7.5 PR #5 (P0-I):浮条 resize 时也跟浮动 top-right。
-        self._reposition_floating_btn()
+        # 2026-10-15 plan-batch7-B:widget 自身 size 跟 view 同步(否则 size=0
+        # widget 内 empty_hint 不渲染),reposition 内计算居中位置。
+        self._empty_overlay_widget.setGeometry(self.rect())
+        self._empty_overlay_widget.reposition(self.width(), self.height())
 
-    # ---- 2026-09-14 v1.7.5 PR #5:新消息浮条 + 空状态分型 ----
+    # ---- 2026-10-15 plan-batch7-B:thin delegate 给 widget ----
+
+    def _on_row_count_changed(self, *_args) -> None:
+        """rowsInserted/Removed/Reset 触发:count 变 → widget overlay 显隐。"""
+        self._empty_overlay_widget.update_for_row_count(self.count())
 
     def _on_row_inserted_floating(self, parent, first: int, last: int) -> None:
         """rowsInserted handler:若 scroll 不在最顶 → 累加未读数 + 显示浮条。
 
         `first == last == 0` 是 LIVE 单条到达场景。set_messages 是
         modelReset(emit modelReset,不 emit rowsInserted),所以本 handler
-        不会被它触发 — 不需要在这里清零 counter。
+        不会被它触发 — 不需要在这里清零 counter(由 `clear_new_msg_counter`
+        显式调)。
         """
         # 在最顶 → 不算「错过的新消息」(用户在看最新)
         if self.verticalScrollBar().value() <= 0:
             return
         added = last - first + 1
-        self._new_msg_count += added
-        self._floating_btn.setText(self.tr("%d 条新消息 ↓").format(self._new_msg_count))
-        self._floating_btn.show()
-        self._reposition_floating_btn()
-
-    def _reposition_floating_btn(self) -> None:
-        """浮条贴 top-right,留 16px padding。"""
-        if not self._floating_btn.isVisible():
-            return
-        size = self._floating_btn.sizeHint()
-        x = max(0, self.width() - size.width() - 16)
-        self._floating_btn.setGeometry(x, 16, size.width(), size.height())
-        self._floating_btn.raise_()
-
-    def _on_floating_btn_clicked(self) -> None:
-        """点浮条 → scrollToTop + 清计数 + 隐藏。"""
-        # newest-first 列表,top row = 最新一条
-        self.scrollToTop()
-        self._new_msg_count = 0
-        self._floating_btn.hide()
+        # 2026-10-15 plan-batch7-B:counter 状态搬到 widget,主类调 setter
+        cur = self._empty_overlay_widget.messages_count()
+        self._empty_overlay_widget.set_messages_count(cur + added)
+        self._empty_overlay_widget.show_floating_btn()
 
     def set_empty_state(self, state: str) -> None:
-        """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案。
+        """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案 — thin delegate。
 
         Args:
             state: "no_subscribed" / "searching" / "live_empty"。
         """
-        self._empty_state = state
-        if state == "no_subscribed":
-            self._empty_overlay_title(
-                "💬",
-                self.tr("未订阅频道"),
-                self.tr("先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。"),
-            )
-        elif state == "searching":
-            self._empty_overlay_title(
-                "🔍", self.tr("无匹配结果"), self.tr("试试更换关键词或日期范围。")
-            )
-        elif state == "live_empty":
-            self._empty_overlay_title("💬", self.tr("暂无消息"), self.tr("新消息会实时显示。"))
-
-    def _empty_overlay_title(self, icon: str, title: str, hint: str) -> None:
-        """直接改 overlay 内 icon / title / hint label 文字(不重建 widget)。"""
-        # empty_hint 返回 widget 含 3 个子 widget:icon QLabel + title QLabel + hint QLabel
-        # 通过 findChildren 拿 label 后改 text。
-        from PySide6.QtWidgets import QLabel
-
-        labels = self._empty_overlay.findChildren(QLabel)
-        # labels 顺序:[icon, title, hint](empty_hint 实现保证)
-        if len(labels) >= 1:
-            labels[0].setText(icon)
-        if len(labels) >= 2:
-            labels[1].setText(title)
-        if len(labels) >= 3:
-            labels[2].setText(hint)
-        self._empty_overlay.raise_()
+        self._empty_overlay_widget.set_state(state)
 
     def clear_new_msg_counter(self) -> None:
-        """VM 搜索 / set_messages reset 时清浮条计数。"""
-        self._new_msg_count = 0
-        self._floating_btn.hide()
+        """VM 搜索 / set_messages reset 时清浮条计数 — thin delegate。"""
+        self._empty_overlay_widget.reset_counter()
 
 
 # 2026-10-15 plan-batch7-A:re-export MessageItemDelegate — 旧
 # `from tgmonitor.ui.widgets.message_view import MessageItemDelegate`
 # 测试 / 调用面零改动(class 已搬到 message_item_delegate.py)。
+# 2026-10-15 plan-batch7-B:re-export MessageEmptyOverlay — 旧 import 路径兼容
+from tgmonitor.ui.widgets.message_empty_overlay import MessageEmptyOverlay  # noqa: E402,F401
 from tgmonitor.ui.widgets.message_item_delegate import MessageItemDelegate  # noqa: E402,F401
