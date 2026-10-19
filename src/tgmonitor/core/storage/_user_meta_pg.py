@@ -8,8 +8,9 @@
 + plan-batch6 media_service 1:1 对齐)。`PostgresRepository` facade
 持 `self._pool`,本 module 走 `self._pool.acquire() as conn` 拿连接。
 
-`_row_to_message` 复用在 facade 顶部模块级函数(2026-10-16 plan-batch8-1.6
-将搬入 `_messages_pg.py`,届时本 module 顶部 import 一并改)。
+`_row_to_message` 复用 `_messages_pg`(2026-10-19 plan-batch8-1.6
+从 facade 搬入 `_messages_pg.py`,顶部 import 同步改为
+`from . import _messages_pg as _messages`)。
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from tgmonitor.core.dto import MessageDTO
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
+from tgmonitor.core.storage import _messages_pg as _messages
 
 # ---- 5 user_meta method ----
 
@@ -93,9 +95,7 @@ async def list_favorites(self: PostgresRepository) -> list[MessageDTO]:
             ORDER BY date DESC
             """
         )
-    from tgmonitor.core.storage.postgres_repo import _row_to_message
-
-    return [_row_to_message(row, []) for row in rows]
+    return [_messages._row_to_message(row, []) for row in rows]
 
 
 async def list_by_tag(self: PostgresRepository, tag: str) -> list[MessageDTO]:
@@ -110,6 +110,4 @@ async def list_by_tag(self: PostgresRepository, tag: str) -> list[MessageDTO]:
             """,
             tag,
         )
-    from tgmonitor.core.storage.postgres_repo import _row_to_message
-
-    return [_row_to_message(row, []) for row in rows]
+    return [_messages._row_to_message(row, []) for row in rows]

@@ -30,6 +30,10 @@
 `_doc_to_message` 仍暂从 facade 导入 — 2026-10-19 plan-batch8-1.6
 将搬入 `_messages_mongo`,届时 list_media 改 `from . import
 _messages_mongo as _messages` 复用。
+
+[2026-10-19 plan-batch8-1.6 落地] `_doc_to_message` 已搬到
+`_messages_mongo`,本 module 顶部 `from . import _messages_mongo as
+_messages` 就位,`list_media` 内调 `_messages._doc_to_message(...)`。
 """
 
 from __future__ import annotations
@@ -47,6 +51,8 @@ from tgmonitor.core.dto import (
 
 if TYPE_CHECKING:
     from tgmonitor.core.storage.mongo_repo import MongoRepository
+
+from tgmonitor.core.storage import _messages_mongo as _messages
 
 
 def _media_status(value: object | None) -> MediaDownloadStatus:
@@ -173,8 +179,6 @@ async def list_media(
     分页:`$skip offset` + `$limit limit`。MVP 不上 cursor-based,offset 在
     Mongo 上对小数据集足够,UI 也没用上 deep paging。
     """
-    from tgmonitor.core.storage.mongo_repo import _doc_to_message
-
     pipeline = _build_media_pipeline(
         channel_ids=channel_ids,
         status=status,
@@ -191,7 +195,7 @@ async def list_media(
         med = _doc_to_media(d["media"])
         # 把媒体子文档从 messages.media 数组临时抽掉,避免 MessageDTO 重复
         d_no_media = {k: v for k, v in d.items() if k != "media"}
-        msg = _doc_to_message({**d_no_media, "media": [med]})
+        msg = _messages._doc_to_message({**d_no_media, "media": [med]})
         rows.append((msg, int(d["media_idx"]), med))
     return rows
 

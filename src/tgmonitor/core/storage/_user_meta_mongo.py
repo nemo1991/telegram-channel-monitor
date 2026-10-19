@@ -8,8 +8,9 @@
 1:1 对齐)。`MongoRepository` facade 持 `self._db`,本 module 走
 `self.db.messages.X` 反射句柄。
 
-`_doc_to_message` 复用在 facade 顶部模块级函数(2026-10-16 plan-batch8-1.6
-将搬入 `_messages_mongo.py`,届时本 module 顶部 import 一并改)。
+`_doc_to_message` 复用 `_messages_mongo`(2026-10-19 plan-batch8-1.6
+从 facade 搬入 `_messages_mongo.py`,顶部 import 同步改为
+`from . import _messages_mongo as _messages`)。
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from tgmonitor.core.dto import MessageDTO
 if TYPE_CHECKING:
     from tgmonitor.core.storage.mongo_repo import MongoRepository
 
+from tgmonitor.core.storage import _messages_mongo as _messages
 
 # ---- 5 user_meta method ----
 
@@ -57,15 +59,11 @@ async def set_notes(
 
 async def list_favorites(self: MongoRepository) -> list[MessageDTO]:
     """2026-09-09 v1.7.2:列所有 `is_favorite=True` 消息,按 date DESC。"""
-    from tgmonitor.core.storage.mongo_repo import _doc_to_message
-
     cursor = self.db.messages.find({"is_favorite": True}).sort("date", -1)
-    return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
+    return [_messages._doc_to_message(d) for d in await cursor.to_list(length=None)]
 
 
 async def list_by_tag(self: MongoRepository, tag: str) -> list[MessageDTO]:
     """2026-09-09 v1.7.2:按 `tag` 精确匹配查询(`$in` 走数组包含),按 date DESC。"""
-    from tgmonitor.core.storage.mongo_repo import _doc_to_message
-
     cursor = self.db.messages.find({"tags": tag}).sort("date", -1)
-    return [_doc_to_message(d) for d in await cursor.to_list(length=None)]
+    return [_messages._doc_to_message(d) for d in await cursor.to_list(length=None)]

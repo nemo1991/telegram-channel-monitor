@@ -34,6 +34,10 @@ media 字段映射),跟随 `list_media` 走不出 module 顶部。
 `_row_to_message` 仍暂从 facade 导入 — 1.6 plan-batch8 将搬入
 `_messages_pg`,届时 list_media 改 `from . import _messages_pg as
 _messages` 复用。
+
+[2026-10-19 plan-batch8-1.6 落地] `_row_to_message` 已搬到
+`_messages_pg`,本 module 顶部 `from . import _messages_pg as _messages`
+就位,`list_media` 内调 `_messages._row_to_message(...)`。
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ from tgmonitor.core.dto import (
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
+from tgmonitor.core.storage import _messages_pg as _messages
 
 # 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
 # DATE 走 m.date;SIZE 走 me.file_size(可能 NULL → NULLS LAST 让 NULL 落到末尾);
@@ -170,8 +175,6 @@ async def list_media(
     `search` 用 `LOWER(file_name) LIKE LOWER('%...%')` 简单 substring
     match(MVP,后续用 pg_trgm 优化)。
     """
-    from tgmonitor.core.storage.postgres_repo import _row_to_message
-
     assert self._pool is not None
     where_sql, params, next_idx = _media_where_clause(
         channel_ids,
@@ -244,7 +247,7 @@ async def list_media(
     )
     return [
         (
-            _row_to_message(
+            _messages._row_to_message(
                 {k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]
             ),
             r["media_idx"],
