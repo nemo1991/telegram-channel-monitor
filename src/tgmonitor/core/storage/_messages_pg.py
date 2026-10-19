@@ -280,9 +280,7 @@ async def update_message_pin(
         )
 
 
-async def delete_message(
-    self: PostgresRepository, channel_id: int, telegram_msg_id: int
-) -> None:
+async def delete_message(self: PostgresRepository, channel_id: int, telegram_msg_id: int) -> None:
     """删单条消息;media 行通过 FK CASCADE 自动删。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
@@ -293,9 +291,7 @@ async def delete_message(
         )
 
 
-async def delete_messages(
-    self: PostgresRepository, channel_id: int, msg_ids: list[int]
-) -> None:
+async def delete_messages(self: PostgresRepository, channel_id: int, msg_ids: list[int]) -> None:
     """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 行 FK CASCADE 自动删。
 
     单发 SQL:`DELETE WHERE channel_id=$1 AND telegram_msg_id = ANY($2)`

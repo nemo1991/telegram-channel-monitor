@@ -186,9 +186,7 @@ async def update_message_interactions(
     if views is not None:
         update["views"] = views
     if reactions is not None:
-        update["reactions"] = [
-            r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions
-        ]
+        update["reactions"] = [r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions]
     if not update:
         return
     await self.db.messages.update_one(
@@ -214,9 +212,7 @@ async def update_message_pin(
     )
 
 
-async def delete_message(
-    self: MongoRepository, channel_id: int, telegram_msg_id: int
-) -> None:
+async def delete_message(self: MongoRepository, channel_id: int, telegram_msg_id: int) -> None:
     """删单条消息;media 子文档随父 doc 一同删。
 
     2026-09-29:同时清掉该消息对应的 thumb 文档(thumbnails collection,
@@ -231,9 +227,7 @@ async def delete_message(
     )
 
 
-async def delete_messages(
-    self: MongoRepository, channel_id: int, msg_ids: list[int]
-) -> None:
+async def delete_messages(self: MongoRepository, channel_id: int, msg_ids: list[int]) -> None:
     """2026-09-08 v1.7.0:批量删单频道 N 条消息;media 子文档随父 doc 一同删。
 
     单次 `delete_many` 走 `telegram_msg_id: {$in: [...]}` 索引扫描,

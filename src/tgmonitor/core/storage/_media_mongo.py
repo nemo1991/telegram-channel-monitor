@@ -117,9 +117,7 @@ _MEDIA_SORT_FIELD: dict[SortKey, str] = {
 # ---- 5 media method + 1 pipeline helper ----
 
 
-async def find_media_by_file_id(
-    self: MongoRepository, telegram_file_id: str
-) -> MediaDTO | None:
+async def find_media_by_file_id(self: MongoRepository, telegram_file_id: str) -> MediaDTO | None:
     """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
 
     命中条件 `object_key 非 None AND download_status == 'done'`。返回最新写入
@@ -290,9 +288,7 @@ def _build_media_pipeline(
     return pipeline
 
 
-async def count_media_by_object_key(
-    self: MongoRepository, object_key: str
-) -> int:
+async def count_media_by_object_key(self: MongoRepository, object_key: str) -> int:
     """2026-08-25 PR #3:refcount — `$unwind` + `$match` + `$count`。
 
     Mongo 5+ 支持直接 `$count`;走 `messages.media` 子文档。O(扫描)
@@ -308,9 +304,7 @@ async def count_media_by_object_key(
     return 0
 
 
-async def count_media_by_channel(
-    self: MongoRepository, channel_id: int
-) -> int:
+async def count_media_by_channel(self: MongoRepository, channel_id: int) -> int:
     """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
 
     `$match` channel + `$project` 用 `$size media` + `$group sum`。

@@ -339,9 +339,7 @@ class PostgresRepository(StorageRepository):
         media_idx: int,
     ) -> None:
         """thin delegate → `_thumbnails_pg`."""
-        return await _thumbnails.delete_thumbnail(
-            self, channel_id, telegram_msg_id, media_idx
-        )
+        return await _thumbnails.delete_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
     async def list_thumbnails_for_message(
         self,

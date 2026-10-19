@@ -150,9 +150,7 @@ async def update_channel_metadata(
     )
 
 
-async def set_channel_subscribed(
-    self: MongoRepository, channel_id: int, subscribed: bool
-) -> None:
+async def set_channel_subscribed(self: MongoRepository, channel_id: int, subscribed: bool) -> None:
     """只设订阅标志;频道未建档时 upsert 一条 stub(后续会被 metadata 覆盖)。"""
     await self.db.channels.update_one(
         {"_id": channel_id},
@@ -192,9 +190,7 @@ async def delete_channel(self: MongoRepository, channel_id: int) -> None:
     await self.db.messages.delete_many({"channel_id": channel_id})
 
 
-async def get_max_telegram_msg_id(
-    self: MongoRepository, channel_id: int
-) -> int | None:
+async def get_max_telegram_msg_id(self: MongoRepository, channel_id: int) -> int | None:
     """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
     d = await self.db.messages.find_one(
         {"channel_id": channel_id},

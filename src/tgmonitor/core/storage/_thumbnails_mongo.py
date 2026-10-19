@@ -96,9 +96,7 @@ async def get_thumbnail(
     media_idx: int,
 ) -> ThumbnailDTO | None:
     """单条 thumb;不存在返 None。"""
-    d = await self.db.thumbnails.find_one(
-        {"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"}
-    )
+    d = await self.db.thumbnails.find_one({"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"})
     return _doc_to_thumb(d) if d else None
 
 
@@ -109,9 +107,7 @@ async def delete_thumbnail(
     media_idx: int,
 ) -> None:
     """不存在不抛(idempotent)。message 删除时由 delete_message 级联调。"""
-    await self.db.thumbnails.delete_one(
-        {"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"}
-    )
+    await self.db.thumbnails.delete_one({"_id": f"{channel_id}:{telegram_msg_id}:{media_idx}"})
 
 
 async def list_thumbnails_for_message(
@@ -126,8 +122,6 @@ async def list_thumbnails_for_message(
     return [_doc_to_thumb(d) async for d in cursor]
 
 
-async def count_thumbnails_by_object_key(
-    self: MongoRepository, object_key: str
-) -> int:
+async def count_thumbnails_by_object_key(self: MongoRepository, object_key: str) -> int:
     """orphan reconcile 用:被 storage 引用的 thumb key 计数(>0 = 不该删)。"""
     return await self.db.thumbnails.count_documents({"object_key": object_key})

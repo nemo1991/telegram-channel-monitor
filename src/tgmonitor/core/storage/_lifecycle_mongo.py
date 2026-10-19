@@ -94,9 +94,7 @@ async def init_schema(self: MongoRepository) -> None:
     见 `test_mongo_repo_parity.py`。
     """
     # 唯一索引
-    await self.db.messages.create_index(
-        [("channel_id", 1), ("telegram_msg_id", 1)], unique=True
-    )
+    await self.db.messages.create_index([("channel_id", 1), ("telegram_msg_id", 1)], unique=True)
     await self.db.messages.create_index([("channel_id", 1), ("date", 1)])
     await self.db.messages.create_index([("date", 1)])
     # 子文档 multikey 索引 — find_media_by_file_id 用(2026-08-31 PR #A7)
@@ -166,9 +164,7 @@ async def repair_schema(self: MongoRepository, report: SchemaReport) -> None:
             name="uq_channel_msg",
         )
     except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "mongo repair: recreate unique index failed — %s", exc
-        )
+        log.warning("mongo repair: recreate unique index failed — %s", exc)
 
 
 async def ping(self: MongoRepository) -> bool:

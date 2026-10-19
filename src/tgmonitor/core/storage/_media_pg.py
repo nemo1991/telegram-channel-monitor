@@ -130,9 +130,7 @@ def _row_to_media(row: asyncpg.Record) -> MediaDTO:
 # ---- 5 media method + 1 WHERE helper ----
 
 
-async def find_media_by_file_id(
-    self: PostgresRepository, telegram_file_id: str
-) -> MediaDTO | None:
+async def find_media_by_file_id(self: PostgresRepository, telegram_file_id: str) -> MediaDTO | None:
     """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
 
     命中条件 `object_key IS NOT NULL AND download_status = 'done'`;partial
@@ -319,9 +317,7 @@ def _media_where_clause(
     return " AND ".join(clauses), params, idx
 
 
-async def count_media_by_object_key(
-    self: PostgresRepository, object_key: str
-) -> int:
+async def count_media_by_object_key(self: PostgresRepository, object_key: str) -> int:
     """2026-08-25 PR #3:refcount — `SELECT count(*)` 走索引 O(log N)。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
@@ -331,9 +327,7 @@ async def count_media_by_object_key(
         )
 
 
-async def count_media_by_channel(
-    self: PostgresRepository, channel_id: int
-) -> int:
+async def count_media_by_channel(self: PostgresRepository, channel_id: int) -> int:
     """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
 
     `JOIN messages` + WHERE channel_id + count media rows。

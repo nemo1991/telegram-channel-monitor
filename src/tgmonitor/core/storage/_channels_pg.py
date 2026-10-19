@@ -252,9 +252,7 @@ async def delete_channel(self: PostgresRepository, channel_id: int) -> None:
         await conn.execute("DELETE FROM channels WHERE id = $1", channel_id)
 
 
-async def get_max_telegram_msg_id(
-    self: PostgresRepository, channel_id: int
-) -> int | None:
+async def get_max_telegram_msg_id(self: PostgresRepository, channel_id: int) -> int | None:
     """续拉历史用 — 该频道已落库的最大 telegram_msg_id;无历史返 None。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:

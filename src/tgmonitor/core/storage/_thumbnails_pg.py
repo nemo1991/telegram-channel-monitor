@@ -175,9 +175,7 @@ async def list_thumbnails_for_message(
         return [_row_to_thumbnail(r) for r in rows]
 
 
-async def count_thumbnails_by_object_key(
-    self: PostgresRepository, object_key: str
-) -> int:
+async def count_thumbnails_by_object_key(self: PostgresRepository, object_key: str) -> int:
     """refcount — `SELECT count(*)` 走 idx_thumbnails_object_key 索引 O(log N)。
 
     `reconcile_orphans` 用:扫 thumb/ prefix 的 ObjectStore key 后,

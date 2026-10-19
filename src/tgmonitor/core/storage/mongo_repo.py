@@ -349,13 +349,9 @@ class MongoRepository(StorageRepository):
         """thin delegate → `_thumbnails_mongo`."""
         return await _thumbnails.get_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
-    async def delete_thumbnail(
-        self, channel_id: int, telegram_msg_id: int, media_idx: int
-    ) -> None:
+    async def delete_thumbnail(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """thin delegate → `_thumbnails_mongo`."""
-        return await _thumbnails.delete_thumbnail(
-            self, channel_id, telegram_msg_id, media_idx
-        )
+        return await _thumbnails.delete_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
     async def list_thumbnails_for_message(
         self, channel_id: int, telegram_msg_id: int
