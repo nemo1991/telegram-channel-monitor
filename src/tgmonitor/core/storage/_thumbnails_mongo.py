@@ -29,6 +29,8 @@ from tgmonitor.core.dto import ThumbnailDTO
 if TYPE_CHECKING:
     from tgmonitor.core.storage.mongo_repo import MongoRepository
 
+from tgmonitor.core.storage import _media_mongo as _media
+
 
 def _thumb_to_doc(t: ThumbnailDTO) -> dict[str, Any]:
     """2026-09-29:thumbnail doc;`_id` 用 `f"{channel_id}:{msg_id}:{media_idx}"`
@@ -54,8 +56,6 @@ def _thumb_to_doc(t: ThumbnailDTO) -> dict[str, Any]:
 
 def _doc_to_thumb(d: dict[str, Any]) -> ThumbnailDTO:
     """2026-09-29:thumbnail doc → DTO;`_id` 不读(由三 key 重新生成)。"""
-    from tgmonitor.core.storage.mongo_repo import _media_status
-
     return ThumbnailDTO(
         channel_id=int(d["channel_id"]),
         telegram_msg_id=int(d["telegram_msg_id"]),
@@ -67,7 +67,7 @@ def _doc_to_thumb(d: dict[str, Any]) -> ThumbnailDTO:
         width=d.get("width"),
         height=d.get("height"),
         sha256=d.get("sha256"),
-        download_status=_media_status(d.get("download_status")),
+        download_status=_media._media_status(d.get("download_status")),
         download_error=d.get("download_error"),
         telegram_thumb_file_id=d.get("telegram_thumb_file_id"),
     )

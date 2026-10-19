@@ -31,10 +31,10 @@ from tgmonitor.core.dto import ThumbnailDTO
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
+from tgmonitor.core.storage import _media_pg as _media
+
 
 def _row_to_thumbnail(row: asyncpg.Record) -> ThumbnailDTO:
-    from tgmonitor.core.storage.postgres_repo import _media_status
-
     return ThumbnailDTO(
         channel_id=row["channel_id"],
         telegram_msg_id=row["telegram_msg_id"],
@@ -46,7 +46,7 @@ def _row_to_thumbnail(row: asyncpg.Record) -> ThumbnailDTO:
         width=row["width"],
         height=row["height"],
         sha256=row["sha256"],
-        download_status=_media_status(row.get("download_status")),
+        download_status=_media._media_status(row.get("download_status")),
         download_error=row.get("download_error"),
         telegram_thumb_file_id=row.get("telegram_thumb_file_id"),
     )

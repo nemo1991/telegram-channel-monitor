@@ -30,6 +30,7 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.core.storage import _channels_pg as _channels
 from tgmonitor.core.storage import _lifecycle_pg as _lifecycle
+from tgmonitor.core.storage import _media_pg as _media
 from tgmonitor.core.storage import _thumbnails_pg as _thumbnails
 from tgmonitor.core.storage import _user_meta_pg as _user_meta
 from tgmonitor.core.storage.repository import StorageRepository
@@ -44,75 +45,11 @@ log = logging.getLogger(__name__)
 # 2026-10-16 plan-batch8-1.3:11 个 channel + meta method + `_row_to_channel` 下沉到
 # `_channels_pg.py`。
 # 2026-10-16 plan-batch8-1.4:5 个 thumbnail method + `_row_to_thumbnail` 下沉到
-# `_thumbnails_pg.py`。其它职责(消息 / 媒体)留本文件,后续 commit
-# 1.5~1.6 逐步下沉。
-
-
-# 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
-# DATE 走 m.date;SIZE 走 me.file_size(可能 NULL → NULLS LAST 让 NULL 落到末尾);
-# STATUS 走 me.download_status(枚举字符串字典序 = done<failed<pending<downloading)。
-# value 是 (column, nulls_last) — direction 与 nulls_last 在拼 ORDER BY 时分别处理,
-# 见 _media_order_by_clause(DESC 时变 `col DESC NULLS LAST`,ASC 时 `col ASC NULLS LAST`)。
-_MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
-    SortKey.DATE: ("m.date", False),
-    SortKey.SIZE: ("me.file_size", True),
-    SortKey.STATUS: ("me.download_status", False),
-}
-
-
-def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
-    """media INSERT 占位;`idx` 当前未用(预留 future:把 idx 入表替代
-    自动生成 media.id)— 保留参数为稳定性。
-    """
-    return (
-        message_pk,
-        m.type.value,
-        m.mime_type,
-        m.file_name,
-        m.file_size,
-        m.width,
-        m.height,
-        m.duration,
-        m.telegram_file_id,
-        # 2026-09-29:thumbnail_telegram_file_id 是新增列;MediaDownloader
-        # 用它按需下载缩略图。media.thumb_key / thumb_backend 列旧 schema
-        # 保留不写(由 schema.sql ALTER TABLE 占位;新代码一律走 thumbnails 表)。
-        m.thumbnail_telegram_file_id,
-        m.object_key,
-        m.object_backend,
-        m.emoji,
-        m.download_status.value,
-        m.download_error,
-    )
-
-
-def _row_to_media(row: asyncpg.Record) -> MediaDTO:
-    return MediaDTO(
-        type=MediaType(row["type"]),
-        mime_type=row["mime_type"],
-        file_name=row["file_name"],
-        file_size=row["file_size"],
-        width=row["width"],
-        height=row["height"],
-        duration=row["duration"],
-        telegram_file_id=row["telegram_file_id"],
-        # 2026-09-29:缩略图改独立 thumbnails 表(MediaDTO 不再含
-        # thumb_key / thumb_backend,旧 media 表这两列保留但不读不写)。
-        thumbnail_telegram_file_id=row.get("thumbnail_telegram_file_id"),
-        object_key=row["object_key"],
-        object_backend=row["object_backend"],
-        emoji=row["emoji"],
-        download_status=_media_status(row.get("download_status")),
-        download_error=row.get("download_error"),
-    )
-
-
-def _media_status(value: object | None) -> MediaDownloadStatus:
-    """反序列化 download_status;非法 / 缺失(旧库)回退 pending。"""
-    try:
-        return MediaDownloadStatus(str(value))
-    except ValueError:
-        return MediaDownloadStatus.PENDING
+# `_thumbnails_pg.py`。
+# 2026-10-19 plan-batch8-1.5:5 个 media method + `_MEDIA_SORT_COLUMN` /
+# `_media_status` / `_media_to_row` / `_row_to_media` / `_media_where_clause`
+# 下沉到 `_media_pg.py`。`save_message`(1.6) 跨子调 `_media._media_to_row` /
+# `_media._row_to_media`。其它职责(消息)留本文件,后续 commit 1.6 逐步下沉。
 
 
 def _row_to_message(row: asyncpg.Record, media: list[MediaDTO]) -> MessageDTO:
@@ -396,7 +333,7 @@ class PostgresRepository(StorageRepository):
                             ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
                              $11,$12,$13,$14,$15)
                         """,
-                    *_media_to_row(msg_pk, m, idx),
+                    *_media._media_to_row(msg_pk, m, idx),
                 )
         message.id = msg_pk
         return msg_pk
@@ -523,7 +460,7 @@ class PostgresRepository(StorageRepository):
             media_rows = await conn.fetch(
                 "SELECT * FROM media WHERE message_id = $1 ORDER BY id", row["id"]
             )
-        return _row_to_message(row, [_row_to_media(m) for m in media_rows])
+        return _row_to_message(row, [_media._row_to_media(m) for m in media_rows])
 
     async def list_messages(
         self,
@@ -612,7 +549,7 @@ class PostgresRepository(StorageRepository):
             )
         by_msg: dict[int, list[MediaDTO]] = {}
         for mr in media_rows:
-            by_msg.setdefault(mr["message_id"], []).append(_row_to_media(mr))
+            by_msg.setdefault(mr["message_id"], []).append(_media._row_to_media(mr))
         return [_row_to_message(r, by_msg.get(r["id"], [])) for r in rows]
 
     async def count_messages(self, channel_id: int) -> int:
@@ -662,28 +599,11 @@ class PostgresRepository(StorageRepository):
             )
         return out
 
-    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
-        """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO。
+    # ---- 媒体(2026-08-25 PR #3,2026-10-19 plan-batch8-1.5) ----
 
-        命中条件 `object_key IS NOT NULL AND download_status = 'done'`;partial
-        index(`idx_media_telegram_file_id`)保证单条查询 O(log N) → 命中 LIMIT 1。
-        """
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT * FROM media
-                WHERE telegram_file_id = $1
-                  AND object_key IS NOT NULL
-                  AND download_status = 'done'
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                telegram_file_id,
-            )
-        if row is None:
-            return None
-        return _row_to_media(row)
+    async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
+        """跨频道去重:任一已 DONE 的同 file_id media → 返 DTO — thin delegate."""
+        return await _media.find_media_by_file_id(self, telegram_file_id)
 
     async def list_media(
         self,
@@ -697,93 +617,18 @@ class PostgresRepository(StorageRepository):
         sort: SortKey = SortKey.DATE,
         sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-        """2026-08-25 PR #3:Postgres 后端的 list_media — `messages m JOIN media` + filter。
-
-        SQL `JOIN` 在 PG 里走 `idx_media_*` 索引;`ORDER BY <sort> <dir>, m.id DESC`
-        保证结果顺序稳定(2026-08-25 v1.3.0 PR #6:`sort`/`sort_dir` 可切)。
-        `search` 用 `LOWER(file_name) LIKE LOWER('%...%')` 简单 substring
-        match(MVP,后续用 pg_trgm 优化)。
-        """
-        assert self._pool is not None
-        where_sql, params, next_idx = self._media_where_clause(
-            channel_ids,
-            status,
-            media_type,
-            search,
+        """messages JOIN media + ROW_NUMBER 窗口函数 — thin delegate → `_media_pg`."""
+        return await _media.list_media(
+            self,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            sort_dir=sort_dir,
         )
-        sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
-        nulls_clause = " NULLS LAST" if nulls_last else ""
-        # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
-        # `media` 表没有该列(Mongo 用 `$unwind includeArrayIndex`、
-        # InMemory 用 enumerate,都运行时生成;PG 的 PR #3 把 media 拆成
-        # 独立表时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY
-        # m.id ORDER BY me.id) - 1` 按 me.id(BIGSERIAL,等价于 save_message
-        # 的 INSERT 顺序)在每条 message 内部从 0 起编。与 InMemory enumerate
-        # / Mongo unwind 顺序对齐,UI `(channel_id, telegram_msg_id,
-        # media_idx)` 三元组定位语义不变。
-        sql = [
-            "SELECT m.*, me.id AS media_id, me.type AS media_type,",
-            "       me.mime_type, me.file_name, me.file_size, me.width, me.height,",
-            "       me.duration, me.telegram_file_id, me.object_key,",
-            # 2026-09-29:thumb_key / thumb_backend 已从 MediaDTO 删除,
-            # list_media 不再 SELECT 它们(列保留在 schema 但不读);改 SELECT
-            # thumbnail_telegram_file_id 让 MediaDTO 拿到该字段。
-            "       me.object_backend, me.thumbnail_telegram_file_id, me.emoji,",
-            "       me.download_status AS media_dl_status, me.download_error,",
-            "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx",
-            "FROM messages m JOIN media me ON me.message_id = m.id",
-            f"WHERE {where_sql}",
-            f"ORDER BY {sort_col} {sort_dir.value.upper()}{nulls_clause}, m.id DESC, media_idx ASC",
-        ]
-        if limit:
-            sql.append(f"LIMIT ${next_idx} OFFSET ${next_idx + 1}")
-            params.extend([limit, offset])
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch("\n".join(sql), *params)
-
-        # row → media dict(2 处复用,抽出 helper 避免重复)
-        def _row_to_media_dict(r: asyncpg.Record) -> dict[str, Any]:
-            return {
-                "type": r["media_type"],
-                "mime_type": r["mime_type"],
-                "file_name": r["file_name"],
-                "file_size": r["file_size"],
-                "width": r["width"],
-                "height": r["height"],
-                "duration": r["duration"],
-                "telegram_file_id": r["telegram_file_id"],
-                "object_key": r["object_key"],
-                "object_backend": r["object_backend"],
-                "emoji": r["emoji"],
-                "download_status": r["media_dl_status"],
-                "download_error": r["download_error"],
-                # 2026-09-29:thumb_key / thumb_backend 已删,改 thumbnail_telegram_file_id
-                "thumbnail_telegram_file_id": r["thumbnail_telegram_file_id"],
-            }
-
-        msg_keys = (
-            "id",
-            "channel_id",
-            "telegram_msg_id",
-            "author",
-            "date",
-            "text",
-            "views",
-            "forwards",
-            "reply_to_msg_id",
-            "edited",
-            "raw",
-        )
-        return [
-            (
-                _row_to_message(
-                    {k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]
-                ),
-                r["media_idx"],
-                _row_to_media(_row_to_media_dict(r)),
-            )
-            for r in rows
-        ]
 
     async def count_media(
         self,
@@ -793,80 +638,22 @@ class PostgresRepository(StorageRepository):
         media_type: MediaType | None = None,
         search: str = "",
     ) -> int:
-        """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,数总数供分页 UI 用。
-
-        复用 `_media_where_clause` 拼同 WHERE 子句,主查询去掉 ORDER/LIMIT/OFFSET,
-        `SELECT count(*)::int`。Postgres 走 `JOIN + WHERE` 同索引,O(log N)。
-        """
-        assert self._pool is not None
-        where_sql, params, _ = self._media_where_clause(
-            channel_ids,
-            status,
-            media_type,
-            search,
+        """与 list_media 同 filter — thin delegate → `_media_pg`."""
+        return await _media.count_media(
+            self,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
         )
-        async with self._pool.acquire() as conn:
-            return await conn.fetchval(
-                f"SELECT count(*)::int FROM messages m "
-                f"JOIN media me ON me.message_id = m.id WHERE {where_sql}",
-                *params,
-            )
-
-    def _media_where_clause(
-        self,
-        channel_ids: list[int] | None,
-        status: MediaDownloadStatus | None,
-        media_type: MediaType | None,
-        search: str,
-    ) -> tuple[str, list[Any], int]:
-        """2026-08-25 v1.3.0 PR #6:Postgres `list_media` / `count_media` 共用的 WHERE 拼装。
-
-        返回 `(where_sql, params, next_param_idx)` — caller 接到后可继续
-        追加 `ORDER BY` / `LIMIT` / `OFFSET`(注意 next_idx 用)。`WHERE 1=1`
-        占位保留,后续 AND 条件直接拼字符串。
-        """
-        clauses: list[str] = ["1=1"]
-        params: list[Any] = []
-        idx = 1
-        if channel_ids:
-            clauses.append(f"m.channel_id = ANY(${idx})")
-            params.append(channel_ids)
-            idx += 1
-        if status is not None:
-            clauses.append(f"me.download_status = ${idx}")
-            params.append(status.value)
-            idx += 1
-        if media_type is not None:
-            clauses.append(f"me.type = ${idx}")
-            params.append(media_type.value)
-            idx += 1
-        if search:
-            clauses.append(f"LOWER(COALESCE(me.file_name, '')) LIKE ${idx}")
-            params.append(f"%{search.lower()}%")
-            idx += 1
-        return " AND ".join(clauses), params, idx
 
     async def count_media_by_object_key(self, object_key: str) -> int:
-        """2026-08-25 PR #3:refcount — `SELECT count(*)` 走索引 O(log N)。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            return await conn.fetchval(
-                "SELECT count(*)::int FROM media WHERE object_key = $1",
-                object_key,
-            )
+        """refcount — thin delegate → `_media_pg`."""
+        return await _media.count_media_by_object_key(self, object_key)
 
     async def count_media_by_channel(self, channel_id: int) -> int:
-        """2026-08-25 v1.3.0 PR #8:该频道全部 media 数(含 PENDING/FAILED)。
-
-        `JOIN messages` + WHERE channel_id + count media rows。
-        """
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            return await conn.fetchval(
-                "SELECT count(*)::int FROM media me "
-                "JOIN messages m ON me.message_id = m.id WHERE m.channel_id = $1",
-                channel_id,
-            )
+        """该频道全部 media 数 — thin delegate → `_media_pg`."""
+        return await _media.count_media_by_channel(self, channel_id)
 
     # ---- 缩略图(2026-09-29 独立存储,2026-10-16 plan-batch8-1.4) ----
 
