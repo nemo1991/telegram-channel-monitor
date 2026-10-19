@@ -1,10 +1,10 @@
 """MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。
 
-2026-10-19 plan-batch9-β:5 mixin + BusMixin 拆分第二步 — channels 域
-下沉到 `_channels.py:ChannelsMixin`(2 handler + 4 method +
-`channels_changed` signal + `known_channels` 字段)。本 facade 多继承
-`ChannelsMixin, BusMixin, QObject`;`_wire_bus` 末尾 `super().wire_bus()`
-让 BusMixin 协议接管 channels 域自动挂。
+2026-10-19 plan-batch9-γ:5 mixin + BusMixin 拆分第三步 — system 域
+下沉到 `_system.py:SystemMixin`(7 handler + 4 statusbar signal +
+`set_selected_channel` + `_message_count` 字段)。本 facade 多继承
+`ChannelsMixin, SystemMixin, BusMixin, QObject`;`_wire_bus` 末尾
+`super().wire_bus()` 让 BusMixin 协议接管 channels + system 双域自动挂。
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
-from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
     DeleteChannelPreview,
@@ -31,15 +30,10 @@ from tgmonitor.core.dto import (
 from tgmonitor.core.events import (
     BatchDone,
     BatchProgress,
-    ChannelSyncDone,
-    ChannelSyncProgress,
-    ConnectionStateChanged,
-    ErrorOccurred,
     Event,
     EventBus,
     ExportDone,
     ExportProgress,
-    LoginStateChanged,
     MediaDeleted,
     MediaDownloaded,
     MediaDownloadProgress,
@@ -49,12 +43,11 @@ from tgmonitor.core.events import (
     MessageInteractionsChanged,
     MessageReceived,
     NotificationRequested,
-    QuitRequested,
-    SettingsChanged,
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.viewmodels._base import BusMixin
 from tgmonitor.ui.viewmodels._channels import ChannelsMixin
+from tgmonitor.ui.viewmodels._system import SystemMixin
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -63,7 +56,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
+class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
     """EventBus → Qt signal 适配层(VM 模式)。
 
     # 唯一职责:把 core 内部事件转 Qt signal,在 qasync 主线程 / 同一 loop
@@ -156,19 +149,10 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
     # 实时性受服务端策略限制。MainWindow 接到 → 调 LIVE 行
     # `refresh_reactions`(局部更新,不重建列表)。
     message_interactions_changed = Signal(object)
-    # 2026-10-01 v1.11.x 状态栏组件化:4 个新 Qt signal — payload 透传,状态栏
-    # 子组件订阅后自己渲染。MainWindow 不再直接 mutate status bar widget 实例。
-    # - selected_channel_changed:payload str | None(LIVE 多选切换 / clear)
-    # - backend_label_changed:payload str(DB=…,ObjectStore=…)
-    # - last_message_received:payload datetime | None(每次 message_received
-    #   末尾 emit,状态栏 _LastMessageLabel 取最新时间)
-    # - stats_changed:payload tuple[int,int](监听频道数,消息总数)— 监听
-    #   数从 channels_changed handler emit,消息总数从 message_received
-    #   末尾累加 emit
-    selected_channel_changed = Signal(object)
-    backend_label_changed = Signal(str)
-    last_message_received = Signal(object)
-    stats_changed = Signal(object)
+    # 2026-10-19 plan-batch9-γ:`selected_channel_changed` /
+    # `backend_label_changed` / `last_message_received` / `stats_changed` 4
+    # 个状态栏 signal 已下沉到 `_system.py:SystemMixin`(与 7 system
+    # handler + `set_selected_channel` + `_message_count` 字段一并搬)。
 
     def __init__(
         self,
@@ -207,11 +191,10 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
         # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发 — TDLib 端 0.5s
         # 节流,VM 不再节流,直接 emit 给 UI(Qt coalesce 自动批量)。
         b.subscribe(MediaDownloadProgress, self._on_media_download_progress)
-        b.subscribe(LoginStateChanged, self._on_login_state)
-        b.subscribe(ConnectionStateChanged, self._on_conn_state)
-        # 2026-10-19 plan-batch9-β:ChannelSubscribed / ChannelUnsubscribed
-        # 已下沉到 ChannelsMixin._BUS_HANDLERS,BusMixin.wire_bus() 走 MRO
-        # walk 自动挂(末尾 super().wire_bus() 调用)。
+        # 2026-10-19 plan-batch9-γ:LoginStateChanged / ConnectionStateChanged /
+        # QuitRequested / ErrorOccurred / SettingsChanged / ChannelSyncProgress /
+        # ChannelSyncDone 已下沉到 SystemMixin._BUS_HANDLERS,BusMixin.wire_bus()
+        # 走 MRO walk 自动挂(末尾 super().wire_bus() 调用)。
         b.subscribe(ExportDone, self._on_export_done)
         # 2026-08-30 v1.5.0 PR #A3:导出进度订阅 — ExportService 每页写完
         # 发一次,UI 侧 ExportProgressDialog 接到 signal 刷新 QProgressBar。
@@ -220,20 +203,13 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
         # MainWindow 接到 signal 后 BatchProgressDialog 刷新进度。
         b.subscribe(BatchProgress, self._on_batch_progress)
         b.subscribe(BatchDone, self._on_batch_done)
-        b.subscribe(ErrorOccurred, self._on_error)
-        b.subscribe(SettingsChanged, self._on_settings_changed)
-        b.subscribe(ChannelSyncProgress, self._on_sync_progress)
-        b.subscribe(ChannelSyncDone, self._on_sync_done)
         # Media Manager 转发(2026-08-24)
         b.subscribe(MediaRetried, self._on_media_retried)
         b.subscribe(MediaDeleted, self._on_media_deleted)
         b.subscribe(MediaReconcileFinished, self._on_media_reconcile_done)
-        # 2026-08-30 v1.5.0 PR #A4:tray menu 退出事件 — MainWindow 接到
-        # `quit_requested` signal 走 qt_app.quit → aboutToQuit → 干净退出。
-        b.subscribe(QuitRequested, self._on_quit_requested)
-        # 2026-10-19 plan-batch9-β:BusMixin 协议接管已下沉 mixin 的 handler
-        # 自动挂(当前仅 ChannelsMixin 2 events);剩余 19 events 仍由
-        # 本 facade 手写,等 C-η 收口时统一迁到各 mixin._BUS_HANDLERS。
+        # 2026-10-19 plan-batch9-γ:BusMixin 协议接管已下沉 mixin 的 handler
+        # 自动挂(当前 ChannelsMixin 2 + SystemMixin 7 = 9 events);剩余 12
+        # events 仍由本 facade 手写,等 C-η 收口时统一迁到各 mixin._BUS_HANDLERS。
         super().wire_bus()
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
@@ -300,39 +276,10 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
             return
         self.media_download_progress.emit(e)
 
-    async def _on_quit_requested(self, e: Event) -> None:
-        """2026-08-30 v1.5.0 PR #A4:tray menu「退出」/「暂停监听」事件。
-
-        2026-09-03 v1.6.1:pause=True 现在真生效 — 调 AppService.pause_monitor /
-        resume_monitor(幂等),bus 后续发 MonitoringPaused/Resumed 事件,
-        VM 不重复 emit monitoring_paused/resumed signal(订阅方在 service 已发)。
-        `pause=False` → emit Qt quit 信号,Qt 主循环走 aboutToQuit
-        → _shutdown_then_quit → 真退出。
-        """
-        if not isinstance(e, QuitRequested):
-            return
-        if e.pause:
-            if self.app.is_paused:
-                log.info("QuitRequested(pause=True) — 当前已 paused,resume")
-                await self.app.resume_monitor(source="tray")
-            else:
-                log.info("QuitRequested(pause=True) — 当前未 paused,pause")
-                await self.app.pause_monitor(source="tray")
-            return
-        # 真退出 — emit 到 main_window 持有 qt_app 信号;此处不便 import qt_app,
-        # 改发 signal 通知 main_window 真退出
-        self.quit_requested.emit()
-
-    async def _on_login_state(self, e: Event) -> None:
-        if not isinstance(e, LoginStateChanged):
-            return
-        self.login_state.emit(e.state)
-
-    async def _on_conn_state(self, e: Event) -> None:
-        if not isinstance(e, ConnectionStateChanged):
-            return
-        self.conn_state.emit(e.state)
-
+    # 2026-10-19 plan-batch9-γ:`_on_quit_requested` / `_on_login_state` /
+    # `_on_conn_state` / `_on_error` / `_on_settings_changed` /
+    # `_on_sync_progress` / `_on_sync_done` 7 个 system handler 已下沉到
+    # `_system.py:SystemMixin`。
     async def _on_export_done(self, e: Event) -> None:
         if not isinstance(e, ExportDone):
             return
@@ -372,35 +319,6 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
         if not isinstance(e, BatchDone):
             return
         self.batch_done.emit(e)
-
-    async def _on_error(self, e: Event) -> None:
-        if not isinstance(e, ErrorOccurred):
-            return
-        self.error.emit(f"[{e.source}] {e.message}")
-
-    async def _on_settings_changed(self, e: Event) -> None:
-        if not isinstance(e, SettingsChanged):
-            return
-        # events.py 里 SettingsChanged.new_settings: object | None(避免循环 import),
-        # 这里 isinstance 窄化到 Settings,再用真字段拼 status 行。
-        if not isinstance(e.new_settings, Settings):
-            return
-        new = e.new_settings
-        backend_label = f"DB={new.db_backend.value}, ObjectStore={new.objectstore_backend.value}"
-        self.settings_changed.emit(e.what, e.needs_relogin, e.needs_restart, backend_label)
-        # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _BackendLabel 订阅本信号,
-        # 自管更新,不再需要 MainWindow 转发。
-        self.backend_label_changed.emit(backend_label)
-
-    async def _on_sync_progress(self, e: Event) -> None:
-        if not isinstance(e, ChannelSyncProgress):
-            return
-        self.sync_progress.emit(e)
-
-    async def _on_sync_done(self, e: Event) -> None:
-        if not isinstance(e, ChannelSyncDone):
-            return
-        self.sync_done.emit(e)
 
     # ---- Media Manager 事件转发(2026-08-24) ----
 
@@ -583,7 +501,10 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
             # `render_pixmap(bytes)` 生成 QPixmap,符合「VM 是 EventBus+signal
             # 适配器,不依赖 Qt 像素层」的分层约束。
             self.thumbnail_loaded.emit(
-                channel_id, telegram_msg_id, media_idx, bytes(data),
+                channel_id,
+                telegram_msg_id,
+                media_idx,
+                bytes(data),
             )
 
         async def _go() -> object:
@@ -621,15 +542,8 @@ class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
 
     # ---- UI 主动调用 ----
 
-    def set_selected_channel(self, name: str | None) -> None:
-        """2026-10-01 v1.11.x 状态栏组件化:MainWindow 在 LIVE 多选 / 切换选中
-        频道后调本方法,emit `selected_channel_changed` 让 status_bar
-        `_SelectedChannelLabel` 更新显示。
-
-        Args:
-            name: 选中频道标题;None 表示清除选中(切走 / 用户按 Esc)。
-        """
-        self.selected_channel_changed.emit(name)
+    # 2026-10-19 plan-batch9-γ:`set_selected_channel` 已下沉到
+    # `_system.py:SystemMixin`(与 4 statusbar signal 一起搬)。
 
     # 2026-10-19 plan-batch9-β:`bootstrap_ui` /
     # `refresh_subscribed_channels` / `subscribe_channel` /

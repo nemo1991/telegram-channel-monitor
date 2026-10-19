@@ -157,7 +157,9 @@ class ChannelsMixin(_Base):
     def subscribe_channel(self, ch: ChannelDTO) -> None:
         """订阅频道 — 后台 fire `app.subscribe_channel`(同步入 storage + 发事件)。"""
         run_coro(
-            self.loop, self.app.subscribe_channel(ch), error_label="subscribe_channel",
+            self.loop,
+            self.app.subscribe_channel(ch),
+            error_label="subscribe_channel",
         )
 
     def unsubscribe_channel(self, channel_id: int) -> None:
