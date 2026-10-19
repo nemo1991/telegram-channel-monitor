@@ -1,10 +1,21 @@
 """MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。
 
-2026-10-19 plan-batch9-γ:5 mixin + BusMixin 拆分第三步 — system 域
-下沉到 `_system.py:SystemMixin`(7 handler + 4 statusbar signal +
-`set_selected_channel` + `_message_count` 字段)。本 facade 多继承
-`ChannelsMixin, SystemMixin, BusMixin, QObject`;`_wire_bus` 末尾
-`super().wire_bus()` 让 BusMixin 协议接管 channels + system 双域自动挂。
+2026-10-19 plan-batch9-δ:5 mixin + BusMixin 拆分第四步 — messages 域
+下沉到 `_messages.py:MessagesMixin`(3 handler + 2 method +
+6 signal:`message_received` / `message_edited` /
+`message_interactions_changed` / `message_search_results` /
+`last_message_received` / `stats_changed`)。本 facade 多继承
+`ChannelsMixin, SystemMixin, MessagesMixin, BusMixin, QObject`;
+`_wire_bus` 末尾 `super().wire_bus()` 让 BusMixin 协议接管 channels
++ system + messages 三域自动挂(共 12 events)。
+
+C-δ 同步归位修正:`last_message_received` / `stats_changed` 2 个
+signal 由 C-γ 阶段放在 SystemMixin(归"状态栏组件化"语义统一),
+C-δ 创建 messages mixin 时发现违反 plan §8 风险 #3 原则
+**字段与 emit 该字段的 signal 同 mixin 持有**(`_message_count` 字段
++ 这 2 signal 都由 `MessageReceived` 唯一触发),从 SystemMixin 搬出
+归位到 MessagesMixin。本 facade 的 `_message_count = 0` init 保留
+(plan §8 风险 #2 "单点 init 收敛"惯例,字段在 facade `__init__` 兜底)。
 """
 
 from __future__ import annotations
@@ -12,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
@@ -39,14 +49,12 @@ from tgmonitor.core.events import (
     MediaDownloadProgress,
     MediaReconcileFinished,
     MediaRetried,
-    MessageEdited,
-    MessageInteractionsChanged,
-    MessageReceived,
     NotificationRequested,
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.viewmodels._base import BusMixin
 from tgmonitor.ui.viewmodels._channels import ChannelsMixin
+from tgmonitor.ui.viewmodels._messages import MessagesMixin
 from tgmonitor.ui.viewmodels._system import SystemMixin
 
 if TYPE_CHECKING:
@@ -56,7 +64,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
+class MonitorViewModel(ChannelsMixin, SystemMixin, MessagesMixin, BusMixin, QObject):
     """EventBus → Qt signal 适配层(VM 模式)。
 
     # 唯一职责:把 core 内部事件转 Qt signal,在 qasync 主线程 / 同一 loop
@@ -73,8 +81,6 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
     # Python 对象本身,跨线程在 qasync 同一 loop 下安全。
     """
 
-    message_received = Signal(object)
-    message_edited = Signal(object)  # 2026-08-24:编辑事件 MessageDTO
     media_downloaded = Signal(object)  # MediaDownloaded(下载结束,成功或失败)
     # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发。`Signal(object)` 承载
     # `MediaDownloadProgress` 事件本身;UI 在 media_manager_widget.on_download_progress
@@ -139,20 +145,14 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
     # - tray icon 视觉由 tray_icon 自己监听 bus(MonitoringPaused/Resumed)
     monitoring_paused = Signal(str)
     monitoring_resumed = Signal(str)
-    # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 — payload list[MessageDTO]。
-    # MainWindow 接到 → live_view.set_messages(messages) 批量替换。
-    # 空 list = 清空视图(query 没命中或被 clear)。
-    message_search_results = Signal(object)
-    # 2026-09-11 v1.7.4:reactions 增量推送 — payload `MessageInteractionsChanged`。
-    # TDLib `updateMessageReactions` 是 bots-only,user client 不收 — 依赖
-    # `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),
-    # 实时性受服务端策略限制。MainWindow 接到 → 调 LIVE 行
-    # `refresh_reactions`(局部更新,不重建列表)。
-    message_interactions_changed = Signal(object)
+    # 2026-10-19 plan-batch9-δ:messages 域 6 signal 已下沉到
+    # `_messages.py:MessagesMixin`:`message_received` / `message_edited` /
+    # `message_interactions_changed` / `message_search_results` /
+    # `last_message_received` / `stats_changed`(后 2 个由 C-γ 在
+    # SystemMixin 中归位到此处)。3 handler + 2 method 也同搬。
     # 2026-10-19 plan-batch9-γ:`selected_channel_changed` /
-    # `backend_label_changed` / `last_message_received` / `stats_changed` 4
-    # 个状态栏 signal 已下沉到 `_system.py:SystemMixin`(与 7 system
-    # handler + `set_selected_channel` + `_message_count` 字段一并搬)。
+    # `backend_label_changed` 2 个系统子组件状态栏 signal 留 SystemMixin
+    # (`last_message_received` / `stats_changed` 已归位到 MessagesMixin)。
 
     def __init__(
         self,
@@ -183,10 +183,9 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
 
     def _wire_bus(self) -> None:
         b: EventBus = self.app.bus
-        b.subscribe(MessageReceived, self._on_message_received)
-        b.subscribe(MessageEdited, self._on_message_edited)
-        # 2026-09-11 v1.7.4:reactions / views 增量推送 → MainWindow 局部刷新 LIVE 行。
-        b.subscribe(MessageInteractionsChanged, self._on_message_interactions_changed)
+        # 2026-10-19 plan-batch9-δ:MessageReceived / MessageEdited /
+        # MessageInteractionsChanged 已下沉到 MessagesMixin._BUS_HANDLERS,
+        # BusMixin.wire_bus() 走 MRO walk 自动挂(末尾 super().wire_bus() 调用)。
         b.subscribe(MediaDownloaded, self._on_media_downloaded)
         # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发 — TDLib 端 0.5s
         # 节流,VM 不再节流,直接 emit 给 UI(Qt coalesce 自动批量)。
@@ -207,45 +206,18 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
         b.subscribe(MediaRetried, self._on_media_retried)
         b.subscribe(MediaDeleted, self._on_media_deleted)
         b.subscribe(MediaReconcileFinished, self._on_media_reconcile_done)
-        # 2026-10-19 plan-batch9-γ:BusMixin 协议接管已下沉 mixin 的 handler
-        # 自动挂(当前 ChannelsMixin 2 + SystemMixin 7 = 9 events);剩余 12
-        # events 仍由本 facade 手写,等 C-η 收口时统一迁到各 mixin._BUS_HANDLERS。
+        # 2026-10-19 plan-batch9-δ:BusMixin 协议接管已下沉 mixin 的 handler
+        # 自动挂(ChannelsMixin 2 + SystemMixin 7 + MessagesMixin 3 = 12 events);
+        # 剩余 9 events 仍由本 facade 手写,等 C-η 收口时统一迁到各
+        # mixin._BUS_HANDLERS。
         super().wire_bus()
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
 
-    async def _on_message_received(self, e: Event) -> None:
-        if not isinstance(e, MessageReceived) or e.message is None:
-            return
-        # 直接 emit MessageDTO — 不要 asdict,会丢嵌套 MediaDTO 类型
-        self.message_received.emit(e.message)
-        # 2026-10-01 v1.11.x 状态栏组件化:累计消息数 + emit 状态栏 2 signal
-        # (last_message_received / stats_changed)。状态栏 _StatsLabel /
-        # _LastMessageLabel 自己渲染;MainWindow 不再关心。
-        self._message_count += 1
-        self.last_message_received.emit(e.message.date)
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
-
-    async def _on_message_edited(self, e: Event) -> None:
-        """2026-08-24:TDLib updateMessageContent 来的编辑事件 → 转发 UI。
-
-        UI 通过 message_edited 信号 → MessageView.replace_message 找到现有
-        cell 重渲,不增删 row。
-        """
-        if not isinstance(e, MessageEdited) or e.message is None:
-            return
-        self.message_edited.emit(e.message)
-
-    async def _on_message_interactions_changed(self, e: Event) -> None:
-        """2026-09-11 v1.7.4:TDLib `updateMessageInteractionInfo` 来的 reactions / views 变化。
-
-        转发到 MainWindow,后者区分 reactions / views 分别走局部刷新路径。
-        详见 `message_interactions_changed` signal docstring — TDLib 限制:
-        `updateMessageReactions` bots-only,user client 不收。
-        """
-        if not isinstance(e, MessageInteractionsChanged):
-            return
-        self.message_interactions_changed.emit(e)
+    # 2026-10-19 plan-batch9-δ:`_on_message_received` / `_on_message_edited` /
+    # `_on_message_interactions_changed` 3 个 messages handler 已下沉到
+    # `_messages.py:MessagesMixin`(与 6 signal + 2 method + `_BUS_HANDLERS`
+    # 3 events 一并搬)。
 
     async def _on_media_downloaded(self, e: Event) -> None:
         if not isinstance(e, MediaDownloaded):
@@ -544,6 +516,9 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
 
     # 2026-10-19 plan-batch9-γ:`set_selected_channel` 已下沉到
     # `_system.py:SystemMixin`(与 4 statusbar signal 一起搬)。
+    # 2026-10-19 plan-batch9-δ:本 mixin 阶段再校正 — statusbar signal
+    # 剩 selected_channel_changed / backend_label_changed 2 个;
+    # last_message_received / stats_changed 已归位 MessagesMixin。
 
     # 2026-10-19 plan-batch9-β:`bootstrap_ui` /
     # `refresh_subscribed_channels` / `subscribe_channel` /
@@ -551,72 +526,9 @@ class MonitorViewModel(ChannelsMixin, SystemMixin, BusMixin, QObject):
     # `_channels.py:ChannelsMixin`(与 2 handler + `channels_changed`
     # signal + `known_channels` 字段一并搬)。
 
-    def load_recent_messages(self) -> None:
-        """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
-
-        async def _go() -> None:
-            msgs = await self.app.list_messages(limit=200)
-            for m in msgs:
-                self.message_received.emit(m)
-
-        run_coro(self.loop, _go(), error_label="load_recent_messages")
-
-    def search_messages(
-        self,
-        text: str = "",
-        *,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
-        limit: int = 200,
-        channel_ids: list[int] | None = None,
-        scope: str = "subscribed",
-        favorite_only: bool = False,
-        tag_only: bool = False,
-        pinned_only: bool = False,
-    ) -> None:
-        """2026-09-02 v1.5.2 PR #B5 + 2026-09-03 v1.5.3 PR #D2 +
-        2026-09-14 v1.7.5 PR #8:VM 异步拉搜索结果 → emit `message_search_results`。
-
-        行为契约:
-        - `text=""` 且 `date_from/to` 全 None → 无意义查询,emit `[]`(清空视图)。
-          MainWindow 用此判定"清空搜索框 = 恢复 LIVE 流(空 search 视为清空)"。
-        - `channel_ids=None` + `scope="subscribed"`(默认)→ 走已订阅频道
-          (与 v1.5.2 行为一致)。
-        - `channel_ids=None` + `scope="all"`(PR #D2)→ 走
-          `include_unsubscribed=True`,跨频道聚合(含已退订但 storage 仍
-          有历史消息的频道)。
-        - `channel_ids=...` 显式传 → 忽略 scope(精细控制场景)。
-        - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
-        - 2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
-          (SearchBar ★/🏷/📌 3 toggle),透传 `app.list_messages` → 存储层
-          SQL / Mongo 子句,AND 语义任一 True 必须命中。
-
-        走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
-        线程 loop,Qt signal 安全 → `live_view.set_messages(...)` 主线程 op。
-
-        UI 端双过滤(在 MainWindow._on_search_changed):text 一变即时
-        `live_view.set_filter(text)` 快过滤 LIVE 流;同时启 300ms debounce
-        调本方法 — search_messages 结果到时 `set_messages` 替换视图
-        (search 命中的命中子集)。两者不冲突:即时快过滤不重 IO,异步拉
-        替换视图是「权威」。
-        """
-
-        async def _go() -> None:
-            include_unsub = scope == "all" and channel_ids is None
-            msgs = await self.app.list_messages(
-                channel_ids=channel_ids,
-                date_from=date_from,
-                date_to=date_to,
-                limit=limit,
-                search=text,
-                include_unsubscribed=include_unsub,
-                favorite_only=favorite_only,
-                tag_only=tag_only,
-                pinned_only=pinned_only,
-            )
-            self.message_search_results.emit(msgs)
-
-        run_coro(self.loop, _go(), error_label="search_messages")
+    # 2026-10-19 plan-batch9-δ:`load_recent_messages` / `search_messages`
+    # 2 method 已下沉到 `_messages.py:MessagesMixin`(与 3 handler + 6 signal
+    # + `_BUS_HANDLERS` 3 events 一并搬)。
 
     def start_export(self, req: ExportRequest) -> asyncio.Future[None]:
         """后台 fire `app.export(req)` 异步生成器,UI 不阻塞。

@@ -1,36 +1,44 @@
 # mypy: disable-error-code="attr-defined,has-type,unused-ignore"
-"""SystemMixin — 状态栏 + 系统事件 handler 集合 — 2026-10-19 plan-batch9-γ。
+"""SystemMixin — 状态栏(系统子组件)+ 系统事件 handler 集合 — 2026-10-19 plan-batch9-γ+δ。
 
 `MonitorViewModel` 拆 5 mixin 第三步(2026-10-19
-plan-batch9-γ):system 域 = 7 handler + 4 status bar signal +
-1 method + `_message_count` 状态字段。
+plan-batch9-γ + 2026-10-19 plan-batch9-δ 归位修正):system 域 =
+7 handler + 2 status bar signal + 1 method。
 
 - handler(7):`_on_login_state` / `_on_conn_state` /
   `_on_quit_requested`(含 pause 调 `app.pause_monitor` /
   `resume_monitor`)/ `_on_error` / `_on_settings_changed`(emit
   `settings_changed` + `backend_label_changed`)/ `_on_sync_progress` /
   `_on_sync_done`
-- status bar signal(4):`selected_channel_changed` /
-  `backend_label_changed` / `last_message_received` / `stats_changed`
-  — 2026-10-01 v1.11.x 状态栏组件化,4 个 payload 透传
+- status bar signal(2 — 2026-10-19 plan-batch9-δ 归位修正):
+  `selected_channel_changed` / `backend_label_changed`
+  — 2026-10-01 v1.11.x 状态栏组件化,这 2 个跟系统状态(DB、ObjectStore
+  后端)绑定,留本 mixin
 - method:`set_selected_channel`(emit `selected_channel_changed` 给
   `_SelectedChannelLabel`)
-- 状态字段:`_message_count: int = 0`(由 facade `__init__` 显式设;
-  跨 mixin 累加,本 mixin 不写 `__init__`)
+
+**归位修正(2026-10-19 plan-batch9-δ)**:`last_message_received` /
+`stats_changed` 2 个 signal 原 C-γ 放在本 mixin(`"状态栏组件化"`
+语义统一),C-δ 创建 `_messages.py` 时发现违反 plan §8 风险 #3 原则
+**字段与 emit 该字段的 signal 同 mixin 持有**(`_message_count` 字段
++ 这 2 signal 都由 `MessageReceived` 唯一触发),从本 mixin 搬出到
+`_messages.py:MessagesMixin`。`_message_count: int = 0` 字段也
+跟随归位(实际值仍由 facade `__init__` 显式设,本 mixin 不持字段,
+仅语义归类)。
 
 跨 mixin access:`_on_login_state` 不跨;`_on_quit_requested` 调
 `self.app.is_paused / pause_monitor / resume_monitor`(AppService
-facade)+ emit `quit_requested`;`_on_settings_changed` 调
-`self.app.bus` 间接跨 mixin 但都走 facade — 跨 mixin attribute
-由文件头 `# mypy: disable-error-code` 屏蔽。
+facade)+ emit `quit_requested`;`_on_settings_changed` emit
+`settings_changed` + `backend_label_changed`(本 mixin 2 signal)— 跨
+mixin attribute 由文件头 `# mypy: disable-error-code` 屏蔽。
 
-`stats_changed.emit` / `last_message_received.emit` / 等跨 mixin
-emit 由 Shiboken metaclass 透传,ChannelsMixin 业务
-(`_on_channel_subscribed`)已 emit stats_changed,本 mixin 不
-重复声明 — 描述符唯一在 SystemMixin,其它 mixin 跨访问。
+`stats_changed` / `last_message_received` 跨 mixin emit 仍合法:由
+MessagesMixin 持有 signal,`ChannelsMixin._on_channel_subscribed`
+跨 mixin emit `self.stats_changed.emit(...)` 由 Shiboken metaclass
+聚合 Signal 描述符透传。
 
-MRO:`MonitorViewModel(ChannelsMixin, SystemMixin, ..., BusMixin,
-QObject)`。
+MRO:`MonitorViewModel(ChannelsMixin, SystemMixin, MessagesMixin,
+BusMixin, QObject)` — MessagesMixin 在 System 之后,BusMixin 末。
 """
 
 from __future__ import annotations
@@ -62,31 +70,29 @@ log = logging.getLogger(__name__)
 
 
 class SystemMixin(_Base):
-    """系统事件 + 状态栏 4 signal — 2026-10-19 plan-batch9-γ。
+    """系统事件 + 状态栏 2 signal(系统子组件) — 2026-10-19 plan-batch9-γ+δ。
 
     公开 API 1:1 保留原 `MonitorViewModel` system 域:
     - 1 method:`set_selected_channel`
-    - 4 status bar signal:`selected_channel_changed` /
-      `backend_label_changed` / `last_message_received` / `stats_changed`
-    - 1 状态字段:`_message_count`(由 facade `__init__` 显式设)
+    - 2 status bar signal(系统子组件):`selected_channel_changed` /
+      `backend_label_changed`
+    - 2026-10-19 plan-batch9-δ 归位:`last_message_received` /
+      `stats_changed` 2 signal 已搬到 MessagesMixin(语义由
+      MessageReceived 触发)
     - 7 EventBus handler:LoginStateChanged / ConnectionStateChanged /
       QuitRequested / ErrorOccurred / SettingsChanged /
       ChannelSyncProgress / ChannelSyncDone
     """
 
-    # 2026-10-01 v1.11.x 状态栏组件化:4 个新 Qt signal — payload 透传
+    # 2026-10-01 v1.11.x 状态栏组件化:2 个系统子组件 Qt signal — payload 透传
     # (2026-10-19 plan-batch9-γ:从 facade 搬到本 mixin)。
     # - selected_channel_changed:payload str | None(LIVE 多选切换 / clear)
     # - backend_label_changed:payload str(DB=…,ObjectStore=…)
-    # - last_message_received:payload datetime | None(每次 message_received
-    #   末尾 emit,状态栏 _LastMessageLabel 取最新时间)
-    # - stats_changed:payload tuple[int,int](监听频道数,消息总数)— 监听
-    #   数从 channels_changed handler emit,消息总数从 message_received
-    #   末尾累加 emit
+    # `last_message_received` / `stats_changed` 2 个 messages 域 signal
+    # 2026-10-19 plan-batch9-δ 归位到 `_messages.py:MessagesMixin`(由
+    # MessageReceived 唯一触发,与 `_message_count` 字段同 mixin)。
     selected_channel_changed = Signal(object)
     backend_label_changed = Signal(str)
-    last_message_received = Signal(object)
-    stats_changed = Signal(object)
 
     _BUS_HANDLERS = {
         LoginStateChanged: "_on_login_state",
