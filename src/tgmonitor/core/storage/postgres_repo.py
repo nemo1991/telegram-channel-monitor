@@ -30,6 +30,7 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.core.storage import _channels_pg as _channels
 from tgmonitor.core.storage import _lifecycle_pg as _lifecycle
+from tgmonitor.core.storage import _thumbnails_pg as _thumbnails
 from tgmonitor.core.storage import _user_meta_pg as _user_meta
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import SchemaReport
@@ -41,8 +42,10 @@ log = logging.getLogger(__name__)
 # delegate。
 # 2026-10-16 plan-batch8-1.2:5 个 user_meta method 下沉到 `_user_meta_pg.py`。
 # 2026-10-16 plan-batch8-1.3:11 个 channel + meta method + `_row_to_channel` 下沉到
-# `_channels_pg.py`。其它职责(消息 / 媒体 / 缩略图)留本文件,后续 commit
-# 1.4~1.6 逐步下沉。
+# `_channels_pg.py`。
+# 2026-10-16 plan-batch8-1.4:5 个 thumbnail method + `_row_to_thumbnail` 下沉到
+# `_thumbnails_pg.py`。其它职责(消息 / 媒体)留本文件,后续 commit
+# 1.5~1.6 逐步下沉。
 
 
 # 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
@@ -101,24 +104,6 @@ def _row_to_media(row: asyncpg.Record) -> MediaDTO:
         emoji=row["emoji"],
         download_status=_media_status(row.get("download_status")),
         download_error=row.get("download_error"),
-    )
-
-
-def _row_to_thumbnail(row: asyncpg.Record) -> ThumbnailDTO:
-    return ThumbnailDTO(
-        channel_id=row["channel_id"],
-        telegram_msg_id=row["telegram_msg_id"],
-        media_idx=row["media_idx"],
-        object_key=row["object_key"],
-        object_backend=row["object_backend"],
-        mime_type=row["mime_type"],
-        file_size=row["file_size"],
-        width=row["width"],
-        height=row["height"],
-        sha256=row["sha256"],
-        download_status=_media_status(row.get("download_status")),
-        download_error=row.get("download_error"),
-        telegram_thumb_file_id=row.get("telegram_thumb_file_id"),
     )
 
 
@@ -883,52 +868,11 @@ class PostgresRepository(StorageRepository):
                 channel_id,
             )
 
-    # ---- 缩略图(2026-09-29 独立存储) ----
+    # ---- 缩略图(2026-09-29 独立存储,2026-10-16 plan-batch8-1.4) ----
 
     async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
-        """upsert thumb 行;主键 (channel_id, telegram_msg_id, media_idx)。
-
-        ON CONFLICT 三 key 时覆盖所有可写列;幂等 — 多次调以最新一次为准。
-        与 media 行无关(各自独立的 storage 状态机)。
-        """
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                    INSERT INTO thumbnails
-                        (channel_id, telegram_msg_id, media_idx,
-                         object_key, object_backend,
-                         mime_type, file_size, width, height, sha256,
-                         download_status, download_error,
-                         telegram_thumb_file_id)
-                    VALUES
-                        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-                    ON CONFLICT (channel_id, telegram_msg_id, media_idx) DO UPDATE SET
-                        object_key = EXCLUDED.object_key,
-                        object_backend = EXCLUDED.object_backend,
-                        mime_type = EXCLUDED.mime_type,
-                        file_size = EXCLUDED.file_size,
-                        width = EXCLUDED.width,
-                        height = EXCLUDED.height,
-                        sha256 = EXCLUDED.sha256,
-                        download_status = EXCLUDED.download_status,
-                        download_error = EXCLUDED.download_error,
-                        telegram_thumb_file_id = EXCLUDED.telegram_thumb_file_id
-                    """,
-                thumb.channel_id,
-                thumb.telegram_msg_id,
-                thumb.media_idx,
-                thumb.object_key,
-                thumb.object_backend,
-                thumb.mime_type,
-                thumb.file_size,
-                thumb.width,
-                thumb.height,
-                thumb.sha256,
-                thumb.download_status.value,
-                thumb.download_error,
-                thumb.telegram_thumb_file_id,
-            )
+        """thin delegate → `_thumbnails_pg`."""
+        return await _thumbnails.save_thumbnail(self, thumb)
 
     async def get_thumbnail(
         self,
@@ -936,25 +880,8 @@ class PostgresRepository(StorageRepository):
         telegram_msg_id: int,
         media_idx: int,
     ) -> ThumbnailDTO | None:
-        """单条 thumb;不存在返 None(不抛)。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                    SELECT channel_id, telegram_msg_id, media_idx,
-                           object_key, object_backend,
-                           mime_type, file_size, width, height, sha256,
-                           download_status, download_error,
-                           telegram_thumb_file_id
-                    FROM thumbnails
-                    WHERE channel_id = $1 AND telegram_msg_id = $2
-                          AND media_idx = $3
-                    """,
-                channel_id,
-                telegram_msg_id,
-                media_idx,
-            )
-            return _row_to_thumbnail(row) if row else None
+        """thin delegate → `_thumbnails_pg`."""
+        return await _thumbnails.get_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
     async def delete_thumbnail(
         self,
@@ -962,54 +889,19 @@ class PostgresRepository(StorageRepository):
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """删 thumb 行;不存在不抛(idempotent)。
-
-        注:`DELETE FROM messages` 时 FK CASCADE 自动调本方法,
-        无需手工再调(走 schema 的 ON DELETE CASCADE)。
-        """
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM thumbnails "
-                "WHERE channel_id = $1 AND telegram_msg_id = $2 AND media_idx = $3",
-                channel_id,
-                telegram_msg_id,
-                media_idx,
-            )
+        """thin delegate → `_thumbnails_pg`."""
+        return await _thumbnails.delete_thumbnail(
+            self, channel_id, telegram_msg_id, media_idx
+        )
 
     async def list_thumbnails_for_message(
         self,
         channel_id: int,
         telegram_msg_id: int,
     ) -> list[ThumbnailDTO]:
-        """一条消息的全部 thumb(通常 0 或 1 条)。"""
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                    SELECT channel_id, telegram_msg_id, media_idx,
-                           object_key, object_backend,
-                           mime_type, file_size, width, height, sha256,
-                           download_status, download_error,
-                           telegram_thumb_file_id
-                    FROM thumbnails
-                    WHERE channel_id = $1 AND telegram_msg_id = $2
-                    ORDER BY media_idx
-                    """,
-                channel_id,
-                telegram_msg_id,
-            )
-            return [_row_to_thumbnail(r) for r in rows]
+        """thin delegate → `_thumbnails_pg`."""
+        return await _thumbnails.list_thumbnails_for_message(self, channel_id, telegram_msg_id)
 
     async def count_thumbnails_by_object_key(self, object_key: str) -> int:
-        """refcount — `SELECT count(*)` 走 idx_thumbnails_object_key 索引 O(log N)。
-
-        `reconcile_orphans` 用:扫 thumb/ prefix 的 ObjectStore key 后,
-        计数 >0 = 被 storage 引用,不算孤儿。
-        """
-        assert self._pool is not None
-        async with self._pool.acquire() as conn:
-            return await conn.fetchval(
-                "SELECT count(*)::int FROM thumbnails WHERE object_key = $1",
-                object_key,
-            )
+        """thin delegate → `_thumbnails_pg`."""
+        return await _thumbnails.count_thumbnails_by_object_key(self, object_key)
