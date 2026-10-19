@@ -1,4 +1,11 @@
-"""MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。"""
+"""MonitorViewModel — 把 EventBus 事件转 Qt signal(在 qasync 主线程安全更新 UI)。
+
+2026-10-19 plan-batch9-β:5 mixin + BusMixin 拆分第二步 — channels 域
+下沉到 `_channels.py:ChannelsMixin`(2 handler + 4 method +
+`channels_changed` signal + `known_channels` 字段)。本 facade 多继承
+`ChannelsMixin, BusMixin, QObject`;`_wire_bus` 末尾 `super().wire_bus()`
+让 BusMixin 协议接管 channels 域自动挂。
+"""
 
 from __future__ import annotations
 
@@ -24,10 +31,8 @@ from tgmonitor.core.dto import (
 from tgmonitor.core.events import (
     BatchDone,
     BatchProgress,
-    ChannelSubscribed,
     ChannelSyncDone,
     ChannelSyncProgress,
-    ChannelUnsubscribed,
     ConnectionStateChanged,
     ErrorOccurred,
     Event,
@@ -48,6 +53,8 @@ from tgmonitor.core.events import (
     SettingsChanged,
 )
 from tgmonitor.ui.async_bridge import run_coro
+from tgmonitor.ui.viewmodels._base import BusMixin
+from tgmonitor.ui.viewmodels._channels import ChannelsMixin
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -56,7 +63,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class MonitorViewModel(QObject):
+class MonitorViewModel(ChannelsMixin, BusMixin, QObject):
     """EventBus → Qt signal 适配层(VM 模式)。
 
     # 唯一职责:把 core 内部事件转 Qt signal,在 qasync 主线程 / 同一 loop
@@ -85,7 +92,8 @@ class MonitorViewModel(QObject):
     conn_state = Signal(
         str
     )  # TG 网络连接状态(waiting_for_network | connecting | updating | ready | unknown)
-    channels_changed = Signal()
+    # 2026-10-19 plan-batch9-β:`channels_changed` signal 已下沉到
+    # `_channels.py:ChannelsMixin`(2 handler + 4 method 一起搬)。
     export_done = Signal(object, object)  # (result_dict | None, error | None)
     # 导出进度(2026-08-30 v1.5.0 PR #A3)— payload ExportProgress
     # (request_id, written, total)。`total=None` 表示流式分页
@@ -201,8 +209,9 @@ class MonitorViewModel(QObject):
         b.subscribe(MediaDownloadProgress, self._on_media_download_progress)
         b.subscribe(LoginStateChanged, self._on_login_state)
         b.subscribe(ConnectionStateChanged, self._on_conn_state)
-        b.subscribe(ChannelSubscribed, self._on_channel_subscribed)
-        b.subscribe(ChannelUnsubscribed, self._on_channel_unsubscribed)
+        # 2026-10-19 plan-batch9-β:ChannelSubscribed / ChannelUnsubscribed
+        # 已下沉到 ChannelsMixin._BUS_HANDLERS,BusMixin.wire_bus() 走 MRO
+        # walk 自动挂(末尾 super().wire_bus() 调用)。
         b.subscribe(ExportDone, self._on_export_done)
         # 2026-08-30 v1.5.0 PR #A3:导出进度订阅 — ExportService 每页写完
         # 发一次,UI 侧 ExportProgressDialog 接到 signal 刷新 QProgressBar。
@@ -222,6 +231,10 @@ class MonitorViewModel(QObject):
         # 2026-08-30 v1.5.0 PR #A4:tray menu 退出事件 — MainWindow 接到
         # `quit_requested` signal 走 qt_app.quit → aboutToQuit → 干净退出。
         b.subscribe(QuitRequested, self._on_quit_requested)
+        # 2026-10-19 plan-batch9-β:BusMixin 协议接管已下沉 mixin 的 handler
+        # 自动挂(当前仅 ChannelsMixin 2 events);剩余 19 events 仍由
+        # 本 facade 手写,等 C-η 收口时统一迁到各 mixin._BUS_HANDLERS。
+        super().wire_bus()
 
     # ---- EventBus → Qt signal 适配(都在主线程 loop 里被 await) ----
 
@@ -319,30 +332,6 @@ class MonitorViewModel(QObject):
         if not isinstance(e, ConnectionStateChanged):
             return
         self.conn_state.emit(e.state)
-
-    async def _on_channel_subscribed(self, e: Event) -> None:
-        if not isinstance(e, ChannelSubscribed) or e.channel is None:
-            return
-        self.known_channels[e.channel.id] = e.channel
-        # 2026-10-15 plan-batch6-2 副产物:走 AppService facade 转发
-        # 到 MonitorService 内部 WhitelistMixin(sync),不再绕过 facade 直调
-        # `self.monitor.add_to_whitelist(cid)`。
-        self.app.add_to_whitelist(e.channel.id)
-        self.channels_changed.emit()
-        # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅 stats_changed
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
-
-    async def _on_channel_unsubscribed(self, e: Event) -> None:
-        if not isinstance(e, ChannelUnsubscribed):
-            return
-        # 2026-10-15 plan-batch6-2 副产物:同上,走 facade。
-        self.app.remove_from_whitelist(e.channel_id)
-        # 2026-09-29:Media Manager combo 走 storage 真理,unsub 后立即
-        # 从 known_channels 清掉 — 下次 channels_changed → set_known_channels
-        # 不再显示这个频道。不必等下次 refresh_subscribed_channels 同步。
-        self.known_channels.pop(e.channel_id, None)
-        self.channels_changed.emit()
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_export_done(self, e: Event) -> None:
         if not isinstance(e, ExportDone):
@@ -642,59 +631,11 @@ class MonitorViewModel(QObject):
         """
         self.selected_channel_changed.emit(name)
 
-    def bootstrap_ui(self) -> None:
-        """MainWindow 构造后调一次:拉一次 subscribed 列表 + 通知 UI 刷新下栏。
-
-        为什么需要:
-        - bootstrap() 同步了 `_subscribed` 到内存,但 VM 不知道。
-        - VM 的 `known_channels` 只在 `refresh_subscribed_channels` 或
-          `ChannelSubscribed` 事件后才填充,启动时为空 → `_refresh_state`
-          算 `subscribed` 时筛不出任何行 → 下栏一直空。
-        - 这里的 refresh_subscribed_channels 同时也补了已知频道的元数据
-          (title / username),下栏才能显示频道名而不是 "频道 -1001xxx"。
-
-        已监听的 id 列表(monitor._whitelist)在 app._setup_async 里已经
-        从 storage 读回并 set,这里只负责把 DTO 拉回来填 known_channels,
-        然后 emit channels_changed 让 UI 算交集并刷新。
-        """
-        self.refresh_subscribed_channels()
-
-    def refresh_subscribed_channels(self) -> None:
-        """后台从 storage 拉已订阅频道 → 填 known_channels → emit channels_changed。
-
-        2026-09-29:从 `list_joined_channels`(TDLib getChats,实时但跟真理漂移)
-        改为 `list_subscribed_channels`(storage 落库数据,跟
-        `MonitorService._whitelist` 的真理对齐)。
-
-        旧设计问题:用户 join 了 1000 个频道但只白名单 5 个时,Media Manager
-        「全部频道」下拉会出现 1000 项噪音;用户实际只关心自己订阅的。
-        新设计:跟 monitor 白名单完全一致 —— 已订阅 → 显示;退订 → 不显示
-        (即时,ChannelUnsubscribed 事件里同步 del);启动 → 从 storage 立刻
-        拉回(不等 TDLib state)。
-        """
-
-        async def _go() -> None:
-            chs = await self.app.list_subscribed_channels()
-            for ch in chs:
-                self.known_channels[ch.id] = ch
-            self.channels_changed.emit()
-            # 2026-10-01 v1.11.x 状态栏组件化:启动后立即 emit stats_changed
-            # 让状态栏 _StatsLabel 拿到首屏已订阅频道数。
-            self.stats_changed.emit((len(self.known_channels), self._message_count))
-
-        run_coro(self.loop, _go(), error_label="refresh_channels")
-
-    def subscribe_channel(self, ch: ChannelDTO) -> None:
-        """订阅频道 — 后台 fire `app.subscribe_channel`(同步入 storage + 发事件)。"""
-        run_coro(self.loop, self.app.subscribe_channel(ch), error_label="subscribe_channel")
-
-    def unsubscribe_channel(self, channel_id: int) -> None:
-        """退订频道 — 后台 fire `app.unsubscribe_channel`(关订阅标志,保留历史)。"""
-
-        async def _go() -> None:
-            await self.app.unsubscribe_channel(channel_id)
-
-        run_coro(self.loop, _go(), error_label="unsubscribe_channel")
+    # 2026-10-19 plan-batch9-β:`bootstrap_ui` /
+    # `refresh_subscribed_channels` / `subscribe_channel` /
+    # `unsubscribe_channel` 4 method 已下沉到
+    # `_channels.py:ChannelsMixin`(与 2 handler + `channels_changed`
+    # signal + `known_channels` 字段一并搬)。
 
     def load_recent_messages(self) -> None:
         """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
