@@ -11,7 +11,7 @@
 - 持有状态:`_page` / `_page_size` / `_total` / `_known_channels`
   / `_search_timer`(后者由 `_wire_filter` 懒建)
 
-**本 mixin 0 处 `self.tr()`** —— 选它做第一个搬家的 mixin 正是为了
+**本 mixin 0 处 `tr()` 调用** —— 选它做第一个搬家的 mixin 正是为了
 **完全不碰 i18n 面**,把「QWidget + plain mixin」模式的风险与翻译风险解耦。
 facade 的 `_tr_xxx()` accessor 机制(见 `media_manager_widget.py` 模块
 docstring 的 i18n 硬约束章节)从 10-γ 才开始需要。

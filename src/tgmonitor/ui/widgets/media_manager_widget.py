@@ -72,6 +72,7 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.ui.thumbnail import ThumbnailCache, cache_key_for, render_pixmap
+from tgmonitor.ui.widgets._mm_actions import ActionsMixin
 from tgmonitor.ui.widgets._mm_base import (
     _MEDIA_ICONS,
     _STATUS_TEXT,
@@ -93,8 +94,14 @@ log = logging.getLogger(__name__)
 # ---------- 主 widget ----------
 
 
-class MediaManagerWidget(FilterMixin, QWidget):
-    """Media Manager 主页:筛选 + 列表 + 工具栏。"""
+class MediaManagerWidget(FilterMixin, ActionsMixin, QWidget):
+    """Media Manager 主页:筛选 + 列表 + 工具栏。
+
+    2026-10-20 plan-batch10 起本类是 **facade**:运行时行为拆到
+    `FilterMixin`(`_mm_filter.py`)/ `ActionsMixin`(`_mm_actions.py`)/
+    后续 `RenderMixin`(`_mm_render.py`),本类留 12 Signal + `__init__`
+    单点 init + 静态 chrome 构建 + **i18n 字面量真理源**(`_tr_*`)。
+    """
 
     # 单条操作 — payload 是 (channel_id, telegram_msg_id, media_idx)
     open_requested = Signal(int, int, int)
@@ -881,111 +888,36 @@ class MediaManagerWidget(FilterMixin, QWidget):
             "QWidget#mediaRow:hover { background: #f5f7fb; }"
         )
 
-    # ---- 内部:选中 / 批量 ----
+    # ---- i18n 字面量真理源(ActionsMixin 用)----
+    # 2026-10-20 plan-batch10-γ:ActionsMixin 的 5 处 tr 字面量必须物理留
+    # 在本类体内 —— lupdate 静态扫描按 **enclosing class name** 定 context,
+    # 挪进 `_mm_actions.ActionsMixin` 会让 `.ts` 的 38 条 MediaManagerWidget
+    # 翻译在下次 lupdate 时被标 type="vanished" → lrelease 产出空 .qm →
+    # i18n 全炸(CHANGELOG:1474 已踩过)。Mixin 侧只调本组 accessor 取
+    # **已翻译**字串,遵循 form_section.py:31-35「caller 提供已 tr() 过的
+    # 字串,FormSection 不二次 tr」house rule。
 
-    def _selected_keys(self) -> list[_RowKey]:
-        """当前选中的所有 row → key list(按 list 内顺序)。"""
-        keys: list[_RowKey] = []
-        for it in self.list.selectedItems():
-            row = self.list.row(it)
-            if 0 <= row < len(self._last_keys):
-                keys.append(self._last_keys[row])
-        return keys
+    def _tr_export_csv_title(self) -> str:
+        """CSV 导出对话框标题。"""
+        return self.tr("导出 Media Manager 当前视图")
 
-    def _on_selection_changed(self) -> None:
-        """enable / disable 批量按钮(选 0 → 全灰;有 FAILED → retry 可点)。"""
-        sel = self._selected_keys()
-        has_sel = bool(sel)
-        has_failed = False
-        for k in sel:
-            row = self._find_row_by_key(k)
-            if row is None:
-                continue
-            if row[2].download_status == MediaDownloadStatus.FAILED:
-                has_failed = True
-                break
-        self.btn_retry_sel.setEnabled(has_sel and has_failed)
-        self.btn_delete_sel.setEnabled(has_sel)
+    def _tr_export_csv_filter(self) -> str:
+        """CSV 导出对话框 filter 串。"""
+        return self.tr("CSV 文件 (*.csv)")
 
-    def _find_row_by_key(self, key: _RowKey) -> tuple[MessageDTO, int, MediaDTO] | None:
-        for i, k in enumerate(self._last_keys):
-            if k == key:
-                return self._rows[i]
-        return None
+    def _tr_export_zip_title(self) -> str:
+        """ZIP 导出对话框标题。"""
+        return self.tr("导出 Media Manager 当前视图为 ZIP")
 
-    def _on_select_all(self) -> None:
-        self.list.selectAll()
+    def _tr_export_zip_filter(self) -> str:
+        """ZIP 导出对话框 filter 串。"""
+        return self.tr("ZIP 文件 (*.zip)")
 
-    def _on_batch_retry(self) -> None:
-        keys = [k for k in self._selected_keys() if self._row_is_failed(k)]
-        if keys:
-            self.batch_retry_requested.emit(keys)
+    def _tr_channel_cleared(self) -> str:
+        """清空频道后的 status bar 文案(占位符 `{cid}` / `{n}`)。"""
+        return self.tr("已清空频道 #{cid}: 删除 {n} 条消息")
 
-    def _on_batch_delete(self) -> None:
-        keys = self._selected_keys()
-        if keys:
-            self.batch_delete_requested.emit(keys)
-
-    def _on_clear_channel(self) -> None:
-        """2026-08-25 PR #4:取当前 filter 选中的 channel_id → emit 信号。
-
-        MainWindow 接到信号做二次确认(QMessageBox.warning)再调
-        vm.delete_by_channel。空 filter(All Channels)时直接 disable 按钮。
-        """
-        channel_id = self.cmb_channel.currentData()
-        if channel_id is None:
-            # `All Channels` / 未选 — 不允许整库清空
-            return
-        self.clear_channel_requested.emit(int(channel_id))
-
-    def _on_export_csv(self) -> None:
-        """2026-08-25 v1.3.0 PR #7:点 Export CSV → QFileDialog 选保存路径 →
-        emit `export_csv_requested(str)`。
-        """
-        from datetime import datetime
-
-        from PySide6.QtWidgets import QFileDialog
-
-        default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self.tr("导出 Media Manager 当前视图"),
-            default_name,
-            self.tr("CSV 文件 (*.csv)"),
-        )
-        if not path:
-            return
-        self.export_csv_requested.emit(path)
-
-    def _on_export_zip(self) -> None:
-        """2026-09-01 v1.5.1 PR #B4:点 Export ZIP → QFileDialog 选 .zip 路径 →
-        emit `export_zip_requested(path, include_thumbnails)`。
-
-        `include_thumbnails` 来自同旁的 `chk_zip_thumbs` checkbox;默认
-        不勾选(纯媒体包),勾上后打包 thumb_<arcname>。
-        """
-        from datetime import datetime
-
-        from PySide6.QtWidgets import QFileDialog
-
-        default_name = f"media-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self.tr("导出 Media Manager 当前视图为 ZIP"),
-            default_name,
-            self.tr("ZIP 文件 (*.zip)"),
-        )
-        if not path:
-            return
-        self.export_zip_requested.emit(path, self.chk_zip_thumbs.isChecked())
-
-    def on_channel_cleared(self, channel_id: int, deleted: int) -> None:
-        """2026-08-25 PR #4:VM 反馈 → status bar + 自动 reload 当前 filter 列表。"""
-        self.lbl_status.setText(
-            self.tr("已清空频道 #{cid}: 删除 {n} 条消息").format(cid=channel_id, n=deleted),
-        )
-        # 重 load 当前 filter(可能就是这个 channel)刷新 UI
-        self.refresh_requested.emit()
+    # ---- 内部:进度 ----
 
     def on_download_progress(self, event) -> None:
         """2026-09-01 v1.5.1 PR #B3:`MediaDownloadProgress` 事件 → 刷新对应 row
@@ -1012,7 +944,3 @@ class MediaManagerWidget(FilterMixin, QWidget):
         else:
             text = f"{_format_size(d)}/?"
         lbl.setText(text)
-
-    def _row_is_failed(self, key: _RowKey) -> bool:
-        r = self._find_row_by_key(key)
-        return r is not None and r[2].download_status == MediaDownloadStatus.FAILED
