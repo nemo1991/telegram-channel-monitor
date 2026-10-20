@@ -113,6 +113,12 @@ class MessagesMixin(_Base):
     last_message_received = Signal(object)
     stats_changed = Signal(object)
 
+    # 2026-10-19 plan-batch9-δ + 2026-10-20 plan-batch9-η:facade 字段
+    # 兜底初值由 `BusMixin.__init__` 统一接管,但 mixin 字段必须在
+    # class body 声明,mypy 类型推断才不会跨 mixin 错位
+    # (plan §8 #3 「字段同 mixin 持有」)。
+    _message_count: int = 0
+
     _BUS_HANDLERS = {
         MessageReceived: "_on_message_received",
         MessageEdited: "_on_message_edited",

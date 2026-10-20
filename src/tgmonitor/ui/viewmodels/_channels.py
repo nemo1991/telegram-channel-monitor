@@ -65,6 +65,16 @@ class ChannelsMixin(_Base):
 
     channels_changed = Signal()
 
+    # 2026-10-19 plan-batch9-β + 2026-10-20 plan-batch9-η:facade 字段
+    # 类型由本 mixin 类体声明(给 mypy 类型推断),实例初值由
+    # `BusMixin.__init__` 统一接管。
+    # **不能**写 `= {}` mutable default — 会被多 VM 实例共享
+    # (Python 类属性语义,违反 facade per-instance 语义)。
+    # BusMixin.__init__ 显式 `self.known_channels: dict[int, ChannelDTO] = {}`
+    # 创建每实例独立空 dict,符合 plan §8 #2 「单点 init 收敛」惯例
+    # (plan-batch7-goal2 MessageListModel 7 字段单点 init 模式)。
+    known_channels: dict[int, ChannelDTO]
+
     # 2026-10-19 plan-batch9-β:handler 自动挂 — BusMixin.wire_bus()
     # 走 MRO walk 累加本 dict,`getattr(self, name)` 拿 bound method
     # 给 EventBus.subscribe。handler 名错 → AttributeError 在
