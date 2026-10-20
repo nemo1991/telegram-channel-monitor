@@ -18,6 +18,25 @@
 - 底部 4 个 QPushButton + 1 个 QLabel(footer 状态)
 - 所有用户操作 → emit Qt Signal → MainWindow 调 VM
 - 后台线程安全:VM 用 run_coro 在 qasync 主 loop 触发,UI 端只读数据
+
+i18n 硬约束(2026-10-20 plan-batch10 实证,**改代码前必读**):
+- 本类 38 条翻译挂在 `.ts` 的 `MediaManagerWidget` context 下,`en_US.ts` /
+  `zh_CN.ts` 的 `<location>` 全部指向本文件。
+- **lupdate 静态扫描按「enclosing class name」定 context,不认
+  `QCoreApplication.translate(ctx, src)` 的第一个参数。** 反证:
+  `status_bar.py` 11 处双字面量 `translate("status_bar", "…")`,
+  `.ts` 历史里从未出现过 `status_bar` context;`nav_bar` / `state_labels`
+  用变量 src,context 列表里同样没有这两个名字。
+- 因此**本文件里所有 `self.tr("字面量")` 必须物理留在 `MediaManagerWidget`
+  类体内**。挪进 `_mm_render.RenderMixin` 等 mixin,下次有人跑
+  `lupdate -extensions py` 时这 38 条会被标 `type="vanished"` →
+  `lrelease` 产出空 `.qm` → **i18n 全炸**(2026-09-07 已踩过,见
+  CHANGELOG 「pyside6-lupdate 默认 extensions 不含 .py」事故)。
+- 需要给 mixin 供文案时,走 facade 里的 `_tr_xxx()` accessor(字面量仍写
+  在本类体内,mixin 侧只调 accessor 取已译字串),不要在 mixin 里直接写
+  字面量。house rule 同 `widgets/form_section.py` 「caller 提供已 tr()
+  过的字串」。
+- 守门:`tests/test_media_manager_i18n.py` 双向校验「源码字面量 ↔ .ts source」。
 """
 
 # mypy: disable-error-code="attr-defined"
@@ -25,7 +44,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
@@ -54,68 +72,22 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.ui.thumbnail import ThumbnailCache, cache_key_for, render_pixmap
+from tgmonitor.ui.widgets._mm_base import (
+    _MEDIA_ICONS,
+    _STATUS_TEXT,
+    LIGHTBOX_PREVIEWABLE_TYPES,
+    _format_size,
+    _RowKey,
+)
 
 log = logging.getLogger(__name__)
 
 
-# ---------- 类型 / emoji 映射 ----------
-
-_MEDIA_ICONS: dict[MediaType, str] = {
-    MediaType.PHOTO: "🖼",
-    MediaType.VIDEO: "🎬",
-    MediaType.AUDIO: "🎵",
-    MediaType.VOICE: "🎤",
-    MediaType.DOCUMENT: "📄",
-    MediaType.STICKER: "🌟",
-    MediaType.ANIMATION: "🎞",
-    MediaType.VIDEO_NOTE: "📹",
-}
-
-# 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 仅图片类(DONE 状态下)
-# 可点缩略图弹大图;视频/音频/文档走 Open/Reveal,不动 lightbox。
-# STICKER 算图片(WebP),ANIMATION 是 GIF。
-# 2026-09-04 v1.6.7:扩展到 VIDEO / VIDEO_NOTE — MP4 bytes 进 Lightbox
-# 内联播(QMediaPlayer);AUDIO / VOICE / DOCUMENT 仍走系统查看器。
-# 公共常量(无下划线前缀)— message_detail 也 import 同一份,避免双拷贝。
-LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
-    {
-        MediaType.PHOTO,
-        MediaType.STICKER,
-        MediaType.ANIMATION,
-        MediaType.VIDEO,
-        MediaType.VIDEO_NOTE,
-    }
-)
-
-_STATUS_TEXT: dict[MediaDownloadStatus, str] = {
-    MediaDownloadStatus.PENDING: "⏳",
-    MediaDownloadStatus.DOWNLOADING: "⏳",
-    MediaDownloadStatus.DONE: "✓",
-    MediaDownloadStatus.FAILED: "❌",
-}
-
-
-@dataclass(frozen=True)
-class _RowKey:
-    """MediaRow 的稳定地址 — `(channel_id, telegram_msg_id, media_idx)`。"""
-
-    channel_id: int
-    telegram_msg_id: int
-    media_idx: int
-
-
-def _format_size(n: int | None) -> str:
-    """人类可读大小(1.2MB / 800KB);None / 0 → '?'。"""
-    if not n:
-        return "?"
-    units = ("B", "KB", "MB", "GB")
-    size = float(n)
-    unit_idx = 0
-    while size >= 1024 and unit_idx < len(units) - 1:
-        size /= 1024
-        unit_idx += 1
-    return f"{size:.1f}{units[unit_idx]}" if unit_idx > 0 else f"{int(size)}B"
-
+# 2026-10-20 plan-batch10-α:`_RowKey` / `_format_size` / `_MEDIA_ICONS` /
+# `_STATUS_TEXT` / `LIGHTBOX_PREVIEWABLE_TYPES` 已抽到 `widgets/_mm_base.py`
+# —— 被 facade + 3 个 mixin 共用,留在本文件会造成 mixin → facade → mixin
+# 循环 import。`LIGHTBOX_PREVIEWABLE_TYPES` 在顶部 import 后继续对本
+# module 可见,`message_detail.py:34` 的 import 路径 1:1 不变。
 
 # ---------- 主 widget ----------
 
