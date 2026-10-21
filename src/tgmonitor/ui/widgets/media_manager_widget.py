@@ -72,18 +72,22 @@ from tgmonitor.core.dto import (
 from tgmonitor.ui.thumbnail import ThumbnailCache
 from tgmonitor.ui.widgets._mm_actions import ActionsMixin
 
-# 2026-10-20 plan-batch10-δ **反向 re-export**(plan §6 零改动不变量):
+# 2026-10-20 plan-batch10-ε **反向 re-export**(plan §6 零改动不变量):
 # `message_detail.py:36` 仍从**本 module** 导入 `LIGHTBOX_PREVIEWABLE_TYPES`。
 # 10-δ 把 `_build_thumb_cell` 搬进 RenderMixin 后 facade 自身不再读它,F401
 # 会把它当死 import 删掉 —— 删掉即 ImportError,13 个 test module 收集失败。
-# 下面的 F401 豁免是必须的,不要「顺手清理」。`_RowKey` 则真在用:
-# `__init__` 的 `_last_keys` 注解 + `_tr_*` 之外的几处构造。
+# `__all__` 里的显式声明就是 ruff 认的「有对外用途」凭据,别「顺手清理」。
 from tgmonitor.ui.widgets._mm_base import (
-    LIGHTBOX_PREVIEWABLE_TYPES,  # noqa: F401 — 反向 re-export,见上方注释
+    LIGHTBOX_PREVIEWABLE_TYPES,
     _RowKey,
 )
 from tgmonitor.ui.widgets._mm_filter import FilterMixin
 from tgmonitor.ui.widgets._mm_render import RenderMixin
+
+# 2026-10-20 plan-batch10-ε:facade 收口 —— 声明本 module 的公开面。
+# `LIGHTBOX_PREVIEWABLE_TYPES` 是**反向 re-export**(见上方注释),列进来
+# 既是对调用方的契约声明,也让 ruff F401 认得它有对外用途。
+__all__ = ["LIGHTBOX_PREVIEWABLE_TYPES", "MediaManagerWidget"]
 
 log = logging.getLogger(__name__)
 
@@ -100,11 +104,31 @@ log = logging.getLogger(__name__)
 class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     """Media Manager 主页:筛选 + 列表 + 工具栏。
 
-    2026-10-20 plan-batch10 起本类是 **facade**:运行时行为拆到
-    `FilterMixin`(`_mm_filter.py`)/ `RenderMixin`(`_mm_render.py`)/
-    `ActionsMixin`(`_mm_actions.py`),本类留 12 Signal + `__init__` 单点
-    init + 静态 chrome 构建(`_build_*`)+ `changeEvent` / `retranslateUi`
-    + **i18n 字面量真理源**(9 个 `_tr_*` accessor)。
+    2026-10-20 plan-batch10 起本类是 **facade**(1149 → 523 LOC)。运行时
+    行为拆到 3 个 mixin,本类只留「对外契约 + 静态装配 + i18n 真理源」。
+    `QWidget` 必须在 MRO 末尾(Shiboken 要求)。
+
+    ## 分布索引(改代码前先看这里,别在 facade 里找运行逻辑)
+
+    | 归属 | 文件 | 内容 |
+    |---|---|---|
+    | **facade(本类)** | `media_manager_widget.py` | 14 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ `changeEvent` / `retranslateUi`(test 用 `__dict__` 断言强制留本类)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` i18n 字面量真理源** |
+    | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_known_channels` |
+    | `RenderMixin` | `_mm_render.py` | 16 method — VM 注入 / 缩略图 LRU / 列表重渲 / 行构建 / meta 列 / 行内按钮 / 下载进度 |
+    | `ActionsMixin` | `_mm_actions.py` | 11 method — 选中集 / 批量重试·删除·清频道 / CSV·ZIP 导出 |
+    | 共享常量 | `_mm_base.py` | `_RowKey` / `_format_size` / `_MEDIA_ICONS` / `_STATUS_TEXT` / `LIGHTBOX_PREVIEWABLE_TYPES` |
+
+    ## 三条硬约束
+
+    1. **Signal 全留 facade**(偏离 plan-batch9 的「Signal 下沉 mixin」):
+       14 个全被 `main_window` connect,是对外公开契约,留本类让 API 一眼可见。
+       Mixin 侧只 `self.<signal>.emit(...)`,不定义也不改 Signal。
+    2. **i18n 字面量必须留 facade 类体内**:lupdate 按 enclosing class 定
+       context,挪进 mixin 会让 `.ts` 的 38 条变 `vanished`(CHANGELOG:1474)。
+       Mixin 侧一律调 `self._tr_xxx()` 取已翻译字串。
+    3. **单点 init**:10 个实例字段全在 `__init__` 赋值,mixin **不写**
+       `__init__`、类体**禁止** mutable default(`= {}` / `= []` 会跨实例共享,
+       plan-batch9-η 为此红过 3 个 test)。
     """
 
     # 单条操作 — payload 是 (channel_id, telegram_msg_id, media_idx)

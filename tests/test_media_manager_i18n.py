@@ -290,3 +290,106 @@ def test_v175_translations_in_both_locales(qapp_no_locale_force: QApplication) -
     assert QCoreApplication.translate("MediaManagerWidget", "全选") == "Select All"
     assert QCoreApplication.translate("MediaManagerWidget", "🔄 刷新") == "🔄 Refresh"
     assert QCoreApplication.translate("MediaManagerWidget", "🗑 清空频道") == "🗑 Clear Channel"
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-20 plan-batch10-ε:.ts context/source **双向**守门
+#
+# 为什么必须加这层:CHANGELOG.md:1474-1478 记的那次事故 —— 抽 method 时漏了
+# `-extensions py`,`lupdate` 把本地 90% 已译条目标成 `type="vanished"`,
+# `lrelease` 产出空 `.qm`,**i18n 全炸**。`test_i18n_runtime.py` 只查运行时
+# locale 行为,查不出「源码里的字面量已经对不上 .ts」这个根因。
+#
+# 本组 2 个测试把双向缺口都封死:
+#   test_all_widget_tr_literals_exist_in_ts — 源码 → .ts(漏抽会红)
+#   test_no_orphan_ts_sources               — .ts → 源码(孤儿翻译堆积会红)
+# ---------------------------------------------------------------------------
+
+_MM_SRC = Path("src/tgmonitor/ui/widgets/media_manager_widget.py")
+_TS_FILES = ("en_US", "zh_CN")
+
+
+def _ts_messages(locale: str, context: str) -> dict[str, str]:
+    """返回 `{source: type}` — type 为 `""`(活跃)或 `"vanished"`。"""
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(f"src/tgmonitor/i18n/{locale}.ts")
+    ctxs = [c for c in tree.getroot().findall("context") if c.find("name").text == context]
+    assert len(ctxs) == 1, f"{locale}.ts 应有且仅有 1 个 `{context}` context,实得 {len(ctxs)}"
+    out: dict[str, str] = {}
+    for m in ctxs[0].findall("message"):
+        src = m.find("source")
+        if src is None or src.text is None:
+            continue
+        out[src.text] = m.get("type") or ""
+    return out
+
+
+def _source_tr_literals() -> set[str]:
+    """抽出 facade 源码里全部 `self.tr("字面量")` 的**字面量参数**。
+
+    用 AST 而非正则:正则会把 docstring / 注释里的散文当成真调用(本 module
+    docstring 就写了 ``self.tr("字面量")`` 作为说明,曾让守门 test 误红),
+    而 lupdate 自己走的是真解析器 —— 只有 AST 的口径与 lupdate 一致。
+
+    只收 `Constant` str 参数:`.tr(f"…")` / `.tr(变量)` lupdate 静态抽不到,
+    不在这组守门的射程内 —— 那正是 `_tr_*()` accessor 模式存在的原因
+    (facade 全部 tr() 调用现已是字面量形式)。
+    """
+    import ast
+
+    tree = ast.parse(_MM_SRC.read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "tr"):
+            continue
+        if not (isinstance(func.value, ast.Name) and func.value.id == "self"):
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            out.add(first.value)
+    return out
+
+
+def test_all_widget_tr_literals_exist_in_ts() -> None:
+    """facade 里每个 `self.tr("字面量")` 都必须是 .ts 中 MediaManagerWidget
+    context 的 source,且 **type != "vanished"**。
+
+    红了意味着两种事故之一:
+    - 字面量是新的,lupdate 还没跑 → 运行时 fallback 到源文
+    - 字面量被标 vanished → 翻译已失效(CHANGELOG:1474 的死法)
+    """
+    literals = _source_tr_literals()
+    assert len(literals) >= 38, f"源码只抽到 {len(literals)} 处字面量,预期 >= 38 —— 正则失效?"
+
+    problems: list[str] = []
+    for locale in _TS_FILES:
+        msgs = _ts_messages(locale, "MediaManagerWidget")
+        for lit in sorted(literals):
+            if lit not in msgs:
+                problems.append(f"[{locale}] 字面量不在 .ts 里,lupdate 未抽: {lit!r}")
+            elif msgs[lit] == "vanished":
+                problems.append(f"[{locale}] 字面量被标 vanished(翻译已失效): {lit!r}")
+    assert not problems, "源码 / .ts 出现缺口:\n  " + "\n  ".join(problems)
+
+
+def test_no_orphan_ts_sources() -> None:
+    """反向守门:.ts 中 MediaManagerWidget context 的每条**活跃** source 都必须
+    仍能在 facade 源码里找到字面量 —— 防孤儿翻译堆积(`.ts` 越滚越大,谁也不敢
+    删,最后没法判断哪条还生效)。
+
+    `type="vanished"` 的 source 故意跳过:它们本就是历史残留,等下次
+    `lupdate` 跑完会自然消失。
+    """
+    literals = _source_tr_literals()
+    orphans: list[str] = []
+    for locale in _TS_FILES:
+        for src, typ in sorted(_ts_messages(locale, "MediaManagerWidget").items()):
+            if typ == "vanished":
+                continue
+            if src not in literals:
+                orphans.append(f"[{locale}] .ts 有活跃 source 但源码已无此字面量: {src!r}")
+    assert not orphans, ".ts 出现孤儿翻译:\n  " + "\n  ".join(orphans)
