@@ -5,6 +5,103 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.12.3] - 2026-10-22
+
+主题:**god class 拆解收官(plan-batch6~10)**(33 commit,纯重构,零用户可见变化)。
+
+v1.12.2 之后只做一条主线:把 `core/` / `ui/` / `ui/viewmodels/` 里剩下的高 LOC
+单文件全部拆成 facade + 子 module,每一步保持公开 API 1:1。全程 pytest 1570 passed
+零 regression。
+
+### 重大变化(用户级可见)
+
+无。行为、配置项、UI widget 树、Signal 名与参数签名全部不变,无需任何迁移。
+
+### 重构(纯内部,零行为变化)
+
+#### plan-batch6:`core/media_service.py` 875 → facade 337 + 5 子 module(7 commit)
+
+- 单文件改成 package `core/media_service/`:`media_service.py` 337(保留原路径,
+  `from tgmonitor.core.media_service import MediaService` 不变)+ 5 个子 module:
+  - `_qt_bridge.py` — Qt callback 注入集中(消 SLF001)
+  - `_media_crud.py` — 4 个 CRUD method
+  - `_media_bytes.py` — 3 个 bytes 读 method
+  - `_media_os_actions.py` — 7 个 OS method
+  - `_media_reconcile.py` — `reconcile_orphans` 下沉
+- facade 末尾 `staticmethod` 绑定保 monkeypatch 契约,test 0 改动
+
+#### plan-batch7:`ui/widgets/message_view.py` 1028 → 318(7 commit)
+
+- 拆出 `widgets/message_item_delegate.py`(165,公开 API 14 method + shim +
+  `MAX_ITEMS` 1:1 锁)、`MessageEmptyOverlay`(浮动新消息按钮 + 空态遮罩)、
+  `LiveActionsController`(8 Signal + 右键 + 选中广播)、`MessageListModel`
+  从 message_view 抽出并再拆 5 mixin(Base / Storage / Mutation / Filter / Format,
+  399 → facade 183)、`MessageViewAPIMixin`(166,选区 3 method thin delegate)
+- `MessageView` 最终 318 LOC + `MessageViewAPIMixin` 166
+
+#### plan-batch8:storage 两个 god class facade 化(8 commit)
+
+- `core/storage/postgres_repo.py` 1662 → 354、`mongo_repo.py` 1084 → 371,
+  各拆 6 个子 module(生命周期 / 用户元数据 / 频道 / 缩略图 / 媒体 / 消息)
+- `core/storage/` 包共 4498 LOC,沿用 plan-batch6 的 free function + `self` 透传模式
+
+#### plan-batch9:`ui/viewmodels/monitor_vm.py` 830 → 99(-88%,7 commit)
+
+- 抽 5 个 mixin:`_base.BusMixin`(EventBus handler 自动 wire 21 个事件)/
+  `_channels.ChannelsMixin` / `_messages.MessagesMixin` / `_media.MediaMixin` /
+  `_export.ExportMixin`
+- `viewmodels/__init__.py` re-export 保持外部 import 路径不变;`BusMixin.__init__`
+  接管单点 init,顺带修掉 mixin 类体 `known_channels: dict = {}` 的 mutable default
+  跨实例共享陷阱(多个 VM 实例共用同一个 dict)
+
+#### plan-batch10:`ui/widgets/media_manager_widget.py` 1149 → 547(5 commit)
+
+- 拆 4 个子 module:`_mm_base.py`(共享常量与 `_RowKey`)/ `_mm_filter.FilterMixin`
+  (6 method)/ `_mm_render.RenderMixin`(16 method)/ `_mm_actions.ActionsMixin`
+  (11 method)
+- 12 个 Signal 全留 facade —— 它们是 widget 的对外公开契约(`main_window.py:383-418`
+  按名 connect)
+- **i18n 字面量一条不搬**:PySide6 lupdate 对 Python 按 **enclosing class name** 定
+  context(不是 `translate()` 第一个参数),把 `self.tr("字面量")` 挪进 mixin 会让 `.ts`
+  里 `MediaManagerWidget` 的 38 条翻译在下次 `lupdate` 时被标 `type="vanished"` →
+  `lrelease` 产出空 `.qm` → i18n 全炸(CHANGELOG v1.6.8 记的事故)。解法是 9 个
+  `_tr_*()` accessor 把字面量钉在 facade 类体内,mixin 只取已译字串 —— 沿用
+  `widgets/form_section.py:31-35` 的既有 house rule
+
+### 修复
+
+- **`monitor_vm` L51 跨层泄漏**(plan-batch6-2)— signal payload 由跨层结构改回
+  `bytes`,viewmodel 退回 `EventBus` + signal 适配器;同时补全 `add_to_whitelist` /
+  `remove_from_whitelist` 两个 facade sync 转发(拆分前的既有遗漏)
+- **`ruff format --check` 3 个 pre-existing 未格式化文件**(`_media_os_actions.py` /
+  `media_service.py` / `ui/main_window.py`,纯空白)— CI 的 format job 会红,本批顺手补齐
+
+### 测试
+
+- 新增 `.ts` 双向守门 `tests/test_media_manager_i18n.py::test_all_widget_tr_literals_exist_in_ts`
+  / `::test_no_orphan_ts_sources` —— 用 **AST**(不是正则,正则会把 docstring 里的示例
+  当真调用)提取 `self.tr()` 字面量,与 `en_US.ts` / `zh_CN.ts` 的
+  `MediaManagerWidget` context 双向比对,封死上面那条 vanished 事故
+- 1570 passed, 65 skipped, 3 xfailed, 0 failed(151s)
+- 视觉回归单跑 8 passed(golden 未变)
+- ruff check + `ruff format --check` 全绿(303 files)
+- mypy 8 入口矩阵全绿(export 10 + monitor 8 + storage 18 + telegram 12 +
+  objectstore 6 + ui 74 + app.py 1 + src catch-all 163 files)
+- integration test(本次无改动,仍由 CI 的 testcontainers PG job 覆盖)
+
+### 已知既有问题(非本批引入)
+
+- `tests/test_main_window_delete_feedback.py::test_on_media_deleted_triggers_widget_refresh`
+  偶发 segfault(嵌套 `QEventLoop` + `QTimer.singleShot`,该 test 用 `_FakeMediaManager`
+  替身)。stash 本批改动后在 HEAD 基线重跑 3 次同样复现 1 次 —— 确认为既有 flaky
+- `tests/test_visual_regression.py` 跑在全套之后会飘(`settings_page_default`
+  0.5749% > 0.5% 阈值),单跑该文件 8/8 通过;`settings_page` 不 import
+  `media_manager_widget`,无依赖路径。该文件 2026-08-12 起本就不进 CI
+
+### 升级提示
+
+- 无需任何操作。无配置迁移、无 schema 变化、无 UI 变化、无新依赖。
+
 ## [1.12.2] - 2026-10-14
 
 主题:**存储后端精简(产品决策:删除 jsonl)+ god class 拆解**(25 commit,
