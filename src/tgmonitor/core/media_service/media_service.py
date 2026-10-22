@@ -254,7 +254,10 @@ class MediaService:
         2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
         return await _os_actions.open_media_with_result(
-            self, channel_id, telegram_msg_id, media_idx,
+            self,
+            channel_id,
+            telegram_msg_id,
+            media_idx,
         )
 
     async def reveal_in_folder(
@@ -291,7 +294,10 @@ class MediaService:
         2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
         """
         return await _os_actions.copy_media_path(
-            self, channel_id, telegram_msg_id, media_idx,
+            self,
+            channel_id,
+            telegram_msg_id,
+            media_idx,
         )
 
     async def _stage_s3_to_tmp(self, med: MediaDTO) -> Path:
@@ -308,7 +314,9 @@ class MediaService:
     # facade 1 行 thin delegate;mutex `ms._reconcile_lock` 透传。
 
     async def reconcile_orphans(
-        self, *, dry_run: bool = True,
+        self,
+        *,
+        dry_run: bool = True,
     ) -> MediaReconcileFinished:
         """扫描 ObjectStore vs storage 媒体索引,孤儿 = ObjectStore 里有但 storage 没引用。
 

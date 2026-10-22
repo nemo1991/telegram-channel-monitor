@@ -338,13 +338,9 @@ class MainWindow(QMainWindow):
         # 右键菜单 6 入口(带 items)
         self.live_actions.export_requested.connect(self._live_selection_ctrl.on_live_export)
         self.live_actions.delete_requested.connect(self._live_selection_ctrl.on_live_delete)
-        self.live_actions.mark_read_requested.connect(
-            self._live_selection_ctrl.on_live_mark_read
-        )
+        self.live_actions.mark_read_requested.connect(self._live_selection_ctrl.on_live_mark_read)
         # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
-        self.live_actions.favorite_requested.connect(
-            self._live_selection_ctrl.on_live_favorite
-        )
+        self.live_actions.favorite_requested.connect(self._live_selection_ctrl.on_live_favorite)
         self.live_actions.tags_requested.connect(self._live_selection_ctrl.on_live_tags)
         self.live_actions.notes_requested.connect(self._live_selection_ctrl.on_live_notes)
         # toolbar 6 按钮(读 controller 内部 _last_live_selection)

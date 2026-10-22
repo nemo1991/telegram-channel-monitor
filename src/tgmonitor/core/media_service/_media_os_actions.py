@@ -69,9 +69,7 @@ async def open_media(
 
     2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
     """
-    return (
-        await open_media_with_result(ms, channel_id, telegram_msg_id, media_idx)
-    ).success
+    return (await open_media_with_result(ms, channel_id, telegram_msg_id, media_idx)).success
 
 
 async def open_media_with_result(
