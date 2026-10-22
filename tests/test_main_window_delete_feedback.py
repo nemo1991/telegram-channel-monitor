@@ -21,12 +21,10 @@ label + debounce QTimer 桩。
 from __future__ import annotations
 
 import os
-import sys
 from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
 
 from tgmonitor.core.events import MediaDeleted, MessageDeleted  # noqa: E402
@@ -35,42 +33,32 @@ from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
     MediaActionsController,
 )
 
-# 2026-09-28 v1.9.2:与 `test_media_manager_i18n.py::windows_qt_paint_skip` 同根
-# 因 —— Qt offscreen paint path race 在 `QEventLoop().exec()` 嵌套时触发,
-# GH Actions ubuntu/macos runner 的 Qt offscreen 平台偶发 SIGSEGV(v1.9.1
-# 合了 `test_main_window_delete_feedback.py` 后这个 race 在 CI 上首次爆出来,
-# 因为 3 个测试用 `loop.exec()` 等 debounce QTimer 到点)。本地 Qt 6.11+
-# macOS 真机 + linux 真机不触发;只在 CI offscreen + Windows 'windows' QPA
-# 跳。CI 绿后打 v1.9.2 tag。
-_PAINT_PATH_RACE_PLATFORMS = ("win32", "linux", "darwin")
-windows_qt_paint_skip = pytest.mark.skipif(
-    sys.platform in _PAINT_PATH_RACE_PLATFORMS,
-    reason=(
-        "Qt offscreen paint path race 在 QEventLoop().exec() 嵌套时触发:"
-        "GH Actions ubuntu/macos runner 的 Qt offscreen 平台都受影响"
-        "(v1.12.3 发版实测 ubuntu 连续 2 次崩在同一行)。"
-        "2026-10-22 起本地也一并 skip —— 让本地与 CI 看到同一份结果,"
-        "而不是本地常绿、CI 随机红。"
-    ),
-)
-
-# 2026-10-04 plan 阶段 1.3.E:debounce QTimer + QEventLoop().exec() 触发的
-# 偶发 race — 本来给这 3 个 case 挂的是 pytest.mark.xfail(..., strict=False),
-# 指望「不阻塞 CI 又保留本地信号」。
+# 2026-10-22 v1.12.3:本文件曾因 Qt offscreen paint path race 挂了两年标记
+# (`xfail` → `skipif`),现在标记全部拆掉,原因是**真 bug 被标记盖住了**,
+# 不是 race 修好了。
 #
-# **2026-10-22 v1.12.3 发版改成 skip(即下面这行别名指向的东西)**:xfail
-# **拦不住 native segfault** —— 崩溃在进程级,pytest 拿不到 Python exception,
-# xfail 机制根本没机会判定,CI 直接 exit 139 红。v1.12.2 的
-# test_login_dialog.py::test_submit_email_invokes_app_and_unlocks 已踩过同一个坑
-# 并改成 skipif,这里是同款。
+# 时间线:
+# - 2026-09-28 v1.9.2:3 个 test 用 `QEventLoop().exec()` 等 debounce QTimer
+#   到点,Qt offscreen paint path race 触发 native SIGSEGV → 挂
+#   `xfail(strict=False)`
+# - 2026-10-22 v1.12.3 发版:xfail 被发现**拦不住** native segfault(进程级
+#   崩溃,pytest 拿不到 exception,CI 直接 exit 139)。GH Actions 在 10-10 /
+#   10-12 / 10-22 三次把 CI 打红,10-12 那次三平台全红。改成 `skipif` 后 CI 绿了。
+# - 同一个 commit 里追下去发现真因:**本文件从未接
+#   `media_refresh_debounce.timeout → flush_media_refresh_pending`**
+#   (生产在 `ui/main_window.py:424`),所以 `refresh_requested` 永远不会被
+#   emit,`assert emit_count == 1` 是一条**永远不成立**的断言。本地它报
+#   xfailed(没人看),CI 上先在 `loop.exec()` 崩掉(exit 139,更没人看)——
+#   两层标记把同一个真 bug 盖了两年。
 #
-# 实测:同一 test 在 GH Actions ubuntu 连续 2 次崩在同一行(216 loop.exec()),
-# macOS 首次崩、重跑过;本地 macOS 3 跑崩 1(HEAD 基线同样复现,与重构无关)。
-# 根因待修,在此之前三平台一致 skip —— 让本地与 CI 看到同一份结果。
+# 修法(两处):
+# 1. `_build_ctrl` 补上生产里那条 `timeout.connect(ctrl.flush_media_refresh_pending)`
+# 2. 3 个 test 用 `isActive()` 验 start + **同步 `timeout.emit()`** 验到点,
+#    不再挂钟等 100ms、不再进任何事件循环
 #
-# 根因修好后:删掉下面这行别名 + 上面的 windows_qt_paint_skip 定义,
-# 三个 @windows_qt_paint_xfail 装饰器即可自动变回「真 pass」。
-windows_qt_paint_xfail = windows_qt_paint_skip
+# `QEventLoop().exec()` 在本文件已彻底消失 —— segfault 的触发条件不存在了。
+# 同类写法见 `test_status_bar.py`(asyncio.run + processEvents)与
+# `test_media_manager_i18n.py`,那些仍在 skip,根因不同,各自单独跟踪。
 
 
 class _FakeSignal:
@@ -192,7 +180,15 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
         search_debounce=MagicMock(name="search_debounce"),
         media_refresh_debounce=win._media_refresh_debounce,
     )
-    return MediaActionsController(ctx)
+    ctrl = MediaActionsController(ctx)
+    # 2026-10-22 v1.12.3:补上生产里 `ui/main_window.py:424` 的那条连接 ——
+    # 本文件**从未**接 `media_refresh_debounce.timeout → flush_media_refresh_pending`,
+    # 于是 refresh_requested 永远不会被 emit,三条 test 里那句
+    # `assert emit_count == 1` 是一条**永远不成立**的断言。它被 xfail 标记吞了:
+    # 本地报 xfailed(没人看),CI 上先在 `loop.exec()` 崩掉 exit 139(更没人看),
+    # 两边都盖住了真因。GH Actions 在 2026-10-10 / 10-12 / 10-22 三次红都是它。
+    win._media_refresh_debounce.timeout.connect(ctrl.flush_media_refresh_pending)
+    return ctrl
 
 
 # ============================================================
@@ -200,27 +196,29 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
 # ============================================================
 
 
-@windows_qt_paint_xfail
 def test_on_media_deleted_triggers_widget_refresh(qapp) -> None:
     """`on_media_deleted` 必须经 debounce timer 触发 widget refresh。
 
     用户报告:点 Delete 后 row 不消失。这是 v1.9.1 修(delete-no-feedback)
     的根因边界。
+
+    2026-10-22 v1.12.3:原本这里嵌套 `QEventLoop().exec()` 等 150ms 让 debounce
+    到点 —— Qt offscreen paint path race 在这里崩(native segfault,CI 三平台都
+    中招)。改成**同步 emit timeout**:debounce 的语义是「start() 后到点才刷」,
+    用 `isActive()` 验 start、用 `timeout.emit()` 验到点后的行为,不需要真的
+    挂钟等 100ms,也不需要任何事件循环。
     """
     win = _FakeWindow()
     ctrl = _build_ctrl(win)
     e = MediaDeleted(channel_id=100, telegram_msg_id=5, media_idx=0)
     ctrl.on_media_deleted(e)
 
-    # debounce timer 启动但还没到点 → refresh 未触发
+    # debounce timer 已启动(interval=100 / singleShot)
+    assert win._media_refresh_debounce.isActive()
+    # 到点前 refresh 未触发
     assert win.media_manager.refresh_requested.emit_count == 0
-    # 主动等 debounce 到点
-    from PySide6.QtCore import QEventLoop
-
-    loop = QEventLoop()
-    QTimer.singleShot(150, loop.quit)
-    loop.exec()
-
+    # 到点 → 单次 widget refresh
+    win._media_refresh_debounce.timeout.emit()
     assert win.media_manager.refresh_requested.emit_count == 1
 
 
@@ -246,15 +244,14 @@ def test_on_media_deleted_non_mediadeleted_type_is_ignored(qapp) -> None:
     assert win.media_manager.refresh_requested.emit_count == 0
 
 
-@windows_qt_paint_xfail
 def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     """批量 N 条连续 MediaDeleted → debounce timer 合并为单次 widget refresh。
 
     验证 100ms debounce 工作:连续 5 条 delete 之间 timer 不应到点(假设
     测试在 50ms 内全发完),最终等 100ms 后只看到 1 次 refresh emit。
-    """
-    from PySide6.QtCore import QEventLoop
 
+    2026-10-22 v1.12.3:同步 emit timeout 版(同上一个 test),不挂钟不事件循环。
+    """
     win = _FakeWindow()
     ctrl = _build_ctrl(win)
     # 5 条连续 delete — 每次都 restart debounce timer
@@ -262,27 +259,22 @@ def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
         ctrl.on_media_deleted(
             MediaDeleted(channel_id=100, telegram_msg_id=i + 1, media_idx=0),
         )
+        # 每次都保持 active(start() 在已运行的 timer 上自动重置 interval)
+        assert win._media_refresh_debounce.isActive()
     # timer 重启但还没到点 → refresh 未触发
     assert win.media_manager.refresh_requested.emit_count == 0
 
-    # 等 150ms 让 timer 到点
-    loop = QEventLoop()
-    QTimer.singleShot(150, loop.quit)
-    loop.exec()
-
     # 5 条 delete → 单次 refresh(不是 5 次)
+    win._media_refresh_debounce.timeout.emit()
     assert win.media_manager.refresh_requested.emit_count == 1
 
 
-@windows_qt_paint_xfail
 def test_on_media_deleted_throttles_activity_messages(qapp) -> None:
     """批量 100 条连续 delete → 活动文案不刷成「已删除 媒体 × 100」。
 
     `_throttle_activity("media_delete", …)` min_interval_ms=500,
     100 条连续 delete(总耗时 < 500ms)只会更新一次 activity label。
     """
-    from PySide6.QtCore import QEventLoop
-
     win = _FakeWindow()
     ctrl = _build_ctrl(win)
     first_label_text = ""
@@ -296,8 +288,6 @@ def test_on_media_deleted_throttles_activity_messages(qapp) -> None:
     assert win._activity_label.text() == first_label_text
     assert "已删除" in first_label_text
 
-    # 等 timer 到点(无新增 delete,会真刷)
-    loop = QEventLoop()
-    QTimer.singleShot(150, loop.quit)
-    loop.exec()
+    # timer 到点(无新增 delete,会真刷)→ 同步 emit,不走事件循环
+    win._media_refresh_debounce.timeout.emit()
     assert win.media_manager.refresh_requested.emit_count == 1
