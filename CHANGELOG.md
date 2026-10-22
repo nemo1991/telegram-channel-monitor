@@ -91,9 +91,13 @@ v1.12.2 之后只做一条主线:把 `core/` / `ui/` / `ui/viewmodels/` 里剩�
 
 ### 已知既有问题(非本批引入)
 
-- `tests/test_main_window_delete_feedback.py::test_on_media_deleted_triggers_widget_refresh`
-  偶发 segfault(嵌套 `QEventLoop` + `QTimer.singleShot`,该 test 用 `_FakeMediaManager`
-  替身)。stash 本批改动后在 HEAD 基线重跑 3 次同样复现 1 次 —— 确认为既有 flaky
+- `tests/test_main_window_delete_feedback.py` 的 3 个 `QEventLoop().exec()` case:
+  Qt offscreen paint path race 导致 native segfault(该文件用 `_FakeWindow` /
+  `_FakeMediaManager` 纯替身;stash 本批改动后在 HEAD 基线同样复现)。发版 CI 上
+  ubuntu 连续 2 次、macOS 首次崩在同一行。**处置**:标记从 `xfail` 改成 `skipif`
+  —— `xfail(strict=False)` 拦不住进程级崩溃,pytest 拿不到 exception,CI 直接
+  exit 139(与 v1.12.2 `test_login_dialog.py` 同款修复)。代价是这 3 个 test 在
+  三平台上不再执行;根因修好后删掉别名行即可自动恢复
 - `tests/test_visual_regression.py` 跑在全套之后会飘(`settings_page_default`
   0.5749% > 0.5% 阈值),单跑该文件 8/8 通过;`settings_page` 不 import
   `media_manager_widget`,无依赖路径。该文件 2026-08-12 起本就不进 CI
