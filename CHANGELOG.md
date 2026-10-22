@@ -92,12 +92,17 @@ v1.12.2 之后只做一条主线:把 `core/` / `ui/` / `ui/viewmodels/` 里剩�
 ### 已知既有问题(非本批引入)
 
 - `tests/test_main_window_delete_feedback.py` 的 3 个 `QEventLoop().exec()` case:
-  Qt offscreen paint path race 导致 native segfault(该文件用 `_FakeWindow` /
-  `_FakeMediaManager` 纯替身;stash 本批改动后在 HEAD 基线同样复现)。发版 CI 上
-  ubuntu 连续 2 次、macOS 首次崩在同一行。**处置**:标记从 `xfail` 改成 `skipif`
-  —— `xfail(strict=False)` 拦不住进程级崩溃,pytest 拿不到 exception,CI 直接
-  exit 139(与 v1.12.2 `test_login_dialog.py` 同款修复)。代价是这 3 个 test 在
-  三平台上不再执行;根因修好后删掉别名行即可自动恢复
+  Qt offscreen paint path race 导致 native segfault。GH Actions 在 10-10 / 10-12 /
+  10-22 三次把 CI 打红(10-12 那次三平台全红)。**追下去发现真因不是 race** ——
+  该文件**从未接 `media_refresh_debounce.timeout → flush_media_refresh_pending`**
+  (生产在 `ui/main_window.py:424`),所以 `refresh_requested` 永远不会被 emit,
+  `assert emit_count == 1` 是一条**永远不成立**的断言。它先被 `xfail` 吞成
+  xfailed(本地没人看),CI 上再被 `loop.exec()` 的 segfault 盖住(exit 139,
+  更没人看)—— 两层标记把同一个真 bug 盖了两年。**修法**:`_build_ctrl` 补上生产
+  里那条连接;3 个 test 改用 `isActive()` 验 start + 同步 `timeout.emit()` 验到点,
+  不再挂钟等 100ms、不再进任何事件循环。标记(skipif)随之全部拆掉,3 个 test
+  在三平台上恢复真跑。附带教训:`xfail(strict=False)` 拦不住 native segfault ——
+  进程级崩溃 pytest 拿不到 exception,CI 直接 exit 139
 - `tests/test_visual_regression.py` 跑在全套之后会飘(`settings_page_default`
   0.5749% > 0.5% 阈值),单跑该文件 8/8 通过;`settings_page` 不 import
   `media_manager_widget`,无依赖路径。该文件 2026-08-12 起本就不进 CI
