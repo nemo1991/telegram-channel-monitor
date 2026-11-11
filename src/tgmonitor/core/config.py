@@ -19,11 +19,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class DBBackend(str, Enum):
     """消息仓储后端选择。
 
-    2026-10-12 plan-batch3 目标 3:JSONL 后端已删除,只保留 Postgres / Mongo。
-    若 .env 仍设 `TG_DB_BACKEND=jsonl`,pydantic 校验时即抛
-    `ValidationError: Input should be 'postgres' or 'mongo'`,启动期拦截。
+    v2.0.0:新增 SQLITE(单文件,零部署);POSTGRES 可选(多设备/大规模)。
     """
 
+    SQLITE = "sqlite"
     POSTGRES = "postgres"
     MONGO = "mongo"
 
@@ -85,10 +84,11 @@ class Settings(BaseSettings):
     tdlib_verbosity: int = Field(default=0, ge=0, le=1023)
 
     # ---- 数据库后端 ----
-    # 默认 POSTGRES:删 JSONL 后端后的首选项。首次启动需先起 PG 实例,
-    # 行为变化在 CHANGELOG + .env.example 里写明。
+    # SQLITE 单文件零部署;POSTGRES 留给多设备/大规模场景。
     db_backend: DBBackend = Field(default=DBBackend.POSTGRES)
     db_dsn: str = Field(default="postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor")
+    # SQLite 数据库文件路径(db_backend=sqlite 时用)。
+    sqlite_path: Path = Field(default_factory=lambda: _user_data_dir() / "tgmonitor.db")
     # 历史字段,删 JSONL 后不再使用;保留只为兼容旧 .env。`EditableSettings`
     # 与 settings_page 都不再编辑/显示此字段。
     db_root: Path = Field(default_factory=lambda: _user_data_dir() / "messages")  # noqa: ARG003  # legacy: 删 JSONL 后无 consumer

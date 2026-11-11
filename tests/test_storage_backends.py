@@ -1,15 +1,9 @@
-"""存储后端 parity(2026-08-25 PR #3)— list_media + count_media_by_object_key 行为对齐。
+"""存储后端 parity — list_media / list_messages / 用户元数据等行为对齐。
 
-2026-10-12 plan-batch3 目标 3 step 3.1:JSONL 后端已删,本文件只覆盖 in-mem
-后端(`InMemoryRepository`);Postgres / Mongo 无本地集成测试桩(需 testcontainers
-PG / mongomock_motor)— 走它们各自 backend unit test,`tests/integration/`
-下 `test_pg_repo_*` / `test_mongo_repo_*` 跑真服务。Parity 测试矩阵的
-PG / Mongo 实现挪到 step 3.4 `test_storage_backends_parity_mongo.py` 走 mongomock。
-
-2026-09-15 PR 1c 旧版用 `seeded_repo` / `meta_seeded_repo` parametrize fixture
-合并 in-mem / Jsonl twin-pair 测试;Jsonl 后端走真实文件 IO(验证 roundtrip +
-落盘)。删 Jsonl 后,本文件保留 in-mem 测试替身;Postgres / Mongo parity 走
-`tests/integration/test_*_repo_parity.py`(testcontainers PG / mongomock_motor)。
+v2.0.0:`seeded_repo` / `meta_seeded_repo` parametrize `inmemory` + `sqlite`
+双后端(SQLite 是 v2.0.0 默认后端,真实文件 IO,验证 roundtrip + 落盘)。
+Postgres 无本地集成测试桩(需 testcontainers PG)— 走
+`tests/integration/test_pg_repo_parity.py` 跑真服务。
 """
 
 from __future__ import annotations
@@ -30,6 +24,7 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.storage.repository import StorageRepository
+from tgmonitor.core.storage.sqlite_repo import SqliteRepository
 
 # ---- 共享 helpers:种子数据 + media 工厂 ----
 
@@ -151,36 +146,39 @@ async def _seed_meta_messages(repo: StorageRepository) -> None:
 
 
 # ---- parametrize fixtures ----
-# 设计:每个 parametrize 后端走一个真实实现(PR #A6 repo_backend 同款),
-# 主 fixture `seeded_repo` 用主种子数据,`meta_seeded_repo` 用 PR #8 metadata
-# 维度种子。
-# 2026-10-12 plan-batch3 目标 3 step 3.1:JSONL 后端已删,parametrize
-# 简化为单 `inmemory` 元素;Postgres / Mongo parity 测试挪到 step 3.4
-# `test_storage_backends_parity_mongo.py` 走 mongomock_motor。
+# v2.0.0:`seeded_repo` / `meta_seeded_repo` parametrize `inmemory` + `sqlite`
+# 双后端 — SQLite 是 v2.0.0 默认后端,与 InMemory 替身跑同一组契约断言。
+# Postgres parity 走 `tests/integration/test_pg_repo_parity.py`(testcontainers)。
 # 本地定义 — 范围清晰,只在 test_storage_backends.py 内部用,不放
 # tests/fixtures/_storage.py 与其它后端测试共享(seed 是这个文件的 spec)。
 
 
-@pytest_asyncio.fixture
-async def seeded_repo() -> InMemoryRepository:
-    """2026-10-12 plan-batch3 目标 3 step 3.1:仅 in-mem(seeded) — JSONL 已删。
-
-    4 条 media seed:跨 ch100/200/300,覆盖 DONE/FAILED/PENDING。
-    """
-    repo = InMemoryRepository()
+@pytest_asyncio.fixture(params=["inmemory", "sqlite"])
+async def seeded_repo(request, tmp_path) -> StorageRepository:
+    """主种子数据(4 条 media:跨 ch100/200/300,覆盖 DONE/FAILED/PENDING)。"""
+    if request.param == "inmemory":
+        repo: StorageRepository = InMemoryRepository()
+    else:
+        repo = SqliteRepository(path=tmp_path / "test.db")
+        await repo.connect()
+        await repo.init_schema()
     await _seed_main_messages(repo)
-    return repo
+    yield repo
+    await repo.close()
 
 
-@pytest_asyncio.fixture
-async def meta_seeded_repo() -> InMemoryRepository:
-    """2026-10-12 plan-batch3 目标 3 step 3.1:仅 in-mem(metadata seeded)。
-
-    频道 1/2(区别于主 fixture 的 100/200/300)— 4 条覆盖 fav/tagged/pinned。
-    """
-    repo = InMemoryRepository()
+@pytest_asyncio.fixture(params=["inmemory", "sqlite"])
+async def meta_seeded_repo(request, tmp_path) -> StorageRepository:
+    """metadata 维度种子(频道 1/2 — 4 条覆盖 fav/tagged/pinned)。"""
+    if request.param == "inmemory":
+        repo: StorageRepository = InMemoryRepository()
+    else:
+        repo = SqliteRepository(path=tmp_path / "test.db")
+        await repo.connect()
+        await repo.init_schema()
     await _seed_meta_messages(repo)
-    return repo
+    yield repo
+    await repo.close()
 
 
 # ---- 单后端 fixture(给 backend-specific 测试用) ----
