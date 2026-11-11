@@ -32,7 +32,12 @@ jobs:
       - name: Install pip-audit (uv-managed tool)
         run: uv tool install pip-audit
 
-      # pip-audit 1.0+ 原生支持 PEP 751 / uv.lock(2024-Q4)
-      # 直接传 lockfile 路径就行,无需先导出 requirements.txt
-      - name: Audit uv.lock
-        run: pip-audit --strict
+      # pip-audit 不直接读 uv.lock(2.10 仍不支持 PEP 751 lock 解析,裸跑会
+      # 误审计工具自身环境)。先 `uv export` 成 requirements.txt(含 dev 全量
+      # 供应链),再喂给 pip-audit。--no-emit-project 跳过 tgmonitor 自身
+      # (未上 PyPI,否则报 "Dependency not found")。
+      - name: Export uv.lock to requirements
+        run: uv export --no-emit-project --no-hashes --format requirements-txt -o requirements-audit.txt
+
+      - name: Audit dependencies
+        run: pip-audit --strict -r requirements-audit.txt

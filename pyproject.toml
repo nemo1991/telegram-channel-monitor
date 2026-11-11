@@ -183,7 +183,7 @@ dev = [
     # 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子(可选用,CI 不依赖)
     "pre-commit>=3.7",
     # 集成测试 — testcontainers 启动真 PG 服务(CI-only;本地无 Docker 跑会 skip)。
-    "testcontainers[postgresql]>=4.8",
+    "testcontainers[postgres]>=4.8",
     # 2026-09-17 PR 6:property-based tests for storage round-trips + UI invariants.
     "hypothesis>=6.100",
     "pytest-timeout>=2.3",

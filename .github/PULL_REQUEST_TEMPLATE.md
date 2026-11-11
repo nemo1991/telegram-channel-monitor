@@ -23,7 +23,7 @@
 <!-- 必填项 -->
 
 - [ ] 没有在 `core/` 包内 import PySide6 / qasync / 任何 UI 框架
-- [ ] 跨层只传 DTO,没有泄漏 TDLib / ORM 类型
+- [ ] 跨层只传 DTO,没有泄漏 Telegram / ORM 类型
 - [ ] 新增功能有对应的测试(`tests/`)
 - [ ] 单测全离线(用 Fake / InMemory / Local,不依赖真实 Telegram/DB/S3)
 

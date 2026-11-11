@@ -14,7 +14,7 @@
 # 对象存储
 /src/tgmonitor/core/objectstore/ @forcetone
 
-# TDLib 集成
+# Telegram 集成(Telethon)
 /src/tgmonitor/core/telegram/  @forcetone
 
 # 安全敏感

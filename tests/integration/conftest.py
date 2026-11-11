@@ -47,7 +47,7 @@ def _pg_container_or_skip():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 from testcontainers.postgres import PostgresContainer
     except ImportError:
-        pytest.skip("testcontainers[postgresql] 未装", allow_module_level=False)
+        pytest.skip("testcontainers[postgres] 未装", allow_module_level=False)
     try:
         return PostgresContainer("postgres:16-alpine")
     except Exception as e:  # DockerNotFoundError / ImageNotFoundError / 权限问题
