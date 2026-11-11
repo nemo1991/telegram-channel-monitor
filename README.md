@@ -7,18 +7,22 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-基于 [TDLib](https://github.com/tdlib/td) 官方库的 Telegram 频道监听桌面应用。通过用户账号登录,
-监听白名单频道的新消息,自动落库并下载媒体;内置 PySide6 桌面 UI,支持查看、检索与
-JSON / CSV / Markdown / HTML 导出。
+基于 [Telethon](https://github.com/LonamiWebs/Telethon) 纯 Python MTProto 库的 Telegram 频道监听桌面应用。
+通过用户账号登录,监听白名单频道的新消息,自动落库并下载媒体;内置 PySide6 桌面 UI,
+支持查看、检索与 JSON / CSV / Markdown / HTML 导出。
+
+> **v2.0.0 重大变化**:Telegram 后端从 TDLib(自编译 libtdjson)换成纯 Python 的 Telethon,
+> **无需再编译任何原生引擎**;默认数据库从 PostgreSQL 改为 **SQLite**(单文件零部署),
+> MongoDB 后端已移除。从 v1.x 升级需**重新登录**(session 格式不兼容),详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
 ## ✨ 特性
 
-- 🧩 **UI 与 core 严格分离** — UI 只依赖 `AppService` 门面 + `EventBus` + DTO
-- 🗄️ **多数据库后端** — PostgreSQL(默认) / MongoDB
+- 🧩 **UI 与 core 严格分离** — UI 只依赖 AppService 组合根 + 按域服务 + `EventBus` + DTO
+- 🗄️ **多数据库后端** — SQLite(默认,单文件零部署) / PostgreSQL(可选,多设备/大规模)
 - 📦 **多对象存储后端** — 本地平铺 / 本地两级分片(默认) / S3(AWS / MinIO / 阿里 OSS)
-- 🔌 **官方 TDLib 集成** — 自编译 libtdjson + ctypes 绑定(`tdlib_json` 子项目,零第三方依赖)
+- 🔌 **纯 Python Telegram 后端** — Telethon MTProto + cryptg 加密加速 + python-socks 代理,零原生编译
 - 📤 **多格式导出** — JSON / CSV / Markdown / HTML,后台流式,大消息量不占内存
 - 🔁 **自动重连** — 监听遇错指数退避后自动重订阅
 - ⚙️ **运行时热重载** — 设置对话框改后端 / 代理 / 媒体策略,无需重启
@@ -32,8 +36,8 @@ JSON / CSV / Markdown / HTML 导出。
 
 ```bash
 git clone https://github.com/nemo1991/telegram-channel-monitor.git
-cd tgmonitor
-uv sync --all-extras        # 含 PostgreSQL / MongoDB / S3 后端(可选)
+cd telegram-channel-monitor
+uv sync --all-extras        # 含 PostgreSQL / S3 后端(可选;默认 SQLite 无需额外依赖)
 cp .env.example .env        # 填下面的 3 个变量
 uv run tgmonitor
 ```
@@ -57,8 +61,9 @@ TG_PHONE=+8613800000000
 |---|---|
 | `TG_API_ID` / `TG_API_HASH` | Telegram 应用凭据([my.telegram.org](https://my.telegram.org/apps)) |
 | `TG_PHONE` | 登录手机号(含国家区号) |
-| `TG_DB_BACKEND` | `postgres`(默认) \| `mongo` |
-| `TG_DB_DSN` | 数据库连接串 |
+| `TG_DB_BACKEND` | `sqlite`(默认) \| `postgres` |
+| `TG_SQLITE_PATH` | SQLite 数据库文件路径(默认:数据目录下 `tgmonitor.db`) |
+| `TG_DB_DSN` | PostgreSQL 连接串(`postgres` 后端用) |
 | `TG_OBJECTSTORE_BACKEND` | `local` \| `folder`(默认,两级分片) \| `s3` |
 | `TG_OBJECTSTORE_ROOT` | 本地对象存储根目录 |
 | `TG_OBJECTSTORE_*` | S3 endpoint / region / key / bucket |
@@ -73,16 +78,16 @@ TG_PHONE=+8613800000000
 
 ```
 UI (PySide6)
-  │  只依赖:AppService 门面 + EventBus + DTO
+  │  只依赖:AppService 组合根 + 按域服务(auth/channels/messages/media/batch)+ EventBus + DTO
   ▼
-core(领域服务)
+core(组合根 + 领域服务)
   │  只依赖:StorageRepository / ObjectStore / TelegramClient / Exporter 四套抽象
   ▼
-存储(postgres/mongo) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
+存储(sqlite/postgres) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
 ```
 
 - **`core/` 禁止 import PySide6** — 领域逻辑与 UI 解耦,可离线单测
-- **跨边界只传 DTO**,不传 TDLib / ORM / Qt 对象
+- **跨边界只传 DTO**,不传 Telegram / ORM / Qt 对象
 - **四套可插拔抽象** — 新增存储 / 对象存储 / 导出 / Telegram 后端 = 加一个实现类 + 注册
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
@@ -96,11 +101,10 @@ core(领域服务)
 | **Linux**(Ubuntu 22.04+ / Debian 12+ / Fedora 39+) | ✅ CI 验证 |
 | **macOS 12+**(Intel + Apple Silicon) | ✅ CI 验证 |
 | **Windows 11 + WSL2** | ✅(在 Ubuntu 里跑,体验同 Linux) |
-| **Windows 原生 x64** | ✅ CI 验证(vcpkg 编译 libtdjson,见 [CONTRIBUTING.md](CONTRIBUTING.md#windows-原生编译)) |
+| **Windows 原生 x64** | ✅ CI 验证 |
 
-TDLib 引擎 `libtdjson` 自编译(锁定 TDLib 1.8.46,首次 clone 后需跑一次;二进制被
-gitignore):macOS / Linux 用 `scripts/build_libtdjson.sh`,Windows 用
-`scripts/build_libtdjson.ps1`(vcpkg 方式)。
+v2.0.0 起 Telegram 后端是纯 Python(Telethon),**三平台均无需编译原生引擎**;
+clone 后 `uv sync` 即可跑测试与打包。
 
 ---
 
@@ -115,8 +119,8 @@ gitignore):macOS / Linux 用 `scripts/build_libtdjson.sh`,Windows 用
 ```
 tgmonitor/
 ├── .env                   # 配置
-├── session/               # TDLib session
-├── messages/              # Postgres 数据库目录(messages / media / channels 表)
+├── session/               # Telethon session(tgmonitor.session)
+├── tgmonitor.db           # SQLite 数据库(默认;messages / media / channels 表)
 └── media/                 # 本地对象存储(local / folder)
 ```
 
@@ -135,7 +139,7 @@ tgmonitor/
 - **macOS 首次启动**:`.app` 未签名会被 Gatekeeper 拦截 → 「系统设置 → 隐私与安全性 → 仍要打开」
 - **Linux**:缺 Qt 系统库报 `could not load Qt platform plugin "xcb"` 时:
   `sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxcb-cursor0`
-- **Postgres(2026-09-03 v1.6.0 PR #Q1)**:搜索加速用 `pg_trgm` 扩展。
+- **PostgreSQL(可选后端)**:搜索加速用 `pg_trgm` 扩展。
   首次部署**需 superuser** 手动授权:
   ```sql
   CREATE EXTENSION pg_trgm;
@@ -151,10 +155,10 @@ tgmonitor/
 ```bash
 uv sync --all-groups --all-extras   # 全量 dev 依赖
 PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest   # 全部测试(含 UI,全离线)
-uv run ruff check src tests packages                     # lint
+uv run ruff check src tests                              # lint
 ```
 
-开发 / 提交规范、新增后端步骤、代理与 TDLib 调试见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+开发 / 提交规范、新增后端步骤、代理与 Telethon 调试见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
