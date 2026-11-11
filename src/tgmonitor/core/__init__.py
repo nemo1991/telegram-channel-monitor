@@ -3,7 +3,7 @@
 子包:
     telegram     官方 TDLib 集成(唯一接触 TDLib 之处)
     monitor      频道监听服务
-    storage      消息数据持久化(PostgreSQL / MongoDB)
+    storage      消息数据持久化(SQLite / PostgreSQL)
     objectstore  媒体二进制对象存储(S3 / Local)
     export       导出服务与各格式 Exporter
 

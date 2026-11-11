@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # `tests/test_introspect_repair.py::test_expected_schema_matches_pg_sql_columns`
 # 验证两者对齐(同步改 schema 时测试会跑过)。
 SCHEMA_SQL = """\
--- PostgreSQL 参考 DDL(Mongo 不固定 schema,仅以此为逻辑对照)
+-- PostgreSQL 参考 DDL(SQLite schema 以此为逻辑对照)
 -- 幂等,init_schema() 会在启动时执行。
 
 -- 2026-09-03 v1.6.0 PR #Q1:pg_trgm GIN 索引加速 LIKE 搜索

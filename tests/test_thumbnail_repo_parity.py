@@ -1,9 +1,8 @@
 """2026-09-29:缩略图独立表多后端 parity。
 
-策略(v2.0.0 更新):
+策略(v2.0.0):
 - `InMemoryRepository`(in-process 替身,基准)
 - `SqliteRepository`(v2.0.0 默认后端,真实文件 IO)
-- `MongoRepository` + `mongomock_motor`(in-process 模拟真 Mongo)
 
 PG 真集在 `tests/integration/test_pg_repo_parity.py` 单独覆盖
 (需要 testcontainers,Docker 不可用时自动 skip)。
@@ -18,7 +17,7 @@ PG 真集在 `tests/integration/test_pg_repo_parity.py` 单独覆盖
 - 各后端行为一致(无 race / 顺序差异)
 
 注:SQL 后端 thumbnails 表有 FK → 父消息必须先存在,`_seed_parent`
-显式建档(InMemory / Mongo 无 FK 概念,调了同样无害)。
+显式建档(InMemory 无 FK 概念,调了同样无害)。
 """
 
 from __future__ import annotations
@@ -28,11 +27,9 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
-from mongomock_motor import AsyncMongoMockClient
 
 from tests.fixtures._in_memory_repository import InMemoryRepository
 from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO, ThumbnailDTO
-from tgmonitor.core.storage.mongo_repo import MongoRepository
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.sqlite_repo import SqliteRepository
 
@@ -55,30 +52,16 @@ async def sqlite_repo(tmp_path) -> AsyncIterator[SqliteRepository]:
         await repo.close()
 
 
-@pytest_asyncio.fixture
-async def mongo_repo() -> AsyncIterator[MongoRepository]:
-    client = AsyncMongoMockClient()
-    repo = MongoRepository.from_client(client, database="tgmonitor_thumb_parity")
-    await repo.connect()
-    await repo.init_schema()
-    try:
-        yield repo
-    finally:
-        await repo.close()
-
-
-@pytest.fixture(params=["inmem", "sqlite", "mongo"])
-def repo(request, inmem_repo, sqlite_repo, mongo_repo) -> StorageRepository:
-    """三后端 parametrize(InMemory + SQLite + Mongo)。"""
+@pytest.fixture(params=["inmem", "sqlite"])
+def repo(request, inmem_repo, sqlite_repo) -> StorageRepository:
+    """双后端 parametrize(InMemory + SQLite)。"""
     if request.param == "inmem":
         return inmem_repo
-    if request.param == "sqlite":
-        return sqlite_repo
-    return mongo_repo
+    return sqlite_repo
 
 
 async def _seed_parent(repo: StorageRepository, channel_id: int, msg_id: int) -> None:
-    """SQL 后端 FK 要求父消息先存在;InMemory / Mongo 无 FK,调了无害。"""
+    """SQL 后端 FK 要求父消息先存在;InMemory 无 FK,调了无害。"""
     await repo.save_message(
         MessageDTO(
             id=0,
@@ -134,7 +117,7 @@ async def test_save_then_get_roundtrip(repo: StorageRepository) -> None:
 
 
 async def test_save_is_upsert(repo: StorageRepository) -> None:
-    """同三元组二次 save 覆盖 — 等价 SQL ON CONFLICT / Mongo replace_one upsert。"""
+    """同三元组二次 save 覆盖 — 等价 SQL ON CONFLICT upsert。"""
     await _seed_parent(repo, 100, 1)
     await repo.save_thumbnail(_thumb(object_key="thumb/v1.jpg"))
     await repo.save_thumbnail(_thumb(object_key="thumb/v2.jpg"))
@@ -199,7 +182,7 @@ async def test_count_by_object_key(repo: StorageRepository) -> None:
 async def test_delete_message_cascades_thumb(repo: StorageRepository) -> None:
     """delete_message 同时清掉该消息的所有 thumb。
 
-    SQL 后端走 FK ON DELETE CASCADE;Mongo / InMemory 走
+    SQL 后端走 FK ON DELETE CASCADE;InMemory 走
     application-level cascade(无 schema 强约束)。
     """
     await _seed_parent(repo, 100, 1)

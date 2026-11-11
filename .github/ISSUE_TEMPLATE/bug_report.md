@@ -29,7 +29,7 @@ assignees: ""
 - **OS**: (e.g. macOS 14.5, Ubuntu 24.04, Windows 11)
 - **Python**: (e.g. 3.12.3)
 - **版本**: (e.g. 0.1.0, commit SHA)
-- **数据库后端**: postgres / mongo
+- **数据库后端**: sqlite / postgres
 - **对象存储后端**: local / s3 (S3 兼容:AWS/MinIO/OSS)
 - **安装方式**: pip / uv / 源码
 

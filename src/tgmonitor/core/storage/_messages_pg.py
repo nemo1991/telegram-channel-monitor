@@ -339,7 +339,7 @@ async def list_messages(
     tag_only: bool = False,
     pinned_only: bool = False,
 ) -> list[MessageDTO]:
-    """按时间升序 + id 升序(与 Mongo 对齐);media 二次查询拼回。
+    """按时间升序 + id 升序(与 SQLite / InMemory 对齐);media 二次查询拼回。
 
     `channel_ids` 走 ANY($1::bigint[]);`limit` = 最近 N 条(倒序取前 N
     后在内存反转为升序,LIMIT 在 SQL 层)。
@@ -390,7 +390,7 @@ async def list_messages(
         )
         params.append(like)
         params.append(like)
-    # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 InMemory / Mongo 语义一致)。
+    # `limit` = 最近 N 条:倒序取前 N 再反转为升序(与 InMemory / SQLite 语义一致)。
     order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
     sql = "SELECT * FROM messages WHERE " + " AND ".join(where) + f" ORDER BY {order_by}"
     if limit is not None:

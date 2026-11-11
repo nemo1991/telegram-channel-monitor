@@ -338,9 +338,8 @@ def test_message_gift():
 async def test_sticker_emoji_roundtrip_via_inmemory():
     """emoji 字段必须经 InMemory 替身完整往返 — 不丢字段,不被改默认值。
 
-    2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删;InMemory 替身同语义验证
-    sticker emoji 字段不丢。JSON 序列化细节(Jsonl 落盘格式)由 PG / Mongo
-    backend unit test 覆盖。
+    InMemory 替身同语义验证 sticker emoji 字段不丢;JSON 序列化细节由
+    SQLite / PG backend 测试覆盖。
     """
     from datetime import datetime
 

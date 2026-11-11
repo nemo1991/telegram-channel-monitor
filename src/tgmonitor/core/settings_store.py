@@ -175,7 +175,7 @@ class EditableSettings:
     phone: str = ""
     session_dir: str = "./data/session"
 
-    db_backend: str = "postgres"  # DBBackend.value
+    db_backend: str = "sqlite"  # DBBackend.value
     db_dsn: str = ""
     # db_root 字段已删除 — 原 JSONL 后端专属,删 JSONL 后无 consumer。
     # `Settings.db_root` 仍保留默认(`_user_data_dir() / messages`),

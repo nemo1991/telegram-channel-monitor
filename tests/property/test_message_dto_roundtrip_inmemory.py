@@ -3,8 +3,8 @@
 PR 6 plan:`MessageDTO` round-trip × 4 backend,Property-based fuzz 找出序列化
 丢字段的 bug。
 
-本文件只跑 **InMemory backend**(其它 backend 需要 testcontainers / mongomock,
-放 `tests/integration/`)。InMemory 是内存 dict,等价 = 序列化/反序列化无损。
+本文件只跑 **InMemory backend**(PG 需 testcontainers,放
+`tests/integration/`;SQLite 契约在 `tests/test_storage_backends.py`)。InMemory 是内存 dict,等价 = 序列化/反序列化无损。
 
 预期 bug(plan 已列):
 - `tags` 顺序(JSON list 反序列化保序,但 Python set → list 会乱序)

@@ -5,7 +5,7 @@
 `UndefinedColumnError`,被 `run_coro` 静默吞掉 → Media Manager 页空表。
 修法:把 SELECT 里的 `me.media_idx` 换成窗口函数
 `ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx`,
-与 Jsonl `enumerate` / Mongo `$unwind includeArrayIndex` 顺序对齐。
+与 InMemory `enumerate` / SQLite `ROW_NUMBER` 顺序对齐。
 
 本测试不依赖真 PG(集成测试在 `tests/integration/test_pg_repo_list_media.py`),
 mock `_pool` 拦截传给 `conn.fetch(...)` 的 SQL,断言关键关键字 / 禁用符号。
@@ -86,7 +86,7 @@ async def test_list_media_sql_no_me_media_idx(fake_pool: _FakeAcquire) -> None:
 
 async def test_list_media_sql_uses_row_number_window(fake_pool: _FakeAcquire) -> None:
     """修复要求:`ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx`
-    在 SELECT 列表里(等价 Jsonl enumerate / Mongo unwind 顺序)。"""
+    在 SELECT 列表里(等价 InMemory enumerate / SQLite ROW_NUMBER 顺序)。"""
     await _repo(fake_pool).list_media()
     sql = fake_pool.captured_sql[0]
     assert "ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx" in sql, (

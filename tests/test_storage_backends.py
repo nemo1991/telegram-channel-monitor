@@ -182,10 +182,8 @@ async def meta_seeded_repo(request, tmp_path) -> StorageRepository:
 
 
 # ---- 单后端 fixture(给 backend-specific 测试用) ----
-# 2026-10-12 plan-batch3 目标 3 step 3.1:JSONL 已删,只剩 `in_mem_repo`
-# 单一 fixture(in-mem 专属:直接 mutate `channels[100]` dict)。
-# Jsonl 专属测试(close+restart roundtrip / 私有 `_root` 访问)随 step 3.1
-# 同步删除(无对应 backend 替代,语义已迁 PG / Mongo 的 integration test)。
+# `in_mem_repo` 是 in-mem 专属(直接 mutate `channels[100]` dict),
+# 不参与 parametrize;SQLite 的持久化 roundtrip 在 tests/test_sqlite_repo.py。
 
 
 @pytest_asyncio.fixture
@@ -321,26 +319,23 @@ async def test_count_refcount_empty_key(seeded_repo):
 
 
 async def test_count_refcount_counts_unsubscribed_channel_media(seeded_repo):
-    """v1.8.0 patch:refcount 必须数全部 channel,与订阅状态无关(对齐 PG/Mongo)。
+    """refcount 必须数全部 channel,与订阅状态无关(SQL 后端同语义)。
 
     旧实现 `list_subscribed_channels()` 过滤会让退订频道的 media 被
     漏数 → 删除同 key 的另一处 media 时误判 refcount=0 → 误删 bytes
     → 退订频道 message.media 仍引用该 key 的 dangling ref,重新订阅看到
-    空媒体。fix 后 `count_media_by_object_key` 走 `self._channels.values()`
-    全扫,与 Postgres `SELECT count(*) FROM media WHERE object_key=$1` /
-    Mongo `$unwind + $match` 等价。
+    空媒体。fix 后 InMemory 走 `self._channels.values()` 全扫,与
+    SQL `SELECT count(*) FROM media WHERE object_key=?` 等价。
     """
     # baseline:订阅状态下 photo_a.jpg refcount=2(msg1 + msg10,见 seeded_repo)
     assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2
-    # 退订其中任一频道(msg1/channel 100 + msg10/channel 300 任一),旧 Jsonl
-    # 实现会把 refcount 降到 1(漏数退订频道的引用),与 PG/Mongo 行为分叉。
-    # 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,此断言仍守 PG/Mongo
-    # 行为对齐 — 集成测试 `tests/integration/test_pg_repo_parity.py` / `test_mongo_repo_parity.py` 跑。
+    # 退订其中任一频道,旧实现会把 refcount 降到 1(漏数退订频道的引用)。
+    # 此断言守 InMemory / SQLite / PG 行为对齐(PG 真集在 tests/integration/)。
     if hasattr(seeded_repo, "set_channel_subscribed"):
         await seeded_repo.set_channel_subscribed(100, False)
         try:
             assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2, (
-                "refcount 必须数退订频道的 media(InMemory 行为,PG/Mongo 在集成测试守门)"
+                "refcount 必须数退订频道的 media(InMemory / SQLite 同语义,PG 在集成测试守门)"
             )
         finally:
             await seeded_repo.set_channel_subscribed(100, True)
@@ -350,7 +345,7 @@ async def test_list_media_includes_unsubscribed_channel_media(seeded_repo):
     """v1.8.0 patch:`list_media(channel_ids=None)` 必须返回退订频道的 media。
 
     旧实现 `list_subscribed_channels()` 兜底让退订频道的 media 在
-    Media Manager 里"消失",与 PG/Mongo 行为不一致。fix 后
+    Media Manager 里"消失",与 SQL 后端行为不一致。fix 后
     `_filter_media_rows` 走 `self._channels.values()` 全扫。
     """
     baseline = await seeded_repo.list_media()
@@ -552,9 +547,8 @@ async def test_aggregate_empty_input(seeded_repo):
     assert bucket == {}
 
 
-# ---- v1.6.0 PR #Q2:photo_local_key 部分更新 parity(InMemory) -----
-# 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory parity 测试保留;
-# Postgres / Mongo 走 `tests/integration/test_*_repo_parity.py`。
+# ---- photo_local_key 部分更新 parity(InMemory + SQLite) -----
+# PG 真集走 `tests/integration/test_pg_repo_parity.py`。
 
 
 async def test_update_channel_metadata_preserves_other_fields_on_photo_update(seeded_repo):
@@ -573,8 +567,7 @@ async def test_update_channel_metadata_preserves_other_fields_on_photo_update(se
 
 # ---- 2026-08-27 v1.4.0 PR #10:`update_message_interactions` 增量更新(views /
 # reactions)—— InMemory parity。reactions 可以是 ReactionDTO 或 dict。
-# 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身验证
-# reactions 序列化层转换;PG / Mongo 走各自 backend unit test。
+# InMemory + SQLite 验证 reactions 序列化层转换;PG 走 integration test。
 # ----
 
 
@@ -660,8 +653,7 @@ async def test_update_pin_nonexistent_silent(seeded_repo):
 # ============================================================
 # 2026-09-14 v1.7.5 PR #8:`list_messages` favorite_only / tag_only / pinned_only
 # 3 个 kwarg 在 InMemory 替身上的行为验证。
-# 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删;PG / Mongo parity 走
-# `tests/integration/test_*_repo_parity.py` 集成测试。
+# InMemory + SQLite parametrize;PG parity 走 tests/integration/。
 # ============================================================
 
 
@@ -923,8 +915,7 @@ async def test_in_mem_update_both_views_and_reactions(in_mem_repo):
 # ---------------------------------------------------------------------------
 # 2026-08-27 v1.4.0 PR #9:MessageDTO 加 forward_origin / via_bot_user_id /
 # media_album_id / is_pinned(reply_to_msg_id 已存在)— 后端 roundtrip parity。
-# 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,只覆盖 InMemory;
-# PG / Mongo 走 `tests/integration/test_*_repo_parity.py` 集成测试。
+# InMemory + SQLite parametrize;PG 走 tests/integration/ 集成测试。
 # ---------------------------------------------------------------------------
 
 

@@ -19,12 +19,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class DBBackend(str, Enum):
     """消息仓储后端选择。
 
-    v2.0.0:新增 SQLITE(单文件,零部署);POSTGRES 可选(多设备/大规模)。
+    v2.0.0:SQLITE 为默认(单文件,零部署);POSTGRES 可选(多设备/大规模)。
+    Mongo 后端已删 — 旧 .env 设 `TG_DB_BACKEND=mongo` 启动期即报 ValidationError。
     """
 
     SQLITE = "sqlite"
     POSTGRES = "postgres"
-    MONGO = "mongo"
 
 
 class ObjectStoreBackend(str, Enum):
@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     tdlib_verbosity: int = Field(default=0, ge=0, le=1023)
 
     # ---- 数据库后端 ----
-    # SQLITE 单文件零部署;POSTGRES 留给多设备/大规模场景。
-    db_backend: DBBackend = Field(default=DBBackend.POSTGRES)
+    # v2.0.0 默认 SQLITE:单文件零部署;POSTGRES 留给多设备/大规模场景。
+    db_backend: DBBackend = Field(default=DBBackend.SQLITE)
     db_dsn: str = Field(default="postgresql://tgmonitor:tgmonitor@localhost:5432/tgmonitor")
     # SQLite 数据库文件路径(db_backend=sqlite 时用)。
     sqlite_path: Path = Field(default_factory=lambda: _user_data_dir() / "tgmonitor.db")
@@ -135,9 +135,9 @@ class Settings(BaseSettings):
     # 正在编辑的其它字段)。
     paused: bool = Field(default=False)
 
-    # 2026-09-23 v1.8.x:启动期 schema introspect/auto-repair 开关。
-    # 默认 False(dry-run — drift 出现仅 log,不修);开启后 `ALTER TABLE ADD
-    # COLUMN IF NOT EXISTS`(无锁)会被自动跑,mongo unique 索引会被重建。
+    # 启动期 schema introspect/auto-repair 开关。
+    # 默认 False(dry-run — drift 出现仅 log,不修);开启后缺列会被
+    # `ALTER TABLE ADD COLUMN` 自动补上。
     # missing_tables / wrong_types / extra_columns 永远仅 log(避免 DROP+CREATE
     # 丢数据 / 类型 ALTER 重写表对大表 lock-heavy)。
     # .env 字段:TG_SCHEMA_AUTO_REPAIR=true|false。
@@ -196,8 +196,8 @@ class Settings(BaseSettings):
         - `_env_file=None`(不读 .env)
         - api_id=1, api_hash="x"*32, phone="+10000000000"
         - session_dir / data_root / db_root / objectstore_root 用 tempfile.mkdtemp
-        - media_policy=METADATA / db_backend=POSTGRES / objectstore_backend=LOCAL
-          (删 JSONL 后端后默认切到 POSTGRES;测试若需真连 PG 应
+        - media_policy=METADATA / db_backend=SQLITE / objectstore_backend=LOCAL
+          (v2.0.0 默认 SQLite,离线可跑;测试若需真连 PG 应
           `monkeypatch` build_storage 拦截,见
           `tests/test_reconfigure.py` 3 处 reconfigure test)
 

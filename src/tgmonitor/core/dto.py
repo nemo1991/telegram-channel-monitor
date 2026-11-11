@@ -157,7 +157,7 @@ class ThumbnailDTO:
     状态)。文件大小 / sha256 / mime 各算。
 
     跨边界:UI / VM / Exporter 只传 ThumbnailDTO,不传 ORM 行 / TDLib 原生。
-    持久化:两后端(POSTGRES / MONGO)各自存,关联键保证 1:1。
+    持久化:各后端(SQLITE / POSTGRES)独立存,关联键保证 1:1。
     """
 
     channel_id: int

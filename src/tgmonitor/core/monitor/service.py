@@ -211,7 +211,7 @@ class MonitorService(
                     queued.append(idx)
 
         # 幂等落库(FULL 模式下 media 状态由异步下载队列写回,`save_message`
-        # 是 upsert:InMemoryRepository 是 dict 覆写,mongo / postgres
+        # 是 upsert:InMemoryRepository 是 dict 覆写,sqlite / postgres
         # 各仓也按 (channel_id, telegram_msg_id) 更新)。
         await self.storage.save_message(msg)
         self._handled += 1
@@ -404,7 +404,7 @@ class MonitorService(
     # ---- helpers ----
 
     # 2026-08-25 PR #3:删除 `_count_media_with_object_key` — 由
-    # `storage.count_media_by_object_key` 替代,后端走 SQL/Mongo 索引 O(1),
+    # `storage.count_media_by_object_key` 替代,后端走 SQL 索引 O(1),
     # InMemory 走顺序扫(与旧实现等价)。
 
     async def _maybe_store_thumb(self, med: MediaDTO) -> None:

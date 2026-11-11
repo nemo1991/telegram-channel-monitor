@@ -183,12 +183,11 @@ async def list_media(
     sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
     nulls_clause = " NULLS LAST" if nulls_last else ""
     # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
-    # `media` 表没有该列(Mongo 用 `$unwind includeArrayIndex`、
-    # InMemory 用 enumerate,都运行时生成;PG 的 PR #3 把 media 拆成
-    # 独立表时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY
+    # `media` 表没有该列(InMemory 用 enumerate 运行时生成;PG 把
+    # media 拆成独立表时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY
     # m.id ORDER BY me.id) - 1` 按 me.id(BIGSERIAL,等价于 save_message
     # 的 INSERT 顺序)在每条 message 内部从 0 起编。与 InMemory enumerate
-    # / Mongo unwind 顺序对齐,UI `(channel_id, telegram_msg_id,
+    # / SQLite ROW_NUMBER 顺序对齐,UI `(channel_id, telegram_msg_id,
     # media_idx)` 三元组定位语义不变。
     sql = [
         "SELECT m.*, me.id AS media_id, me.type AS media_type,",

@@ -1,10 +1,8 @@
 """2026-09-23 v1.8.x:启动期 schema introspect / repair — 纯单元测试。
 
-只覆盖 EXPECTED_SCHEMA(单源)与 SchemaReport 数据类的契约;真 PG / Mongo
-后端行为在 `test_pg_repo_introspect_repair.py`(testcontainers)与
-`test_storage_backends_parity_introspect.py`(parametrize mongo)。
-
-2026-10-12 plan-batch3 目标 3:JSONL 后端已删,parity 不再 parametrize jsonl。
+只覆盖 EXPECTED_SCHEMA(单源)与 SchemaReport 数据类的契约;真后端行为:
+SQLite 在 `tests/test_sqlite_repo.py`,PG 在 `tests/integration/`
+(testcontainers)。
 """
 
 from __future__ import annotations

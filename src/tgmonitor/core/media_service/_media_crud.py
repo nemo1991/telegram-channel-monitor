@@ -52,7 +52,7 @@ async def list_media(
     """列出已下载 / 失败 / 下载中媒体(2026-08-25 PR #3 下沉)— 转发 storage。
 
     filter 全部下沉到 `StorageRepository.list_media` 后端(Postgres
-    SQL JOIN,Mongo aggregate,InMemory 顺序扫 + slice),UI 不再
+    SQL JOIN,InMemory 顺序扫 + slice),UI 不再
     触碰应用层 flatten。
 
     2026-08-25 v1.3.0 PR #6:返 `(rows, total)` — `total` 来自

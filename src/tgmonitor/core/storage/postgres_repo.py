@@ -239,7 +239,7 @@ class PostgresRepository(StorageRepository):
         tag_only: bool = False,
         pinned_only: bool = False,
     ) -> list[MessageDTO]:
-        """按时间升序 + id 升序(与 Mongo 对齐);media 二次查询拼回 — thin delegate."""
+        """按时间升序 + id 升序(与 SQLite / InMemory 对齐);media 二次查询拼回 — thin delegate."""
         return await _messages.list_messages(
             self,
             channel_ids,

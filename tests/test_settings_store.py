@@ -44,14 +44,12 @@ def test_write_env_preserves_format(tmp_path: Path):
     )
     env = parse_env_file(p)
     env.pairs["TG_API_ID"] = "999"  # 改
-    env.pairs["TG_DB_BACKEND"] = (
-        "mongo"  # 新增(2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,改用 mongo)
-    )
+    env.pairs["TG_DB_BACKEND"] = "postgres"  # 新增(非默认值,验证写入)
     write_env_file(env, p)
     text = p.read_text(encoding="utf-8")
     assert "# header" in text
     assert "TG_API_ID=999" in text
-    assert "TG_DB_BACKEND=mongo" in text
+    assert "TG_DB_BACKEND=postgres" in text
     assert text.endswith("\n")  # 末尾换行
 
 
@@ -62,7 +60,7 @@ def test_update_env_with_settings(tmp_path: Path):
         "TG_API_ID=1\n"
         "TG_API_HASH=old\n"
         "TG_PHONE=+1\n"
-        "TG_DB_BACKEND=mongo\n"  # 2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,seed 改 mongo
+        "TG_DB_BACKEND=postgres\n"  # seed 非默认值,验证被 for_test 默认覆盖
         "TG_OBJECTSTORE_BACKEND=local\n"
         "TG_OBJECTSTORE_ROOT=./data/media\n",
         encoding="utf-8",
@@ -83,8 +81,8 @@ def test_update_env_with_settings(tmp_path: Path):
     assert "TG_API_ID=42" in text
     assert "TG_API_HASH=new-hash" in text
     assert "TG_PHONE=+1234" in text
-    # 2026-10-12 plan-batch3 目标 3 step 3.2:for_test 默认 POSTGRES,覆盖 seed mongo
-    assert "TG_DB_BACKEND=postgres" in text
+    # for_test 继承类默认 SQLITE,覆盖 seed postgres
+    assert "TG_DB_BACKEND=sqlite" in text
     assert "TG_OBJECTSTORE_BACKEND=folder" in text
     assert "TG_MEDIA_POLICY=full" in text
 
@@ -116,7 +114,7 @@ def test_editable_to_settings_roundtrip():
         api_hash="h" * 32,
         phone="+1",
         session_dir="./s",
-        db_backend="mongo",  # 2026-10-12 plan-batch3 目标 3 step 3.2:JSONL 删,改 mongo
+        db_backend="postgres",
         db_dsn="",
         # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 字段已删
         objectstore_backend="folder",
@@ -131,7 +129,7 @@ def test_editable_to_settings_roundtrip():
     )
     s = e.to_settings()
     assert s.api_id == 1
-    assert s.db_backend == DBBackend.MONGO
+    assert s.db_backend == DBBackend.POSTGRES
     assert s.objectstore_backend == ObjectStoreBackend.FOLDER
     assert s.media_policy == MediaPolicy.FULL
 
@@ -142,10 +140,7 @@ def test_editable_to_settings_roundtrip():
 def _settings(**kw) -> Settings:
     """最小可工作 Settings(default 全相同)。
 
-    2026-10-12 plan-batch3 目标 3:
-    - step 3.2:`db_backend` 默认从 JSONL 切到 POSTGRES
-    - step 3.3:db_root 字段从 EditableSettings 删;Settings.db_root 仍
-      接受(留兼容旧 .env)但本 helper 不再生成默认值
+    v2.0.0:db_backend 类默认 SQLITE;本 helper 显式 POSTGRES 作 diff 基准。
     """
     base = dict(
         api_id=1,

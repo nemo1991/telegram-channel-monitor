@@ -8,7 +8,7 @@ r"""`StorageRepository.list_messages(search=...)` 4 后端 parity 测试 — 202
   Jsonl 已删,后端 parity 走 `tests/integration/test_*_repo_parity.py`)
 - text 命中、file_name 命中、大小写不敏感
 - date + search 组合过滤
-- SQL LIKE / Mongo $regex 通配符安全(`%` / `_` / `\` 用户输入不破坏查询)
+- SQL LIKE 通配符安全(`%` / `_` / `\` 用户输入不破坏查询)
 - 兼容旧调用(`search` 不传 = 不过滤)
 """
 

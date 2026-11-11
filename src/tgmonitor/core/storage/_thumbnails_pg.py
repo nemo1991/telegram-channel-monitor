@@ -13,7 +13,7 @@
 使用(get_thumbnail / list_thumbnails_for_message + facade 自身后续
 如有别处引用),放本 module 顶部。
 
-`_media_status` 反序列化 download_status 是 PG / Mongo 共有 helper,
+`_media_status` 反序列化 download_status 是 PG / SQLite 同款 helper,
 签名一致但各自定义(plan-batch8 设计决策:不抽公共),本 module 通过
 `from tgmonitor.core.storage.postgres_repo import _media_status`
 复用 facade 顶部 helper(2026-10-16 plan-batch8-1.5 将搬入

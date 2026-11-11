@@ -1,7 +1,7 @@
 """`InMemoryRepository` 测试替身 — 2026-08-31 v1.5.0 PR #A6。
 
 从 tests/conftest.py 抽出(原 397-394 行,共 360+ 行实现)。
-实现与 Postgres / Mongo 语义对齐(隐式建频道 / fid 索引 /
+实现与 Postgres / SQLite 语义对齐(隐式建频道 / fid 索引 /
 offset+limit 反向取),`StorageRepository` ABC 完整实现。
 
 2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 是唯一的 in-process
@@ -46,7 +46,7 @@ class InMemoryRepository(StorageRepository):
     async def init_schema(self) -> None: ...
 
     # 2026-09-23 v1.8.x:启动期 introspect/auto-repair — InMemory 无 schema
-    # 概念,固定返回 ok=True(跟 Mongo / JSONL 一致)。
+    # 概念,固定返回 ok=True。
     async def introspect_schema(self) -> SchemaReport:
         return SchemaReport()
 
@@ -297,7 +297,7 @@ class InMemoryRepository(StorageRepository):
             out.append(m)
         # 归一化为 aware UTC 再排序 — 测试 fixture 默认 datetime() 是 naive,
         # dto.py default_factory / tdlib _map_message 现在是 aware UTC,
-        # 直接 < 比较会 TypeError。生产代码走的是 Postgres/Mongo/JSONL,
+        # 直接 < 比较会 TypeError。生产代码走的是 Postgres/SQLite,
         # 它们各自处理 tzinfo,不在 conftest 范围。
         out.sort(key=lambda m: (m.date if m.date.tzinfo else m.date.replace(tzinfo=UTC), m.id))
         # `limit` = 最近 N 条:取排序尾部,仍按时间升序返回(与各存储后端对齐)。
@@ -376,7 +376,7 @@ class InMemoryRepository(StorageRepository):
 
         排序(2026-08-25 v1.3.0 PR #6 新增):filter 后整体 sort,key 由
         `sort`/`sort_dir` 决定;tie-breaker `(msg_id DESC, idx ASC)` 与
-        Postgres / Mongo 默认行为对齐。
+        Postgres / SQLite 默认行为对齐。
         """
         # 1) 先按 message.date 排序(与 list_messages 一致)
         msgs = await self.list_messages(

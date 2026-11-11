@@ -24,12 +24,11 @@ dependencies = [
 [project.optional-dependencies]
 # 选择性安装:实际用哪个 DB 就装哪个(或都装)
 postgres = ["asyncpg>=0.29"]
-mongo = ["motor>=3.4"]
 # 对象存储 (S3 协议: AWS S3 / MinIO / 阿里 OSS)
 objectstore = ["aioboto3>=13.0"]
 # 一键全装
 all = [
-    "tgmonitor[postgres,mongo,objectstore]",
+    "tgmonitor[postgres,objectstore]",
 ]
 
 [project.urls]
@@ -106,7 +105,7 @@ testpaths = ["tests"]
 # 2026-09-15 v1.7.5+ PR 1a:`-m 'not integration and not legacy'` 也 skip PR 编号 frozen 文件。
 addopts = "-ra -q -m 'not integration'"
 markers = [
-    "integration: requires Docker (testcontainers) or in-process mongomock_motor;off by default",
+    "integration: requires Docker (testcontainers);off by default",
     "legacy: PR 编号 frozen regression file (test_*_pr*.py) or perf/;behavior covered by main test files, pass --include-legacy to enable",
 ]
 # 2026-10-22 v1.12.4:给**每个** test 加超时上限。
@@ -173,7 +172,6 @@ module = [
     "PySide6", "PySide6.*",         # Qt6 绑定:有 stub 但 mypy 选错版本会报 import-not-found
     "qasync",                      # asyncio ↔ Qt 事件循环桥
     "asyncpg",                     # Postgres async driver
-    "motor", "motor.*",            # Mongo async driver
     "aioboto3", "aioboto3.*",       # S3 async SDK
     "botocore", "botocore.*",       # aioboto3 底层的 S3 协议栈(无 stub)
     "jinja2",                      # HTML export 模板
@@ -191,11 +189,8 @@ dev = [
     "moto[s3]>=5",
     # 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子(可选用,CI 不依赖)
     "pre-commit>=3.7",
-    # 2026-08-31 v1.5.0 PR #A7:集成测试 — testcontainers 启动真 PG 服务(
-    # CI-only;本地无 Docker 跑会 skip)/ mongomock_motor in-process Mongo mock(
-    # 本地 + CI 通用,aggregate pipeline 部分支持度参差,仅覆盖基础 CRUD + find_media_by_file_id)。
-    "testcontainers[postgresql,mongodb]>=4.8",
-    "mongomock_motor>=0.0.21",
+    # 集成测试 — testcontainers 启动真 PG 服务(CI-only;本地无 Docker 跑会 skip)。
+    "testcontainers[postgresql]>=4.8",
     # 2026-09-17 PR 6:property-based tests for storage round-trips + UI invariants.
     "hypothesis>=6.100",
     "pytest-timeout>=2.3",

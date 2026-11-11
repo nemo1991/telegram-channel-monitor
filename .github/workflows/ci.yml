@@ -64,7 +64,7 @@ jobs:
 
       # uv sync 一次性装:
       #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
-      #   - [project.optional-dependencies] 全部 (postgres/mongo/objectstore)
+      #   - [project.optional-dependencies] 全部 (postgres/objectstore)
       #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
       # `-q` 关 progress bar,CI 日志干净
       #
@@ -238,8 +238,8 @@ jobs:
           uv run mypy ${{ matrix.module }}
 
   integration:
-    # 2026-08-31 v1.5.0 PR #A7:真集成测试 job — testcontainers[postgresql]
-    # 启动 Docker 容器跑真 PG parity,plus mongomock_motor in-process Mongo parity。
+    # 真集成测试 job — testcontainers[postgresql] 启动 Docker 容器跑真 PG parity。
+    # (SQLite 契约由离线 pytest job 覆盖;Mongo 后端 v2.0.0 已删。)
     #
     # 只在 ubuntu-latest 跑:Windows runner Docker 兼容性差;macOS runner
     # 在 GitHub Actions 上偶发 Docker 守护进程挂起(M1 / arm64 镜像拉取
@@ -284,8 +284,7 @@ jobs:
         uses: ./.github/actions/compile-qt-translations
 
       - name: Install dependencies
-        # --all-extras 装 asyncpg + motor(extras[postgres,mongo]),--group dev
-        # 装 testcontainers + mongomock_motor。
+        # --all-extras 装 asyncpg(extras[postgres]),--group dev 装 testcontainers。
         run: uv sync --all-extras --group dev -q
 
       - name: Run integration tests

@@ -200,7 +200,7 @@ class MessagesMixin(_Base):
         - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
         - 2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
           (SearchBar ★/🏷/📌 3 toggle),透传 `app.list_messages` → 存储层
-          SQL / Mongo 子句,AND 语义任一 True 必须命中。
+          SQL 子句,AND 语义任一 True 必须命中。
 
         走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
         线程 loop,Qt signal 安全 → `live_view.set_messages(...)` 主线程 op。

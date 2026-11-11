@@ -1,21 +1,14 @@
-"""集成测试包 — 2026-08-31 v1.5.0 PR #A7。
+"""集成测试包 — 真 Postgres(testcontainers,Docker required)。
 
-目的:覆盖真后端(Postgres / Mongo)的 parity 行为 —
-`tests/test_storage_backends.py` 长期只覆盖 InMemory 替身,
-PostgresRepository / MongoRepository 的 `list_media` /
-`aggregate_per_channel` / `find_media_by_file_id` 真实路径只在生产
-环境触发,**没有 contract 一致性保证**。
+目的:覆盖 PostgresRepository 的真实 SQL 路径 — `schema.sql` /
+`init_schema()` / asyncpg JSON 序列化 / `list_media` /
+`aggregate_per_channel` / `find_media_by_file_id` 等只在真服务上才能
+验证的行为。
 
-2026-10-12 plan-batch3 目标 3 step 3.1:Jsonl 已删,InMemory 替身继续作为
-默认 storage 替身;Postgres / Mongo parity 验证在本 integration 包跑真后端。
-
-策略(asymmetry):
-- **Postgres**:testcontainers 启动真 PG 服务(Docker required);跑真 SQL,
-  验证 `schema.sql` / `init_schema()` / asyncpg JSON 序列化等真路径
-- **Mongo**:mongomock_motor in-process mock(无需 Docker);验证基础 CRUD
-  + `find_media_by_file_id` 本 PR bug fix。`$unwind` / `$match` aggregate
-  pipeline mongomock 支持度参差,**`list_media` / `aggregate_per_channel`
-  Mongo parity 不在本 PR 覆盖**(留 v1.5.1 真 Mongo via testcontainers 补)
+v2.0.0:默认后端 SQLite 的契约由离线测试守门
+(`tests/test_storage_backends.py` / `tests/test_sqlite_repo.py` /
+`tests/test_thumbnail_repo_parity.py`,parametrize InMemory + SQLite);
+Mongo 后端已删。本包只跑真 PG parity。
 
 Marker:全部测试 `@pytest.mark.integration`,默认 `addopts` 不开 ——
 `uv run pytest -m integration` 显式启用。CI integration job 自动跑。
