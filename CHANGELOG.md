@@ -5,6 +5,72 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.0.0] - 2026-11-11
+
+主题:**全方位重构 v2.0.0** — Telegram 后端 TDLib → Telethon(纯 Python,零原生编译)、
+默认存储 Postgres → SQLite、god facade 按域真解耦。**破坏性升级**:需重新登录,
+Mongo 用户需迁移数据。分支 `refactor/v2`,分阶段提交,全程 pytest 1594 用例零失败(65 skip)。
+
+### ⚠️ 破坏性变化(需迁移)
+
+- **Telegram 后端 TDLib → Telethon**:协议层从自编译 `libtdjson`(ctypes 绑定
+  `tdlib_json` 子项目)整体切到纯 Python 的 [Telethon](https://github.com/LonamiWebs/Telethon)。
+  - **session 不兼容,必须重新登录**:TDLib 的 `session/` 目录与 Telethon 的
+    `tgmonitor.session` 文件格式完全不同,无自动迁移。升级后首次启动需重新走
+    手机号 → 验证码(→ 两步验证密码)登录流程。
+  - **`packages/tdlib_json/` 子项目整体删除**,`scripts/build_libtdjson.sh` /
+    `build_libtdjson.ps1` 移除 —— 不再需要 cmake / gperf / openssl / vcpkg,
+    clone 后 `uv sync` 即可运行。
+  - TDLib 专属接口 `nuke_and_rebuild` / `optimize_storage` / `clean_files` 删除
+    (Telethon 无对应概念)。
+- **默认存储后端 Postgres → SQLite**:零配置即用,数据库落在数据目录
+  `tgmonitor.db`(aiosqlite + WAL)。老用户若继续用 Postgres,显式设
+  `TG_DB_BACKEND=postgres` + `TG_DB_DSN` 即可,数据不动。
+- **Mongo 后端整体删除**:`mongo_repo` 及其 6 个子 module、`motor` 依赖、
+  `DBBackend.MONGO` 枚举全部移除。Mongo 用户需先导出再导入 SQLite / Postgres,
+  或重新同步(无自动迁移工具)。
+
+### 新增
+
+- **SQLite 后端**(`core/storage/sqlite_repo.py`):aiosqlite + WAL,42 方法全量实现,
+  与 Postgres 共享同一组查询语义(按 `date ASC, id ASC` 排序),双后端契约测试守门。
+- **Telethon 客户端**(`core/telegram/telethon_client.py`):`TelegramClient` Protocol
+  全量实现(鉴权 / 频道 / 历史回放 / 实时流 / 媒体下载 / 已读 / 转发 / 置顶 / 反应),
+  配 `telethon_messages.py` 归一化 + 离线测试。SOCKS5 代理走 python-socks
+  (`proxy.py` 的 `parse_socks5_proxy` / `probe_proxy`,后端无关,零 TDLib 依赖)。
+
+### 重构(内部)
+
+- **`StorageRepository` 按域切 7 个小接口**:SchemaLifecycle / ChannelStore /
+  MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore,组合门面
+  保持调用面不变。
+- **`AppService` god facade → 6 个域服务**:`app.auth`(AuthService)/
+  `app.channels`(ChannelService)/ `app.messages`(MessageService)/
+  `app.media`(MediaService)/ `app.batch`(BatchService)/
+  `app.channel_sync`(ChannelSyncService)。facade 只保留生命周期
+  (bootstrap / start_monitor / stop_monitor / pause / resume / shutdown)、
+  热重载(reconfigure / validate_backends)与导出;UI / VM / 测试全部迁到域 API,
+  `tests/test_app_service_surface.py` allowlist 锁公开面。
+- **`MonitorService` mixin → 显式组合**:orchestrator / whitelist / event_handlers /
+  downloader / backfill / delete 六个协作对象,替代继承 mixin。
+
+### 依赖
+
+- **新增**:`telethon>=1.45.0`、`cryptg>=0.6.1`(Telethon 加密加速)、
+  `python-socks[asyncio]>=3.2.1`(SOCKS5)、`aiosqlite>=0.22.1`(SQLite)。
+- **移除**:`tdlib-json-client`(workspace 子项目)、`motor`(Mongo)。
+- **dev 传递依赖 CVE 升级**:certifi / filelock / packaging / python-discovery /
+  setuptools / urllib3 / virtualenv / werkzeug 升到补丁版,38 个 CVE 清零;
+  运行时依赖全程干净。`testcontainers` extra 修正 `[postgresql]` → `[postgres]`。
+
+### CI / 打包
+
+- **纯 pip 打包**:三平台 `uv sync` + PyInstaller 分钟级完成,删除 libtdjson 编译、
+  warm-cache 预热 job、Windows vcpkg 工具链。
+- **pip-audit 修复**:裸 `pip-audit --strict` 实际审计的是工具自身环境(paths=[]),
+  且不支持 `uv.lock`。改为 `uv export --no-emit-project --no-hashes
+  --format requirements-txt` 后 `pip-audit --strict -r <file>`,真实审计项目依赖。
+
 ## [1.12.3] - 2026-10-22
 
 主题:**god class 拆解收官(plan-batch6~10)**(33 commit,纯重构,零用户可见变化)。
