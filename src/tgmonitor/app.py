@@ -261,7 +261,7 @@ def run() -> None:
             async def _startup_reconcile() -> None:
                 try:
                     await asyncio.sleep(2.0)
-                    await app_svc.reconcile_orphans(dry_run=True)
+                    await app_svc.media.reconcile_orphans(dry_run=True)
                 except Exception:  # noqa: BLE001 — startup reconcile 不能让 UI 崩溃
                     log.exception("startup orphan reconcile failed")
 
@@ -305,7 +305,7 @@ def run() -> None:
             # Step 1: 加载白名单
             win.status_bar.show_activity("加载已订阅频道...")
             t = time.monotonic()
-            subscribed = await app_svc.storage.list_subscribed_channels()
+            subscribed = await app_svc.channels.list_subscribed_channels()
             monitor.set_whitelist(c.id for c in subscribed)
             log.info(
                 "[startup-bg] loaded %d subscribed channels from storage in %.2fs",

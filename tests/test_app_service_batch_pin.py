@@ -15,7 +15,7 @@ from tgmonitor.core.events import BatchDone, BatchProgress
 async def test_pin_groups_by_cid(batch_app: AppService, collected: list) -> None:
     """pin_messages 按 cid group — 1 个 RPC 每个 cid。"""
     items = [(1, 10), (2, 200), (1, 11), (2, 201), (1, 12)]
-    n = await batch_app.pin_messages(items)
+    n = await batch_app.batch.pin_messages(items)
     assert n == 5
     assert batch_app.client.pin_messages.await_count == 2  # type: ignore[attr-defined]
     # 第一次调用 cid=1, mids 长度 3
@@ -25,14 +25,14 @@ async def test_pin_groups_by_cid(batch_app: AppService, collected: list) -> None
 
 
 async def test_pin_empty_noop(batch_app: AppService, collected: list) -> None:
-    n = await batch_app.pin_messages([])
+    n = await batch_app.batch.pin_messages([])
     assert n == 0
     batch_app.client.pin_messages.assert_not_awaited()  # type: ignore[attr-defined]
     assert collected == []
 
 
 async def test_pin_paused_guard(paused_batch_app: AppService, collected: list) -> None:
-    n = await paused_batch_app.pin_messages([(1, 10)])
+    n = await paused_batch_app.batch.pin_messages([(1, 10)])
     assert n == 0
     paused_batch_app.client.pin_messages.assert_not_awaited()  # type: ignore[attr-defined]
     assert collected == []
@@ -40,7 +40,7 @@ async def test_pin_paused_guard(paused_batch_app: AppService, collected: list) -
 
 async def test_pin_emits_progress_and_done(batch_app: AppService, collected: list) -> None:
     items = [(1, i) for i in range(3)]
-    await batch_app.pin_messages(items)
+    await batch_app.batch.pin_messages(items)
     progress = [e for e in collected if isinstance(e, BatchProgress)]
     done = [e for e in collected if isinstance(e, BatchDone)]
     assert len(progress) == 1
@@ -52,20 +52,20 @@ async def test_pin_emits_progress_and_done(batch_app: AppService, collected: lis
 
 
 async def test_unpin_empty_noop(batch_app: AppService, collected: list) -> None:
-    n = await batch_app.unpin_messages([])
+    n = await batch_app.batch.unpin_messages([])
     assert n == 0
     batch_app.client.unpin_messages.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 async def test_unpin_paused_guard(paused_batch_app: AppService, collected: list) -> None:
-    n = await paused_batch_app.unpin_messages([(1, 10)])
+    n = await paused_batch_app.batch.unpin_messages([(1, 10)])
     assert n == 0
     assert collected == []
 
 
 async def test_unpin_emits_done_with_correct_op(batch_app: AppService, collected: list) -> None:
     """unpin 用 op='unpin' 区分 pin。"""
-    await batch_app.unpin_messages([(1, 10), (2, 20)])
+    await batch_app.batch.unpin_messages([(1, 10), (2, 20)])
     done = [e for e in collected if isinstance(e, BatchDone)]
     assert done[0].op == "unpin"
     assert done[0].succeeded == 2

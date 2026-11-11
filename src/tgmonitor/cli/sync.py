@@ -72,7 +72,7 @@ async def run_sync(
         )
         # CLI `--media-policy` 走 `sync_channels(media_policy=)` 一次性 override
         # — 不污染 service 状态,下次启动按 .env 默认
-        result = await app.sync_channels(
+        result = await app.channel_sync.sync_channels(
             args.channel_ids,
             options,
             media_policy=MediaPolicy(args.media_policy),

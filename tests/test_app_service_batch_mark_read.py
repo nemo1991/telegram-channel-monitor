@@ -24,10 +24,10 @@ async def test_cancel_marks_read_stops_mid_loop(batch_app: AppService, collected
         nonlocal call_count
         call_count += 1
         if call_count == 1:  # 第 1 次 RPC 返回后触发 cancel
-            batch_app.cancel_current_batch()
+            batch_app.batch.cancel_current_batch()
 
     batch_app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
-    result = await batch_app.mark_messages_read(items)
+    result = await batch_app.batch.mark_messages_read(items)
     # cid 1 RPC 已发出 → success += 1;cid 2 起 is_set → break
     assert result == 1
     assert call_count == 1
@@ -42,9 +42,9 @@ async def test_cancel_marks_read_stops_mid_loop(batch_app: AppService, collected
 async def test_cancel_after_completion_no_error(batch_app: AppService, collected: list) -> None:
     """v1.7.3:批量全完成后 cancel — 无副作用,BatchDone.error is None。"""
     items = [(1, 1), (1, 2)]
-    await batch_app.mark_messages_read(items)
+    await batch_app.batch.mark_messages_read(items)
     # 已 set 的 event 不影响已完成的 facade;此 facade 内部 clear → 全过完
-    batch_app.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
     # clear 由下次 facade 进入时做;此处直接看最后一次 BatchDone
     done = [e for e in collected if isinstance(e, BatchDone)]
     assert done[-1].error is None
@@ -63,10 +63,10 @@ async def test_cancel_after_event_cleared_by_next_facade(
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            batch_app.cancel_current_batch()
+            batch_app.batch.cancel_current_batch()
 
     batch_app.client.mark_messages_read.side_effect = _side_effect  # type: ignore[attr-defined]
-    await batch_app.mark_messages_read(items1)
+    await batch_app.batch.mark_messages_read(items1)
     done1 = [e for e in collected if isinstance(e, BatchDone)]
     assert done1[0].error == "cancelled"
     assert done1[0].succeeded == 1
@@ -78,7 +78,7 @@ async def test_cancel_after_event_cleared_by_next_facade(
 
     # 第 2 次 facade 不应被上次的 event 影响(开头 clear)
     items2 = [(1, 100), (1, 101)]
-    await batch_app.mark_messages_read(items2)
+    await batch_app.batch.mark_messages_read(items2)
     done2 = [e for e in collected if isinstance(e, BatchDone)]
     assert done2[0].error is None
     assert done2[0].succeeded == 2
@@ -96,7 +96,7 @@ async def test_batch_progress_emits_elapsed_and_rate_for_mark_read(
     bus.subscribe(BatchProgress, _on)
 
     items = [(1, 1), (1, 2), (2, 3)]
-    await batch_app.mark_messages_read(items)
+    await batch_app.batch.mark_messages_read(items)
     assert len(received) >= 1
     last = received[-1]
     assert last.op == "mark_read"

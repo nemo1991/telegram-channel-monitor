@@ -63,26 +63,31 @@ def _build_ctrl(
 ) -> tuple[LiveSelectionController, MainWindowCtx]:
     """构造 `LiveSelectionController` + mock ctx。
 
-    默认 `app.{pin_messages,delete_messages_batch,mark_messages_read,
-    forward_messages,add_reaction,set_favorite,set_tags,set_notes,
-    list_joined_channels,export}` 全是 AsyncMock,测试用
+    默认 `app.batch.{pin_messages,delete_messages_batch,mark_messages_read,
+    forward_messages,add_reaction}` / `app.messages.{set_favorite,set_tags,
+    set_notes}` / `app.channels.list_joined_channels` 全是 AsyncMock,测试用
     `assert_called_once_with(...)` 验证 controller 调用的参数。
     """
     if state is None:
         state = _FakeState()
     app_mock = MagicMock(name="app")
+    # C2:controller 直调域服务 — AsyncMock 挂在 batch/messages/channels 子 mock 上
+    app_mock.batch = MagicMock(name="app.batch")
     for name in (
         "pin_messages",
         "delete_messages_batch",
         "mark_messages_read",
         "forward_messages",
         "add_reaction",
-        "set_favorite",
-        "set_tags",
-        "set_notes",
-        "list_joined_channels",
     ):
-        setattr(app_mock, name, AsyncMock(name=f"app.{name}", return_value=None))
+        setattr(app_mock.batch, name, AsyncMock(name=f"app.batch.{name}", return_value=None))
+    app_mock.messages = MagicMock(name="app.messages")
+    for name in ("set_favorite", "set_tags", "set_notes"):
+        setattr(app_mock.messages, name, AsyncMock(name=f"app.messages.{name}", return_value=None))
+    app_mock.channels = MagicMock(name="app.channels")
+    app_mock.channels.list_joined_channels = AsyncMock(
+        name="app.channels.list_joined_channels", return_value=None
+    )
     # app.export 是 AsyncIterator,单独配
     app_mock.export = MagicMock(name="app.export")
     app_mock.export.return_value.__aiter__ = lambda self: iter([])  # type: ignore[attr-defined]
@@ -218,7 +223,7 @@ def test_on_live_delete_selected_uses_cached_selection(
 
     ctrl.on_live_delete_selected()
 
-    ctx.app.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
+    ctx.app.batch.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
     assert state._clear_selection_count == 1
 
 
@@ -231,7 +236,7 @@ def test_on_live_delete_selected_empty_noop(qapp, monkeypatch: pytest.MonkeyPatc
 
     ctrl.on_live_delete_selected()
 
-    ctx.app.delete_messages_batch.assert_not_called()
+    ctx.app.batch.delete_messages_batch.assert_not_called()
     assert state._clear_selection_count == 0
 
 
@@ -246,7 +251,7 @@ def test_on_live_mark_read_selected_uses_cached_selection(
 
     ctrl.on_live_mark_read_selected()
 
-    ctx.app.mark_messages_read.assert_called_once_with([(10, 1000)])
+    ctx.app.batch.mark_messages_read.assert_called_once_with([(10, 1000)])
     assert state._clear_selection_count == 0, "mark_read 不清 selection"
 
 
@@ -262,7 +267,7 @@ def test_on_live_delete_yes_runs_and_clears(qapp, monkeypatch: pytest.MonkeyPatc
 
     ctrl.on_live_delete([(1, 100), (2, 200)])
 
-    ctx.app.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
+    ctx.app.batch.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
     assert state._clear_selection_count == 1
 
 
@@ -275,7 +280,7 @@ def test_on_live_delete_no_skips(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
 
     ctrl.on_live_delete([(1, 100)])
 
-    ctx.app.delete_messages_batch.assert_not_called()
+    ctx.app.batch.delete_messages_batch.assert_not_called()
     assert state._clear_selection_count == 0
 
 
@@ -288,7 +293,7 @@ def test_on_live_delete_empty_no_dialog(qapp, monkeypatch: pytest.MonkeyPatch) -
 
     ctrl.on_live_delete([])
 
-    ctx.app.delete_messages_batch.assert_not_called()
+    ctx.app.batch.delete_messages_batch.assert_not_called()
 
 
 def test_on_live_delete_normalizes_3tuple(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +305,7 @@ def test_on_live_delete_normalizes_3tuple(qapp, monkeypatch: pytest.MonkeyPatch)
 
     ctrl.on_live_delete([(1, 100, 0), (2, 200, 1)])
 
-    ctx.app.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
+    ctx.app.batch.delete_messages_batch.assert_called_once_with([(1, 100), (2, 200)])
 
 
 # ---- right-click mark_read(favorite / tags / notes) ----
@@ -314,7 +319,7 @@ def test_on_live_mark_read_runs_without_confirm(qapp, monkeypatch: pytest.Monkey
 
     ctrl.on_live_mark_read([(1, 100)])
 
-    ctx.app.mark_messages_read.assert_called_once_with([(1, 100)])
+    ctx.app.batch.mark_messages_read.assert_called_once_with([(1, 100)])
 
 
 def test_on_live_favorite_calls_set_favorite(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -325,7 +330,7 @@ def test_on_live_favorite_calls_set_favorite(qapp, monkeypatch: pytest.MonkeyPat
 
     ctrl.on_live_favorite(42, 1000, True)
 
-    ctx.app.set_favorite.assert_called_once_with(42, 1000, True)
+    ctx.app.messages.set_favorite.assert_called_once_with(42, 1000, True)
 
 
 def test_on_live_favorite_unset_calls_with_false(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,7 +341,7 @@ def test_on_live_favorite_unset_calls_with_false(qapp, monkeypatch: pytest.Monke
 
     ctrl.on_live_favorite(42, 1000, False)
 
-    ctx.app.set_favorite.assert_called_once_with(42, 1000, False)
+    ctx.app.messages.set_favorite.assert_called_once_with(42, 1000, False)
 
 
 def test_on_live_tags_splits_commas_and_spaces(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,7 +352,7 @@ def test_on_live_tags_splits_commas_and_spaces(qapp, monkeypatch: pytest.MonkeyP
 
     ctrl.on_live_tags(42, 1000)
 
-    ctx.app.set_tags.assert_called_once_with(42, 1000, ["tech", "news"])
+    ctx.app.messages.set_tags.assert_called_once_with(42, 1000, ["tech", "news"])
 
 
 def test_on_live_notes_sends_multiline_text(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,7 +363,7 @@ def test_on_live_notes_sends_multiline_text(qapp, monkeypatch: pytest.MonkeyPatc
 
     ctrl.on_live_notes(42, 1000)
 
-    ctx.app.set_notes.assert_called_once_with(42, 1000, "reminder note")
+    ctx.app.messages.set_notes.assert_called_once_with(42, 1000, "reminder note")
 
 
 # ---- 详情顶部 3 入口 ----
@@ -388,7 +393,7 @@ def test_on_live_delete_current_yes_runs_and_show_none(
 
     ctrl.on_live_delete_current(42, 1000)
 
-    ctx.app.delete_messages_batch.assert_called_once_with([(42, 1000)])
+    ctx.app.batch.delete_messages_batch.assert_called_once_with([(42, 1000)])
     assert state._show_message_called_with is None
 
 
@@ -401,7 +406,7 @@ def test_on_live_delete_current_no_skips(qapp, monkeypatch: pytest.MonkeyPatch) 
 
     ctrl.on_live_delete_current(42, 1000)
 
-    ctx.app.delete_messages_batch.assert_not_called()
+    ctx.app.batch.delete_messages_batch.assert_not_called()
     assert state._show_message_called_with is None
 
 
@@ -457,7 +462,7 @@ def test_on_live_pin_selected_yes_calls_pin_messages(qapp, monkeypatch: pytest.M
 
     ctrl.on_live_pin_selected()
 
-    ctx.app.pin_messages.assert_called_once_with([(1, 100)])
+    ctx.app.batch.pin_messages.assert_called_once_with([(1, 100)])
 
 
 def test_on_live_react_selected_yes_calls_add_reaction(
@@ -472,7 +477,7 @@ def test_on_live_react_selected_yes_calls_add_reaction(
 
     ctrl.on_live_react_selected()
 
-    ctx.app.add_reaction.assert_called_once_with([(1, 100)], "👍", is_big=False)
+    ctx.app.batch.add_reaction.assert_called_once_with([(1, 100)], "👍", is_big=False)
 
 
 def test_on_live_export_selected_uses_cached(qapp, monkeypatch: pytest.MonkeyPatch) -> None:

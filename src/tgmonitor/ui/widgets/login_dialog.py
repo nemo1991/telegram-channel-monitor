@@ -235,7 +235,7 @@ class LoginDialog(QDialog):
         self._set_busy(True, "正在请求验证码…")
         fut = run_coro(
             self.loop,
-            self.app.submit_phone(phone),
+            self.app.auth.submit_phone(phone),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error("提交手机号失败", exc),
             error_label="submit_phone",
@@ -255,7 +255,7 @@ class LoginDialog(QDialog):
         # run_coro 的 on_success 是 `Callable[[T], None]`,把 tuple 展开传两个位置参。
         fut = run_coro(
             self.loop,
-            self.app.submit_code(code),
+            self.app.auth.submit_code(code),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error("提交验证码失败", exc),
             error_label="submit_code",
@@ -272,7 +272,7 @@ class LoginDialog(QDialog):
         self._set_busy(True, "正在验证…")
         fut = run_coro(
             self.loop,
-            self.app.submit_password(pwd),
+            self.app.auth.submit_password(pwd),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error("提交 2FA 密码失败", exc),
             error_label="submit_password",
@@ -289,7 +289,7 @@ class LoginDialog(QDialog):
         self._set_busy(True, self.tr("正在提交邮箱…"))
         fut = run_coro(
             self.loop,
-            self.app.submit_email(email),
+            self.app.auth.submit_email(email),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error(self.tr("提交邮箱失败"), exc),
             error_label="submit_email",
@@ -307,7 +307,7 @@ class LoginDialog(QDialog):
         self._set_busy(True, self.tr("正在验证邮箱…"))
         fut = run_coro(
             self.loop,
-            self.app.submit_email_code(code),
+            self.app.auth.submit_email_code(code),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error(self.tr("提交邮箱验证码失败"), exc),
             error_label="submit_email_code",
@@ -326,7 +326,7 @@ class LoginDialog(QDialog):
         self._set_busy(True, self.tr("正在注册…"))
         fut = run_coro(
             self.loop,
-            self.app.submit_registration(first, last),
+            self.app.auth.submit_registration(first, last),
             on_success=lambda res: self._render(res[0], res[1] or ""),
             on_error=lambda exc: self._show_submit_error(self.tr("注册失败"), exc),
             error_label="submit_registration",

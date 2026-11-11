@@ -354,7 +354,7 @@ class MessageDetail(QScrollArea):
 
     def _on_delete_current(self) -> None:
         """当前消息详情 → 删除。emit `(cid, mid)`,MainWindow 弹 QMessageBox
-        二次确认后调 `app.delete_message` 并关详情面板。
+        二次确认后调 `app.messages.delete_message` 并关详情面板。
         """
         if self._current is None:
             return

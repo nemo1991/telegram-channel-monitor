@@ -20,7 +20,7 @@ async def test_forward_groups_by_cid_and_chunks_100(batch_app: AppService, colle
     each 调 sorted msg_ids。
     """
     items = [(1, 10), (2, 200), (1, 11), (1, 12), (2, 201)]
-    n = await batch_app.forward_messages(items, to_chat_id=99)
+    n = await batch_app.batch.forward_messages(items, to_chat_id=99)
     assert n == 5
     # 2 次 RPC(每个 cid 一次)
     assert batch_app.client.forward_messages.await_count == 2  # type: ignore[attr-defined]
@@ -36,7 +36,7 @@ async def test_forward_groups_by_cid_and_chunks_100(batch_app: AppService, colle
 
 async def test_forward_empty_noop(batch_app: AppService, collected: list) -> None:
     """空 items → 返 0,不发任何 BatchProgress / BatchDone。"""
-    n = await batch_app.forward_messages([], to_chat_id=99)
+    n = await batch_app.batch.forward_messages([], to_chat_id=99)
     assert n == 0
     batch_app.client.forward_messages.assert_not_awaited()  # type: ignore[attr-defined]
     assert collected == []
@@ -44,7 +44,7 @@ async def test_forward_empty_noop(batch_app: AppService, collected: list) -> Non
 
 async def test_forward_paused_guard(paused_batch_app: AppService, collected: list) -> None:
     """paused 状态 → 返 0,client 完全不被调,无 events。"""
-    n = await paused_batch_app.forward_messages([(1, 10), (1, 11)], to_chat_id=99)
+    n = await paused_batch_app.batch.forward_messages([(1, 10), (1, 11)], to_chat_id=99)
     assert n == 0
     paused_batch_app.client.forward_messages.assert_not_awaited()  # type: ignore[attr-defined]
     assert collected == []
@@ -53,7 +53,7 @@ async def test_forward_paused_guard(paused_batch_app: AppService, collected: lis
 async def test_forward_emits_progress_and_done(batch_app: AppService, collected: list) -> None:
     """forward 1 个 cid 5 条 → BatchProgress×N + BatchDone×1,counts 准确。"""
     items = [(1, i) for i in range(5)]
-    await batch_app.forward_messages(items, to_chat_id=99)
+    await batch_app.batch.forward_messages(items, to_chat_id=99)
     # 1 chunk 5 条 → 1 BatchProgress(processed=5,total=5) + 1 BatchDone
     progress = [e for e in collected if isinstance(e, BatchProgress)]
     done = [e for e in collected if isinstance(e, BatchDone)]

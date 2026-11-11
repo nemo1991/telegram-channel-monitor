@@ -359,8 +359,8 @@ def test_main_window_initial(qapp, tmp_path):
         data_root=tmp_path,
     )
     mock_app.client.state = "phone_required"
-    mock_app.list_joined_channels = AsyncMock(return_value=[])
-    mock_app.list_messages = AsyncMock(return_value=[])
+    mock_app.channels.list_joined_channels = AsyncMock(return_value=[])
+    mock_app.messages.list_messages = AsyncMock(return_value=[])
     mock_monitor = Mock()
     mock_monitor.subscribed_ids = set()
     loop = asyncio.new_event_loop()
@@ -389,7 +389,7 @@ def test_main_window_initial(qapp, tmp_path):
             # `MonitorViewModel.bootstrap_ui` 和 `_refresh_state` 通过
             # `run_coro(self.loop, _go())` 把 `_go` coro 推上 loop,内部用
             # `loop.call_soon_threadsafe` 排 Task 创建。`_go` 调
-            # `await app.list_messages(...)`(AsyncMock),需要 ≥1 个 tick
+            # `await app.messages.list_messages(...)`(AsyncMock),需要 ≥1 个 tick
             # resolve。我们 drain 几次到 `all_tasks` 稳定为空,然后 cancel
             # 兜底 + gather 排空。
             #

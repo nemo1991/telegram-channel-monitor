@@ -85,7 +85,7 @@ class MediaActionsController:
         async def _go() -> None:
             for cid, mid, idx in items:
                 try:
-                    await self._ctx.app.retry_media(cid, mid, idx)
+                    await self._ctx.app.media.retry_media(cid, mid, idx)
                 except Exception:  # noqa: BLE001
                     log.exception(
                         "batch retry failed: %s/%s/%d",
@@ -366,7 +366,7 @@ class MediaActionsController:
         # 2026-10-04 plan 阶段 3.3:原 `run_coro(self._qloop, ...)` 是 bug —
         # `self._qloop` 从未赋值,运行到会 AttributeError。统一走 `ctx.loop`。
         async def _go():
-            return await self._ctx.app.reveal_in_folder(
+            return await self._ctx.app.media.reveal_in_folder(
                 channel_id,
                 telegram_msg_id,
                 media_idx,
@@ -399,7 +399,7 @@ class MediaActionsController:
         """
 
         async def _go():
-            return await self._ctx.app.copy_media_path(
+            return await self._ctx.app.media.copy_media_path(
                 channel_id,
                 telegram_msg_id,
                 media_idx,

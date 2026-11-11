@@ -108,7 +108,7 @@ async def test_preview_basic_counts(svc: AppService):
         )
     )
 
-    pv = await svc.preview_delete_by_channel(100)
+    pv = await svc.media.preview_delete_by_channel(100)
     assert isinstance(pv, DeleteChannelPreview)
     assert pv.channel_id == 100
     assert pv.message_count == 2
@@ -119,7 +119,7 @@ async def test_preview_basic_counts(svc: AppService):
 
 async def test_preview_empty_channel_returns_zero(svc: AppService):
     """PR #8:空 channel → 全 0 dataclass,不抛。"""
-    pv = await svc.preview_delete_by_channel(999)
+    pv = await svc.media.preview_delete_by_channel(999)
     assert pv.message_count == 0
     assert pv.media_count == 0
     assert pv.potential_orphan_bytes == 0
@@ -153,7 +153,7 @@ async def test_preview_shared_object_key_excluded(svc: AppService):
         )
     )
 
-    pv = await svc.preview_delete_by_channel(100)
+    pv = await svc.media.preview_delete_by_channel(100)
     # refcount("media/shared.jpg") = 2 → 不应计入 orphan
     assert pv.potential_orphan_bytes == 0
 
@@ -175,7 +175,7 @@ async def test_preview_pending_status_excluded(svc: AppService):
         )
     )
 
-    pv = await svc.preview_delete_by_channel(100)
+    pv = await svc.media.preview_delete_by_channel(100)
     # 只算 DONE 1024 — PENDING / FAILED 不计
     assert pv.potential_orphan_bytes == 1024
 
@@ -197,7 +197,7 @@ async def test_preview_does_not_mutate_storage(svc: AppService):
     msg_count_before = await svc.storage.count_messages(100)
     media_count_before = await svc.storage.count_media_by_channel(100)
 
-    await svc.preview_delete_by_channel(100)
+    await svc.media.preview_delete_by_channel(100)
 
     assert await svc.storage.count_messages(100) == msg_count_before
     assert await svc.storage.count_media_by_channel(100) == media_count_before

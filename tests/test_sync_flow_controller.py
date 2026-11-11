@@ -39,7 +39,7 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
     app.settings.sync_page_delay_ms = 200
     app.settings.sync_resume_from_saved = True
     app.channel_sync.cancel = MagicMock(name="channel_sync.cancel")
-    app.sync_channels = MagicMock(name="sync_channels")
+    app.channel_sync.sync_channels = MagicMock(name="sync_channels")
 
     main_window = MagicMock(name="main_window")
 
@@ -192,7 +192,7 @@ class TestOnSyncRequested:
         # dialog 不应该被构造
         mock_prog_dlg.assert_not_called()
         # run_coro 不应该被调
-        ctx.app.sync_channels.assert_not_called()
+        ctx.app.channel_sync.sync_channels.assert_not_called()
 
     def test_full_flow_with_options(self) -> None:
         """options 有值 → 构造 progress dialog + connect signals + run_coro + exec。"""
@@ -237,11 +237,11 @@ class TestOnSyncRequested:
 
         ctx, _refs = _make_ctx()
 
-        # app.sync_channels 必须是 awaitable(MagicMock 默认不是)
+        # app.channel_sync.sync_channels 必须是 awaitable(MagicMock 默认不是)
         async def _fake_sync(*_a, **_kw):
             return None
 
-        ctx.app.sync_channels = MagicMock(side_effect=_fake_sync)
+        ctx.app.channel_sync.sync_channels = MagicMock(side_effect=_fake_sync)
 
         ctrl = SyncFlowController(ctx)
         options = SyncOptions(chat_delay_ms=100, page_delay_ms=200, resume_from_saved=True)
@@ -275,7 +275,7 @@ class TestOnSyncRequested:
         async def _fake_sync(*_a, **_kw):
             return None
 
-        ctx.app.sync_channels = MagicMock(side_effect=_fake_sync)
+        ctx.app.channel_sync.sync_channels = MagicMock(side_effect=_fake_sync)
 
         ctrl = SyncFlowController(ctx)
         options = SyncOptions(chat_delay_ms=100, page_delay_ms=200, resume_from_saved=True)

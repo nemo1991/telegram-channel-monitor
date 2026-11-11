@@ -33,7 +33,7 @@ from tgmonitor.ui.controllers.live_selection_controller import LiveSelectionCont
 class _FakeState:
     """最小桩:state + 桩 method,模拟 `ctx.main_window` + `ctx.live_view`。
 
-    `run_coro` 短路后,`ctx.app.pin_messages` / `ctx.app.add_reaction` 是 AsyncMock,
+    `run_coro` 短路后,`ctx.app.batch.pin_messages` / `ctx.app.batch.add_reaction` 是 AsyncMock,
     测试用 `assert_called_once_with(items)` 验证 controller 调用的参数。
     """
 
@@ -65,15 +65,15 @@ def _build_ctrl(state: _FakeState) -> tuple[LiveSelectionController, MainWindowC
     `ctx.main_window` 和 `ctx.live_view` — controller 只调 .warning() /
     .clear_selection() / ._run_live_*,其余方法不依赖。
 
-    返回 `(ctrl, ctx)`:测试用 `ctx.app.pin_messages` 等 AsyncMock
+    返回 `(ctrl, ctx)`:测试用 `ctx.app.batch.pin_messages` 等 AsyncMock
     `assert_called_once_with(items)`。
     """
     app_mock = MagicMock(name="app")
     # 让 pin_messages / add_reaction 返回真 coroutine — AsyncMock 走
     # `await ctx.app.X(...)` 不会 TypeError;MagicMock 返回值不是 coroutine,
     # run_coro / asyncio.run_coroutine_threadsafe 会拒收。
-    app_mock.pin_messages = AsyncMock(name="app.pin_messages", return_value=None)
-    app_mock.add_reaction = AsyncMock(name="app.add_reaction", return_value=None)
+    app_mock.batch.pin_messages = AsyncMock(name="app.batch.pin_messages", return_value=None)
+    app_mock.batch.add_reaction = AsyncMock(name="app.batch.add_reaction", return_value=None)
     ctx = MainWindowCtx(
         app=app_mock,
         monitor=MagicMock(name="monitor"),
@@ -124,7 +124,7 @@ def _patch_pickers_and_dialog(monkeypatch: pytest.MonkeyPatch, win: _FakeState) 
     )
 
     # run_coro 不调 asyncio.run_coroutine_threadsafe — 直接关掉副作用,
-    # controller 调 ctx.app.pin_messages(items)(AsyncMock,真 coroutine)→ 进
+    # controller 调 ctx.app.batch.pin_messages(items)(AsyncMock,真 coroutine)→ 进
     # run_coro 然后到此 no-op;coro.close() 避免「never awaited」warning。
     def _noop_run_coro(loop, coro, **kwargs):  # noqa: ANN001
         import inspect
@@ -146,7 +146,7 @@ def test_pin_yes_calls_run_live_pin(qapp, monkeypatch: pytest.MonkeyPatch) -> No
     items = [(1, 100), (2, 200), (3, 300)]
     ctrl._on_live_pin(items)
 
-    ctx.app.pin_messages.assert_called_once_with(items)
+    ctx.app.batch.pin_messages.assert_called_once_with(items)
     assert state._clear_selection_count == 1, "Yes 之后应 clear_selection"
 
 
@@ -160,7 +160,7 @@ def test_pin_no_does_not_call_run_live_pin(qapp, monkeypatch: pytest.MonkeyPatch
     items = [(1, 100), (2, 200)]
     ctrl._on_live_pin(items)
 
-    ctx.app.pin_messages.assert_not_called()
+    ctx.app.batch.pin_messages.assert_not_called()
     assert state._clear_selection_count == 0, "No 不 clear_selection"
 
 
@@ -172,7 +172,7 @@ def test_pin_empty_items_no_dialog(qapp, monkeypatch: pytest.MonkeyPatch) -> Non
     ctrl, ctx = _build_ctrl(state)
 
     ctrl._on_live_pin([])
-    ctx.app.pin_messages.assert_not_called()
+    ctx.app.batch.pin_messages.assert_not_called()
     # clear_selection 也不调(空选区清无意义)
 
 
@@ -186,7 +186,7 @@ def test_react_yes_calls_run_live_react(qapp, monkeypatch: pytest.MonkeyPatch) -
     items = [(10, 1000), (20, 2000)]
     ctrl._on_live_react(items)
 
-    ctx.app.add_reaction.assert_called_once_with(items, "👍", is_big=False)
+    ctx.app.batch.add_reaction.assert_called_once_with(items, "👍", is_big=False)
     assert state._clear_selection_count == 1
 
 
@@ -200,7 +200,7 @@ def test_react_no_does_not_call_run_live_react(qapp, monkeypatch: pytest.MonkeyP
     items = [(10, 1000)]
     ctrl._on_live_react(items)
 
-    ctx.app.add_reaction.assert_not_called()
+    ctx.app.batch.add_reaction.assert_not_called()
     assert state._clear_selection_count == 0
 
 
@@ -219,7 +219,7 @@ def test_react_picker_cancel_no_dialog(qapp, monkeypatch: pytest.MonkeyPatch) ->
     ctrl, ctx = _build_ctrl(state)
 
     ctrl._on_live_react([(1, 100)])
-    ctx.app.add_reaction.assert_not_called()
+    ctx.app.batch.add_reaction.assert_not_called()
     assert state._clear_selection_count == 0
 
 
@@ -242,7 +242,7 @@ def test_react_empty_items_no_dialog(qapp, monkeypatch: pytest.MonkeyPatch) -> N
     ctrl, ctx = _build_ctrl(state)
 
     ctrl._on_live_react([])
-    ctx.app.add_reaction.assert_not_called()
+    ctx.app.batch.add_reaction.assert_not_called()
     assert picker_called["n"] == 0, "空选区不应弹 emoji picker"
 
 

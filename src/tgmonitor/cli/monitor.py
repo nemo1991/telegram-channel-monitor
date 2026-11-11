@@ -68,7 +68,7 @@ async def run_monitor(
             return 1
 
         # 默认行为:从 storage 重载白名单(与 GUI 一致)
-        subscribed = await app.storage.list_subscribed_channels()
+        subscribed = await app.channels.list_subscribed_channels()
         monitor.set_whitelist(c.id for c in subscribed)
 
         # --no-resume 标志:覆盖 settings.paused=True 强制启动 monitor

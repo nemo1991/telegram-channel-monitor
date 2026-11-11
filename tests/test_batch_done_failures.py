@@ -74,7 +74,7 @@ async def test_batch_done_failures_delete_messages(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (100, 2), (200, 3)]
-    await svc.delete_messages_batch(items)
+    await svc.batch.delete_messages_batch(items)
 
     assert len(captured) == 1
     done = captured[0]
@@ -104,7 +104,7 @@ async def test_batch_done_failures_mark_messages_read(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (100, 2), (200, 3), (200, 4)]
-    await svc.mark_messages_read(items)
+    await svc.batch.mark_messages_read(items)
 
     assert len(captured) == 1
     done = captured[0]
@@ -134,7 +134,7 @@ async def test_batch_done_failures_forward_messages(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (100, 2), (200, 3)]
-    await svc.forward_messages(items, to_chat_id=999)
+    await svc.batch.forward_messages(items, to_chat_id=999)
 
     assert len(captured) == 1
     done = captured[0]
@@ -160,7 +160,7 @@ async def test_batch_done_failures_pin_messages(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (200, 2), (200, 3)]
-    await svc.pin_messages(items)
+    await svc.batch.pin_messages(items)
 
     assert len(captured) == 1
     done = captured[0]
@@ -185,7 +185,7 @@ async def test_batch_done_failures_unpin_messages(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (200, 2)]
-    await svc.unpin_messages(items)
+    await svc.batch.unpin_messages(items)
 
     assert len(captured) == 1
     done = captured[0]
@@ -214,7 +214,7 @@ async def test_batch_done_failures_add_reaction(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (100, 2), (200, 3)]
-    await svc.add_reaction(items, emoji="🔥")
+    await svc.batch.add_reaction(items, emoji="🔥")
 
     assert len(captured) == 1
     done = captured[0]
@@ -239,7 +239,7 @@ async def test_batch_done_failures_remove_reaction(bus: EventBus) -> None:
     captured = _capture_batch_done(bus)
 
     items = [(100, 1), (200, 5), (200, 6)]
-    await svc.remove_reaction(items, emoji="👍")
+    await svc.batch.remove_reaction(items, emoji="👍")
 
     assert len(captured) == 1
     done = captured[0]
@@ -269,7 +269,7 @@ async def test_batch_done_failures_uses_class_name_when_str_empty(
     captured = _capture_batch_done(bus)
 
     items = [(100, 1)]
-    await svc.pin_messages(items)
+    await svc.batch.pin_messages(items)
 
     assert len(captured) == 1
     # 失败 reason 用类名

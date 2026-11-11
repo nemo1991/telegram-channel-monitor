@@ -1,13 +1,13 @@
-"""PR #A2 — AppService 拆分后,验证 facade 真的 1:1 转发到子 service。
+"""AppService 组合根接线 contract test。
 
-这是「contract test」:即便 facade 实现方式换了(子 service swap / 直接
-转发),子 service 必须收到正确参数。这层保证后续重构(再拆 / 合并 /
-改名)有兜底。
+2026-11-11 v2.0.0 Phase 3-C2:41 个 facade 域转发已删除,UI/CLI 直调
+`app.<domain>.<method>`。本文件不再测转发,改测组合根保留的接线契约:
 
-约定:
-  - 不测内部实现细节(如 `app.media` 字段名)
-  - 只测「facade.<method> → 子 service.<method> 真被调 + 参数一致」
-  - 子 service 真实类型不被断言(避免重构时全坏)
+  - backend swap 传播:`app.objects/storage = X` setter 必须同步到子 service
+  - `subscribe_updates` 直接代理 client 并登记 stream
+  - `shutdown` 分阶段超时(client hang 不阻塞 storage/objects 关闭)
+
+公开表面本身由 `tests/test_app_service_surface.py` allowlist 锁死。
 """
 
 from __future__ import annotations
@@ -54,69 +54,6 @@ def _find_sub_service(app: AppService, method_name: str):
         ),
         None,
     )
-
-
-async def test_facade_forwards_list_media_to_media_service(app: AppService) -> None:
-    """`app.list_media` 必须真调到子 service(模拟),不走 storage 直调。
-
-    验证:facade.list_media 返回 mock 的值(不是真查 storage 的结果),
-    证明 facade 没绕过子 service 自己实现。
-    """
-    expected = ([(MagicMock(), 0, MagicMock())], 42)
-    media_svc = _find_sub_service(app, "list_media")
-    assert media_svc is not None, "未找到具有 list_media 方法的子 service"
-    media_svc.list_media = AsyncMock(return_value=expected)  # type: ignore[attr-defined]
-
-    result = await app.list_media(channel_id=100, limit=50)
-    media_svc.list_media.assert_awaited_once()  # type: ignore[attr-defined]
-    kwargs = media_svc.list_media.await_args.kwargs  # type: ignore[attr-defined]
-    assert kwargs["channel_id"] == 100
-    assert kwargs["limit"] == 50
-    assert result is expected
-
-
-async def test_facade_forwards_list_messages_to_message_service(app: AppService) -> None:
-    """`app.list_messages` 必须真调到子 service(模拟)。"""
-    expected = [MagicMock()]
-    sub_svc = _find_sub_service(app, "list_messages")
-    assert sub_svc is not None, "未找到具有 list_messages 方法的子 service"
-    sub_svc.list_messages = AsyncMock(return_value=expected)  # type: ignore[attr-defined]
-
-    result = await app.list_messages(channel_ids=[1, 2], limit=10)
-    sub_svc.list_messages.assert_awaited_once_with(  # type: ignore[attr-defined]
-        [1, 2],
-        None,
-        None,
-        10,
-        search="",
-        include_unsubscribed=False,
-        favorite_only=False,
-        tag_only=False,
-        pinned_only=False,
-    )
-    assert result is expected
-
-
-async def test_facade_forwards_list_messages_search_kwarg(app: AppService) -> None:
-    """PR #B2:`app.list_messages(search="foo")` 把 search 透传给子 service。"""
-    expected = [MagicMock()]
-    sub_svc = _find_sub_service(app, "list_messages")
-    assert sub_svc is not None
-    sub_svc.list_messages = AsyncMock(return_value=expected)  # type: ignore[attr-defined]
-
-    result = await app.list_messages(channel_ids=[1], search="hello")
-    sub_svc.list_messages.assert_awaited_once_with(  # type: ignore[attr-defined]
-        [1],
-        None,
-        None,
-        200,
-        search="hello",
-        include_unsubscribed=False,
-        favorite_only=False,
-        tag_only=False,
-        pinned_only=False,
-    )
-    assert result is expected
 
 
 async def test_facade_objects_setter_syncs_to_media_service(app: AppService) -> None:

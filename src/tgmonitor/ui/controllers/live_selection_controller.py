@@ -169,7 +169,7 @@ class LiveSelectionController:
 
         run_coro(
             self._ctx.loop,
-            self._ctx.app.set_favorite(channel_id, telegram_msg_id, value),
+            self._ctx.app.messages.set_favorite(channel_id, telegram_msg_id, value),
             error_label="live_favorite",
         )
 
@@ -193,7 +193,7 @@ class LiveSelectionController:
         tags = [t.strip() for t in text.replace(",", " ").split() if t.strip()]
         run_coro(
             self._ctx.loop,
-            self._ctx.app.set_tags(channel_id, telegram_msg_id, tags),
+            self._ctx.app.messages.set_tags(channel_id, telegram_msg_id, tags),
             error_label="live_tags",
         )
 
@@ -214,7 +214,7 @@ class LiveSelectionController:
             return
         run_coro(
             self._ctx.loop,
-            self._ctx.app.set_notes(channel_id, telegram_msg_id, text),
+            self._ctx.app.messages.set_notes(channel_id, telegram_msg_id, text),
             error_label="live_notes",
         )
 
@@ -306,7 +306,7 @@ class LiveSelectionController:
         from tgmonitor.ui.async_bridge import run_coro
 
         async def _go() -> list[ChannelDTO]:
-            return await self._ctx.app.list_joined_channels()
+            return await self._ctx.app.channels.list_joined_channels()
 
         def _on_channels(channels: list[ChannelDTO]) -> None:
             # 局部 import — channel picker 是次常用路径,避免启动开销。
@@ -412,7 +412,7 @@ class LiveSelectionController:
         self._show_batch_progress_dialog("delete")
         run_coro(
             self._ctx.loop,
-            self._ctx.app.delete_messages_batch(items),
+            self._ctx.app.batch.delete_messages_batch(items),
             error_label="live_delete",
         )
 
@@ -427,7 +427,7 @@ class LiveSelectionController:
 
         run_coro(
             self._ctx.loop,
-            self._ctx.app.mark_messages_read(items),
+            self._ctx.app.batch.mark_messages_read(items),
             error_label="live_mark_read",
         )
 
@@ -443,7 +443,7 @@ class LiveSelectionController:
         self._show_batch_progress_dialog("forward")
         run_coro(
             self._ctx.loop,
-            self._ctx.app.forward_messages(items, to_chat_id),
+            self._ctx.app.batch.forward_messages(items, to_chat_id),
             error_label="live_forward",
         )
 
@@ -454,7 +454,7 @@ class LiveSelectionController:
         from tgmonitor.ui.async_bridge import run_coro
 
         self._show_batch_progress_dialog("pin")
-        run_coro(self._ctx.loop, self._ctx.app.pin_messages(items), error_label="live_pin")
+        run_coro(self._ctx.loop, self._ctx.app.batch.pin_messages(items), error_label="live_pin")
 
     def _run_live_react(
         self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
@@ -473,7 +473,7 @@ class LiveSelectionController:
         self._show_batch_progress_dialog("react", extra=emoji)
         run_coro(
             self._ctx.loop,
-            self._ctx.app.add_reaction(items, emoji, is_big=is_big),
+            self._ctx.app.batch.add_reaction(items, emoji, is_big=is_big),
             error_label="live_react",
         )
 

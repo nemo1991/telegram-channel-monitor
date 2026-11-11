@@ -166,7 +166,7 @@ class MessagesMixin(_Base):
         """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
 
         async def _go() -> None:
-            msgs = await self.app.list_messages(limit=200)
+            msgs = await self.app.messages.list_messages(limit=200)
             for m in msgs:
                 self.message_received.emit(m)
 
@@ -199,7 +199,7 @@ class MessagesMixin(_Base):
         - `channel_ids=...` 显式传 → 忽略 scope(精细控制场景)。
         - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
         - 2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
-          (SearchBar ★/🏷/📌 3 toggle),透传 `app.list_messages` → 存储层
+          (SearchBar ★/🏷/📌 3 toggle),透传 `app.messages.list_messages` → 存储层
           SQL 子句,AND 语义任一 True 必须命中。
 
         走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
@@ -214,7 +214,7 @@ class MessagesMixin(_Base):
 
         async def _go() -> None:
             include_unsub = scope == "all" and channel_ids is None
-            msgs = await self.app.list_messages(
+            msgs = await self.app.messages.list_messages(
                 channel_ids=channel_ids,
                 date_from=date_from,
                 date_to=date_to,

@@ -18,10 +18,10 @@ from tgmonitor.core.events import BatchDone, BatchProgress, EventBus
 async def test_cancel_current_batch_sets_event(batch_app: AppService) -> None:
     """v1.7.3:`cancel_current_batch()` 必须 set `_cancel_event`。"""
     assert not batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
-    batch_app.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
     assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
     # 多次调用安全(再次 set 已 set 的 Event)
-    batch_app.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
     assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
@@ -34,10 +34,10 @@ async def test_cancel_pin_stops_mid_loop(batch_app: AppService, collected: list)
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            batch_app.cancel_current_batch()
+            batch_app.batch.cancel_current_batch()
 
     batch_app.client.pin_messages.side_effect = _side_effect  # type: ignore[attr-defined]
-    result = await batch_app.pin_messages(items)
+    result = await batch_app.batch.pin_messages(items)
     assert result == 1
     assert call_count == 1
     done = [e for e in collected if isinstance(e, BatchDone)]
@@ -56,10 +56,10 @@ async def test_cancel_react_stops_mid_loop(batch_app: AppService, collected: lis
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            batch_app.cancel_current_batch()
+            batch_app.batch.cancel_current_batch()
 
     batch_app.client.add_reaction.side_effect = _side_effect  # type: ignore[attr-defined]
-    result = await batch_app.add_reaction(items, "🔥")
+    result = await batch_app.batch.add_reaction(items, "🔥")
     assert result == 1  # 第 1 条 RPC 已发出
     assert call_count == 1
     done = [e for e in collected if isinstance(e, BatchDone)]
@@ -72,9 +72,9 @@ async def test_cancel_react_stops_mid_loop(batch_app: AppService, collected: lis
 
 async def test_multiple_cancel_calls_safe(batch_app: AppService) -> None:
     """v1.7.3:多次 cancel_current_batch 调用安全 — Event 多次 set。"""
-    batch_app.cancel_current_batch()
-    batch_app.cancel_current_batch()
-    batch_app.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
+    batch_app.batch.cancel_current_batch()
     assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
@@ -92,7 +92,7 @@ async def test_batch_progress_emits_elapsed_and_rate_for_pin(
     bus.subscribe(BatchProgress, _on)
 
     items = [(1, 1), (1, 2), (1, 3)]
-    await batch_app.pin_messages(items)
+    await batch_app.batch.pin_messages(items)
     # 至少 1 个 progress emit(3 条成功 → 1 个 emit)
     assert len(received) >= 1
     last = received[-1]
@@ -119,7 +119,7 @@ async def test_batch_progress_emits_elapsed_and_rate_for_react(
     bus.subscribe(BatchProgress, _on)
 
     items = [(1, 1), (1, 2)]
-    await batch_app.add_reaction(items, "🔥")
+    await batch_app.batch.add_reaction(items, "🔥")
     assert len(received) >= 1
     last = received[-1]
     assert last.op == "react"

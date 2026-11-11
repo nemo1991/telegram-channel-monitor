@@ -99,7 +99,7 @@ async def test_cli_sync_handles_not_ready(app, monitor, monkeypatch) -> None:
         sync_called = True
         return None
 
-    monkeypatch.setattr(app, "sync_channels", fake_sync)
+    monkeypatch.setattr(app.channel_sync, "sync_channels", fake_sync)
 
     args = _make_args(channel_ids=[100])
     rc = await run_sync(args, app=app, monitor=monitor)
@@ -126,7 +126,7 @@ async def test_cli_sync_passes_correct_options(
         captured_options.append((options, media_policy))
         return SyncResult(per_channel={})
 
-    monkeypatch.setattr(app, "sync_channels", capture_sync)
+    monkeypatch.setattr(app.channel_sync, "sync_channels", capture_sync)
 
     args = _make_args(
         channel_ids=[200],

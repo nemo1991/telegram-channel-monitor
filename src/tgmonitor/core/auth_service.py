@@ -1,9 +1,12 @@
-"""AuthService — Telegram 登录鉴权 façade(给 AppService 用)。
+"""AuthService — Telegram 登录鉴权域服务。
 
 从 `AppService` 抽出(2026-08-03 微切):
   - `_check_credentials` — 凭据预检(api_id / api_hash / phone)
   - `submit_phone` / `submit_code` / `submit_password` — 3 个
     「client.x → publish ErrorOccurred + return ('error', str)」模板
+
+2026-11-11 v2.0.0 Phase 3-C2:补 `get_login_state` / `logout` —
+鉴权调用面全部收拢到本服务,AppService 不再转发。
 
 设计:
   - 持 `bus + client + settings`,不知道 storage / objects / channel_sync,
@@ -60,6 +63,14 @@ class AuthService:
         if not s.phone.startswith("+"):
             return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
         return None
+
+    async def get_login_state(self) -> str:
+        """当前登录状态机值(透传 client.state,不缓存)。"""
+        return self._client.state
+
+    async def logout(self) -> None:
+        """登出 — 清 session;异常冒泡给调用方(run_coro 统一显示)。"""
+        await self._client.logout()
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """用户点「登录」按钮 — 提交手机号 + 触发发送验证码。"""

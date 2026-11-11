@@ -26,7 +26,7 @@ message_view 1028→318 的同一条拆分线。
   event 类,跨 mixin 构造实例无问题
 - `load_thumbnail` 内部用 `from tgmonitor.core.dto import MediaDTO`(函数级
   局部 import)— 保持 DTO 与 mixin 解耦
-- `load_media_bytes` async,直接 `await self.app.load_media_bytes(media)`
+- `load_media_bytes` async,直接 `await self.app.media.load_media_bytes(media)`
   — facade 实例方法
 
 字段保留:Media 域不持有 facade 私有字段;`_export_task` 是 ExportMixin
@@ -184,7 +184,7 @@ class MediaMixin(_Base):
         sort: SortKey | None = None,
         sort_dir: SortDir | None = None,
     ) -> None:
-        """后台 fire app.list_media → emit media_list_loaded(rows, total)。
+        """后台 fire app.media.list_media → emit media_list_loaded(rows, total)。
 
         2026-08-25 v1.3.0 PR #6 新增 sort / sort_dir / offset kwargs;不传
         走默认(DATE DESC,offset=0),向后兼容旧调用方。
@@ -196,7 +196,7 @@ class MediaMixin(_Base):
             mt = media_type if isinstance(media_type, MediaType) else None
             sk = sort if isinstance(sort, SortKey) else SortKey.DATE
             sd = sort_dir if isinstance(sort_dir, SortDir) else SortDir.DESC
-            rows, total = await self.app.list_media(
+            rows, total = await self.app.media.list_media(
                 channel_id=channel_id,
                 status=st,
                 media_type=mt,
@@ -211,10 +211,10 @@ class MediaMixin(_Base):
         run_coro(self.loop, _go(), error_label="load_media_list")
 
     def delete_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
-        """单条 media 删除 — 后台 fire app.delete_media。"""
+        """单条 media 删除 — 后台 fire app.media.delete_media。"""
 
         async def _go() -> None:
-            await self.app.delete_media(channel_id, telegram_msg_id, media_idx)
+            await self.app.media.delete_media(channel_id, telegram_msg_id, media_idx)
 
         run_coro(self.loop, _go(), error_label="delete_media")
 
@@ -224,7 +224,7 @@ class MediaMixin(_Base):
         async def _go() -> None:
             for cid, mid, idx in items:
                 try:
-                    await self.app.delete_media(cid, mid, idx)
+                    await self.app.media.delete_media(cid, mid, idx)
                 except Exception:  # noqa: BLE001 — 单条失败不影响 batch
                     log.exception(
                         "delete_media batch failed: %s/%s/%d",
@@ -236,20 +236,20 @@ class MediaMixin(_Base):
         run_coro(self.loop, _go(), error_label="delete_media_batch")
 
     def retry_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
-        """单条 retry — 后台 fire app.retry_media。"""
+        """单条 retry — 后台 fire app.media.retry_media。"""
 
         async def _go() -> None:
-            await self.app.retry_media(channel_id, telegram_msg_id, media_idx)
+            await self.app.media.retry_media(channel_id, telegram_msg_id, media_idx)
 
         run_coro(self.loop, _go(), error_label="retry_media")
 
     def open_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
-        """打开 media 文件 — 后台 fire app.open_media_with_result,失败时 emit
+        """打开 media 文件 — 后台 fire app.media.open_media_with_result,失败时 emit
         open_media_failed 把原因给 UI(2026-08-25 v1.3.0 PR #5)。
         """
 
         async def _go() -> None:
-            result = await self.app.open_media_with_result(
+            result = await self.app.media.open_media_with_result(
                 channel_id,
                 telegram_msg_id,
                 media_idx,
@@ -276,13 +276,13 @@ class MediaMixin(_Base):
         """孤儿 reconcile — dry_run=True 只 log,dry_run=False 真删。"""
 
         async def _go() -> None:
-            await self.app.reconcile_orphans(dry_run=dry_run)
+            await self.app.media.reconcile_orphans(dry_run=dry_run)
 
         run_coro(self.loop, _go(), error_label="reconcile_orphans")
 
     def preview_delete_by_channel(self, channel_id: int) -> None:
         """2026-08-25 v1.3.0 PR #8:Clear Channel dry-run — 后台 fire
-        `app.preview_delete_by_channel` 后 emit `delete_preview_ready`。
+        `app.media.preview_delete_by_channel` 后 emit `delete_preview_ready`。
 
         `app.preview_*` 严格只读,不会改 storage / objects 状态。
         MainWindow 收到 `delete_preview_ready` 后弹 `ClearChannelPreviewDialog`
@@ -291,7 +291,7 @@ class MediaMixin(_Base):
         """
 
         async def _go() -> DeleteChannelPreview:
-            return await self.app.preview_delete_by_channel(channel_id)
+            return await self.app.media.preview_delete_by_channel(channel_id)
 
         def _on_success(preview: object) -> None:
             if isinstance(preview, DeleteChannelPreview):
@@ -306,14 +306,14 @@ class MediaMixin(_Base):
 
     def delete_by_channel(self, channel_id: int) -> None:
         """2026-08-25 PR #4:批量删某频道所有 message — 后台 fire
-        app.delete_by_channel。
+        app.media.delete_by_channel。
 
         完成后 emit `channel_cleared(channel_id, deleted_count)` — UI 据此
         状态栏反馈 + 重新加载 media list。
         """
 
         async def _go() -> None:
-            n = await self.app.delete_by_channel(channel_id)
+            n = await self.app.media.delete_by_channel(channel_id)
             self.channel_cleared.emit(channel_id, n)
 
         run_coro(self.loop, _go(), error_label="delete_by_channel")
@@ -327,7 +327,7 @@ class MediaMixin(_Base):
     ) -> None:
         """UI 行内请求加载缩略图(2026-08-25 PR #1)。
 
-        流程:异步读 bytes(app.load_thumbnail_bytes)→ 主线程内
+        流程:异步读 bytes(app.media.load_thumbnail_bytes)→ 主线程内
         QPixmap.fromData → emit thumbnail_loaded。失败(None bytes /
         非图像格式)on_success 拿到 None,UI 端保持 emoji 不变。
         """
@@ -354,7 +354,7 @@ class MediaMixin(_Base):
                 return None
             # 2026-09-29:缩略图独立存储 — 必须传 (channel_id, msg_id,
             # media_idx) 三元组定位独立 thumbnails 表的 thumb 行。
-            return await self.app.load_thumbnail_bytes(
+            return await self.app.media.load_thumbnail_bytes(
                 media,
                 channel_id=channel_id,
                 telegram_msg_id=telegram_msg_id,
@@ -371,10 +371,10 @@ class MediaMixin(_Base):
     async def load_media_bytes(self, media: object) -> bytes | None:
         """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览 — 异步读原图 bytes。
 
-        走 `app.load_media_bytes` 转发到 MediaService。
+        走 `app.media.load_media_bytes` 转发到 MediaService。
         """
         from tgmonitor.core.dto import MediaDTO
 
         if not isinstance(media, MediaDTO):
             return None
-        return await self.app.load_media_bytes(media)
+        return await self.app.media.load_media_bytes(media)

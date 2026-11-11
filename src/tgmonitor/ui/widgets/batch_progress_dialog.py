@@ -48,7 +48,7 @@ class BatchProgressDialog(QDialog):
     使用模式(MainWindow._on_live_*):
         dlg = BatchProgressDialog(self._vm, op="delete", parent=self)
         dlg.show()
-        await self._vm.app.delete_messages_batch(items)
+        await self._vm.app.batch.delete_messages_batch(items)
         # BatchDone 自动 emit → dialog 收尾
 
     2026-09-10 v1.7.3:加 `extra` kwarg 用于 react/unreact 标题显示 emoji;
@@ -114,7 +114,7 @@ class BatchProgressDialog(QDialog):
         """
         self.lbl_status.setText(self.tr("正在取消…"))
         self._btn_cancel.setEnabled(False)
-        # noqa: capability-probe — VM.cancel_current_batch 是可选扩展能力(早期 VM 无),新 VM 才有
+        # capability-probe:VM.cancel_current_batch 是可选扩展能力(早期 VM 无),新 VM 才有
         if hasattr(self._vm, "cancel_current_batch"):
             self._vm.cancel_current_batch()
 

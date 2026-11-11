@@ -47,7 +47,7 @@ class SyncFlowController:
 
         async def _go() -> None:
             try:
-                await self._ctx.app.sync_channels(channel_ids, options)
+                await self._ctx.app.channel_sync.sync_channels(channel_ids, options)
             finally:
                 # progress dialog 关闭后 disconnect VM signals — 防 dangling slot
                 # Qt C++ 侧 reference 累积。dialog 已 GC / signal 已断 → swallow

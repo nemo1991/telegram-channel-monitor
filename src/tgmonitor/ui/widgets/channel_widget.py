@@ -540,7 +540,7 @@ class ChannelWidget(QWidget):
 
     def _on_refresh(self) -> None:
         async def _go() -> None:
-            chs = await self.app.list_joined_channels()
+            chs = await self.app.channels.list_joined_channels()
             # 用 Signal 而非 QMetaObject.invokeMethod —— 后者把 Python list 经
             # Qt 元对象系统转 C++ 会 "Cannot copy-convert (list) to C++"。
             # Signal.emit 在 qasync 里跨 loop iteration 自然 queued,语义等价。
@@ -560,7 +560,7 @@ class ChannelWidget(QWidget):
             return  # 已订阅,双击无效(改在已监听栏里退订)
         run_coro(
             self.loop,
-            self.app.subscribe_channel(ch),
+            self.app.channels.subscribe_channel(ch),
             error_label="subscribe_channel",
         )
 
@@ -569,7 +569,7 @@ class ChannelWidget(QWidget):
             return
         run_coro(
             self.loop,
-            self.app.unsubscribe_channel(int(cid)),
+            self.app.channels.unsubscribe_channel(int(cid)),
             error_label="unsubscribe_channel",
         )
 

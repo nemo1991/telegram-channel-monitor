@@ -105,7 +105,7 @@ async def test_list_media_returns_all_with_no_filter(
     """无 filter 时返所有 media(扁平化)+ total 一致。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(100, 2, [_done_media("f2", "media/2.jpg")]))
-    rows, total = await app.list_media()
+    rows, total = await app.media.list_media()
     assert len(rows) == 2
     assert total == 2
     keys = {(r[0].channel_id, r[0].telegram_msg_id, r[1]) for r in rows}
@@ -119,7 +119,7 @@ async def test_list_media_filters_by_status_failed(
     """status=FAILED 只返失败的 media + total=1。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(100, 2, [_failed_media("f2")]))
-    rows, total = await app.list_media(status=MediaDownloadStatus.FAILED)
+    rows, total = await app.media.list_media(status=MediaDownloadStatus.FAILED)
     assert len(rows) == 1
     assert total == 1
     assert rows[0][2].download_status == MediaDownloadStatus.FAILED
@@ -132,7 +132,7 @@ async def test_list_media_filters_by_channel(
     """channel_id 过滤 — 只返指定频道 + total 同样被过滤。"""
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
     await storage.save_message(_msg(200, 1, [_done_media("f2", "media/2.jpg")]))
-    rows, total = await app.list_media(channel_id=100)
+    rows, total = await app.media.list_media(channel_id=100)
     assert len(rows) == 1
     assert total == 1
     assert rows[0][0].channel_id == 100
@@ -151,7 +151,7 @@ async def test_list_media_filters_by_type(
         mime_type="video/mp4",
     )
     await storage.save_message(_msg(100, 2, [video]))
-    rows, total = await app.list_media(media_type=MediaType.VIDEO)
+    rows, total = await app.media.list_media(media_type=MediaType.VIDEO)
     assert len(rows) == 1
     assert total == 1
     assert rows[0][2].type == MediaType.VIDEO
@@ -169,7 +169,7 @@ async def test_list_media_search_by_filename_case_insensitive(
     )
     await storage.save_message(_msg(100, 2, [sunset]))
     await storage.save_message(_msg(100, 3, [_base_media("f3")]))
-    rows, total = await app.list_media(search="sunset")
+    rows, total = await app.media.list_media(search="sunset")
     assert len(rows) == 1
     assert total == 1
     assert rows[0][2].file_name == "Sunset.JPG"
@@ -188,7 +188,7 @@ async def test_delete_media_removes_from_message_keeps_bytes_when_referenced(
     shared = _done_media("f-shared", "media/shared.jpg")
     await storage.save_message(_msg(100, 1, [shared]))
     await storage.save_message(_msg(100, 2, [shared]))  # 同 media 对象引用
-    await app.delete_media(100, 1, 0)
+    await app.media.delete_media(100, 1, 0)
 
     # message 1 已删 media;message 2 仍引用
     m1 = await storage.get_message(100, 1)
@@ -207,7 +207,7 @@ async def test_delete_media_removes_bytes_when_no_other_reference(
     """唯一引用 → 删 media + 删 bytes。"""
     await objectstore.put("media/only.jpg", b"data", None)
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/only.jpg")]))
-    await app.delete_media(100, 1, 0)
+    await app.media.delete_media(100, 1, 0)
     # bytes 真删
     assert not await objectstore.exists("media/only.jpg")
 
@@ -222,7 +222,7 @@ async def test_delete_media_publishes_media_deleted_event(
     bus.subscribe(MediaDeleted, lambda e: received.append(e))  # type: ignore[arg-type]
 
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
-    await app.delete_media(100, 1, 0)
+    await app.media.delete_media(100, 1, 0)
     assert len(received) == 1
     assert received[0].channel_id == 100
     assert received[0].telegram_msg_id == 1
@@ -258,7 +258,7 @@ async def test_retry_failed_resets_to_pending_and_redownloads(
     app.downloader = _StubDownloader()  # type: ignore[assignment]
 
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    await app.retry_media(100, 1, 0)
+    await app.media.retry_media(100, 1, 0)
 
     # 走 force=True
     assert download_calls and download_calls[0][2] is True
@@ -276,7 +276,7 @@ async def test_retry_skips_non_failed(
     received: list[MediaRetried] = []
     app.bus.subscribe(MediaRetried, lambda e: received.append(e))  # type: ignore[arg-type]
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
-    await app.retry_media(100, 1, 0)
+    await app.media.retry_media(100, 1, 0)
     # 非 FAILED → 跳过
     assert received == []
     m = await storage.get_message(100, 1)
@@ -305,7 +305,7 @@ async def test_retry_publishes_retried_and_downloaded_events(
 
     app.downloader = _StubDownloader()  # type: ignore[assignment]
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    await app.retry_media(100, 1, 0)
+    await app.media.retry_media(100, 1, 0)
     assert len(retried) == 1
     assert len(downloaded) == 1
 
@@ -320,7 +320,7 @@ async def test_open_media_returns_false_for_failed(
 ) -> None:
     """FAILED media 返 False(QDesktopServices 不能打开不存在的文件)。"""
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    ok = await app.open_media(100, 1, 0)
+    ok = await app.media.open_media(100, 1, 0)
     assert ok is False
 
 
@@ -328,7 +328,7 @@ async def test_open_media_returns_false_for_missing_message(
     app: AppService,
 ) -> None:
     """message 不存在 → False。"""
-    ok = await app.open_media(999, 1, 0)
+    ok = await app.media.open_media(999, 1, 0)
     assert ok is False
 
 
@@ -344,7 +344,7 @@ async def test_open_media_local_done_returns_bool(
     """
     await objectstore.put("media/photo.jpg", b"jpeg-bytes", None)
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-    ok = await app.open_media(100, 1, 0)
+    ok = await app.media.open_media(100, 1, 0)
     assert isinstance(ok, bool)
 
 
@@ -362,7 +362,7 @@ async def test_open_media_folder_done_returns_bool(
     app.objects = folder  # type: ignore[assignment]
     try:
         await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-        ok = await app.open_media(100, 1, 0)
+        ok = await app.media.open_media(100, 1, 0)
         assert isinstance(ok, bool)
     finally:
         app.objects = saved  # type: ignore[assignment]
@@ -382,7 +382,7 @@ async def test_reconcile_orphans_emits_event(
     bus.subscribe(MediaReconcileFinished, lambda e: received.append(e))  # type: ignore[arg-type]
     # ObjectStore 里有个孤儿 key
     await objectstore.put("media/orphan.jpg", b"orphan", None)
-    evt = await app.reconcile_orphans(dry_run=True)
+    evt = await app.media.reconcile_orphans(dry_run=True)
     assert isinstance(evt, MediaReconcileFinished)
     assert evt.backend == "local"
     assert evt.scanned >= 1
@@ -408,7 +408,7 @@ async def test_delete_by_channel_removes_all_messages_in_channel(
     # ch 200: 1 条 message(不应受影响)
     await storage.save_message(_msg(200, 1, [_done_media("d", "media/d.jpg")]))
 
-    deleted = await app.delete_by_channel(100)
+    deleted = await app.media.delete_by_channel(100)
     assert deleted == 3
     # ch 100 全空
     assert await storage.get_message(100, 1) is None
@@ -426,7 +426,7 @@ async def test_delete_by_channel_no_op_when_no_messages(
     from tgmonitor.core.dto import ChannelDTO
 
     await storage.upsert_channel(ChannelDTO(id=999, title="#999"))
-    deleted = await app.delete_by_channel(999)
+    deleted = await app.media.delete_by_channel(999)
     assert deleted == 0
 
 
@@ -447,7 +447,7 @@ async def test_delete_by_channel_cleans_orphan_bytes(
     # ch 200: 1 条共享(sentinel → shared.jpg 引用 refcount=2)
     await storage.save_message(_msg(200, 1, [_done_media("c", "media/shared.jpg")]))
 
-    deleted = await app.delete_by_channel(100)
+    deleted = await app.media.delete_by_channel(100)
     assert deleted == 2
 
     # only_here.jpg 已无引用 → bytes 清掉
@@ -465,7 +465,7 @@ async def test_delete_by_channel_does_not_touch_other_channels(
     await storage.save_message(_msg(200, 1, []))
     await storage.save_message(_msg(300, 1, []))
 
-    await app.delete_by_channel(200)
+    await app.media.delete_by_channel(200)
 
     assert await storage.get_message(200, 1) is None
     assert await storage.get_message(100, 1) is not None
@@ -496,7 +496,7 @@ async def test_open_media_with_result_missing_message_returns_error(
     app: AppService,
 ) -> None:
     """message 不存在 → OpenMediaResult(False, '消息或媒体不存在')。"""
-    result = await app.open_media_with_result(999, 1, 0)
+    result = await app.media.open_media_with_result(999, 1, 0)
     assert result.success is False
     assert result.error == "消息或媒体不存在"
 
@@ -507,7 +507,7 @@ async def test_open_media_with_result_failed_media_returns_error(
 ) -> None:
     """FAILED media → OpenMediaResult(False, '媒体未下载完成')(状态前置检查)。"""
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    result = await app.open_media_with_result(100, 1, 0)
+    result = await app.media.open_media_with_result(100, 1, 0)
     assert result.success is False
     assert result.error == "媒体未下载完成"
 
@@ -542,7 +542,7 @@ async def test_open_media_s3_stages_to_temp_and_calls_openurl(
     await storage.save_message(
         _msg(100, 1, [_done_media("f1", "media/photo.jpg")]),
     )
-    result = await app.open_media_with_result(100, 1, 0)
+    result = await app.media.open_media_with_result(100, 1, 0)
 
     # 还原
     app.objects = saved_objects  # type: ignore[assignment]
@@ -583,7 +583,7 @@ async def test_open_media_s3_cleans_tmp_when_open_url_fails(
     await storage.save_message(
         _msg(100, 1, [_done_media("f1", "media/photo.jpg")]),
     )
-    result = await app.open_media_with_result(100, 1, 0)
+    result = await app.media.open_media_with_result(100, 1, 0)
 
     app.objects = saved_objects  # type: ignore[assignment]
 
@@ -620,7 +620,7 @@ async def test_list_media_sort_by_size_desc(
     await storage.save_message(_msg(100, 2, [small_a]))
     await storage.save_message(_msg(100, 3, [small_b]))
 
-    rows, total = await app.list_media(
+    rows, total = await app.media.list_media(
         sort=SortKey.SIZE,
         sort_dir=SortDir.DESC,
     )
@@ -640,7 +640,7 @@ async def test_list_media_sort_default_unchanged_when_omitted(
     await storage.save_message(
         _msg(100, 2, [_done_media("f2", "media/2.jpg")]),
     )
-    rows, _ = await app.list_media()
+    rows, _ = await app.media.list_media()
     # 默认 DATE DESC(没设 date 字段时 list_messages 自己定)— 这里只验不抛 + 返 tuple
     assert isinstance(rows, list)
     assert len(rows) == 2
@@ -658,7 +658,7 @@ async def test_list_media_offset_pagination(
         await storage.save_message(
             _msg(100, i + 1, [_done_media(f"f{i}", f"media/{i}.jpg")]),
         )
-    rows, total = await app.list_media(limit=2, offset=2)
+    rows, total = await app.media.list_media(limit=2, offset=2)
     assert total == 5
     assert len(rows) == 2
 
@@ -672,8 +672,8 @@ async def test_list_media_count_matches_total_independent_of_pagination(
         await storage.save_message(
             _msg(100, i + 1, [_done_media(f"f{i}", f"media/{i}.jpg")]),
         )
-    _, total_first = await app.list_media(limit=3, offset=0)
-    _, total_last = await app.list_media(limit=3, offset=4)
+    _, total_first = await app.media.list_media(limit=3, offset=0)
+    _, total_last = await app.media.list_media(limit=3, offset=4)
     assert total_first == total_last == 7
 
 
@@ -702,7 +702,7 @@ async def test_reveal_in_folder_local_success(
 
     monkeypatch.setattr("tgmonitor.core.media_service._media_os_actions._spawn_reveal", _fake_spawn)
 
-    result = await app.reveal_in_folder(100, 1, 0)
+    result = await app.media.reveal_in_folder(100, 1, 0)
     assert result.success is True
     assert result.error is None
     assert len(spawn_calls) == 1
@@ -727,7 +727,7 @@ async def test_reveal_in_folder_s3_returns_error(
         _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
     )
 
-    result = await app.reveal_in_folder(100, 1, 0)
+    result = await app.media.reveal_in_folder(100, 1, 0)
 
     app.objects = saved_objects  # type: ignore[assignment]
 
@@ -740,7 +740,7 @@ async def test_reveal_in_folder_missing_message_returns_error(
     app: AppService,
 ) -> None:
     """PR #16:message 不存在 → RevealResult(False, '消息或媒体不存在')。"""
-    result = await app.reveal_in_folder(999, 1, 0)
+    result = await app.media.reveal_in_folder(999, 1, 0)
     assert result.success is False
     assert result.error == "消息或媒体不存在"
 
@@ -751,7 +751,7 @@ async def test_reveal_in_folder_pending_media_returns_error(
 ) -> None:
     """PR #16:media 未 DONE → RevealResult(False, '媒体未下载完成')。"""
     await storage.save_message(_msg(100, 1, [_base_media("f1")]))  # PENDING
-    result = await app.reveal_in_folder(100, 1, 0)
+    result = await app.media.reveal_in_folder(100, 1, 0)
     assert result.success is False
     assert result.error == "媒体未下载完成"
 
@@ -766,7 +766,7 @@ async def test_reveal_in_folder_missing_file_returns_error(
     await storage.save_message(
         _msg(100, 1, [_done_media("f1", "media/ghost.jpg")]),
     )
-    result = await app.reveal_in_folder(100, 1, 0)
+    result = await app.media.reveal_in_folder(100, 1, 0)
     assert result.success is False
     assert result.error is not None and "文件不存在" in result.error
 
@@ -781,7 +781,7 @@ async def test_copy_media_path_local_returns_absolute_path(
     await storage.save_message(
         _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
     )
-    result = await app.copy_media_path(100, 1, 0)
+    result = await app.media.copy_media_path(100, 1, 0)
     assert result.success is True
     assert result.error is None
     assert result.copied_value is not None
@@ -805,7 +805,7 @@ async def test_copy_media_path_s3_returns_uri(
         _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
     )
 
-    result = await app.copy_media_path(100, 1, 0)
+    result = await app.media.copy_media_path(100, 1, 0)
 
     app.objects = saved_objects  # type: ignore[assignment]
 
@@ -818,7 +818,7 @@ async def test_copy_media_path_missing_message_returns_error(
     app: AppService,
 ) -> None:
     """PR #16:message 不存在 → CopyResult(False, error='消息或媒体不存在')。"""
-    result = await app.copy_media_path(999, 1, 0)
+    result = await app.media.copy_media_path(999, 1, 0)
     assert result.success is False
     assert result.error == "消息或媒体不存在"
 
@@ -829,7 +829,7 @@ async def test_copy_media_path_pending_media_returns_error(
 ) -> None:
     """PR #16:media 未 DONE → CopyResult(False, error='媒体未下载完成')。"""
     await storage.save_message(_msg(100, 1, [_base_media("f1")]))
-    result = await app.copy_media_path(100, 1, 0)
+    result = await app.media.copy_media_path(100, 1, 0)
     assert result.success is False
     assert result.error == "媒体未下载完成"
 
@@ -881,7 +881,7 @@ async def test_open_media_with_result_does_not_block_event_loop(
 
     start = time.monotonic()
     await asyncio.gather(
-        app.open_media(100, 1, 0),
+        app.media.open_media(100, 1, 0),
         asyncio.sleep(0.2),
     )
     elapsed = time.monotonic() - start
@@ -919,7 +919,7 @@ async def test_open_media_invokes_openurl_off_main_thread(
 
     await objectstore.put("media/photo.jpg", b"jpeg", None)
     await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-    await app.open_media(100, 1, 0)
+    await app.media.open_media(100, 1, 0)
 
     assert seen, "openUrl should have been called"
     assert seen[0] != main_tid, (

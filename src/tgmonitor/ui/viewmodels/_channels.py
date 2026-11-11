@@ -15,7 +15,7 @@ plan-batch9-β):channels 域 = 2 handler + 4 method + 1 signal +
   `__init__` 避免与 facade 冲突(2026-10-19 plan-batch9 §8 风险
   #2 缓解:仅 BusMixin 的 `__init__` 显式 `super().__init__()` 收口)
 
-跨 mixin access:handler 调 `self.app.add_to_whitelist` /
+跨 mixin access:handler 调 `self.app.channels.add_to_whitelist` /
 `self.remove_from_whitelist`(AppService facade)+ `self.stats_changed.emit`
 (SystemMixin 字段)— 跨 mixin attribute / signal 由 Shiboken
 metaclass 透传,mypy 已被文件头 disable-error-code 屏蔽。
@@ -93,7 +93,7 @@ class ChannelsMixin(_Base):
         # 2026-10-15 plan-batch6-2 副产物:走 AppService facade 转发
         # 到 MonitorService 内部 WhitelistMixin(sync),不再绕过 facade
         # 直调 `self.monitor.add_to_whitelist(cid)`。
-        self.app.add_to_whitelist(e.channel.id)
+        self.app.channels.add_to_whitelist(e.channel.id)
         self.channels_changed.emit()
         # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅
         # stats_changed(SystemMixin 持有)→ 跨 mixin emit。
@@ -103,7 +103,7 @@ class ChannelsMixin(_Base):
         if not isinstance(e, ChannelUnsubscribed):
             return
         # 2026-10-15 plan-batch6-2 副产物:同上,走 facade。
-        self.app.remove_from_whitelist(e.channel_id)
+        self.app.channels.remove_from_whitelist(e.channel_id)
         # 2026-09-29:Media Manager combo 走 storage 真理,unsub 后
         # 立即从 known_channels 清掉 — 下次 channels_changed →
         # set_known_channels 不再显示这个频道。不必等下次
@@ -151,7 +151,7 @@ class ChannelsMixin(_Base):
         """
 
         async def _go() -> None:
-            chs = await self.app.list_subscribed_channels()
+            chs = await self.app.channels.list_subscribed_channels()
             for ch in chs:
                 self.known_channels[ch.id] = ch
             self.channels_changed.emit()
@@ -165,17 +165,17 @@ class ChannelsMixin(_Base):
         run_coro(self.loop, _go(), error_label="refresh_channels")
 
     def subscribe_channel(self, ch: ChannelDTO) -> None:
-        """订阅频道 — 后台 fire `app.subscribe_channel`(同步入 storage + 发事件)。"""
+        """订阅频道 — 后台 fire `app.channels.subscribe_channel`(同步入 storage + 发事件)。"""
         run_coro(
             self.loop,
-            self.app.subscribe_channel(ch),
+            self.app.channels.subscribe_channel(ch),
             error_label="subscribe_channel",
         )
 
     def unsubscribe_channel(self, channel_id: int) -> None:
-        """退订频道 — 后台 fire `app.unsubscribe_channel`(关订阅标志,保留历史)。"""
+        """退订频道 — 后台 fire `app.channels.unsubscribe_channel`(关订阅标志,保留历史)。"""
 
         async def _go() -> None:
-            await self.app.unsubscribe_channel(channel_id)
+            await self.app.channels.unsubscribe_channel(channel_id)
 
         run_coro(self.loop, _go(), error_label="unsubscribe_channel")

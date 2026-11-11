@@ -66,7 +66,7 @@ async def test_local_reconcile_dry_run_does_not_delete(
     assert isinstance(objectstore, LocalObjectStore)
     await objectstore.put("media/orphan.jpg", b"orphan", None)
     await storage.save_message(_msg(100, 1, media=[]))  # 没引用
-    evt = await app.reconcile_orphans(dry_run=True)
+    evt = await app.media.reconcile_orphans(dry_run=True)
     assert evt.orphans >= 1
     assert evt.deleted == 0
     assert evt.dry_run is True
@@ -83,7 +83,7 @@ async def test_local_reconcile_prune_deletes_orphan_bytes(
     await objectstore.put("media/orphan.jpg", b"orphan", None)
     await objectstore.put("media/keep.jpg", b"keep", None)
     await storage.save_message(_msg(100, 1, [_done("f-keep", "media/keep.jpg")]))
-    evt = await app.reconcile_orphans(dry_run=False)
+    evt = await app.media.reconcile_orphans(dry_run=False)
     assert evt.orphans >= 1
     assert evt.deleted >= 1
     # orphan 删了
@@ -101,7 +101,7 @@ async def test_local_reconcile_keeps_referenced_bytes(
     assert isinstance(objectstore, LocalObjectStore)
     await objectstore.put("media/only.jpg", b"x", None)
     await storage.save_message(_msg(100, 1, [_done("f", "media/only.jpg")]))
-    evt = await app.reconcile_orphans(dry_run=False)
+    evt = await app.media.reconcile_orphans(dry_run=False)
     assert evt.orphans == 0
     assert evt.deleted == 0
     assert await objectstore.exists("media/only.jpg")
@@ -126,7 +126,7 @@ async def test_folder_reconcile_dry_run_does_not_delete(
     try:
         await folder.put("media/orphan.jpg", b"x", None)
         await storage.save_message(_msg(100, 1, media=[]))
-        evt = await app.reconcile_orphans(dry_run=True)
+        evt = await app.media.reconcile_orphans(dry_run=True)
         assert evt.backend == "folder"
         assert evt.orphans >= 1
         assert evt.deleted == 0
@@ -147,7 +147,7 @@ async def test_folder_reconcile_prune_deletes_orphan_bytes(
     app.objects = folder  # type: ignore[assignment]
     try:
         await folder.put("media/orphan.jpg", b"x", None)
-        evt = await app.reconcile_orphans(dry_run=False)
+        evt = await app.media.reconcile_orphans(dry_run=False)
         assert evt.deleted >= 1
         assert not await folder.exists("media/orphan.jpg")
     finally:
@@ -174,7 +174,7 @@ async def test_s3_reconcile_skips_gracefully(
     saved = app.objects
     app.objects = s3  # type: ignore[assignment]
     try:
-        evt = await app.reconcile_orphans(dry_run=True)
+        evt = await app.media.reconcile_orphans(dry_run=True)
         assert evt.backend == "s3"
         assert evt.scanned == 0
         assert evt.orphans == 0
@@ -221,7 +221,7 @@ async def test_s3_reconcile_with_iter_keys(
     app.objects = s3  # type: ignore[assignment]
     try:
         await storage.save_message(_msg(100, 1, [_done("f-keep", "media/keep.jpg")]))
-        evt = await app.reconcile_orphans(dry_run=True)
+        evt = await app.media.reconcile_orphans(dry_run=True)
         assert evt.backend == "s3"
         assert evt.scanned == 3
         assert evt.referenced == 1
@@ -229,7 +229,7 @@ async def test_s3_reconcile_with_iter_keys(
         assert evt.deleted == 0  # dry_run
 
         # prune 模式真删
-        evt2 = await app.reconcile_orphans(dry_run=False)
+        evt2 = await app.media.reconcile_orphans(dry_run=False)
         assert evt2.orphans == 2
         assert evt2.deleted == 2
         assert sorted(s3.deleted) == ["media/orphan.jpg", "media/other.png"]
@@ -278,10 +278,10 @@ async def test_reconcile_reentrant_skips_with_empty_event(
 
     try:
         # 启动第一次 reconcile(将 hang 在 iter_keys)
-        first = _asyncio.create_task(app.reconcile_orphans(dry_run=True))
+        first = _asyncio.create_task(app.media.reconcile_orphans(dry_run=True))
         await iter_started.wait()
         # 第二次(模拟启动期 _startup_reconcile 与用户立刻 Prune 的重入)
-        evt2 = await app.reconcile_orphans(dry_run=False)
+        evt2 = await app.media.reconcile_orphans(dry_run=False)
         # skip 路径返空事件
         assert evt2.scanned == 0
         assert evt2.referenced == 0

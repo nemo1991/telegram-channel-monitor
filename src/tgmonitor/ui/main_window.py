@@ -659,7 +659,7 @@ class MainWindow(QMainWindow):
         self._sync_ctrl.on_sync_all_channels()
 
     def _on_logout_clicked(self) -> None:
-        run_coro(self.loop, self.app.client.logout(), error_label="logout")
+        run_coro(self.loop, self.app.auth.logout(), error_label="logout")
 
     def _on_header_action(self) -> None:
         """头栏「登录」按钮 — 弹 LoginDialog。委托 `HeaderActionController`(v1.12.x)。"""

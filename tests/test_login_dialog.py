@@ -58,9 +58,9 @@ def _make_dlg(qloop, *, submit_phone=None):
     mock_app.settings.phone = ""
     mock_app.client.state = "phone_required"
     if submit_phone is None:
-        mock_app.submit_phone = AsyncMock(return_value=("code_required", None))
+        mock_app.auth.submit_phone = AsyncMock(return_value=("code_required", None))
     else:
-        mock_app.submit_phone = AsyncMock(side_effect=submit_phone)
+        mock_app.auth.submit_phone = AsyncMock(side_effect=submit_phone)
     dlg = LoginDialog(app=mock_app, loop=qloop)
     return dlg, mock_app
 
@@ -88,7 +88,7 @@ def test_submit_phone_busy_locks_then_unlocks(qapp, qloop):
     dlg.in_phone.setText("+8613800000000")
     dlg._submit_phone()
     # 等后台 loop 真正开始执行 coroutine(AsyncMock 计数发生在 coroutine 启动时)
-    _wait_until(lambda: mock_app.submit_phone.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_phone.await_count == 1)
 
     # 提交期间:busy + 控件禁用 + loading 文案
     assert dlg._busy is True
@@ -98,7 +98,7 @@ def test_submit_phone_busy_locks_then_unlocks(qapp, qloop):
 
     # busy 期间重复提交被拦截,不二次调用
     dlg._submit_phone()
-    assert mock_app.submit_phone.await_count == 1
+    assert mock_app.auth.submit_phone.await_count == 1
 
     # 放行响应 → done callback 解锁 + 切到验证码页
     # 注:asyncio.Event 是 loop-bound,主线程直接 set() 唤醒不了后台 loop 的
@@ -121,11 +121,11 @@ def test_submit_code_busy_blocks_reentry(qapp, qloop):
     mock_app = Mock()
     mock_app.settings.phone = ""
     mock_app.client.state = "code_required"
-    mock_app.submit_code = AsyncMock(side_effect=submit_code)
+    mock_app.auth.submit_code = AsyncMock(side_effect=submit_code)
     dlg = LoginDialog(app=mock_app, loop=qloop)
     dlg.in_code.setText("12345")
     dlg._submit_code()
-    _wait_until(lambda: mock_app.submit_code.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_code.await_count == 1)
 
     assert dlg._busy is True
     assert dlg.btn_submit.isEnabled() is False
@@ -133,7 +133,7 @@ def test_submit_code_busy_blocks_reentry(qapp, qloop):
 
     dlg._submit_code()
     dlg._on_submit()
-    assert mock_app.submit_code.await_count == 1
+    assert mock_app.auth.submit_code.await_count == 1
 
     qloop.call_soon_threadsafe(gate.set)
     _wait_until(lambda: dlg._busy is False)
@@ -184,9 +184,9 @@ def _make_email_dlg(qloop, *, initial_state="email_required"):
     mock_app = Mock()
     mock_app.settings.phone = ""
     mock_app.client.state = initial_state
-    mock_app.submit_email = AsyncMock(return_value=("email_code_required", None))
-    mock_app.submit_email_code = AsyncMock(return_value=("ready", None))
-    mock_app.submit_registration = AsyncMock(return_value=("ready", None))
+    mock_app.auth.submit_email = AsyncMock(return_value=("email_code_required", None))
+    mock_app.auth.submit_email_code = AsyncMock(return_value=("ready", None))
+    mock_app.auth.submit_registration = AsyncMock(return_value=("ready", None))
     dlg = LoginDialog(app=mock_app, loop=qloop)
     dlg._expected_state = initial_state  # 强制 _render 路径走对应 page
     dlg._render(initial_state)
@@ -224,12 +224,12 @@ def test_registration_required_state_shows_reg_page(qapp, qloop):
     ),
 )
 def test_submit_email_invokes_app_and_unlocks(qapp, qloop):
-    """PR #13:state=email_required → _submit_email → 调 app.submit_email。"""
+    """PR #13:state=email_required → _submit_email → 调 app.auth.submit_email。"""
     dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
     dlg.in_email.setText("user@example.com")
     dlg._submit_email()
 
-    _wait_until(lambda: mock_app.submit_email.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_email.await_count == 1)
     assert dlg._busy is False
     assert dlg.stack.currentIndex() == 4  # 推到 email_code_required
 
@@ -260,9 +260,9 @@ def test_submit_email_busy_blocks_reentry(qapp, qloop):
     mock_app = Mock()
     mock_app.settings.phone = ""
     mock_app.client.state = "email_required"
-    mock_app.submit_email = submit_email
-    mock_app.submit_email_code = AsyncMock(return_value=("ready", None))
-    mock_app.submit_registration = AsyncMock(return_value=("ready", None))
+    mock_app.auth.submit_email = submit_email
+    mock_app.auth.submit_email_code = AsyncMock(return_value=("ready", None))
+    mock_app.auth.submit_registration = AsyncMock(return_value=("ready", None))
     dlg = LoginDialog(app=mock_app, loop=qloop)
     dlg._expected_state = "email_required"  # 强制 _render 走 email 页
     dlg._render("email_required")
@@ -282,23 +282,23 @@ def test_submit_email_busy_blocks_reentry(qapp, qloop):
 
 
 def test_submit_email_code_invokes_app(qapp, qloop):
-    """PR #13:_submit_email_code → app.submit_email_code。"""
+    """PR #13:_submit_email_code → app.auth.submit_email_code。"""
     dlg, mock_app = _make_email_dlg(qloop, initial_state="email_code_required")
     dlg.in_email_code.setText("123456")
     dlg._submit_email_code()
-    _wait_until(lambda: mock_app.submit_email_code.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_email_code.await_count == 1)
     assert dlg._busy is False
 
 
 def test_submit_registration_invokes_app(qapp, qloop):
-    """PR #13:_submit_registration → app.submit_registration(first, last)。"""
+    """PR #13:_submit_registration → app.auth.submit_registration(first, last)。"""
     dlg, mock_app = _make_email_dlg(qloop, initial_state="registration_required")
     dlg.in_reg_first.setText("Alice")
     dlg.in_reg_last.setText("Wonder")
     dlg._submit_registration()
-    _wait_until(lambda: mock_app.submit_registration.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_registration.await_count == 1)
     assert dlg._busy is False
-    mock_app.submit_registration.assert_awaited_once_with("Alice", "Wonder")
+    mock_app.auth.submit_registration.assert_awaited_once_with("Alice", "Wonder")
 
 
 def test_submit_registration_empty_first_name_blocks(qapp, qloop):
@@ -306,7 +306,7 @@ def test_submit_registration_empty_first_name_blocks(qapp, qloop):
     dlg, mock_app = _make_email_dlg(qloop, initial_state="registration_required")
     dlg.in_reg_first.setText("")
     dlg._submit_registration()
-    assert mock_app.submit_registration.await_count == 0
+    assert mock_app.auth.submit_registration.await_count == 0
     assert "first_name" in dlg.status_label.text() or "必填" in dlg.status_label.text()
 
 
@@ -315,7 +315,7 @@ def test_on_submit_dispatches_to_email_methods(qapp, qloop):
     dlg, mock_app = _make_email_dlg(qloop, initial_state="email_required")
     dlg.in_email.setText("user@example.com")
     dlg._on_submit()  # 应走 _submit_email
-    _wait_until(lambda: mock_app.submit_email.await_count == 1)
+    _wait_until(lambda: mock_app.auth.submit_email.await_count == 1)
     # Mock 默认会建 submit_code 属性 — 用 side_effect 标记其**未被**调用
     # 简单做法:确保 _submit_email_code / _submit_password 都没被触发。
     assert dlg._busy is False

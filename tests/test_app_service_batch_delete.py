@@ -31,7 +31,7 @@ async def test_delete_messages_batch_paused_returns_zero_without_calling_monitor
     paused_batch_app.monitor.delete_messages = AsyncMock(return_value=42)  # type: ignore[attr-defined]
     items = [(1, 1), (1, 2), (2, 3)]
 
-    deleted = await paused_batch_app.delete_messages_batch(items)
+    deleted = await paused_batch_app.batch.delete_messages_batch(items)
 
     assert deleted == 0
     paused_batch_app.monitor.delete_messages.assert_not_called()  # type: ignore[attr-defined]
@@ -49,7 +49,7 @@ async def test_delete_messages_batch_passes_cancel_event_to_monitor(
     batch_app.monitor.delete_messages = AsyncMock(return_value=3)  # type: ignore[attr-defined]
 
     items = [(1, 1), (1, 2), (2, 3)]
-    await batch_app.delete_messages_batch(items)
+    await batch_app.batch.delete_messages_batch(items)
 
     # monitor.delete_messages 应被调一次,参数 = (items, cancel_event=batch_app.batch._cancel_event)
     batch_app.monitor.delete_messages.assert_called_once()  # type: ignore[attr-defined]
@@ -81,7 +81,7 @@ async def test_delete_messages_batch_emits_cancelled_when_cancel_set_before_call
     batch_app.monitor.delete_messages = AsyncMock(side_effect=_fake_delete)  # type: ignore[attr-defined]
 
     items = [(1, 1), (1, 2), (2, 3)]
-    await batch_app.delete_messages_batch(items)
+    await batch_app.batch.delete_messages_batch(items)
 
     assert len(received) == 1
     done = received[0]
@@ -107,7 +107,7 @@ async def test_batch_progress_zero_processed_zero_rate(bus, batch_app: AppServic
     # 让 monitor.delete_messages 立刻返 1(单条 delete 同步)
     batch_app.monitor = AsyncMock()  # type: ignore[attr-defined]
     batch_app.monitor.delete_messages = AsyncMock(return_value=1)  # type: ignore[attr-defined]
-    await batch_app.delete_messages_batch(items)
+    await batch_app.batch.delete_messages_batch(items)
     # 第一个 emit 是 processed=0;rate 应 = 0(elapsed ≈ 0)
     assert len(received) >= 1
     first = received[0]
