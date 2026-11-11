@@ -144,6 +144,13 @@ class SettingsPage(QWidget):
         scroll.setWidget(scroll_content)
         root.addWidget(scroll, 1)
 
+        # 后端字段初始显隐 — 必须在此(scroll.setWidget 已把 scroll_content
+        # parent 到 self,find_form_row 才找得到各 groupbox)。build 期调
+        # _on_*_backend_changed 是 no-op;且默认值恰为 combo index 0 时
+        # _load_from_settings 的 setCurrentIndex 不 fire 信号,故统一在此刷一次。
+        self._on_db_backend_changed()
+        self._on_os_backend_changed()
+
         # 底部固定按钮
         btn_bar = QHBoxLayout()
         btn_bar.setContentsMargins(24, 12, 24, 16)
@@ -239,9 +246,10 @@ class SettingsPage(QWidget):
         self.btn_test_proxy.clicked.connect(self._on_test_proxy)
 
     def _build_storage(self, root: QVBoxLayout) -> None:
-        """💾 消息存储 — DB 后端 + DSN。
+        """💾 消息存储 — DB 后端 + DSN(PG)/ SQLite 文件路径。
 
-        `db_dsn` 永远显(仅 POSTGRES 用;SQLITE 走 `sqlite_path` 默认路径)。
+        字段显隐随后端切:POSTGRES 显 `db_dsn`,SQLITE 显 `sqlite_path`
+        (见 `_on_db_backend_changed`,镜像 os_backend 的本地/S3 互斥模式)。
         """
         s = FormSection(
             title=self.tr("💾 消息存储 (Database)"),
@@ -258,11 +266,25 @@ class SettingsPage(QWidget):
                     label=self.tr("DSN:"),
                     placeholder="postgresql://user:pass@host/db",
                 ),
+                FieldDef(
+                    key="sqlite_path",
+                    kind=FieldKind.PATH,
+                    label=self.tr("SQLite 文件:"),
+                    placeholder=str(_user_data_dir() / "tgmonitor.db"),
+                    file_mode=True,
+                    on_default=lambda: self._set_default(self.in_sqlite_path, "tgmonitor.db"),
+                    default_tooltip=self.tr("恢复为 platform-native 默认路径"),
+                ),
             ),
         )
         gb = s.build(self)
         root.addWidget(gb)
         self._sections.append(s)
+        self.cmb_db = s._widgets["db_backend"]
+        self.in_sqlite_path = s._widgets["sqlite_path"]
+        # 后端切换显隐(DSN 仅 PG / SQLite 文件仅 SQLite)。初始显隐在 _build()
+        # 末尾统一刷(此时 scroll_content 才 parent 到 self,find_form_row 可达)。
+        self.cmb_db.currentIndexChanged.connect(self._on_db_backend_changed)
 
     def _build_objectstore(self, root: QVBoxLayout) -> None:
         """📁 对象存储 — 后端 + 本地目录 / S3 凭据(后端切时显隐)。"""
@@ -332,9 +354,8 @@ class SettingsPage(QWidget):
         self.in_os_secret_key = s._widgets["os_secret_key"]
         self.in_os_bucket = s._widgets["os_bucket"]
         self.lbl_os_s3_hint = s._widgets["os_s3_hint"]
-        # 后端切换显隐
+        # 后端切换显隐(初始显隐在 _build() 末尾统一刷,见该处注释)
         self.cmb_os.currentIndexChanged.connect(self._on_os_backend_changed)
-        self._on_os_backend_changed()
 
     def _build_policy(self, root: QVBoxLayout) -> None:
         """⚙️ 策略 — 媒体下载策略 + 单文件大小 + 数据根目录。"""
@@ -615,8 +636,15 @@ class SettingsPage(QWidget):
     # ============================================================
     # 后端切换显隐 — 用 form_section.find_form_row 走跨 group 隔离
     # ============================================================
-    # DB 后端切(SQLITE ↔ POSTGRES)无字段显隐变化(DSN 仅 PG 用,常显)。
-    # OS 后端切仍需(本地/S3 字段互斥),保留 `_on_os_backend_changed`。
+    # DB 后端切(SQLITE ↔ POSTGRES):DSN 仅 PG / SQLite 文件仅 SQLite,互斥显隐。
+    # OS 后端切(本地/S3 字段互斥),保留 `_on_os_backend_changed`。
+
+    def _on_db_backend_changed(self) -> None:
+        is_pg = self.cmb_db.currentData() == DBBackend.POSTGRES
+        # DSN:POSTGRES 时显示
+        self._set_field_visible("db_dsn", is_pg)
+        # SQLite 文件:SQLITE 时显示
+        self._set_field_visible("sqlite_path", not is_pg)
 
     def _on_os_backend_changed(self) -> None:
         is_local = self.cmb_os.currentData() in (
@@ -685,6 +713,7 @@ class SettingsPage(QWidget):
             session_dir=str(collected.get("session_dir", "")).strip() or str(ud / "session"),
             db_backend=collected.get("db_backend", DBBackend.SQLITE),
             db_dsn=str(collected.get("db_dsn", "")).strip(),
+            sqlite_path=str(collected.get("sqlite_path", "")).strip(),
             # 2026-10-12 plan-batch3 目标 3 step 3.4:db_root 字段已删,
             # EditableSettings.to_settings() 不再传 db_root=Path(...),
             # Settings.db_root 走 pydantic default_factory 兜底。
@@ -738,6 +767,7 @@ class SettingsPage(QWidget):
             # storage
             "db_backend": s.db_backend,
             "db_dsn": s.db_dsn or "",
+            "sqlite_path": str(s.sqlite_path),
             # 2026-10-12 plan-batch3 目标 3 step 3.4:db_root 字段已删,
             # UI 不再编辑/显示
             # objectstore

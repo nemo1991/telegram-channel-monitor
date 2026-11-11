@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
+from tgmonitor.core.config import (
+    DBBackend,
+    MediaPolicy,
+    ObjectStoreBackend,
+    Settings,
+    _user_data_dir,
+)
 
 _LINE = re.compile(r"^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$")
 
@@ -103,6 +109,7 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_PROXY": s.proxy or "",
         "TG_DB_BACKEND": s.db_backend.value,
         "TG_DB_DSN": s.db_dsn,
+        "TG_SQLITE_PATH": str(s.sqlite_path),
         "TG_OBJECTSTORE_BACKEND": s.objectstore_backend.value,
         "TG_OBJECTSTORE_ROOT": str(s.objectstore_root),
         "TG_OBJECTSTORE_ENDPOINT": s.objectstore_endpoint or "",
@@ -177,6 +184,9 @@ class EditableSettings:
 
     db_backend: str = "sqlite"  # DBBackend.value
     db_dsn: str = ""
+    # SQLite 数据库文件路径(db_backend=sqlite 时用)。空串 = 走 platform-native
+    # 默认(`_user_data_dir() / tgmonitor.db`),to_settings() 兜底。
+    sqlite_path: str = ""
     # db_root 字段已删除 — 原 JSONL 后端专属,删 JSONL 后无 consumer。
     # `Settings.db_root` 仍保留默认(`_user_data_dir() / messages`),
     # 只为兼容老用户 .env,UI 不再编辑/显示。
@@ -239,6 +249,7 @@ class EditableSettings:
             session_dir=str(s.session_dir),
             db_backend=s.db_backend.value,
             db_dsn=s.db_dsn,
+            sqlite_path=str(s.sqlite_path),
             objectstore_backend=s.objectstore_backend.value,
             objectstore_root=str(s.objectstore_root),
             objectstore_endpoint=s.objectstore_endpoint or "",
@@ -308,6 +319,9 @@ class EditableSettings:
             session_dir=Path(self.session_dir),
             db_backend=DBBackend(self.db_backend),
             db_dsn=self.db_dsn,
+            sqlite_path=Path(self.sqlite_path)
+            if self.sqlite_path.strip()
+            else _user_data_dir() / "tgmonitor.db",
             objectstore_backend=ObjectStoreBackend(self.objectstore_backend),
             objectstore_root=Path(self.objectstore_root),
             objectstore_endpoint=self.objectstore_endpoint or None,
@@ -386,8 +400,8 @@ class SettingsDiff:
 
     字段:
       needs_relogin: api_id / api_hash / phone 之一变化(Telegram 凭据)
-      storage_changed: db_backend / db_dsn 之一变化(2026-10-12 plan-batch3
-        目标 3 step 3.3:db_root 字段已删,不再列入 diff)
+      storage_changed: db_backend / db_dsn / sqlite_path 之一变化
+        (db_root 字段已删,不再列入 diff)
       objects_changed: objectstore_* 字段之一变化
       client_changed: proxy / session_dir 之一变化(TelegramClient 构造参数,运行时
         不重建 client,需重启生效 — 2026-08-18 新增,此前纯代理/会话目录变更
@@ -421,8 +435,10 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
         old.api_id != new.api_id or old.api_hash != new.api_hash or old.phone != new.phone
     )
     storage_changed = (
-        old.db_backend != new.db_backend or old.db_dsn != new.db_dsn
-    )  # 2026-10-12 plan-batch3 目标 3 step 3.3:db_root 已删,不再 diff
+        old.db_backend != new.db_backend
+        or old.db_dsn != new.db_dsn
+        or old.sqlite_path != new.sqlite_path
+    )
     objects_changed = (
         old.objectstore_backend != new.objectstore_backend
         or old.objectstore_root != new.objectstore_root

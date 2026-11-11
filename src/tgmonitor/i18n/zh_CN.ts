@@ -1434,6 +1434,14 @@ S            切换幻灯片自动播放
         <translation>DSN:</translation>
     </message>
     <message>
+        <source>SQLite 文件:</source>
+        <translation>SQLite 文件:</translation>
+    </message>
+    <message>
+        <source>恢复为 platform-native 默认路径</source>
+        <translation>恢复为 platform-native 默认路径</translation>
+    </message>
+    <message>
         <location filename="../ui/widgets/settings_page.py" line="232"/>
         <source>📁 对象存储 (ObjectStore)</source>
         <translation>📁 对象存储 (ObjectStore)</translation>

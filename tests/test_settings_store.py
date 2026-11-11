@@ -9,6 +9,7 @@ from tgmonitor.core.settings_store import (
     EditableSettings,
     diff_settings,
     parse_env_file,
+    settings_to_pairs,
     update_env_with_settings,
     write_env_file,
 )
@@ -210,3 +211,45 @@ def test_diff_settings_session_dir_change_needs_restart():
     d = diff_settings(old, new)
     assert d.client_changed is True
     assert d.changed is True
+
+
+# ---- sqlite_path(v2.0.0 Phase 4-A:SQLite 默认后端,UI 可编辑路径)----
+
+
+def test_editable_sqlite_path_roundtrip():
+    """EditableSettings.sqlite_path 显式路径 → to_settings 保留。"""
+    e = EditableSettings(
+        api_id=1,
+        api_hash="h" * 32,
+        phone="+1",
+        db_backend="sqlite",
+        sqlite_path="/custom/dir/my.db",
+    )
+    s = e.to_settings()
+    assert s.sqlite_path == Path("/custom/dir/my.db")
+    # from_settings 回读一致
+    assert EditableSettings.from_settings(s).sqlite_path == "/custom/dir/my.db"
+
+
+def test_editable_sqlite_path_empty_falls_back_to_default():
+    """空 sqlite_path → to_settings 兜底 platform-native 默认路径。"""
+    from tgmonitor.core.config import _user_data_dir
+
+    e = EditableSettings(api_id=1, api_hash="h" * 32, phone="+1", sqlite_path="")
+    assert e.to_settings().sqlite_path == _user_data_dir() / "tgmonitor.db"
+
+
+def test_settings_to_pairs_includes_sqlite_path():
+    """settings_to_pairs 序列化 TG_SQLITE_PATH(写回 .env 用)。"""
+    s = _settings(db_backend=DBBackend.SQLITE, sqlite_path=Path("/x/y.db"))
+    pairs = settings_to_pairs(s)
+    assert pairs["TG_SQLITE_PATH"] == "/x/y.db"
+
+
+def test_diff_settings_sqlite_path_change():
+    """sqlite_path 变化触发 storage_changed(热重载重建 storage)。"""
+    old = _settings(db_backend=DBBackend.SQLITE, sqlite_path=Path("/x/a.db"))
+    new = _settings(db_backend=DBBackend.SQLITE, sqlite_path=Path("/x/b.db"))
+    d = diff_settings(old, new)
+    assert d.storage_changed is True
+    assert d.needs_relogin is False
