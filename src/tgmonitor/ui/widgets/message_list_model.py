@@ -20,7 +20,7 @@ MRO 声明 + 1 行 `MAX_ITEMS = 10000`(语义从 MessageView 搬来)。
 
 Qt model 必须 `QAbstractListModel` 子类(beginInsertRows / dataChanged /
 modelReset 走 Shiboken 元类绑定),composition delegate 模式不可用
-(plan-batch2-3 tdlib_client 经验证)— mixin 是唯一可行拆法。这是项目
+(plan-batch2-3 telegram client 经验证)— mixin 是唯一可行拆法。这是项目
 首次引入 mixin 模式,Phase 1 探查确认 Python C3 + Shiboken 兼容。
 """
 

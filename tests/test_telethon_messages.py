@@ -170,8 +170,14 @@ def test_video_note_round_message() -> None:
 def test_voice_vs_audio() -> None:
     voice = _doc([types.DocumentAttributeAudio(duration=5, voice=True)])
     audio = _doc([types.DocumentAttributeAudio(duration=200, voice=False, title="Song")])
-    assert map_message(_msg(media=types.MessageMediaDocument(document=voice))).media[0].type == MediaType.VOICE
-    assert map_message(_msg(media=types.MessageMediaDocument(document=audio))).media[0].type == MediaType.AUDIO
+    assert (
+        map_message(_msg(media=types.MessageMediaDocument(document=voice))).media[0].type
+        == MediaType.VOICE
+    )
+    assert (
+        map_message(_msg(media=types.MessageMediaDocument(document=audio))).media[0].type
+        == MediaType.AUDIO
+    )
 
 
 def test_sticker_emoji() -> None:
@@ -186,11 +192,16 @@ def test_sticker_emoji() -> None:
 
 def test_animation() -> None:
     doc = _doc([types.DocumentAttributeAnimated()], mime_type="image/gif")
-    assert map_message(_msg(media=types.MessageMediaDocument(document=doc))).media[0].type == MediaType.ANIMATION
+    assert (
+        map_message(_msg(media=types.MessageMediaDocument(document=doc))).media[0].type
+        == MediaType.ANIMATION
+    )
 
 
 def test_plain_document_no_thumb() -> None:
-    doc = _doc([types.DocumentAttributeFilename(file_name="report.pdf")], mime_type="application/pdf")
+    doc = _doc(
+        [types.DocumentAttributeFilename(file_name="report.pdf")], mime_type="application/pdf"
+    )
     m = map_message(_msg(media=types.MessageMediaDocument(document=doc))).media[0]
     assert m.type == MediaType.DOCUMENT
     assert m.file_name == "report.pdf"
@@ -245,7 +256,9 @@ def test_poll_text() -> None:
 def test_map_reactions_emoji_and_custom() -> None:
     reactions = types.MessageReactions(
         results=[
-            types.ReactionCount(reaction=types.ReactionEmoji(emoticon="🔥"), count=3, chosen_order=0),
+            types.ReactionCount(
+                reaction=types.ReactionEmoji(emoticon="🔥"), count=3, chosen_order=0
+            ),
             types.ReactionCount(reaction=types.ReactionCustomEmoji(document_id=777), count=2),
         ]
     )

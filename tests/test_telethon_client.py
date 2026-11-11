@@ -193,7 +193,10 @@ async def test_start_connect_timeout_error(wrapper, monkeypatch) -> None:
 async def test_start_401_resets_session(wrapper) -> None:
     w, mock = wrapper
     # 第一次 connect 抛 UnauthorizedError → reset → 第二次成功(未授权)
-    mock.connect.side_effect = [errors.UnauthorizedError(request=None, message="AUTH_KEY_UNREGISTERED"), None]
+    mock.connect.side_effect = [
+        errors.UnauthorizedError(request=None, message="AUTH_KEY_UNREGISTERED"),
+        None,
+    ]
     mock.is_user_authorized.return_value = False
     state, _ = await w.start()
     assert state == "phone_required"
@@ -207,9 +210,7 @@ async def test_start_proxy_unreachable_error(wrapper, monkeypatch) -> None:
     async def _bad_probe(url, **_kw):
         return False, "代理 TCP 不通"
 
-    monkeypatch.setattr(
-        "tgmonitor.core.telegram.telethon_client.probe_proxy", _bad_probe
-    )
+    monkeypatch.setattr("tgmonitor.core.telegram.telethon_client.probe_proxy", _bad_probe)
     state, detail = await w.start()
     assert state == "error"
     assert "代理" in detail
@@ -238,9 +239,7 @@ async def test_submit_phone_email_code_login(wrapper) -> None:
 
 async def test_submit_phone_setup_email(wrapper) -> None:
     w, mock = wrapper
-    mock.send_code_request.return_value = _sent_code(
-        types.auth.SentCodeTypeSetUpEmailRequired()
-    )
+    mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeSetUpEmailRequired())
     state, _ = await w.submit_phone("+10000000000")
     assert state == "email_required"
     assert w._email_flow == "setup"
@@ -577,12 +576,16 @@ async def test_download_file_no_message(wrapper) -> None:
 async def test_download_file_success(wrapper) -> None:
     w, mock = wrapper
     doc = types.Document(
-        id=1, access_hash=1, file_reference=b"\x00", date=_DATE,
-        mime_type="video/mp4", size=4, dc_id=2, attributes=[],
+        id=1,
+        access_hash=1,
+        file_reference=b"\x00",
+        date=_DATE,
+        mime_type="video/mp4",
+        size=4,
+        dc_id=2,
+        attributes=[],
     )
-    mock.get_messages.return_value = SimpleNamespace(
-        media=types.MessageMediaDocument(document=doc)
-    )
+    mock.get_messages.return_value = SimpleNamespace(media=types.MessageMediaDocument(document=doc))
     mock.download_media.return_value = b"data"
     out = await w.download_file(encode_file_id(_CID, 10))
     assert out == b"data"
@@ -592,12 +595,16 @@ async def test_download_file_success(wrapper) -> None:
 async def test_download_file_thumb_document(wrapper) -> None:
     w, mock = wrapper
     doc = types.Document(
-        id=1, access_hash=1, file_reference=b"\x00", date=_DATE,
-        mime_type="video/mp4", size=4, dc_id=2, attributes=[],
+        id=1,
+        access_hash=1,
+        file_reference=b"\x00",
+        date=_DATE,
+        mime_type="video/mp4",
+        size=4,
+        dc_id=2,
+        attributes=[],
     )
-    mock.get_messages.return_value = SimpleNamespace(
-        media=types.MessageMediaDocument(document=doc)
-    )
+    mock.get_messages.return_value = SimpleNamespace(media=types.MessageMediaDocument(document=doc))
     await w.download_file(encode_file_id(_CID, 10, thumb=True))
     assert mock.download_media.call_args.kwargs["thumb"] == -1
 
@@ -605,12 +612,16 @@ async def test_download_file_thumb_document(wrapper) -> None:
 async def test_download_file_progress_final_emit(wrapper) -> None:
     w, mock = wrapper
     doc = types.Document(
-        id=1, access_hash=1, file_reference=b"\x00", date=_DATE,
-        mime_type="video/mp4", size=4, dc_id=2, attributes=[],
+        id=1,
+        access_hash=1,
+        file_reference=b"\x00",
+        date=_DATE,
+        mime_type="video/mp4",
+        size=4,
+        dc_id=2,
+        attributes=[],
     )
-    mock.get_messages.return_value = SimpleNamespace(
-        media=types.MessageMediaDocument(document=doc)
-    )
+    mock.get_messages.return_value = SimpleNamespace(media=types.MessageMediaDocument(document=doc))
     calls: list[tuple[int, int | None]] = []
 
     async def cb(downloaded: int, total: int | None) -> None:
@@ -624,12 +635,16 @@ async def test_download_file_progress_final_emit(wrapper) -> None:
 async def test_download_file_failure_returns_none(wrapper) -> None:
     w, mock = wrapper
     doc = types.Document(
-        id=1, access_hash=1, file_reference=b"\x00", date=_DATE,
-        mime_type="video/mp4", size=4, dc_id=2, attributes=[],
+        id=1,
+        access_hash=1,
+        file_reference=b"\x00",
+        date=_DATE,
+        mime_type="video/mp4",
+        size=4,
+        dc_id=2,
+        attributes=[],
     )
-    mock.get_messages.return_value = SimpleNamespace(
-        media=types.MessageMediaDocument(document=doc)
-    )
+    mock.get_messages.return_value = SimpleNamespace(media=types.MessageMediaDocument(document=doc))
     mock.download_media.side_effect = RuntimeError("network")
     assert await w.download_file(encode_file_id(_CID, 10)) is None
 
@@ -699,7 +714,9 @@ async def test_on_pinned_channel_publishes(wrapper, bus) -> None:
     received: list[MessagePinChanged] = []
     bus.subscribe(MessagePinChanged, lambda e: _collect(received, e))
     await w._on_pinned_channel(
-        types.UpdatePinnedChannelMessages(channel_id=123, messages=[10, 11], pts=1, pts_count=1, pinned=True)
+        types.UpdatePinnedChannelMessages(
+            channel_id=123, messages=[10, 11], pts=1, pts_count=1, pinned=True
+        )
     )
     await bus.flush()
     assert len(received) == 2
@@ -711,7 +728,9 @@ async def test_on_chat_action_title(wrapper, bus) -> None:
     w, _ = wrapper
     received: list[ChannelTitleChanged] = []
     bus.subscribe(ChannelTitleChanged, lambda e: _collect(received, e))
-    await w._on_chat_action(SimpleNamespace(chat_id=_CID, new_title="新名", new_photo=False, photo=None))
+    await w._on_chat_action(
+        SimpleNamespace(chat_id=_CID, new_title="新名", new_photo=False, photo=None)
+    )
     await bus.flush()
     assert received[0].new_title == "新名"
 
@@ -720,7 +739,9 @@ async def test_on_chat_action_photo_removed(wrapper, bus) -> None:
     w, _ = wrapper
     received: list[ChannelPhotoChanged] = []
     bus.subscribe(ChannelPhotoChanged, lambda e: _collect(received, e))
-    await w._on_chat_action(SimpleNamespace(chat_id=_CID, new_title=None, new_photo=True, photo=None))
+    await w._on_chat_action(
+        SimpleNamespace(chat_id=_CID, new_title=None, new_photo=True, photo=None)
+    )
     await bus.flush()
     assert received[0].local_path is None
 
@@ -799,8 +820,12 @@ async def test_remove_reaction_filters_chosen(wrapper) -> None:
     w, mock = wrapper
     reactions = types.MessageReactions(
         results=[
-            types.ReactionCount(reaction=types.ReactionEmoji(emoticon="🔥"), count=2, chosen_order=0),
-            types.ReactionCount(reaction=types.ReactionEmoji(emoticon="👍"), count=1, chosen_order=1),
+            types.ReactionCount(
+                reaction=types.ReactionEmoji(emoticon="🔥"), count=2, chosen_order=0
+            ),
+            types.ReactionCount(
+                reaction=types.ReactionEmoji(emoticon="👍"), count=1, chosen_order=1
+            ),
         ]
     )
     mock.get_messages.return_value = SimpleNamespace(reactions=reactions)

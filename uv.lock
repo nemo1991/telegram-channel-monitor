@@ -2,12 +2,6 @@ version = 1
 revision = 3
 requires-python = "==3.13.*"
 
-[manifest]
-members = [
-    "tdlib-json-client",
-    "tgmonitor",
-]
-
 [[package]]
 name = "aioboto3"
 version = "15.5.0"
@@ -1280,11 +1274,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tdlib-json-client"
-version = "0.1.1"
-source = { editable = "packages/tdlib_json" }
-
-[[package]]
 name = "telethon"
 version = "1.45.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1326,7 +1315,6 @@ dependencies = [
     { name = "pyside6" },
     { name = "python-socks" },
     { name = "qasync" },
-    { name = "tdlib-json-client" },
     { name = "telethon" },
 ]
 
@@ -1369,7 +1357,6 @@ requires-dist = [
     { name = "pyside6", specifier = ">=6.6" },
     { name = "python-socks", extras = ["asyncio"], specifier = ">=3.2.1" },
     { name = "qasync", specifier = ">=0.27" },
-    { name = "tdlib-json-client", editable = "packages/tdlib_json" },
     { name = "telethon", specifier = ">=1.45.0" },
     { name = "tgmonitor", extras = ["postgres", "objectstore"], marker = "extra == 'all'" },
 ]

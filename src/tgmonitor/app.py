@@ -102,7 +102,7 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
             f"应用初始化失败:\n\n{err_type}: {err_msg}\n\n"
             "常见原因:\n"
             "  • .env 缺失 / TG_API_ID / TG_API_HASH / TG_PHONE 没填\n"
-            "  • TDLib 加密 key 文件损坏(删除 platform-native 目录重试)\n"
+            "  • Telegram session 文件损坏(删除数据目录下 session/ 重试)\n"
             "  • SOCKS5 代理不可达(检查 URL + 网络)\n\n"
             "详细日志请查看下方路径:",
             QMessageBox.StandardButton.Ok,
@@ -133,7 +133,7 @@ def run() -> None:
     **关键区别 — 取消 `loop.run_until_complete`**:
     旧版用 `loop.run_until_complete(_setup_async)` 再 `run_forever()`,中间
     qasync 的 `__is_running` 被设为 False,asyncio `_set_running_loop(None)`,
-    Tasks 处于 paused 状态。tdlib_json 内部 thread 在这段窗口发 IO wakeup 时,
+    Tasks 处于 paused 状态。Telegram 后端在这段窗口发 IO wakeup 时,
     `Task.__step()` 检查 "loop is the running loop" 失败,抛 `RuntimeError:
     loop ... is not the running loop`,日志刷「qasync._QEventLoop: Exception in
     callback Task.task_wakeup()」。
@@ -215,7 +215,7 @@ def run() -> None:
 
         2026-09-25 v1.8.x:把 list_subscribed + set_whitelist + monitor.start +
         app.bootstrap 拆到 `_background_startup` 后台 task,让 win.show() 立即
-        执行 — 避免冷启动 / libtdjson 慢(1-5s,断网可达 10s+)时用户对着空白
+        执行 — 避免冷启动 / Telegram 连接慢(断网可达 10s+)时用户对着空白
         dock 图标干等。UI 在 win.show() 后立即可见,后台启动各 step 通过
         `win.status_bar.show_activity(...)` 在状态栏左侧活动指示器滚动显示。
 
@@ -248,9 +248,8 @@ def run() -> None:
             # LoginStateChanged 驱动(后台 bootstrap 完成后会自动 fire)。
             win = MainWindow(app_svc, monitor, loop, env_path=env_path, objects_error=objects_error)
             # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
-            # 然后再让 Qt 进入 quit 流程 — 这样 tdlib_json client.close() / TDLib
-            # 内部 thread join 都跑在 CFRunLoop 仍合法的阶段,避开 macOS 的
-            # "mutex lock failed: Invalid argument" 析构崩溃。
+            # 然后再让 Qt 进入 quit 流程 — 这样 client.close() / 后台 task
+            # 清理都跑在事件循环仍合法的阶段,避开析构期竞态崩溃。
             win.set_shutdown_callback(_shutdown_async)
             win.show()
             state["win"] = win
@@ -294,7 +293,7 @@ def run() -> None:
 
         1. 加载白名单(list_subscribed + set_whitelist)
         2. monitor.start()(起 asyncio worker)
-        3. app.bootstrap()(调 libtdjson 启动会话,触发 LoginStateChanged)
+        3. app.bootstrap()(启动 Telegram 会话,触发 LoginStateChanged)
 
         每步通过 `win.status_bar.show_activity(...)` 更新状态栏左侧活动指示器,出错走
         ErrorOccurred 事件(bus subscriber 已存在,自动弹窗/计数)。
@@ -328,7 +327,7 @@ def run() -> None:
             await monitor.start()
             log.info("[startup-bg] monitor.start() returned in %.2fs", time.monotonic() - t)
 
-            # Step 3: bootstrap libtdjson — 触发 LoginStateChanged,header 自动跟进
+            # Step 3: bootstrap Telegram 会话 — 触发 LoginStateChanged,header 自动跟进
             win.status_bar.show_activity("连接 Telegram...")
             t = time.monotonic()
             login_state, login_detail = await app_svc.bootstrap()
@@ -370,8 +369,8 @@ def run() -> None:
     # 这样 step 4 的 async 任务在 loop 仍然 alive 时跑完,避开 'Event loop is closed'。
     def _shutdown_then_quit() -> None:
         # 2026-09-22 v1.8.x:之前这里 `asyncio.ensure_future` 调度后立刻返回,
-        # Qt 继续 quit → loop close → future 还没跑就被 cancel → TDLib 子进程
-        # 未 join / storage 连接未关。改为嵌套 subloop 同步等(与
+        # Qt 继续 quit → loop close → future 还没跑就被 cancel → client 连接
+        # 未断 / storage 连接未关。改为嵌套 subloop 同步等(与
         # `MainWindow.closeEvent` 同模式),`_shutdown_async` 真跑完才让
         # `qt_app.quit()` 返回、loop close。
         #

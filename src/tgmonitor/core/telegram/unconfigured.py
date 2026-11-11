@@ -1,7 +1,7 @@
 """UnconfiguredTelegramClient — 凭据未配置时的占位实现。
 
 工厂(`factory.build_telegram_client`)在检测到 `TG_API_ID` / `TG_API_HASH` /
-`TG_PHONE` 缺失时返回本占位类,**不**构造真 `TdlibTelegramClient` — 让应用
+`TG_PHONE` 缺失时返回本占位类,**不**构造真 `TelethonTelegramClient` — 让应用
 在没有凭据时也能正常启动进 UI,用户在 设置 → 账户 填好凭据、重启后即可监听。
 
 行为契约:
@@ -21,7 +21,7 @@ from typing import AsyncIterator, Callable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
-from tgmonitor.core.telegram.tdlib_errors import TelegramNotConfiguredError
+from tgmonitor.core.telegram.errors import TelegramNotConfiguredError
 
 
 class _IdleUpdateStream(UpdateStream):
@@ -60,7 +60,7 @@ class UnconfiguredTelegramClient(TelegramClient):
     """无凭据占位 client — 所有鉴权 / 数据接口给出安全默认值。"""
 
     def __init__(self) -> None:
-        """初始 state=`phone_required`;不持有任何 TDLib 资源。"""
+        """初始 state=`phone_required`;不持有任何网络资源。"""
         self._state = "phone_required"
         self._me: dict | None = None
         self._all_streams: list[_IdleUpdateStream] = []
@@ -152,7 +152,7 @@ class UnconfiguredTelegramClient(TelegramClient):
         channel_id: int,
         msg_ids: list[int],
     ) -> None:
-        """2026-09-09 v1.7.x:无凭据不可发 TDLib RPC,no-op。
+        """2026-09-09 v1.7.x:无凭据不可发 Telegram RPC,no-op。
 
         兜底实现:满足 `TelegramClient` Protocol 完整性(否则 mypy 把本类
         视作 abstract,`factory.build_telegram_client` 实例化失败)。调用

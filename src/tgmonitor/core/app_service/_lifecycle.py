@@ -52,10 +52,10 @@ async def bootstrap(app: AppService) -> tuple[str, str | None]:
     详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
 
     2026-09-04 v1.6.6:paused-startup 时 (`_is_paused=True`) 直接返
-    `("ready", None)` 不连 TDLib — 正常路径由 `app.py:_setup_then_show`
+    `("ready", None)` 不连 Telegram — 正常路径由 `app.py:_setup_then_show`
     gate 跳过 `monitor.start()` + `bootstrap()` 整个不进 paused-startup。
     本 guard 是 belt-and-suspenders:兜底直接调 `bootstrap()` 的边缘场景(
-    测试 / 未来扩展),避免在 paused 状态走 TDLib 连接(client.state 仍
+    测试 / 未来扩展),避免在 paused 状态走 Telegram 连接(client.state 仍
     "uninit" 是 explicit,UI 渲染依赖 `is_paused` 不是 client.state)。
     """
     if app._is_paused:
@@ -97,12 +97,12 @@ async def stop_monitor(app: AppService) -> None:
 
 
 async def pause_monitor(app: AppService, source: str = "tray") -> None:
-    """2026-09-03 v1.6.1:暂停监听 — 断 TDLib + 取消 in-flight 下载。
+    """2026-09-03 v1.6.1:暂停监听 — 断 Telegram 连接 + 取消 in-flight 下载。
 
     流程:
     1. `monitor.stop()` — 取消 download_task + 关 update stream
        (download_task 取消会把队列里 PENDING + 进行中 IN_PROGRESS 都 cancel)
-    2. `client.stop()` — TDLib 完整断开,释放 fd + 内存
+    2. `client.stop()` — 完整断开,释放连接资源
     3. `_is_paused = True` + 发 `MonitoringPaused` 事件
 
     幂等:已 paused 时再调 no-op。`_running` 仍保持 True(暂停 ≠ 退出),
@@ -133,12 +133,12 @@ async def pause_monitor(app: AppService, source: str = "tray") -> None:
 
 
 async def resume_monitor(app: AppService, source: str = "tray") -> None:
-    """2026-09-03 v1.6.1:恢复监听 — 重启 TDLib + 重建 monitor。
+    """2026-09-03 v1.6.1:恢复监听 — 重连 Telegram + 重建 monitor。
 
     流程:
     1. `client.start()` — 重新走 authorization 状态机(已 login 的 session
        会秒过,冷启动走 phone/code/password)
-    2. `monitor.start()` — 重订阅 TDLib update stream + 启动 download worker
+    2. `monitor.start()` — 重订阅 update stream + 启动 download worker
     3. `_is_paused = False` + 发 `MonitoringResumed` 事件
 
     幂等:已 resumed 时再调 no-op。

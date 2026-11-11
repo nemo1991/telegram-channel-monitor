@@ -107,11 +107,7 @@ def _unix_ts(dt: datetime | None) -> int | None:
 
 def _pick_biggest_photo_size(photo: types.Photo) -> types.TypePhotoSize | None:
     """Photo.sizes 按 width*height 取最大的(跳过无尺寸的 stripped/path)。"""
-    sizes = [
-        s
-        for s in (photo.sizes or [])
-        if getattr(s, "w", 0) and getattr(s, "h", 0)
-    ]
+    sizes = [s for s in (photo.sizes or []) if getattr(s, "w", 0) and getattr(s, "h", 0)]
     if not sizes:
         return None
     return max(sizes, key=lambda s: s.w * s.h)
@@ -126,9 +122,7 @@ def pick_thumb_size(photo: types.Photo) -> types.TypePhotoSize | None:
     candidates = [
         s
         for s in (photo.sizes or [])
-        if isinstance(s, (types.PhotoSize, types.PhotoSizeProgressive))
-        and s.w
-        and s.h
+        if isinstance(s, (types.PhotoSize, types.PhotoSizeProgressive)) and s.w and s.h
     ]
     if not candidates:
         return None
@@ -170,18 +164,14 @@ def _document_media_type(doc: types.Document) -> tuple[MediaType, str | None]:
             return (MediaType.VOICE if attr.voice else MediaType.AUDIO), None
     for attr in doc.attributes:
         if isinstance(attr, types.DocumentAttributeVideo):
-            return (
-                MediaType.VIDEO_NOTE if attr.round_message else MediaType.VIDEO
-            ), None
+            return (MediaType.VIDEO_NOTE if attr.round_message else MediaType.VIDEO), None
     for attr in doc.attributes:
         if isinstance(attr, types.DocumentAttributeAnimated):
             return MediaType.ANIMATION, None
     return MediaType.DOCUMENT, None
 
 
-def _map_document(
-    media: types.MessageMediaDocument, chat_id: int, msg_id: int
-) -> MediaDTO | None:
+def _map_document(media: types.MessageMediaDocument, chat_id: int, msg_id: int) -> MediaDTO | None:
     doc = media.document
     if not isinstance(doc, types.Document):
         return None
@@ -268,18 +258,14 @@ _ACTION_TEXT: dict[str, Any] = {
     "MessageActionContactSignUp": lambda a: "📱 联系人注册了 Telegram",
     "MessageActionGeoProximityReached": lambda a: "📍 到达接近提醒范围",
     "MessageActionGroupCall": lambda a: f"📹 视频通话 {a.duration or 0}s",
-    "MessageActionInviteToGroupCall": lambda a: (
-        f"📹 邀请 {len(a.users or [])} 人加入视频通话"
-    ),
+    "MessageActionInviteToGroupCall": lambda a: f"📹 邀请 {len(a.users or [])} 人加入视频通话",
     "MessageActionSetMessagesTTL": lambda a: "⏱ 设置了消息自动删除",
     "MessageActionGiftPremium": lambda a: "🎁 赠送了 Telegram Premium",
     "MessageActionTopicCreate": lambda a: f"🏷 创建话题「{a.title}」",
     "MessageActionTopicEdit": lambda a: "🏷 编辑了话题",
     "MessageActionSetChatWallPaper": lambda a: "🖼 设置了聊天壁纸",
     "MessageActionGiveawayLaunch": lambda a: "🎁 抽奖开始",
-    "MessageActionGiveawayResults": lambda a: (
-        f"🎁 抽奖结束 · {a.winners_count or 0} 名获奖者"
-    ),
+    "MessageActionGiveawayResults": lambda a: f"🎁 抽奖结束 · {a.winners_count or 0} 名获奖者",
     "MessageActionBoostApply": lambda a: f"🚀 群组被 boost {a.boosts or 0} 次",
     "MessageActionSetChatTheme": lambda a: "🎨 设置了聊天主题",
     "MessageActionRequestedPeer": lambda a: "👤 分享了联系人",

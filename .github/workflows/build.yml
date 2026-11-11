@@ -1,14 +1,11 @@
 name: Build packages
 
-# 2026-09-20+ 解耦:tdlib-json-client 不再在此 workflow 编译 —— 见
-# `.github/workflows/tdlib_json.yml`,预编译 wheel 发布到
-# GitHub Release `tdlib-json-client/v<version>`(永久存储),本 workflow
-# 只需下载 + pip install。
+# v2.0.0:Telegram 后端切 Telethon(纯 Python),无原生库编译 —
+# 打包只需 uv sync + PyInstaller,三平台分钟级完成。
 #
 # 触发:
 #   - tag v*  → 完整打包 + GitHub Release
 #   - workflow_dispatch → 同上手动打包
-#   - push main 已无工作要做(测试归 ci.yml)
 on:
   push:
     tags: ["v*"]
@@ -21,7 +18,6 @@ concurrency:
 jobs:
   build:
     name: build (${{ matrix.os }}, py${{ matrix.python-version }})
-    # push main 只预热缓存,不打包;打包只在 tag / 手动触发时跑
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -41,9 +37,6 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       # Linux:Qt offscreen / AppImage 工具链
-      # (2026-09-20+ 解耦后,libtdjson 不再本 workflow 编译,所以 cmake /
-      #  gperf / openssl / zlib / build-essential 不再需要 —— 保留是
-      # 防御性的,即便以后再加 libtdjson 编译也免去一次 workflow 改动)
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -54,10 +47,9 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libxcb-icccm4 libxcb-image0 libxcb-util1 \
-            libsm6 libice6 libc++-dev \
+            libsm6 libice6 \
             librsvg2-bin \
-            file \
-            cmake gperf libssl-dev zlib1g-dev build-essential
+            file
           # appimagetool 一次性下到 /usr/local/bin
           # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool)
           # -k / --retry:runner 偶发自签证书与网络抖动,资产源可信故跳过校验
@@ -68,9 +60,6 @@ jobs:
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
         run: |
-          # (2026-09-20+ 解耦后,cmake / gperf / openssl@3 不再需要 —
-          #  保留是防御性的;libtdjson 编译已挪到独立 workflow)
-          brew install cmake gperf openssl@3
           # appimagetool 一次性下到 /usr/local/bin
           # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool,
           #  旧 continuous release 链接已 404)
@@ -92,89 +81,13 @@ jobs:
         uses: ./.github/actions/compile-qt-translations
 
       - name: Install project + PyInstaller (via uv)
-        run: |
-          # PyInstaller 已在 pyproject.toml dev dep
-          # 2026-09-20+ 解耦:tdlib-json-client 不再用 workspace source,而是
-          # 显式跳过(--no-install-package),由下一步的预编译 wheel 接管。
-          # 这样 build job 不再触发任何 TDLib 编译(2h 冷编彻底消失)。
-          uv sync --all-extras --group dev --no-install-package tdlib-json-client
-
-      # 2026-09-20+ 解耦:从 GitHub Release `tdlib-json-client/v<version>` 拉
-      # 预编译 wheel(由 .github/workflows/tdlib_json.yml 编译并发布),覆盖
-      # workspace 装的空壳包。强制 reinstall 避免与 workspace 残留版本冲突。
-      #
-      # wheel 文件名由 hatchling 自动按 PEP 425 生成:
-      #   linux_x86_64  → manylinux_2_17_x86_64
-      #   macos arm64   → macosx_11_0_arm64
-      #   macos amd64   → macosx_11_0_x86_64
-      #   windows x64   → win_amd64
-      # `gh release download --pattern` 按正则匹配,免去跨平台拼路径。
-      - name: Download tdlib-json-client wheel
-        # Windows runner 默认 pwsh 不认 bash case 语句,显式切 bash
-        # (windows-latest 自带 Git Bash)。Linux/macOS 默认 bash 不受影响。
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 从 packages/tdlib_json/pyproject.toml 读 version
-          version=$(grep -E '^version = ' packages/tdlib_json/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
-          tag="tdlib-json-client/v${version}"
-          echo "==> 拉 wheel: ${tag} (current runner: ${RUNNER_OS}/${RUNNER_ARCH})"
-          # 2026-09-22 修:按当前 runner 平台过滤,只下当前平台 wheel。
-          # 否则 `*.whl` 会拉全部 3 个平台,Linux runner 同时下到
-          # macosx_*_arm64.whl + linux_x86_64.whl,wheels/*.whl 展开为多个
-          # → uv pip install 报 conflicting URLs(file://...)
-          case "${RUNNER_OS}/${RUNNER_ARCH}" in
-            Linux/X64)    pattern='*linux_x86_64.whl' ;;
-            Linux/ARM64)  pattern='*linux_aarch64.whl' ;;
-            macOS/X64)    pattern='*macosx_*_x86_64.whl' ;;
-            macOS/ARM64)  pattern='*macosx_*_arm64.whl' ;;
-            Windows/X64)  pattern='*win_amd64.whl' ;;
-            Windows/ARM64) pattern='*win_arm64.whl' ;;
-            *) echo "❌ 不支持的 runner 平台: ${RUNNER_OS}/${RUNNER_ARCH}"; exit 1 ;;
-          esac
-          echo "==> pattern: ${pattern}"
-          mkdir -p wheels
-          gh release download "${tag}" --dir wheels --pattern "${pattern}"
-          ls -lh wheels/
-
-      - name: Install tdlib-json-client wheel
-        # Windows runner 默认 pwsh 不展开 `wheels/*.whl` glob(保留字面
-        # `*.whl`),uv pip install 报 "filename is invalid: Must have a
-        # version"。显式切 bash 让 bash 自己展开。Linux/macOS 默认 bash
-        # 不受影响。
-        shell: bash
-        env:
-          # 2026-09-22 修:Windows 默认 stdout 是 cp1252,print('✅ ...')
-          # 的 U+2705 编码失败 — UnicodeEncodeError: 'charmap' codec can't
-          # encode character '✅'。显式 utf-8。Linux/macOS 默认已是
-          # utf-8,无影响。
-          PYTHONIOENCODING: utf-8
-        run: |
-          # --force-reinstall 覆盖 workspace 装的空壳(没 binary)
-          # --no-deps 已是零依赖,但显式声明语义清晰
-          uv pip install --force-reinstall --no-deps wheels/*.whl
-          # 2026-09-22 修:必须用 `uv run --no-sync`(默认 `uv run` 会重新
-          # 触发 uv sync,把 --no-install-package 排除的 tdlib-json-client
-          # 装回 workspace editable 版本(无 native lib 的空壳)→ ctypes
-          # 加载失败:FileNotFoundError libtdjson_linux_amd64.so。
-          uv run --no-sync python -c "
-          import tdlib_json
-          c = tdlib_json.TdlibJsonClient({'@type':'setLogVerbosityLevel','new_verbosity_level':0})
-          print('✅ wheel 加载 OK, client_id =', c.tdjson_client.client_id)
-          "
+        run: uv sync --all-extras --group dev
 
       - name: Run PyInstaller
         # `PYTHONPATH=src` 是 bash 语法;Windows runner 默认 pwsh 不认,
         # 显式切 bash(windows-latest 自带 Git Bash)
         shell: bash
-        run: |
-          # 2026-09-22 修:必须 --no-sync,否则 uv run 会重新 sync,把
-          # --no-install-package 排除的 tdlib-json-client 装回 workspace
-          # editable 版本(spec 走 collect_data_files 解析 .venv 里的
-          # tdlib-json-client,如果那里是空壳 editable,collect 出来的 tdlib/
-          # 目录没 native lib → PyInstaller 打的 .app/.exe 启动崩)。
-          PYTHONPATH=src uv run --no-sync pyinstaller --clean -y tgmonitor.spec
+        run: PYTHONPATH=src uv run pyinstaller --clean -y tgmonitor.spec
 
       - name: Build AppImage (Linux)
         if: runner.os == 'Linux'
@@ -219,10 +132,6 @@ jobs:
           path: dist/tgmonitor-windows-x64.zip
           if-no-files-found: error
           retention-days: 14
-
-  # 2026-09-20+ 解耦:warm-cache job 彻底删除 —— tdlib 编译已移到独立 workflow
-  # (`.github/workflows/tdlib_json.yml`),产物以预编译 wheel 形式发布到
-  # GitHub Release `tdlib-json-client/v<version>`(永久存储,无 90 天限制)。
 
   release:
     name: GitHub Release

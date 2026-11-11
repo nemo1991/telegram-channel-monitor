@@ -57,7 +57,7 @@ async def bootstrap(
         time.monotonic() - t0,
         settings.data_root,
         settings.session_dir,
-        (settings.session_dir / "tdlib").exists(),
+        (settings.session_dir / "tgmonitor.session").exists(),
         settings.db_backend.value,
     )
 
@@ -141,8 +141,8 @@ async def bootstrap(
     t = time.monotonic()
     # 凭据未配置时,factory 返回占位 client(UnconfiguredTelegramClient)→ UI
     # 正常启动,显示"未登录"引导,用户在 设置 → 账户 填好凭据重启即可。
-    # 真 client 构造失败(如 libtdjson 缺失)仍上抛 → 走 setup 失败弹窗;不
-    # 静默回退 fake(历史 bug #22:吞异常返 Fake 导致"无 libtdjson 也能 ready")。
+    # 真 client 构造失败仍上抛 → 走 setup 失败弹窗;不静默回退 fake
+    # (历史 bug #22:吞异常返 Fake 导致"后端不可用也能 ready")。
     client = build_telegram_client(settings, use_fake=False, event_bus=bus)
     log.info(
         "[bootstrap] telegram client built in %.2fs kind=%s",
@@ -194,9 +194,8 @@ async def shutdown(app: AppService, monitor: MonitorService) -> None:
     `app.shutdown()`(client.close + storage.close + objects.close)。
 
     每步自带兜底:失败仅 log 不抛,保证 CLI 进程总能干净退出。
-    `AppService.shutdown` 内部已分阶段 2s 超时(client.close 走 TDLib 内部
-    CFRunLoop / eventfd + IOCP,macOS 偶发卡);`monitor.stop()` 内部 2s 超时
-    硬 cancel。
+    `AppService.shutdown` 内部已分阶段 2s 超时(client.close 断网偶发卡);
+    `monitor.stop()` 内部 2s 超时硬 cancel。
     """
     if isinstance(monitor, MonitorService):
         try:

@@ -1,10 +1,17 @@
-"""代理支持 — proxy URL 解析 + Settings/store 往返 + TdlibClient 跳过 None。"""
+"""代理支持 — proxy URL 解析 + Settings/store 往返 + Telethon 工厂 wiring + 握手探测。
+
+v2.0.0:parse_socks5_proxy 产 python-socks tuple(Telethon `proxy=` 入参),
+不再是 TDLib Socks5Proxy dataclass;新增 probe_proxy 真 SOCKS5 握手测试
+(本地 fake server,离线)。
+"""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
+from python_socks import ProxyType
 
 from tgmonitor.core.config import ObjectStoreBackend, Settings
 from tgmonitor.core.settings_store import (
@@ -14,7 +21,7 @@ from tgmonitor.core.settings_store import (
     settings_to_pairs,
     update_env_with_settings,
 )
-from tgmonitor.core.telegram.tdlib_proxy import parse_socks5_proxy
+from tgmonitor.core.telegram.proxy import parse_socks5_proxy, probe_proxy
 
 # ---- parse_socks5_proxy 边界 ----
 
@@ -32,31 +39,32 @@ class TestParseSocks5Proxy:
     def test_basic(self) -> None:
         out = parse_socks5_proxy("socks5://127.0.0.1:1080")
         assert out is not None
-        assert out.host == "127.0.0.1"
-        assert out.port == 1080
-        # Socks5Proxy 的 username/password 是严格 str — 无凭据时内部统一用空串
-        assert out.username == ""
-        assert out.password == ""
-        # SOCKS5 是默认值
+        assert out[0] is ProxyType.SOCKS5
+        assert out[1] == "127.0.0.1"
+        assert out[2] == 1080
+        assert out[3] is True  # rdns:域名解析交给代理端
+        # python-socks 接受 None = 无认证
+        assert out[4] is None
+        assert out[5] is None
 
     def test_with_user_pass(self) -> None:
         out = parse_socks5_proxy("socks5://alice:s3cr3t@10.0.0.1:9050")
         assert out is not None
-        assert out.host == "10.0.0.1"
-        assert out.port == 9050
-        assert out.username == "alice"
-        assert out.password == "s3cr3t"
+        assert out[1] == "10.0.0.1"
+        assert out[2] == 9050
+        assert out[4] == "alice"
+        assert out[5] == "s3cr3t"
 
     def test_with_user_only(self) -> None:
         out = parse_socks5_proxy("socks5://bob@1.2.3.4:1080")
         assert out is not None
-        assert out.username == "bob"
-        assert out.password == ""
+        assert out[4] == "bob"
+        assert out[5] is None
 
     def test_uppercase_scheme(self) -> None:
         out = parse_socks5_proxy("SOCKS5://h:1")
         assert out is not None
-        assert out.host == "h" and out.port == 1
+        assert out[1] == "h" and out[2] == 1
 
     @pytest.mark.parametrize(
         "bad",
@@ -68,7 +76,7 @@ class TestParseSocks5Proxy:
         ],
     )
     def test_invalid_raises(self, bad: str) -> None:
-        with pytest.raises((ValueError, RuntimeError)):
+        with pytest.raises(ValueError):
             parse_socks5_proxy(bad)
 
 
@@ -139,184 +147,166 @@ class TestSettingsProxyRoundTrip:
         assert any(line.startswith("#") for line in env.raw_lines)
 
 
-# ---- TdlibClient wiring:parse_socks5_proxy → TdlibJsonClient(proxy=...) ----
-# 注:TdlibTelegramClient 现在内部持 tdlib_json.TdlibJsonClient(自编译 libtdjson
-# 的 ctypes 绑定),proxy 以 Socks5Proxy dataclass 传构造。下面是纯函数 /
-# kwargs 形状 的单元测试 + 真实解析的端到端校验。
+# ---- Telethon 工厂 wiring:parse_socks5_proxy → TelegramClient(proxy=...) ----
 
 
-def test_parse_socks5_proxy_returns_socks5_proxy() -> None:
-    """parse_socks5_proxy() 必须产 TdlibJsonClient 构造能吃的 Socks5Proxy。
-
-    Socks5Proxy 是普通 dataclass,断言 host/port/username/password 即可。
-    """
-    ps = parse_socks5_proxy("socks5://u:p@127.0.0.1:1080")
-    assert ps.host == "127.0.0.1"
-    assert ps.port == 1080
-    assert ps.username == "u"
-    assert ps.password == "p"
-
-
-def test_parse_socks5_proxy_no_creds_uses_empty_strings() -> None:
-    """回归测试:无凭据 (`socks5://host:port`) 时 username/password 必须是 "" 而非 None。
-
-    之前 bug: parse_socks5_proxy 把 username/password 设为 None,
-    Socks5Proxy 的严格 str 字段校验失败,跑到 start() 时崩溃。
-    """
-    ps = parse_socks5_proxy("socks5://127.0.0.1:1080")
-    assert ps is not None
-    # 字段类型必须是 str(不是 None),可被 TdlibJsonClient 接受
-    assert isinstance(ps.username, str)
-    assert isinstance(ps.password, str)
-    assert ps.username == ""
-    assert ps.password == ""
-
-
-def test_proxy_kwargs_passed_to_construct_via_factory(
+def test_proxy_tuple_passed_to_telethon_via_factory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """工厂把 parsed Socks5Proxy 通过 `proxy=` 传给 TdlibJsonClient 构造。
+    """工厂构造 TelethonTelegramClient,proxy tuple 透传给 Telethon 构造。
 
-    用 monkeypatch 把 `tdc._AiClient.__init__` 换成探针:只记录 kwargs,
-    不触发 native libtdjson 加载 / 文件路径检查。settings 必须带 session_dir
-    (tmp_path),否则 `_load_or_create_encryption_key` 写真实 platformdirs。
+    monkeypatch 掉 telethon_client 模块里的 TelegramClient 符号,只记录
+    kwargs,不触发真 session 文件 / 网络连接。client 实例延迟到 start()
+    才构造,这里直接调 `_build_client()` 触发构造路径。
     """
-    from tgmonitor.core.telegram import tdlib_client as tdc
+    from unittest.mock import MagicMock
+
+    from tgmonitor.core.telegram import telethon_client as tc
     from tgmonitor.core.telegram.factory import build_telegram_client
 
-    def _safe_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        # 拦截真 client 构造,只验证 kwargs 内容;不调 super,避免 native 加载。
-        # add_event_handler 依赖 _updates_handlers(TdlibTelegramClient.__init__
-        # 在 super() 后要注册 updateNewMessage / "*" 两个 handler)。
-        self._updates_handlers = {}
-        self._captured = kwargs
+    captured: dict = {}
 
-    monkeypatch.setattr(tdc._AiClient, "__init__", _safe_init)
+    def _fake_ctor(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        m = MagicMock()
+        m.add_event_handler = MagicMock()
+        return m
+
+    monkeypatch.setattr(tc, "TelegramClient", _fake_ctor)
     s = Settings.for_test(
         phone="+100", proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session"
     )
     client = build_telegram_client(s, use_fake=False, event_bus=None)
-    # 工厂返回真 TdlibTelegramClient(不再 fallback fake)
-    assert isinstance(client, tdc.TdlibTelegramClient)
-    captured = client._captured  # type: ignore[attr-defined]
+    assert isinstance(client, tc.TelethonTelegramClient)
+    client._build_client()
     proxy = captured["proxy"]
-    assert proxy.host == "127.0.0.1"
-    assert proxy.port == 1080
-    assert proxy.username == "u"
-    assert proxy.password == "p"
-    assert captured["parameters"]["api_id"] == 1
-    assert captured["parameters"]["phone_number"] == "+100"
+    assert proxy[0] is ProxyType.SOCKS5
+    assert proxy[1] == "127.0.0.1"
+    assert proxy[2] == 1080
+    assert proxy[4] == "u"
+    assert proxy[5] == "p"
+    # session path / api_id / api_hash 是位置参数
+    assert captured["args"][1] == 1
+    assert captured["flood_sleep_threshold"] == 0
 
 
-def test_aio_event_emit_login_state_changed_via_bus() -> None:
-    """验证 TDLib 的 authorizationState* → 我们字符串 映射 `_AUTH_STATE_MAP` 覆盖所有
-    关键状态。真正事件桥接需要真 libtdjson 在线跑,只能依赖手动 trigger;此处覆盖字典内容。
-    """
-    from tgmonitor.core.telegram.tdlib_proxy import _AUTH_STATE_MAP
+def test_factory_no_proxy_passes_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """未配代理 → Telethon 构造 proxy=None(直连)。"""
+    from unittest.mock import MagicMock
 
-    expected = {
-        # TDLib 已知的关键状态
-        "authorizationStateWaitPhoneNumber": "phone_required",
-        "authorizationStateWaitCode": "code_required",
-        "authorizationStateWaitPassword": "password_required",
-        "authorizationStateReady": "ready",
-    }
-    for tdlib_id, ours in expected.items():
-        assert _AUTH_STATE_MAP.get(tdlib_id) == ours, (
-            f"期望 {tdlib_id} → {ours!r},实际 {_AUTH_STATE_MAP.get(tdlib_id)!r}"
-        )
+    from tgmonitor.core.telegram import telethon_client as tc
+    from tgmonitor.core.telegram.factory import build_telegram_client
 
+    captured: dict = {}
 
-# ---- _setup_proxy:addProxy / disableProxy 显式请求 ----
-# 回归 2026-08-13 Windows 线上 bug:send()(fire-and-forget)的 addProxy 失败
-# 响应没有 request_id,被 tdlib_json 静默丢弃 → 代理不生效,只有开 TUN 才通。
-# 现在改用 request() 显式等响应,失败直接抛 TdlibError,启动流程转可见错误。
+    def _fake_ctor(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        m = MagicMock()
+        m.add_event_handler = MagicMock()
+        return m
 
-
-async def test_setup_proxy_sends_addproxy_when_configured(
-    tmp_path: Path,
-    bus,
-    stub_tdlib_init,
-) -> None:
-    """配了 SOCKS5 代理 → 发 addProxy(enable=True),proxy 对象内 server/port/凭据逐字段正确。
-
-    TDLib 1.8.x 起 addProxy 签名是 (proxy_, enable_),server/port/type 必须
-    内嵌 `{"@type": "proxy"}` 对象;1.7 扁平格式会被 1.8.46 以 400 拒绝
-    (v1.0.13 线上 bug:代理可达仍报「代理设置失败」)。
-    """
-    from tgmonitor.core.telegram import tdlib_client as tdc
-
-    s = Settings.for_test(
-        phone="+10000000000", proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session"
-    )
-    client = tdc.TdlibTelegramClient(s, event_bus=bus)
-    client._running = True  # request() 会校验 running
-    captured: list[dict] = []
-
-    async def _fake_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
-        captured.append(query)
-        return {"@type": "addedProxy", "id": 7}
-
-    client.request = _fake_request  # type: ignore[method-assign]
-    await client._setup_proxy()
-    assert len(captured) == 1
-    payload = captured[0]
-    assert payload["@type"] == "addProxy"
-    assert payload["enable"] is True
-    # server/port/type 必须内嵌 proxy 对象(TDLib 1.8+ 格式)
-    assert "server" not in payload and "port" not in payload and "type" not in payload
-    proxy_obj = payload["proxy"]
-    assert proxy_obj["@type"] == "proxy"
-    assert proxy_obj["server"] == "127.0.0.1"
-    assert proxy_obj["port"] == 1080
-    proxy_type = proxy_obj["type"]
-    assert proxy_type["@type"] == "proxyTypeSocks5"
-    assert proxy_type["username"] == "u"
-    assert proxy_type["password"] == "p"
-
-
-async def test_setup_proxy_disables_when_no_proxy(
-    tmp_path: Path,
-    bus,
-    stub_tdlib_init,
-) -> None:
-    """未配代理 → 发 disableProxy,防止残留/默认代理生效。
-
-    注:不用 conftest `settings` 直接构造 — Settings 默认读平台数据目录 `.env`,
-    用户机器上可能配了 TG_PROXY。显式 `_env_file=None` + `proxy=None` 保证确定。
-    """
-    from tgmonitor.core.telegram import tdlib_client as tdc
-
+    monkeypatch.setattr(tc, "TelegramClient", _fake_ctor)
     s = Settings.for_test(phone="+10000000000", proxy=None, session_dir=tmp_path / "session")
-    client = tdc.TdlibTelegramClient(s, event_bus=bus)
-    client._running = True
-    captured: list[dict] = []
-
-    async def _fake_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
-        captured.append(query)
-        return {"@type": "ok"}
-
-    client.request = _fake_request  # type: ignore[method-assign]
-    await client._setup_proxy()
-    assert [q["@type"] for q in captured] == ["disableProxy"]
+    client = build_telegram_client(s, use_fake=False, event_bus=None)
+    client._build_client()
+    assert captured["proxy"] is None
 
 
-async def test_setup_proxy_raises_tdlib_error(
-    tmp_path: Path,
-    bus,
-    stub_tdlib_init,
-) -> None:
-    """addProxy 被 TDLib 拒绝 → 必须抛 TdlibError(启动流程转可见错误)。"""
-    from tgmonitor.core.telegram import tdlib_client as tdc
+# ---- probe_proxy:真 SOCKS5 握手(本地 fake server,离线) ----
 
-    s = Settings.for_test(phone="+10000000000", proxy=None, session_dir=tmp_path / "session")
-    client = tdc.TdlibTelegramClient(s, event_bus=bus)
-    client._running = True
 
-    async def _bad_request(query: dict, **kwargs):  # type: ignore[no-untyped-def]
-        raise tdc.TdlibError(code=400, message="addProxy failed")
+async def test_probe_proxy_empty_url() -> None:
+    ok, msg = await probe_proxy("")
+    assert ok is False
+    assert "未配置" in msg
 
-    client.request = _bad_request  # type: ignore[method-assign]
-    with pytest.raises(tdc.TdlibError):
-        await client._setup_proxy()
+
+async def test_probe_proxy_malformed_url() -> None:
+    ok, msg = await probe_proxy("socks5://no-port")
+    assert ok is False
+    assert "格式错" in msg
+
+
+async def test_probe_proxy_tcp_unreachable() -> None:
+    # 127.0.0.1:1 几乎不可能有服务 listen
+    ok, msg = await probe_proxy("socks5://127.0.0.1:1", timeout=1.0)
+    assert ok is False
+    assert "TCP 不通" in msg
+
+
+async def _start_fake_socks5(handler) -> tuple[asyncio.AbstractServer, int]:
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    return server, port
+
+
+async def test_probe_proxy_handshake_ok() -> None:
+    """fake SOCKS5 server:greeting 选 no-auth + CONNECT 成功 → ok=True。"""
+
+    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        greeting = await reader.readexactly(3)
+        assert greeting == bytes([0x05, 0x01, 0x00])
+        writer.write(bytes([0x05, 0x00]))
+        await writer.drain()
+        header = await reader.readexactly(4)
+        assert header == bytes([0x05, 0x01, 0x00, 0x01])
+        addr_len = (await reader.readexactly(1))[0]
+        await reader.readexactly(addr_len + 2)  # addr + port
+        writer.write(bytes([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+        await writer.drain()
+        writer.close()
+
+    server, port = await _start_fake_socks5(_handler)
+    try:
+        ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
+        assert ok is True
+        assert "OK" in msg
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_probe_proxy_bad_greeting() -> None:
+    """端口开但不是 SOCKS5(回错 greeting)→ ok=False,不误报。"""
+
+    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readexactly(3)
+        writer.write(bytes([0x04, 0x00]))  # 错版本
+        await writer.drain()
+        writer.close()
+
+    server, port = await _start_fake_socks5(_handler)
+    try:
+        ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
+        assert ok is False
+        assert "不是 SOCKS5" in msg
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_probe_proxy_connect_refused() -> None:
+    """greeting 正常但 CONNECT 被拒(rep=0x01)→ ok=False。"""
+
+    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readexactly(3)
+        writer.write(bytes([0x05, 0x00]))
+        await writer.drain()
+        await reader.readexactly(4)
+        addr_len = (await reader.readexactly(1))[0]
+        await reader.readexactly(addr_len + 2)
+        writer.write(bytes([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+        await writer.drain()
+        writer.close()
+
+    server, port = await _start_fake_socks5(_handler)
+    try:
+        ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
+        assert ok is False
+        assert "拒绝 CONNECT" in msg
+    finally:
+        server.close()
+        await server.wait_closed()

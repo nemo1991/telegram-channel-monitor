@@ -18,8 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from tgmonitor.core.events import ConnectionStateChanged, ErrorOccurred
-from tgmonitor.core.telegram.tdlib_channels import ChatUnavailableError
-from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
+from tgmonitor.core.telegram.errors import ChatUnavailableError, ClientClosingError
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import EventBus

@@ -33,8 +33,6 @@ from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
-# `stub_tdlib_init` fixture 由 tests/conftest.py 统一提供
-
 
 def _window_settings(base: Path) -> Settings:
     """MainWindow 测试专用 Settings — phone="+8612345" + 3 paths 在 base 下。
@@ -236,7 +234,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
         assert 300 not in vm.known_channels
 
 
-def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
+def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
     """2026-09-29:VM bootstrap 走 storage,不被 TDLib state race 阻塞。
 
     旧 race(已被消除):VM.bootstrap_ui 紧接着 fire-and-forget 调
@@ -246,7 +244,7 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
     新设计:storage 是同步真理,VM bootstrap 直接读,跟 TDLib state 解耦。
 
     测试:
-      1) client._state = 'tdlib_parameters'(中间态,模拟 TDLib 还没走完)
+      1) client._state = 'uninit'(中间态,模拟 client 还没走完启动)
       2) storage 里 2 个 subscribed channels(真理已就绪)
       3) VM.bootstrap_ui 触发后,**不等 state 变 ready**,known_channels
          立刻填上 2 个 —— storage 不需要 TDLib state。
@@ -262,7 +260,7 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
 
         bus = EventBus()
         client = FakeTelegramClient()
-        client._state = "tdlib_parameters"  # 中间态 —— 不动它
+        client._state = "uninit"  # 中间态 —— 不动它
         # TD 视角故意为空 / 不一致:VM 不应该看
         # (如果走 list_joined 会拿到 [],但我们不在 client 上 add_channel)
 
@@ -303,19 +301,18 @@ def test_vm_bootstrap_does_not_wait_for_tdlib_state(qapp, qloop):
             f"client._state={client._state!r}"
         )
         # 关键断言:client 仍然是中间态,但 VM 已经填好
-        assert client._state == "tdlib_parameters"
+        assert client._state == "uninit"
         assert sorted(vm.known_channels.keys()) == [100, 200]
 
 
-def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
+def test_list_joined_waits_for_state_to_become_ready_via_telethon_client(
     qapp,
     qloop,
     tmp_path,
-    stub_tdlib_init,
 ):
-    """直接打 TdlibTelegramClient.list_joined_channels:生产代码确实有
+    """直接打 TelethonTelegramClient.list_joined_channels:生产代码确实有
     `_state != "ready"` 早返 guard,但 fire-and-forget 调用时机可能正撞
-    上 TDLib 的 "WaitTdlibParameters → Ready" 序列中间态。
+    上启动中间态。
 
     如果 list_joined_channels 在 _state 不是 ready 时立即 [],bootstrap_ui
     race 时机下永远拿不到 channels。
@@ -325,43 +322,41 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
 
     2026-09-29 备注:VM.bootstrap_ui 已不再用 list_joined_channels(改走
     storage 真理),但 `list_joined_channels` 本身仍被 live_forward dialog
-    (`MainWindow._on_live_forward`,main_window.py:1171)调用 —— race
-    守护仍要保留。
+    (`MainWindow._on_live_forward`)调用 —— race 守护仍要保留。
 
-    注意:TdlibTelegramClient 创建(含 asyncio.Event)必须跑在 background
-    loop(qloop)上,避免 Python 3.9 下 Event loop 绑定错误
-    ("attached to a different loop")。
+    v2.0.0:从 TdlibTelegramClient 迁到 TelethonTelegramClient(mock 后端,
+    iter_dialogs 只记录「被调到」)。
     """
+    from unittest.mock import MagicMock
+
     from tgmonitor.core.events import EventBus
-    from tgmonitor.core.telegram import tdlib_client as tdc
+    from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient
 
     settings = _window_settings(tmp_path)
     bus = EventBus()
     captured = {"called": False}
 
     async def _setup_and_go():
-        """在 background loop 上一气呵成:构造 client → 设中间态 → 模拟 request
-        → 0.3s 后推到 ready → list_joined_channels。"""
-        client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-        client._state = "tdlib_parameters"  # 中间态
+        """在 background loop 上一气呵成:构造 client → 中间态 → 0.3s 后推到
+        ready → list_joined_channels。"""
+        client = TelethonTelegramClient(settings, event_bus=bus)
+        # 初始 state="uninit"(中间态);_client 装 mock,iter_dialogs 记录调用
 
-        class _R:
-            chat_ids: list = [42, 99]
-
-        async def _fake_request(req):  # noqa: ARG001
+        async def _dialogs():
             captured["called"] = True
-            return _R()
+            return
+            yield  # 空 dialog 流 — 只验证「被调到」
 
-        client.request = _fake_request  # type: ignore[method-assign]
+        mock = MagicMock()
+        mock.iter_dialogs = _dialogs
+        client._client = mock
 
         # 0.3s 后在_同一个_ loop 上把 state 推到 ready — 必须用 ensure_future
         # (而非跨线程 Timer),否则 polling 协程读不到另一个线程的 setattr 结果
         # 注意:必须走 _set_state 而非 setattr,因为 _wait_for_state 也依赖
         # _state_event 状态来决定用 sleep(0.05) 还是 wait_for(event.wait()) 路径。
         async def _delay_ready():
-            import asyncio as _asyncio
-
-            await _asyncio.sleep(0.3)
+            await asyncio.sleep(0.3)
             client._set_state("ready")
 
         asyncio.ensure_future(_delay_ready())
@@ -371,7 +366,7 @@ def test_list_joined_waits_for_state_to_become_ready_via_tdlib_client(
     fut = asyncio.run_coroutine_threadsafe(_setup_and_go(), qloop)
     fut.result(timeout=5.0)
     # 如果 list_joined_channels 是 fire-and-forget "先看 state, 非 ready 立即 []",
-    # 那 _setup_and_go 会立即返回 [] 且 _fake_request 永远不会被调
+    # 那 _setup_and_go 会立即返回 [] 且 iter_dialogs 永远不会被调
     assert captured["called"], "list_joined_channels 没有等到 state 走到 ready,而是在中间态就 []"
 
 
@@ -379,7 +374,6 @@ def test_wait_for_state_does_not_spin_when_event_already_set(
     qapp,
     qloop,
     tmp_path,
-    stub_tdlib_init,
 ):
     """`_state_event` 是 set-only — 一旦被前面的 `_set_state(...)` set 住,
     后续 `wait()` 立即返回,不等 CPU。如果 `_wait_for_state` 用纯
@@ -393,23 +387,20 @@ def test_wait_for_state_does_not_spin_when_event_already_set(
          `_wait_for_state` 在 spin,ping 不会被 pump;如果 sleep 让出 CPU,
          ping 会被 pump。
 
-    注意:TdlibTelegramClient 创建必须在 background loop 上完成(见前一个
-    test 的说明),故全部逻辑包在 `_run` 协程内。
+    v2.0.0:从 TdlibTelegramClient 迁到 TelethonTelegramClient(同一
+    anti-spin 契约)。
     """
     import time as _t
 
     from tgmonitor.core.events import EventBus
-    from tgmonitor.core.telegram import tdlib_client as tdc
+    from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient
 
     settings = _window_settings(tmp_path)
     bus = EventBus()
 
     async def _run():
-        client = tdc.TdlibTelegramClient(settings, event_bus=bus)
-        # state 永远停在 tdlib_parameters(≠ ready)。但 event 已经被前面的
-        # _set_state(...) 隐式 set 至少一次(任何构造路径都不可能保持 clear)
-        client._state = "tdlib_parameters"
-        # 强制模拟 event set:
+        client = TelethonTelegramClient(settings, event_bus=bus)
+        # state 永远停在 uninit(≠ ready)。强制模拟 event set:
         client._state_event.set()
 
         async def _ping_loop() -> int:

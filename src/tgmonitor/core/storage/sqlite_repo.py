@@ -846,9 +846,7 @@ class SqliteRepository(StorageRepository):
         if reactions is not None:
             set_parts.append("reactions = ?")
             args.append(
-                json.dumps(
-                    [r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions]
-                )
+                json.dumps([r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions])
             )
         if not set_parts:
             return
@@ -1234,8 +1232,7 @@ class SqliteRepository(StorageRepository):
         assert self._db is not None
         async with self._lock:
             await self._db.execute(
-                "UPDATE messages SET is_favorite = ? "
-                "WHERE channel_id = ? AND telegram_msg_id = ?",
+                "UPDATE messages SET is_favorite = ? WHERE channel_id = ? AND telegram_msg_id = ?",
                 (value, channel_id, telegram_msg_id),
             )
 

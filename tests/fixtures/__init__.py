@@ -6,7 +6,6 @@
   - `_objectstore.py`    : `objectstore` fixture(LocalObjectStore)
   - `_bus_client.py`     : `bus` / `client` fixtures(EventBus + FakeTelegramClient)
   - `_factories.py`      : `make_message` / `make_photo` 测试数据工厂
-  - `_tdlib_stub.py`     : `stub_tdlib_init` fixture(Windows / CI 不编译 libtdjson)
   - `_monitor_app.py`    : `monitor` / `app` fixtures(完整链路)
 
 公开 API:`tests.fixtures.<X>` 直接 import 子模块;`tests/conftest.py` 保留

@@ -39,7 +39,7 @@ class FakeUpdateStream(UpdateStream):
     async def __anext__(self) -> MessageDTO:
         """从 queue 拿一条;closed 后抛 StopAsyncIteration。
 
-        与真实流 `_TdlibJsonUpdateStream` 语义一致:`aclose()` 会 `put(None)`
+        与真实流 `_TelethonUpdateStream` 语义一致:`aclose()` 会 `put(None)`
         唤醒阻塞的 `get()`,拿到 None 或已 closed 都应抛 `StopAsyncIteration`,
         不能让 None 漏给消费方(MonitorService._run 会把 None 当流关闭处理)。
         """
@@ -258,7 +258,7 @@ class FakeTelegramClient(TelegramClient):
         - 支持 inject 错误:`raise_after_n_messages` → 第 N+1 条 yield 前抛
           `TelegramRateLimitError`。
 
-        语义跟 tdlib_client 一致:**只能向旧方向拉**(id 递减),不模拟"向新拉"。
+        语义跟真 client 一致:**只能向旧方向拉**(id 递减),不模拟"向新拉"。
         """
         ch_state = self._history_state.get(channel_id)
         if ch_state is None:
@@ -271,7 +271,7 @@ class FakeTelegramClient(TelegramClient):
         for yielded, mid in enumerate(range(start, end + 1)):
             if self._raise_after_n is not None and yielded == self._raise_after_n:
                 self._raise_after_n = None
-                from tgmonitor.core.telegram.tdlib_errors import (
+                from tgmonitor.core.telegram.errors import (
                     TelegramRateLimitError,
                 )
 

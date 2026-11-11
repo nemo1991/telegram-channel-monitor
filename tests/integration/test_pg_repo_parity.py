@@ -106,7 +106,7 @@ async def test_update_channel_metadata_partial(pg_repo: PostgresRepository) -> N
     assert got.member_count == 99
 
 
-async def test_update_channel_metadata_4_tdlib_fields_pg(pg_repo: PostgresRepository) -> None:
+async def test_update_channel_metadata_4_fields_pg(pg_repo: PostgresRepository) -> None:
     """2026-09-04 v1.6.4:4 个 spammer 字段(verified/scam/fake/has_protected_content)
     COALESCE partial update 路径。
 
@@ -140,7 +140,7 @@ async def test_update_channel_metadata_4_tdlib_fields_pg(pg_repo: PostgresReposi
     assert got.member_count == 10
 
 
-async def test_upsert_channel_4_tdlib_fields_pg(pg_repo: PostgresRepository) -> None:
+async def test_upsert_channel_4_fields_pg(pg_repo: PostgresRepository) -> None:
     """2026-09-04 v1.6.4:`upsert_channel` INSERT + ON CONFLICT 4 字段路径。"""
     ch = ChannelDTO(
         id=100,

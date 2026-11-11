@@ -17,8 +17,6 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator
 
-import pytest
-
 from tests.conftest import make_message
 from tests.fixtures._async import wait_for
 from tgmonitor.core.dto import MessageDTO
@@ -138,7 +136,7 @@ async def test_backfill_loop_runs_periodically_and_stops(bus, storage, objectsto
 async def test_backfill_silent_when_client_closing(bus, storage, objectstore, settings):
     """close() 中补拉 → 静默返回(不抛、不落库、不打 traceback)。"""
     from tgmonitor.core.monitor.service import MonitorService
-    from tgmonitor.core.telegram.tdlib_errors import ClientClosingError
+    from tgmonitor.core.telegram.errors import ClientClosingError
 
     class _ClosingClient(_BackfillClient):
         async def iter_chat_history(  # type: ignore[override]
@@ -187,79 +185,6 @@ async def test_backfill_skipped_when_not_ready(bus, storage, objectstore, settin
     assert await storage.count_messages(100) == 0
 
 
-# ============================================================
-# iter_chat_history 预热(getChat)— [400] Chat not found 修复
-# ============================================================
-
-
-class _ChatHistoryClient:
-    """ChannelsApi 的假父 client:记录请求、按 @type 分发。
-
-    只实现 `iter_chat_history` 用到的两个入口(`getChat` / `getChatHistory`)
-    与 `_check_alive()`;其它请求直接 AssertionError。
-    """
-
-    def __init__(self, *, chat_available: bool = True, history: list | None = None) -> None:
-        """`chat_available=False` 模拟 getChat 返回 Chat not found。"""
-        self.chat_available = chat_available
-        self.history = history or []
-        self.calls: list[str] = []
-
-    def _check_alive(self) -> None:
-        return None
-
-    async def request(self, payload: dict) -> object:
-        self.calls.append(payload["@type"])
-        if payload["@type"] == "getChat":
-            if not self.chat_available:
-                from tdlib_json.errors import TdlibError
-
-                raise TdlibError(400, "Chat not found")
-            return type("Chat", (), {"id": payload["chat_id"], "title": "t"})()
-        if payload["@type"] == "getChatHistory":
-            return type("History", (), {"messages": self.history})()
-        raise AssertionError(f"unexpected request: {payload}")
-
-
-async def test_iter_chat_history_unavailable_chat_raises():
-    """getChat 预热失败(Chat not found)→ 抛 ChatUnavailableError,不再每页 400。"""
-    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi, ChatUnavailableError
-
-    client = _ChatHistoryClient(chat_available=False)
-    api = ChannelsApi(client)
-    with pytest.raises(ChatUnavailableError) as ei:
-        [m async for m in api.iter_chat_history(100)]
-    assert ei.value.channel_id == 100
-    assert client.calls == ["getChat"]  # 预热先行,没发 getChatHistory
-
-
-async def test_iter_chat_history_warms_up_chat_then_yields():
-    """预热 getChat 成功后照常分页 yield MessageDTO(旧行为不回归)。"""
-    from tgmonitor.core.telegram.tdlib_channels import ChannelsApi
-
-    raw = type(
-        "Message",
-        (),
-        {
-            "id": 5,
-            "chat_id": 100,
-            "date": 0,
-            "author_signature": None,
-            "content": type("MessageText", (), {"text": "hi"})(),
-            "views": None,
-            "forwards": None,
-            "edit_date": 0,
-        },
-    )()
-    client = _ChatHistoryClient(history=[raw])
-    api = ChannelsApi(client)
-    msgs = [m async for m in api.iter_chat_history(100)]
-    assert client.calls[0] == "getChat"
-    assert "getChatHistory" in client.calls
-    assert len(msgs) == 1
-    assert msgs[0].channel_id == 100 and msgs[0].telegram_msg_id == 5
-
-
 async def test_backfill_unavailable_channel_warns_once_and_continues(
     bus, storage, objectstore, settings, caplog
 ):
@@ -269,7 +194,7 @@ async def test_backfill_unavailable_channel_warns_once_and_continues(
     import logging
 
     from tgmonitor.core.monitor.service import MonitorService
-    from tgmonitor.core.telegram.tdlib_channels import ChatUnavailableError
+    from tgmonitor.core.telegram.errors import ChatUnavailableError
 
     class _UnavailableClient(_BackfillClient):
         """history 里标记为 unavailable 的频道抛 ChatUnavailableError。"""

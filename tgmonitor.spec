@@ -6,11 +6,6 @@ Cross-platform:
   - macOS  → .app bundle(BUNDLE),含 Info.plist + 资源
 
 资源收集策略(显式写死 datas,不用 collect_data_files,详见下方 datas 段):
-  - tdlib_json 内置 libtdjson native lib(.so / .dylib / .dll)— 由
-    scripts/build_libtdjson.sh(macOS / Linux)或
-    scripts/build_libtdjson.ps1(Windows,vcpkg)编译后放入包内 `tdlib/` 目录。
-    加载器(tdjson.py)用 `Path(__file__).parent / "tdlib" / <binary>` 定位,
-    所以 destination 必须是 `tdlib_json/tdlib`。
   - tgmonitor.resources / tgmonitor.ui.resources(SVG / QSS / icons)
     — 运行时走 `importlib.resources.files()`,destination 分别对应
     `<bundle>/tgmonitor/resources/` 与 `<bundle>/tgmonitor/ui/resources/`,
@@ -37,17 +32,8 @@ _SPEC_DIR = Path(SPECPATH)
 
 # (源目录, 目标目录)。PyInstaller 对目录型 (src, dest) 会递归拷贝整棵树,
 # 子目录结构原样保留。目标目录必须与运行时定位逻辑一致:
-#   - tdjson.py:  `Path(__file__).parent / "tdlib" / <binary>` →
-#                 frozen 下 __file__ = <bundle>/tdlib_json/tdjson.pyc
 #   - icon.py:    `importlib.resources.files("tgmonitor.resources")`
 #   - theme.py:   `importlib.resources.files("tgmonitor.ui.resources")`
-#
-# tdlib_json 的 native lib 走 collect_data_files(见下方)而不是 _DATA_DIRS:
-#   - 2026-09-20+ 解耦后,libtdjson 不再存在仓库里(wheel 提供)。写死
-#     `packages/tdlib_json/src/tdlib_json/tdlib` 在本地 dev + uv workspace
-#     下能解析,但 CI 装的是预编译 wheel,目录位置在 site-packages 下,
-#     路径会找不到。collect_data_files 走 importlib.metadata 找包数据,
-#     两种安装方式都正确解析。
 _DATA_DIRS = [
     (_SPEC_DIR / "src/tgmonitor/resources", "tgmonitor/resources"),
     (_SPEC_DIR / "src/tgmonitor/ui/resources", "tgmonitor/ui/resources"),
@@ -62,21 +48,11 @@ for src_dir, dest in _DATA_DIRS:
     else:
         print(f"[spec] WARNING: 跳过缺失目录 {src_dir}")
 
-# tdlib_json 的 native lib(.so/.dylib/.dll) — 2026-09-20+ 解耦后通过
-# collect_data_files 从已安装包定位,无论来源是 workspace 还是预编译 wheel。
-# collect_data_files 会查 importlib.metadata 找包数据目录,跨平台/跨安装方式
-# 一致。dest 由 hook 解析,运行时 tdjson.py 通过 `Path(__file__).parent /
-# "tdlib"` 找到。
-from PyInstaller.utils.hooks import collect_data_files
-
-datas += collect_data_files("tdlib_json")
-
 # 2026-10-12 plan-batch3 目标 3 step 3.1:`schema.sql` 已删,SQL inline 到
 # `postgres_repo.py:SCHEMA_SQL` 字符串,frozen 启动直接 `await conn.execute(SCHEMA_SQL)`。
 # spec 不再需要 copy 一个不存在的单文件。
 
-# tdlib_json 是纯 Python + data,无延迟导入的 C 扩展,不需要 hiddenimports。
-# aioboto3(S3 对象存储)例外:它通过 `session.client("s3")` 用**字符串
+# aioboto3(S3 对象存储)通过 `session.client("s3")` 用**字符串
 # lazy import** 注册服务子模块(如 `'aioboto3.s3.inject.inject_s3_transfer_methods'`),
 # PyInstaller 静态分析只能看到 `import aioboto3`,漏掉全部子模块 → 打包产物
 # 运行时 `no module named aioboto3.s3`(v1.0.18 Windows 产物报错)。collect_submodules
@@ -98,8 +74,6 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
-    # 旧 hooks/hook-aiotdlib.py 已随 aiotdlib 迁移删除;libtdjson 数据收集
-    # 由上面显式 datas 完成,不再需要 hookspath
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -119,7 +93,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,       # macOS 上 strip 会破代码签名(我们不签,无所谓)
-    upx=False,         # 不压 UPX — 影响 TDLib 启动速度
+    upx=False,         # 不压 UPX — 启动更快,体积换速度
     console=False,     # GUI 应用,不开 console 窗口(Linux + macOS 都适用)
     disable_windowed_traceback=False,
     argv_emulation=False,

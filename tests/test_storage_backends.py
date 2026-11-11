@@ -814,7 +814,7 @@ async def test_in_mem_update_channel_metadata_photo_local_key(in_mem_repo):
 # ---- v1.6.4:4 个 spammer 字段 — InMemory 直接读回验证语义 ---
 
 
-async def test_in_mem_update_channel_metadata_4_tdlib_fields(in_mem_repo):
+async def test_in_mem_update_channel_metadata_4_fields(in_mem_repo):
     """v1.6.4:InMemory 4 字段部分更新 + 其它字段保留。"""
     await in_mem_repo.upsert_channel(
         ChannelDTO(

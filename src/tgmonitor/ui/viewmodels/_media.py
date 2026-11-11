@@ -92,7 +92,7 @@ class MediaMixin(_Base):
     # 2026-09-01 v1.5.1 PR #B3:下载进度节流转发。`Signal(object)` 承载
     # `MediaDownloadProgress` 事件本身;UI 在
     # media_manager_widget.on_download_progress 接到后查 row + 更新
-    # 「已下载 X / Y (Z%)」文字。VM 不做节流(节流在 tdlib_client 端
+    # 「已下载 X / Y (Z%)」文字。VM 不做节流(节流在 telegram client 端
     # 0.5s/次已完成;UI 端 Qt 内置 coalesce 也够用)。
     media_download_progress = Signal(object)
     media_list_loaded = Signal(object)  # list_media 返回值(list of (msg, idx, media))
@@ -148,7 +148,7 @@ class MediaMixin(_Base):
         """2026-09-01 v1.5.1 PR #B3:`MediaDownloadProgress` 事件 → emit Qt signal。
 
         UI 端 media_manager_widget.on_download_progress 接到后查 row +
-        更新「已下载 X / Y (Z%)」文字。节流已由 TDLib 客户端 0.5s/次
+        更新「已下载 X / Y (Z%)」文字。节流已由 Telegram 客户端 0.5s/次
         完成,这里直接透传。
         """
         if not isinstance(e, MediaDownloadProgress):

@@ -389,7 +389,7 @@ class SettingsDiff:
       storage_changed: db_backend / db_dsn 之一变化(2026-10-12 plan-batch3
         目标 3 step 3.3:db_root 字段已删,不再列入 diff)
       objects_changed: objectstore_* 字段之一变化
-      client_changed: proxy / session_dir 之一变化(TdlibClient 构造参数,运行时
+      client_changed: proxy / session_dir 之一变化(TelegramClient 构造参数,运行时
         不重建 client,需重启生效 — 2026-08-18 新增,此前纯代理/会话目录变更
         diff.changed=False,reconfigure 直接 return,UI 却弹「已保存并热重载」,
         属假成功)

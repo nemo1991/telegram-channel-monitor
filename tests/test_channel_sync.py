@@ -289,7 +289,7 @@ async def test_rate_limit_during_metadata_skips_history(bus, client, storage, se
     svc = await _make_app(bus, client, storage)
 
     # 用 wrapper 替换 get_channel_metadata,只为 100 抛
-    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
+    from tgmonitor.core.telegram.errors import TelegramRateLimitError
 
     orig = client.get_channel_metadata
 
@@ -344,7 +344,7 @@ async def test_sync_multiple_channels_serial(bus, client, storage, settings):
 async def test_sync_continues_after_one_channel_fails(bus, client, storage, settings):
     """一频道 metadata 失败,不应阻塞下一个频道。"""
     svc = await _make_app(bus, client, storage)
-    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
+    from tgmonitor.core.telegram.errors import TelegramRateLimitError
 
     # 用 wrapper 替 client.get_channel_metadata,只为 id=1 抛
     orig = client.get_channel_metadata
@@ -394,48 +394,6 @@ async def test_metadata_sync_does_not_change_subscribed(bus, client, storage, se
     assert ch is not None
     assert ch.is_subscribed is True
     assert ch.title == "Updated"
-
-
-# ============================================================
-# TelegramRateLimitError 翻译辅助
-# ============================================================
-
-
-def test_translate_rate_limit_429():
-    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
-    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
-
-    class _FakeError:
-        code = 429
-        retry_after = 12
-
-    got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
-    assert isinstance(got, TelegramRateLimitError)
-    assert got.retry_after_seconds == 12
-
-
-def test_translate_rate_limit_flood_wait_text():
-    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
-    from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
-
-    class _FakeError:
-        code = 0
-        message = "FLOOD_WAIT_42 something"
-
-    got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
-    assert isinstance(got, TelegramRateLimitError)
-    assert got.retry_after_seconds == 42
-
-
-def test_translate_rate_limit_returns_none_for_unrelated():
-    from tgmonitor.core.telegram.tdlib_client import TdlibTelegramClient
-
-    class _FakeError:
-        code = 400
-        message = "Something else"
-
-    got = TdlibTelegramClient._translate_rate_limit(_FakeError())  # type: ignore[arg-type]
-    assert got is None
 
 
 # ============================================================

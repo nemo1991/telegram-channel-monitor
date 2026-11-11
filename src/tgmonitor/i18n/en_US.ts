@@ -1604,11 +1604,6 @@ New messages will appear here in real time.</translation>
         <translation>Shortcuts are session-bound and not persisted (implemented in v1.5.0).</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="1150"/>
-        <source>🧹 清理中…</source>
-        <translation>🧹 Cleaning…</translation>
-    </message>
-    <message>
         <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
         Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消
         Ctrl+C 复制当前消息文本
@@ -1641,65 +1636,14 @@ Shortcuts are session-only for now, not persisted (planned for v1.5.5).</transla
         <translation>Resume (continue from saved position)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="561"/>
-        <source>📦 TDLib 缓存</source>
-        <translation>📦 TDLib cache</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="566"/>
-        <source>计算中…</source>
-        <translation>Calculating…</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="569"/>
-        <source>当前占用:</source>
-        <translation>Current usage:</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="572"/>
-        <location filename="../ui/widgets/settings_page.py" line="1148"/>
-        <source>🧹 清理缓存</source>
-        <translation>🧹 Clear cache</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="576"/>
-        <source>删除 TDLib 文件分片缓存 + 触发 TDLib optimizeStorage 压缩数据库。session/auth_key 不丢,无需重新登录。</source>
-        <translation>Delete TDLib file cache + trigger TDLib optimizeStorage to compact database. session/auth_key preserved — no re-login required.</translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="581"/>
         <source>操作:</source>
         <translation>Action:</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="610"/>
-        <source>(无法读取)</source>
-        <translation>(cannot read)</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="622"/>
-        <source>清理中…</source>
-        <translation>Cleaning…</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="637"/>
-        <source>清理完成</source>
-        <translation>Clear complete</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="638"/>
-        <source>已释放:files {0}(optimizeStorage 报告 {1})</source>
-        <translation>Freed: files {0} (optimizeStorage reports {1})</translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="649"/>
         <source>清理失败</source>
         <translation>Clear failed</translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="650"/>
-        <source>操作未完成:{0}</source>
-        <translation>Operation incomplete: {0}</translation>
     </message>
     <message>
         <location filename="../ui/widgets/settings_page.py" line="875"/>

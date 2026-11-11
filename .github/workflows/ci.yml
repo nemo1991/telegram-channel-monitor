@@ -18,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-        # Windows:测试不加载真实 libtdjson(conftest 的 stub_tdlib_init
-        # fixture 拦截 TdlibJsonClient 构造),无需编译引擎即可跑通。
+        # 测试全离线:Telegram 走 FakeTelegramClient / Telethon mock,
+        # 无需真实引擎或网络凭据。
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
@@ -38,7 +38,6 @@ jobs:
 
       # Ubuntu 上 Qt6 offscreen QPA 需要 libEGL / libGL / libxkbcommon / libfontconfig / libsm / libice 等
       # 缺一 import QtWidgets 就 ImportError;macOS 自带 / 已 brew 装好。
-      # libc++-dev 给 libtdjson(TDLib 原生库)提供 libc++.so.1
       # libpulse0 给 QtMultimedia(QMediaPlayer)用,缺则 test_lightbox_dialog_gif_mp4 报
       # ImportError: libpulse.so.0;libpulse0 在 ubuntu-latest 默认未装。
       - name: Install system dependencies (Ubuntu)
@@ -51,8 +50,7 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libxcb-icccm4 libxcb-image0 libxcb-util1 \
-            libsm6 libice6 libpulse0 \
-            libc++-dev
+            libsm6 libice6 libpulse0
           # Qt offscreen QPA 还需要 libegl;装完后 ldconfig
           sudo ldconfig
 
@@ -63,7 +61,7 @@ jobs:
         uses: ./.github/actions/compile-qt-translations
 
       # uv sync 一次性装:
-      #   - [project.dependencies] (PySide6 / qasync / tdlib-json-client / pydantic-settings / Jinja2)
+      #   - [project.dependencies] (PySide6 / qasync / telethon / pydantic-settings / Jinja2)
       #   - [project.optional-dependencies] 全部 (postgres/objectstore)
       #   - [dependency-groups].dev (pytest / pytest-asyncio / ruff / coverage)
       # `-q` 关 progress bar,CI 日志干净
@@ -178,22 +176,21 @@ jobs:
     # 守住业务模块的类型完整性。
     #
     # 范围:8 个入口 — 5 个 core 业务子包 + ui 子包 + app.py 顶层入口 +
-    # **整 `src` 包全局 sanity check**(守住 `__main__.py` / `core/settings_store.py` /
-    # `core/telegram/tdlib_{channels,proxy,messages}.py` 这些没在 entry 矩阵里的文件)。
+    # **整 `src` 包全局 sanity check**(守住 `__main__.py` / `core/settings_store.py`
+    # 这些没在 entry 矩阵里的文件)。
     # ui/ + app.py 走 per-file `# mypy: disable-error-code="attr-defined"`
     # 屏蔽 PySide6 stub 不全噪声,留下 union-attr / var-annotated 等真错。
     # telegram 子包走 `# mypy: disable-error-code="misc,assignment"`
-    # 屏蔽 tdlib_json / pydantic stub 不全噪声。
+    # 屏蔽 telethon / pydantic stub 不全噪声。
     name: mypy (${{ matrix.module }} / ${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # 5 个 core 业务子包 + 1 UI 子包 + app.py 顶层入口 + 整 src 全局 sanity check。
-        # 历史:`core/telegram/` 首发(tdlib_json stub 完整性,35 → 0 ignores 守住),
+        # 历史:`core/telegram/` 首发(类型绑定完整性守住),
         # 2026-08-04 加 ui/ + app.py(per-file attr-defined 关掉,107 → 0 错),
-        # 加 `src` 整包守住 `settings_store.py` + `tdlib_channels.py` +
-        # `tdlib_proxy.py` + `tdlib_messages.py`(71 → 0 错)。
+        # 加 `src` 整包守住 `settings_store.py` 等散文件(71 → 0 错)。
         module: [
           "src/tgmonitor/core/monitor",
           "src/tgmonitor/core/storage",
@@ -223,7 +220,7 @@ jobs:
       - name: Compile Qt translation files (.ts → .qm)
         uses: ./.github/actions/compile-qt-translations
 
-      # 装 dev + extras 让 tdlib_json / pydantic / platformdirs / pydantic_settings
+      # 装 dev + extras 让 telethon / pydantic / platformdirs / pydantic_settings
       # 全可 import,否则 mypy 报 missing-imports(已被 [tool.mypy.overrides]
       # 屏蔽但 warning 仍多,污染日志)
       - name: Install dependencies

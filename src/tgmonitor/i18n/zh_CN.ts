@@ -1578,11 +1578,6 @@ S            切换幻灯片自动播放
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="1150"/>
-        <source>🧹 清理中…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>快捷键: Ctrl+1..5 切页 · Ctrl+F 搜索 · Ctrl+E 导出 · Ctrl+T 主题切换
         Ctrl+R 刷新频道 · Ctrl+Q 退出 · Ctrl+, 设置 · Esc 取消
         Ctrl+C 复制当前消息文本
@@ -1615,64 +1610,13 @@ S            切换幻灯片自动播放
         <translation>续拉(从已保存位置继续)</translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="561"/>
-        <source>📦 TDLib 缓存</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="566"/>
-        <source>计算中…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="569"/>
-        <source>当前占用:</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="572"/>
-        <location filename="../ui/widgets/settings_page.py" line="1148"/>
-        <source>🧹 清理缓存</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="576"/>
-        <source>删除 TDLib 文件分片缓存 + 触发 TDLib optimizeStorage 压缩数据库。session/auth_key 不丢,无需重新登录。</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="581"/>
         <source>操作:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../ui/widgets/settings_page.py" line="610"/>
-        <source>(无法读取)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="622"/>
-        <source>清理中…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="637"/>
-        <source>清理完成</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="638"/>
-        <source>已释放:files {0}(optimizeStorage 报告 {1})</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <location filename="../ui/widgets/settings_page.py" line="649"/>
         <source>清理失败</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../ui/widgets/settings_page.py" line="650"/>
-        <source>操作未完成:{0}</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

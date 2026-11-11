@@ -126,8 +126,9 @@ class MediaDTO:
     duration: int | None = None  # 秒
 
     # Telegram 侧标识
-    telegram_file_id: str | None = None  # TDLib remote file_id,用于按需重下
-    # TG 端 `Thumbnail.file.id`(无缩略图时 None)。MediaDownloader 用它调
+    telegram_file_id: str | None = None  # 媒体定位符 tl:{chat_id}:{msg_id},用于按需重下
+    # 缩略图定位符(`tl:{chat_id}:{msg_id}:thumb`,无缩略图时 None)。
+    # MediaDownloader 用它调
     # `client.download_file` 把缩略图入 ObjectStore `thumb/` prefix + 落
     # `thumbnails` 表;跟原图的 `telegram_file_id` 独立,各自有自己的按需重下。
     thumbnail_telegram_file_id: str | None = None

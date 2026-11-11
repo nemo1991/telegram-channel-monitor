@@ -36,21 +36,18 @@ class TelegramClient(Protocol):
         ...
 
     async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailAddress` 时
-        提交邮箱地址。TDLib 会推到 `email_code_required`(已有账号)或
-        `registration_required`(新账号)。"""
+        """`email_required` 时提交邮箱地址。推进到 `email_code_required`
+        (已有账号)或 `registration_required`(新账号)。"""
         ...
 
     async def submit_email_code(self, code: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailCode` 时
-        提交邮箱验证码 → 通常推到 `ready`。"""
+        """`email_code_required` 时提交邮箱验证码 → 通常推到 `ready`。"""
         ...
 
     async def submit_registration(
         self, first_name: str, last_name: str = ""
     ) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitRegistration` 时
-        注册新账号;TDLib 推 → `ready`。"""
+        """`registration_required` 时注册新账号;成功 → `ready`。"""
         ...
 
     async def logout(self) -> None:
@@ -58,17 +55,17 @@ class TelegramClient(Protocol):
         ...
 
     async def stop(self) -> None:
-        """2026-09-03 v1.6.1:暂停监听用 — 断开 TDLib 但不杀 session db,
+        """2026-09-03 v1.6.1:暂停监听用 — 断开连接但保留 session 文件,
         后续 `start()` 可秒过(已 login)或走 phone/code/password(冷启动)。
 
         与 `close()` 区别:
-        - `stop()` 保留 session(下次 start 自动 ready);`close()` 杀后台 loop
+        - `stop()` 保留 session(下次 start 自动 ready);`close()` 杀后台 task
         - `stop()` 后可 `start()` 回到 ready;`close()` 后再 start 等同冷启动
         """
         ...
 
     async def close(self) -> None:
-        """关停 tdlib_json 后台任务 — app exit 时必调,否则 updates_loop 吊着 loop 不放。"""
+        """关停后台 task — app exit 时必调,否则更新流 / watchdog 吊着 loop 不放。"""
         ...
 
     @property
@@ -95,9 +92,9 @@ class TelegramClient(Protocol):
     async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
         """拉取频道的最新元数据(title/username/member_count/kind)。
 
-        走 GetChat + GetSupergroup / GetBasicGroup — 修原 list_joined_channels
-        元数据 bug:username / member_count 不在 Chat 上,只在 Supergroup /
-        BasicGroup 上。ChannelSyncService 用这个拉元数据。
+        走 get_entity + GetFullChannel — 修原 list_joined_channels 元数据
+        bug:username / member_count 不在 dialog 摘要上,要拉 full chat。
+        ChannelSyncService 用这个拉元数据。
         """
         ...
 
@@ -107,12 +104,12 @@ class TelegramClient(Protocol):
     ) -> AsyncIterator[MessageDTO]:
         """分页拉取频道历史消息(ChannelSyncService 续拉用)。
 
-        **方向约束:TDLib `GetChatHistory.from_message_id` 只能向旧方向拉**(id 递减)。
-        即使想"从某条之后正向拉更新",`iter_chat_history` 也**不**支持 — 想
-        拿最新消息请调 `subscribe_updates()` 的实时流。
+        **方向约束:只能向旧方向拉**(id 递减)。即使想"从某条之后正向拉
+        更新",`iter_chat_history` 也**不**支持 — 想拿最新消息请调
+        `subscribe_updates()` 的实时流。
 
         参数:
-          - `before_msg_id=0`:拉该频道最新 N 条(TDLib 反向翻页直到耗尽)
+          - `before_msg_id=0`:拉该频道最新 N 条(反向翻页直到耗尽)
           - `before_msg_id>0`:从 `before_msg_id` 之前(更早的)消息开始拉
             —— 续拉场景把已知的最小 id 传进来,实现会把本批**最后**一条
             (id 最小)的 id 作为下次入参,直到消息耗尽(返回 <limit 条时结束)
@@ -126,10 +123,11 @@ class TelegramClient(Protocol):
         *,
         progress_callback: Callable[[int, int | None], Awaitable[None]] | None = None,
     ) -> bytes | None:
-        """下载 TDLib 文件原 bytes;失败 / 超时返 None,**不抛**。
+        """下载媒体文件原 bytes;失败 / 超时返 None,**不抛**。
 
         实现约定(给 MediaDownloader 用的契约):
-          - 两步:异步 `DownloadFile` 触发 + `GetFile` 轮询到 `is_downloading_completed`。
+          - `file_id` 是消息定位符(`tl:{chat_id}:{msg_id}[:thumb]`),实现
+            重取消息后下载(自动刷新过期的文件引用)。
           - 失败(网络 / 权限 / 30 min hard cap)→ 返 None,monitor 循环继续。
           - 真拿到 bytes 才返非 None bytes。
 
@@ -152,23 +150,22 @@ class TelegramClient(Protocol):
         ...
 
     async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-08 v1.7.0:批量标已读 — TDLib viewMessages RPC。
+        """2026-09-08 v1.7.0:批量标已读。
 
-        `msg_ids` 长度无硬限制;TDLib 内部 batch。fire-and-forget,
+        `msg_ids` 长度无硬限制;实现内部 batch。fire-and-forget,
         抛错由调用方捕获(典型:client paused / 网络断)。
 
-        Out of scope:本地 inbox counter UI(由 `updateChatReadInbox` 推
-        回,本 PR 不读 inbound ack)。
+        Out of scope:本地 inbox counter UI(不读 inbound ack)。
         """
         ...
 
     async def forward_messages(
         self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
     ) -> None:
-        """2026-09-09 v1.7.2:批量转发消息 — TDLib `forwardMessages` RPC。
+        """2026-09-09 v1.7.2:批量转发消息。
 
         `from_chat_id` / `to_chat_id` 是 Telegram chat id(频道 id 或私聊 id);
-        `msg_ids` 长度上限 100,且必须 sorted 递增(TDLib 强约束)。
+        `msg_ids` 长度上限 100,且必须 sorted 递增(API 约束)。
         实现内部 `sorted()` 兜底,UI 可任意顺序传入。失败抛
         `TelegramAPIError`,调用方走 per-item 异常隔离。
         """
@@ -177,7 +174,7 @@ class TelegramClient(Protocol):
     async def pin_messages(
         self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
     ) -> None:
-        """2026-09-09 v1.7.2:批量钉选 — TDLib `pinChatMessage` 一次一条。
+        """2026-09-09 v1.7.2:批量钉选 — per-message RPC 逐条发。
 
         `only_for_self=True` 默认只影响本端(不影响其它客户端显示);
         `msg_ids` 空 list = no-op。
@@ -185,7 +182,7 @@ class TelegramClient(Protocol):
         ...
 
     async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-09 v1.7.2:批量取消钉选 — TDLib `unpinChatMessage` 一次一条。"""
+        """2026-09-09 v1.7.2:批量取消钉选 — per-message RPC 逐条发。"""
         ...
 
     async def add_reaction(
@@ -196,21 +193,20 @@ class TelegramClient(Protocol):
         *,
         is_big: bool = False,
     ) -> None:
-        """emoji 回应 — TDLib `addMessageReaction` RPC。
+        """emoji 回应 — per-message RPC,不支持批量;调用方走循环 + 异常隔离。
 
-        TDLib 不支持批量;per-message 调用走循环 + 异常隔离。
         `reaction` 两种格式(2026-09-10 v1.7.3):
-        - 普通 emoji char:`"😀"` `"🔥"` 等 → dispatch `reactionTypeEmoji`
+        - 普通 emoji char:`"😀"` `"🔥"` 等 → ReactionEmoji
         - custom emoji:`"custom_emoji_id:<id>"` →
-          `reactionTypeCustomEmoji`(Telegram Premium 自定义 emoji)
+          ReactionCustomEmoji(Telegram Premium 自定义 emoji)
         """
         ...
 
     async def remove_reaction(self, channel_id: int, msg_id: int, reaction: str) -> None:
-        """取消 emoji 回应 — TDLib `removeMessageReaction`。
+        """取消 emoji 回应。
 
         2026-09-10 v1.7.3:`reaction` 格式与 `add_reaction` 对齐 — 支持
-        `"custom_emoji_id:<id>"` 前缀 dispatch `reactionTypeCustomEmoji`。
+        `"custom_emoji_id:<id>"` 前缀 dispatch ReactionCustomEmoji。
         """
         ...
 
@@ -232,7 +228,7 @@ class UpdateStream:
     async def __anext__(self) -> MessageDTO:  # type: ignore[empty-body]
         """取下一个更新;`aclose()` 后抛 `StopAsyncIteration`。
 
-        实现类(如 `_TdlibJsonUpdateStream`)负责;这里声明类型给 mypy
+        实现类(如 `_TelethonUpdateStream`)负责;这里声明类型给 mypy
         (调用方 `anext(stream)` 依赖该协议)。
         """
         ...

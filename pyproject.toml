@@ -11,17 +11,16 @@ dependencies = [
     # UI
     "PySide6>=6.6",
     "qasync>=0.27",
-    # Telegram 官方 (底层 TDLib,自编译 libtdjson 的 ctypes 绑定)
-    "tdlib-json-client>=0.1.0",
+    # Telegram 后端(纯 Python MTProto;cryptg 加速加密,python-socks 走 SOCKS5)
+    "telethon>=1.45.0",
+    "cryptg>=0.6.1",
+    "python-socks[asyncio]>=3.2.1",
     # 配置
     "pydantic-settings>=2.2",
     # 导出
     "Jinja2>=3.1",
     "platformdirs>=4.11.0",
     "aiosqlite>=0.22.1",
-    "telethon>=1.45.0",
-    "cryptg>=0.6.1",
-    "python-socks[asyncio]>=3.2.1",
 ]
 
 [project.optional-dependencies]
@@ -43,13 +42,6 @@ Documentation = "https://github.com/nemo1991/telegram-channel-monitor/blob/main/
 
 [project.scripts]
 tgmonitor = "tgmonitor.__main__:main"
-
-# uv workspace:tdlib-json-client 是仓库内子项目(packages/tdlib_json)
-[tool.uv.workspace]
-members = ["packages/*"]
-
-[tool.uv.sources]
-tdlib-json-client = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -77,8 +69,6 @@ include = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-# 备份的 aiotdlib 参考源码不参与 lint
-extend-exclude = ["packages/tdlib_json/_vendor_ref"]
 
 [tool.ruff.format]
 # 2026-08-29 v1.5.0 PR #A1:加 format 配置 — 与 ruff check 平行门控,
@@ -152,9 +142,8 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-# 2026-08-03 配置 — 让 tdlib_json type 绑定可验证
 # 严格度有意放低:pyright-like 全开会扫到几百个 pydantic / Qt / 测试 fixture 噪声,
-# 本项目以 ruff lint 为主,mypy 仅用于「tdlib_json 类型绑定完整性」这件事。
+# 本项目以 ruff lint 为主,mypy 守核心类型契约。
 python_version = "3.13"
 ignore_missing_imports = false   # 默认严格,显式 override 列外
 warn_unused_ignores = true
@@ -168,7 +157,6 @@ warn_return_any = false
 [[tool.mypy.overrides]]
 # 没 .pyi 或 runtime 不影响业务逻辑的依赖 — 全视为 Any
 module = [
-    "tdlib_json", "tdlib_json.*",     # 自编译 libtdjson 的 ctypes 绑定
     "telethon", "telethon.*",         # v2.0.0 Telegram 后端(纯 Python,无 py.typed)
     "python_socks", "python_socks.*",  # Telethon SOCKS5 代理依赖
     "platformdirs",                # user_data_dir helper

@@ -23,7 +23,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
     bus = EventBus()
     storage = build_storage(settings); await storage.connect(); await storage.init_schema()
     objects = build_object_store(settings); await objects.connect()
-    client = TdlibClient(...)  # 或 FakeTelegramClient()
+    client = build_telegram_client(settings)  # 或 FakeTelegramClient()
     app = AppService(bus, client, storage, objects, settings)
     # UI 启动时: app.bootstrap() / app.login(...) / app.start_monitor()
 

@@ -271,18 +271,12 @@ class TelethonTelegramClient:
         client.add_event_handler(self._on_message_edited, events.MessageEdited())
         client.add_event_handler(self._on_message_deleted, events.MessageDeleted())
         client.add_event_handler(self._on_chat_action, events.ChatAction())
-        client.add_event_handler(
-            self._on_views, events.Raw(types.UpdateChannelMessageViews)
-        )
-        client.add_event_handler(
-            self._on_reactions, events.Raw(types.UpdateMessageReactions)
-        )
+        client.add_event_handler(self._on_views, events.Raw(types.UpdateChannelMessageViews))
+        client.add_event_handler(self._on_reactions, events.Raw(types.UpdateMessageReactions))
         client.add_event_handler(
             self._on_pinned_channel, events.Raw(types.UpdatePinnedChannelMessages)
         )
-        client.add_event_handler(
-            self._on_pinned, events.Raw(types.UpdatePinnedMessages)
-        )
+        client.add_event_handler(self._on_pinned, events.Raw(types.UpdatePinnedMessages))
         client.add_event_handler(self._on_channel_updated, events.Raw(types.UpdateChannel))
         client.add_event_handler(self._on_chat_updated, events.Raw(types.UpdateChat))
 
@@ -333,7 +327,9 @@ class TelethonTelegramClient:
         except TimeoutError:
             log.error("start: timed out after %.0fs", self._BOOT_TIMEOUT)
             await self._disconnect_quietly()
-            self._set_state("error", detail=f"启动超时({self._BOOT_TIMEOUT:.0f}s)— 网络或代理不可达")
+            self._set_state(
+                "error", detail=f"启动超时({self._BOOT_TIMEOUT:.0f}s)— 网络或代理不可达"
+            )
         except Exception as e:  # noqa: BLE001
             log.exception("start: unexpected")
             await self._disconnect_quietly()
@@ -463,9 +459,7 @@ class TelethonTelegramClient:
         self._check_alive()
         assert self._client is not None
         try:
-            await self._client.sign_in(
-                self._phone, code, phone_code_hash=self._phone_code_hash
-            )
+            await self._client.sign_in(self._phone, code, phone_code_hash=self._phone_code_hash)
         except errors.SessionPasswordNeededError:
             self._set_state("password_required")
         except errors.PhoneNumberUnoccupiedError:
@@ -515,9 +509,7 @@ class TelethonTelegramClient:
         assert self._client is not None
         try:
             if self._email_flow == "login":
-                await self._client.sign_in(
-                    self._phone, code, phone_code_hash=self._phone_code_hash
-                )
+                await self._client.sign_in(self._phone, code, phone_code_hash=self._phone_code_hash)
                 await self._on_login_success()
             else:
                 result = await self._client(
@@ -661,9 +653,7 @@ class TelethonTelegramClient:
             if chat_id is None:
                 return
             for mid in event.deleted_ids or []:
-                self._publish(
-                    MessageDeleted(channel_id=chat_id, telegram_msg_id=int(mid))
-                )
+                self._publish(MessageDeleted(channel_id=chat_id, telegram_msg_id=int(mid)))
         except Exception:  # noqa: BLE001
             log.exception("MessageDeleted handling failed")
 
@@ -674,9 +664,7 @@ class TelethonTelegramClient:
             if chat_id is None:
                 return
             if event.new_title:
-                self._publish(
-                    ChannelTitleChanged(channel_id=chat_id, new_title=event.new_title)
-                )
+                self._publish(ChannelTitleChanged(channel_id=chat_id, new_title=event.new_title))
             if event.new_photo:
                 await self._handle_chat_photo(chat_id, event.photo)
         except Exception:  # noqa: BLE001
@@ -699,9 +687,7 @@ class TelethonTelegramClient:
             await self._client.download_media(photo, file=str(path))
             if pid is not None:
                 self._photo_cache[chat_id] = pid
-            self._publish(
-                ChannelPhotoChanged(channel_id=chat_id, local_path=str(path))
-            )
+            self._publish(ChannelPhotoChanged(channel_id=chat_id, local_path=str(path)))
         except Exception:  # noqa: BLE001
             log.debug("chat photo download failed for %s", chat_id, exc_info=True)
 
@@ -741,9 +727,7 @@ class TelethonTelegramClient:
             pinned = bool(update.pinned)
             for mid in update.messages or []:
                 self._publish(
-                    MessagePinChanged(
-                        channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned
-                    )
+                    MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
                 )
         except Exception:  # noqa: BLE001
             log.exception("UpdatePinnedChannelMessages handling failed")
@@ -756,9 +740,7 @@ class TelethonTelegramClient:
             pinned = bool(update.pinned)
             for mid in update.messages or []:
                 self._publish(
-                    MessagePinChanged(
-                        channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned
-                    )
+                    MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
                 )
         except Exception:  # noqa: BLE001
             log.exception("UpdatePinnedMessages handling failed")
@@ -875,9 +857,7 @@ class TelethonTelegramClient:
             return ChannelDTO(id=channel_id, title=f"#{channel_id}")
         if isinstance(entity, types.Channel):
             try:
-                full = await self._client(
-                    functions.channels.GetFullChannelRequest(entity)
-                )
+                full = await self._client(functions.channels.GetFullChannelRequest(entity))
                 mc = getattr(full.full_chat, "participants_count", None)
                 if mc:
                     dto.member_count = mc
@@ -930,9 +910,7 @@ class TelethonTelegramClient:
         `limit` 仅作页大小提示 — Telethon `iter_messages` 内部自动分页,
         这里 yield 全量历史(ChannelSyncService 期望全量,自己做节流)。
         """
-        return self._iter_chat_history(
-            channel_id, before_msg_id=before_msg_id, limit=limit
-        )
+        return self._iter_chat_history(channel_id, before_msg_id=before_msg_id, limit=limit)
 
     async def _iter_chat_history(
         self, channel_id: int, *, before_msg_id: int, limit: int
@@ -945,9 +923,7 @@ class TelethonTelegramClient:
         except ClientClosingError:
             raise
         except (errors.ChannelPrivateError, errors.ChannelInvalidError) as e:
-            raise ChatUnavailableError(
-                channel_id, reason=_extract_error_detail(e)
-            ) from e
+            raise ChatUnavailableError(channel_id, reason=_extract_error_detail(e)) from e
         except (ValueError, TypeError) as e:
             raise ChatUnavailableError(channel_id, reason=str(e)) from e
         try:
@@ -1026,9 +1002,7 @@ class TelethonTelegramClient:
         """缩略图下载参数:document → -1(最大 jpeg);photo → ~320px PhotoSize。"""
         if isinstance(media, types.MessageMediaDocument):
             return -1
-        if isinstance(media, types.MessageMediaPhoto) and isinstance(
-            media.photo, types.Photo
-        ):
+        if isinstance(media, types.MessageMediaPhoto) and isinstance(media.photo, types.Photo):
             return pick_thumb_size(media.photo) or 0
         return None
 
@@ -1095,9 +1069,7 @@ class TelethonTelegramClient:
             return
         self._check_alive()
         assert self._client is not None
-        await self._client.forward_messages(
-            to_chat_id, sorted(msg_ids), from_peer=from_chat_id
-        )
+        await self._client.forward_messages(to_chat_id, sorted(msg_ids), from_peer=from_chat_id)
 
     async def pin_messages(
         self, channel_id: int, msg_ids: list[int], *, only_for_self: bool = True
@@ -1108,9 +1080,7 @@ class TelethonTelegramClient:
         self._check_alive()
         assert self._client is not None
         for mid in msg_ids:
-            await self._client.pin_message(
-                channel_id, mid, notify=False, pm_oneside=only_for_self
-            )
+            await self._client.pin_message(channel_id, mid, notify=False, pm_oneside=only_for_self)
 
     async def unpin_messages(self, channel_id: int, msg_ids: list[int]) -> None:
         """批量取消钉选 — 一次一条 unpin_message。"""
@@ -1158,9 +1128,7 @@ class TelethonTelegramClient:
                     continue  # 丢弃要取消的那条
                 remaining.append(rc.reaction)
         await self._client(
-            functions.messages.SendReactionRequest(
-                peer=peer, msg_id=msg_id, reaction=remaining
-            )
+            functions.messages.SendReactionRequest(peer=peer, msg_id=msg_id, reaction=remaining)
         )
 
     @staticmethod
@@ -1175,8 +1143,6 @@ class TelethonTelegramClient:
     def _reaction_matches(a: Any, b: Any) -> bool:
         if isinstance(a, types.ReactionEmoji) and isinstance(b, types.ReactionEmoji):
             return a.emoticon == b.emoticon
-        if isinstance(a, types.ReactionCustomEmoji) and isinstance(
-            b, types.ReactionCustomEmoji
-        ):
+        if isinstance(a, types.ReactionCustomEmoji) and isinstance(b, types.ReactionCustomEmoji):
             return a.document_id == b.document_id
         return False

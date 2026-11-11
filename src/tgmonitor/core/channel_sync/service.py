@@ -5,11 +5,11 @@
 
 设计:
 - **手动触发**(不是周期后台 task;周期功能不在本期范围)
-- **逐频道串行**:GetSupergroup / getChatHistory 顺序处理(单条 API 间隔
-  `options.chat_delay_ms`);翻页(`page_delay_ms`)在 getChatHistory 之间
+- **逐频道串行**:元数据 / 历史消息顺序处理(单条 API 间隔
+  `options.chat_delay_ms`);翻页(`page_delay_ms`)在历史拉取之间
 - **续拉**:从 `storage.get_max_telegram_msg_id(channel_id)` 之后拉
   (`options.resume_from_saved=True`)
-- **限流归一**:tdlib 抛 `TelegramRateLimitError` → 等准确 `retry_after` →
+- **限流归一**:client 抛 `TelegramRateLimitError` → 等准确 `retry_after` →
   继续;网络错误也退避
 - **取消**:`cancel()` 唤醒所有 `asyncio.sleep`,可中断长任务
 - **进度事件**:每阶段发 `ChannelSyncProgress` → UI 实时显示
@@ -48,7 +48,7 @@ from tgmonitor.core.events import (
     ChannelSyncProgress,
 )
 from tgmonitor.core.telegram.client import TelegramClient
-from tgmonitor.core.telegram.tdlib_errors import TelegramRateLimitError
+from tgmonitor.core.telegram.errors import TelegramRateLimitError
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import EventBus

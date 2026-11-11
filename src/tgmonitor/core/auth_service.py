@@ -62,7 +62,7 @@ class AuthService:
         return None
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """用户点「登录」按钮 — 提交手机号 + 触发 TDLib 发 code。"""
+        """用户点「登录」按钮 — 提交手机号 + 触发发送验证码。"""
         err = self._check_credentials()
         if err:
             return await self._fail("submit_phone", err)
@@ -86,9 +86,8 @@ class AuthService:
             return await self._fail("submit_password", e)
 
     async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:`authorizationStateWaitEmailAddress` 时
-        提交邮箱地址。TDLib 会推到 `email_code_required`(已有账号)或
-        `registration_required`(新账号)。
+        """`email_required` 时提交邮箱地址。推进到 `email_code_required`
+        (已有账号)或 `registration_required`(新账号)。
         """
         email = (email or "").strip()
         if "@" not in email or len(email) > 100:

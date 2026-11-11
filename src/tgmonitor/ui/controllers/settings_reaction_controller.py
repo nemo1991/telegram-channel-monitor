@@ -57,12 +57,12 @@ class SettingsReactionController:
                 mw.tr("Telegram 凭据已变更。\n请重新登录以继续监听。"),
             )
         elif needs_restart:
-            # v1.0.23:proxy / session_dir 是 TdlibClient 构造参数,运行时
+            # v1.0.23:proxy / session_dir 是 TelegramClient 构造参数,运行时
             # 不重建 client,变更已写入 .env 但需重启应用才生效
             from PySide6.QtWidgets import QMessageBox
 
             QMessageBox.information(
                 self._ctx.main_window,
                 "需重启生效",
-                "代理或会话目录已变更并保存。\nTDLib 客户端在启动时创建,请重启应用使其生效。",
+                "代理或会话目录已变更并保存。\nTelegram 客户端在启动时创建,请重启应用使其生效。",
             )
