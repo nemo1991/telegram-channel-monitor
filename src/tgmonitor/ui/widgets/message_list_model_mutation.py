@@ -196,7 +196,7 @@ class MutationMixin:
         telegram_msg_id: int,
         reactions: list[ReactionDTO] | None,
     ) -> None:
-        """2026-09-11 v1.7.4:TDLib `MessageInteractionsChanged` 触发 — 局部刷新一行 reactions。
+        """2026-09-11 v1.7.4:Telegram `MessageInteractionsChanged` 触发 — 局部刷新一行 reactions。
 
         TDLib `updateMessageReactions` 是 bots-only,user client 收不到 —
         本方法依赖 `updateMessageInteractionInfo`(`MessageInteractionsChanged.reactions`),

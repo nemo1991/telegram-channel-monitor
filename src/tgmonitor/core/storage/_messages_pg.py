@@ -89,7 +89,7 @@ async def save_message(self: PostgresRepository, message: MessageDTO) -> int:
 
     2026-08-31 v1.5.0 PR #A7 修 latent prod FK violation:`messages.channel_id`
     外键引用 `channels.id`,但 monitor 路径可能先收到消息、再调
-    `sync_channels`(频道元数据从 TDLib 拉到 storage 有时延)— 若调用方
+    `sync_channels`(频道元数据从 Telegram 拉到 storage 有时延)— 若调用方
     未显式 `upsert_channel`,PG 会抛 `ForeignKeyViolationError`。
     InMemoryRepository 都隐式建频道
     (id + title="#<id>"),本实现对齐:INSERT 前 `ON CONFLICT DO NOTHING`

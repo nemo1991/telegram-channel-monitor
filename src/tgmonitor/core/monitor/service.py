@@ -71,7 +71,7 @@ class MonitorService:
     """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。
 
     除了实时流,还会以 `_BACKFILL_INTERVAL` 周期对白名单频道做一轮补拉
-    (见 `_backfill`):TDLib 的 `updateNewMessage` 只推送连接期间的新消息,
+    (见 `_backfill`):Telegram 实时推送只覆盖连接期间的新消息,
     断线 / 重启期间的消息不会重放,补拉负责兜底,避免监测不全 / 长空窗。
 
     显式组合 5 个组件(WhitelistManager / Orchestrator / BackfillRunner /
@@ -120,7 +120,7 @@ class MonitorService:
         self._unavailable_channels: set[int] = set()
         # 异步下载队列:FULL 策略时 `_handle` 先落库(media 标 DOWNLOADING),
         # 再入队由 `_download_worker` 串行消费;下载结束后回写状态 + 发
-        # MediaDownloaded 事件。串行单 worker 避免 TDLib 并发下载互相干扰。
+        # MediaDownloaded 事件。串行单 worker 避免并发下载互相干扰。
         self._download_queue: asyncio.Queue[tuple[MessageDTO, int]] | None = None
         self._download_task: asyncio.Task | None = None
         # 2026-08-24:最近 stream 见过 / 落库过的 (channel_id, telegram_msg_id)。
@@ -410,7 +410,7 @@ class MonitorService:
             async def _on_progress(
                 downloaded: int, total: int | None, _ch=ch_id, _mid=tg_msg_id, _idx=idx
             ) -> None:
-                """TDLib 进度回调 → 发 MediaDownloadProgress 事件。
+                """Telegram 进度回调 → 发 MediaDownloadProgress 事件。
 
                 闭包捕获 `msg.channel_id / msg.telegram_msg_id / idx` —
                 MediaDownloader 不需要知道 EventBus,事件协议在 dispatcher

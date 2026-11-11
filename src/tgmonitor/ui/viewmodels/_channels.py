@@ -146,7 +146,7 @@ class ChannelsMixin(_Base):
         实际只关心自己订阅的。新设计:跟 monitor 白名单完全
         一致 —— 已订阅 → 显示;退订 → 不显示(即时,
         ChannelUnsubscribed 事件里同步 del);启动 → 从 storage
-        立刻拉回(不等 TDLib state)。
+        立刻拉回(不等 Telegram state)。
         """
 
         async def _go() -> None:

@@ -91,7 +91,7 @@ class DeleteManager:
         return len(succeeded)
 
     async def _handle_message_deleted(self, event: MessageDeleted) -> None:
-        """2026-08-27 v1.4.0 PR #11:TDLib `updateDeleteMessages` → 落库删 row +
+        """2026-08-27 v1.4.0 PR #11:Telegram 推送消息删除 → 落库删 row +
         清孤儿 bytes。**不**再 publish(避免与发布者形成无限循环)。
         """
         try:

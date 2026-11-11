@@ -44,7 +44,7 @@ class BackfillRunner:
         self._svc = svc
 
     async def _backfill(self, channel_id: int) -> None:
-        """补拉该频道最近消息:TDLib 的 `updateNewMessage` 只在连接期间推送,
+        """补拉该频道最近消息:Telegram 实时推送只覆盖连接期间,
         断线 / 重启期间的新消息不会重放,这里以周期兜底,顺带覆盖"实时流静默
         死亡"的场景(此时 `request()` 仍可用,消息数据照常入库)。
 
@@ -89,8 +89,8 @@ class BackfillRunner:
     async def _backfill_all(self) -> None:
         """对白名单里每个频道跑一轮补拉(频控:每频道每轮一次 getChatHistory)。
 
-        未登录(非 ready)时不拉取 —— TDLib 未就绪时 getChatHistory 会抛
-        "Client not started",每轮刷错误日志;登录成功 state 变 ready 后,
+        未登录(非 ready)时不拉取 —— 客户端未就绪时拉历史会抛
+        错误,每轮刷错误日志;登录成功 state 变 ready 后,
         下一轮补拉自动恢复,无需外部触发。
         """
         if self._svc.client.state != "ready":

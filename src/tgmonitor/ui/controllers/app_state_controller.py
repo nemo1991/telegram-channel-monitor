@@ -71,7 +71,7 @@ class AppStateController:
     async def on_bus_login(self, e) -> None:
         """EventBus `LoginStateChanged` — header 更新 + refresh_state + activity。
 
-        TDLib 走原始 dict 经 EventBus → UI,与 VM 走 Qt signal 双轨。
+        Telegram 事件走原始 dict 经 EventBus → UI,与 VM 走 Qt signal 双轨。
         """
         if not isinstance(e, LoginStateChanged):
             return

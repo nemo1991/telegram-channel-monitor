@@ -42,7 +42,7 @@ class LoginStateChanged(Event):
 
 @dataclass
 class ConnectionStateChanged(Event):
-    """TDLib 网络连接状态变化(updateConnectionState)。"""
+    """Telegram 网络连接状态变化。"""
 
     state: str = "unknown"  # waiting_for_network | connecting | updating | ready | unknown
 
@@ -70,7 +70,7 @@ class ChannelUnsubscribed(Event):
 
 @dataclass
 class ChannelTitleChanged(Event):
-    """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatTitle` 推送频道改名。
+    """2026-09-03 v1.6.0 PR #Q2:Telegram 推送频道改名。
 
     UI `ChannelListCard` 订阅后实时刷卡片标题(此前不重启应用 = 标题 stale)。
     """
@@ -81,9 +81,9 @@ class ChannelTitleChanged(Event):
 
 @dataclass
 class ChannelPhotoChanged(Event):
-    """2026-09-03 v1.6.0 PR #Q2:TDLib `updateChatPhoto` 推送频道头像变化。
+    """2026-09-03 v1.6.0 PR #Q2:Telegram 推送频道头像变化。
 
-    `local_path` 是 TDLib 给的本地缓存绝对路径(frozen / sandbox 下路径
+    `local_path` 是 Telegram 给的本地缓存绝对路径(frozen / sandbox 下路径
     可能不可访问 — UI 走 placeholder 兜底)。None = 头像被删。
     """
 
@@ -100,9 +100,9 @@ class MessageReceived(Event):
 
 @dataclass
 class MessageEdited(Event):
-    """消息文本 / 媒体被编辑(TDLib updateMessageContent)。
+    """消息文本 / 媒体被编辑(Telegram 编辑推送)。
 
-    编辑不走 updateNewMessage,所以不能依赖 live skip-if-stored 自动吸收 —
+    编辑不走新消息推送,所以不能依赖 live skip-if-stored 自动吸收 —
     必须有独立事件让 UI 知道「同一条 cell 内容变了」。
     """
 
@@ -119,10 +119,10 @@ class MessageDeleted(Event):
 
 @dataclass
 class MessagePinChanged(Event):
-    """2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 — 消息 pin / unpin
+    """2026-09-10 v1.7.3:Telegram 推送 — 消息 pin / unpin
     server-side 状态变化。
 
-    重要语义:TDLib 推送只携带 `(chat_id, message_id, is_pinned)` 三元组
+    重要语义:Telegram 推送只携带 `(chat_id, message_id, is_pinned)` 三元组
     (没有完整 message DTO)。MonitorService 订阅后从 storage re-fetch 完整
     DTO + publish `MessageEdited` 触发 UI 行 📌 图标刷新。
     """
@@ -136,7 +136,7 @@ class MessagePinChanged(Event):
 class MessageInteractionsChanged(Event):
     """2026-08-27 v1.4.0 PR #10:reactions / views 增量更新。
 
-    TDLib `updateMessageInteractionInfo` 推送时,只携带 changed 的字段
+    Telegram 互动信息推送时,只携带 changed 的字段
     (可能是新 views、可能删/加 reaction),`views=None` 表示本次 update
     没新 view,`reactions=None` 表示没动 reactions。
 
@@ -148,7 +148,7 @@ class MessageInteractionsChanged(Event):
     views: int | None = None
     # 2026-09-11 v1.7.4:从 list[object] 占位升级为 list[ReactionDTO] —
     # reactions 跟 MessageDTO.reactions 一致,事件 payload 类型对得上,
-    # UI 调用 refresh_reactions 时无需 cast。TDLib JSON deserializer 仍
+    # UI 调用 refresh_reactions 时无需 cast。Telegram JSON deserializer 仍
     # 接受 dict(走 dataclasses.from_dict 兼容路径)。
     reactions: list[ReactionDTO] | None = None
 
@@ -169,8 +169,8 @@ class MediaDownloaded(Event):
 class MediaDownloadProgress(Event):
     """2026-09-01 v1.5.1 PR #B3:Media Manager 下载进度反馈。
 
-    TDLib `local.downloaded_size`(从 `LocalFile.downloaded_size` 读)轮询
-    时节流(0.5s/次)发出。`total=None` 表示 file_size 未知(只显示已下载
+    Telegram 下载进度回调(已下载字节)节流(0.5s/次)发出。
+    `total=None` 表示 file_size 未知(只显示已下载
     字节);`total=downloaded` 表示已完成(终态,与 `MediaDownloaded` 配对)。
 
     UI 据此在 Media Manager row 上实时显示「已下载 X / Y MB (50%)」。
@@ -297,7 +297,7 @@ class AuthErrorOccurred(ErrorOccurred):
     """验证码 / 2FA 密码错误等 transient 鉴权错误。
 
     与顶层 `error` 状态的区别:验证码错不会把我们踢回 `phone_required` —
-    TDLib 会自动重新进入 `WaitCode` 状态,用户在原地重输即可。
+    Telegram 登录流程仍停在等待验证码状态,用户在原地重输即可。
     UI 应该弹一个短暂的红色提示行(类似 toast),3 秒后自动消失。
     继承自 `ErrorOccurred`,这样订阅 `ErrorOccurred` 的代码也能收到。
     """
@@ -324,7 +324,7 @@ class NotificationRequested(Event):
 class QuitRequested(Event):
     """2026-08-30 v1.5.0 PR #A4:用户从 tray menu 选「退出」/「暂停监听」。
 
-    pause=True → 仅暂停 monitor(2026-09-03 v1.6.1 实装:断开 TDLib + 取消
+    pause=True → 仅暂停 monitor(2026-09-03 v1.6.1 实装:断开 Telegram 连接 + 取消
     in-flight 下载;resume 走 client.start() + 重建 monitor)
     pause=False → 真退出,UI 走 shutdown_then_quit 路径
     """
@@ -334,7 +334,7 @@ class QuitRequested(Event):
 
 @dataclass
 class MonitoringPaused(Event):
-    """2026-09-03 v1.6.1:监听已暂停 — TDLib 断开 + 下载取消。
+    """2026-09-03 v1.6.1:监听已暂停 — Telegram 连接断开 + 下载取消。
 
     UI 据此:
     - tray icon 换灰度变体 + tooltip 改「⏸ 暂停中」
@@ -348,7 +348,7 @@ class MonitoringPaused(Event):
 
 @dataclass
 class MonitoringResumed(Event):
-    """2026-09-03 v1.6.1:监听已恢复 — TDLib 已重新 ready,新 update 正常接收。
+    """2026-09-03 v1.6.1:监听已恢复 — Telegram 已重新 ready,新 update 正常接收。
 
     UI 据此复位所有 paused 视觉指示(icon / tooltip / status bar / title /
     menu text)。
@@ -395,12 +395,12 @@ class ChannelSyncDone(Event):
 
 @dataclass
 class ChannelMetadataChanged(Event):
-    """2026-08-27 v1.4.0 PR #14:TDLib `updateChannel` / `updateSupergroup`
-    → 频道元数据变更(title / username / member_count)。
+    """2026-08-27 v1.4.0 PR #14:Telegram 推送 → 频道元数据变更
+    (title / username / member_count)。
 
     部分字段语义:
     - 任一字段为 None 表示本 update 没动该字段(只更新其它字段)
-    - `supergroup_id`:TG 内部 supergroup id(对应 TDLib `updateSupergroup`),
+    - `supergroup_id`:TG 内部 supergroup id,
       MonitorService 据此查 `channels.username` 拿到 channel_id
     """
 
@@ -408,13 +408,13 @@ class ChannelMetadataChanged(Event):
     title: str | None = None
     username: str | None = None
     member_count: int | None = None
-    # 2026-08-27 PR #14:`updateSupergroup` 推送时只有 supergroup_id,
+    # 2026-08-27 PR #14:元数据推送只带 supergroup_id 时,
     # channel_id 由 monitor 通过 username 关联得到。
     supergroup_id: int | None = None
-    # 2026-09-04 v1.6.4:spammer 过滤 UI 用 — TDLib `Supergroup` 顶层
-    # 字段(is_verified/is_scam/is_fake)随 `updateSupergroup` 推送;
-    # `chat.has_protected_content` 随 `updateChannel` 推送。MonitorService
-    # 据此落库到 channels 表,UI 端 ChannelListCard 显徽。
+    # 2026-09-04 v1.6.4:spammer 过滤 UI 用 — Telegram 频道实体字段
+    # (is_verified/is_scam/is_fake)与 has_protected_content 随频道
+    # 元数据推送更新。MonitorService 据此落库到 channels 表,UI 端
+    # ChannelListCard 显徽。
     is_verified: bool | None = None
     is_scam: bool | None = None
     is_fake: bool | None = None
@@ -477,8 +477,8 @@ class EventBus:
     def publish_async(self, event: Event) -> asyncio.Task:
         """PR 1b:异步发布 — fire-and-forget task,加入 `_inflight` 跟踪。
 
-        用于 TDLib update handler 等「不能在当前调用栈 await」的场合:
-        - 不阻塞调用者(响应 TDLib 心跳)
+        用于 Telegram update handler 等「不能在当前调用栈 await」的场合:
+        - 不阻塞调用者(响应 Telegram 心跳)
         - 测试可 await `bus.flush()` 等所有 in-flight 跑完
 
         生产语义与原 `asyncio.create_task(self._bus.publish(event))` 等价;

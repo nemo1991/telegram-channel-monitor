@@ -114,15 +114,14 @@ class ChannelStore(ABC):
     ) -> None:
         """部分更新频道元数据。
 
-        TDLib `updateChannel` / `updateSupergroup` / `updateChatTitle` /
-        `updateChatPhoto` 推送可能只动 1 个字段(如 member_count 改、title
+        Telegram 频道元数据推送可能只动 1 个字段(如 member_count 改、title
         不变);`title=None` 表示不动 title。`photo_local_key=None` 表示
         不动(不是「删头像」 — 删头像语义需走显式参数)。
 
         与 `upsert_channel_metadata` 不同:本方法**只**动传入字段(其它字段
         保留旧值);`upsert_channel_metadata` 是覆盖式写入全字段。
 
-        不存在频道 idempotent 不抛(TDLib 偶发对陈年 channel 推 metadata
+        不存在频道 idempotent 不抛(Telegram 偶发对陈年 channel 推 metadata
         update,落库时机晚于本 update 时跳过即可)。
 
         4 个 spammer 过滤字段(`is_verified` / `is_scam` / `is_fake` /
@@ -203,12 +202,12 @@ class MessageStore(ABC):
     ) -> None:
         """增量更新一条消息的 views / reactions。
 
-        TDLib `updateMessageInteractionInfo` 推送的字段可能只更新一部分
+        Telegram 互动信息推送的字段可能只更新一部分
         (比如只有 reactions 没新 view) — `views=None` 表示不动 views,
         `reactions=None` 表示不动 reactions。`reactions=[]` 表示清空
         (推了空 list 表示该消息所有 reaction 都被撤回)。
 
-        不存在消息 idempotent 不抛 — TDLib 偶尔会推陈年历史消息的 view
+        不存在消息 idempotent 不抛 — Telegram 偶尔会推陈年历史消息的 view
         更新,落库时机早于本 update,跳过即可,UI 不感知。
 
         `reactions` 元素类型:可以是 `ReactionDTO`(新代码)或 dict(兼容老
@@ -225,7 +224,7 @@ class MessageStore(ABC):
     ) -> None:
         """更新一条消息的 pin 状态。
 
-        TDLib `updateMessageIsPinned` 推送触发;MonitorService 订阅后调
+        Telegram 推送消息 pin / unpin 触发;MonitorService 订阅后调
         本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 📌
         图标刷新。不存在消息 idempotent 不抛(与 `update_message_interactions`
         一致 — 落库时机早于本 update 的旧历史消息)。
@@ -311,8 +310,8 @@ class MediaStore(ABC):
         """查任意 prior MediaDTO 同 `telegram_file_id`(任意 channel)且下载已完成。
 
         用于跨消息媒体去重:同一 file_id 在 channel A 已下载成功 → channel B 再
-        出现时直接复用 `object_key` / `object_backend` / `file_size`,不发起 TDLib
-        `GetFile` 请求。
+        出现时直接复用 `object_key` / `object_backend` / `file_size`,不发起
+        Telegram 文件下载请求。
 
         命中条件:`download_status == DONE` 且 `object_key` 非 None。命中时返回的
         DTO 至少含上述三字段;`download_status != DONE` 视为未下,返 None。

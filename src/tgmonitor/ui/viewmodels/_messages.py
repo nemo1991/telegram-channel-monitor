@@ -140,7 +140,7 @@ class MessagesMixin(_Base):
         self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_message_edited(self, e: object) -> None:
-        """2026-08-24:TDLib updateMessageContent 来的编辑事件 → 转发 UI。
+        """2026-08-24:Telegram 推送的编辑事件 → 转发 UI。
 
         UI 通过 message_edited 信号 → MessageView.replace_message 找到现有
         cell 重渲,不增删 row。
@@ -150,7 +150,7 @@ class MessagesMixin(_Base):
         self.message_edited.emit(e.message)
 
     async def _on_message_interactions_changed(self, e: object) -> None:
-        """2026-09-11 v1.7.4:TDLib `updateMessageInteractionInfo` 来的 reactions / views 变化。
+        """2026-09-11 v1.7.4:Telegram 推送的 reactions / views 变化。
 
         转发到 MainWindow,后者区分 reactions / views 分别走局部刷新路径。
         详见 `message_interactions_changed` signal docstring — TDLib 限制:

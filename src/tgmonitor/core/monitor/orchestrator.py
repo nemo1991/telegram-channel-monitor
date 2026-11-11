@@ -71,13 +71,13 @@ class Orchestrator:
             name="MonitorService.backfill",
         )
         # 2026-08-27 v1.4.0 PR #10:订阅 reactions / views 增量更新事件。
-        # TDLib 高频推 updateMessageInteractionInfo,落库走 bus → 单点 +
+        # Telegram 高频推互动信息,落库走 bus → 单点 +
         # 订阅者异常被吞,比 stream 更安全。
         svc.bus.subscribe(
             MessageInteractionsChanged,
             svc._handle_interactions_changed,
         )
-        # 2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` 推送 → 落库 + republish
+        # 2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish
         # MessageEdited 触发 UI 行 📌 刷新(只有 republish 才能让 UI 实时感知
         # 外部 pin,而不依赖下次 reload)。
         svc.bus.subscribe(
@@ -187,7 +187,7 @@ class Orchestrator:
                     )
                     try:
                         # 2026-08-24:按 _seen_ids 区分「新消息」与「编辑」—
-                        # TDLib 编辑( updateMessageContent)走同一个 stream,
+                        # Telegram 编辑推送走同一个 stream,
                         # 用 cache 命中标记。
                         key = (msg.channel_id, msg.telegram_msg_id)
                         if key in svc._seen_ids:

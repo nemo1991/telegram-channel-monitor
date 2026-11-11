@@ -514,7 +514,7 @@ class RenderMixin(_Base):
 
         - 走 `_status_labels.get(key)`(行 widget 已渲染)→ setText
         - 行被 filter 掉 / reload 中 → 静默 skip(`get` 返 None)
-        - 节流:TDLib 客户端 0.5s/次,UI 端不再节流(Qt coalesce 自动批量)
+        - 节流:Telegram 客户端 0.5s/次,UI 端不再节流(Qt coalesce 自动批量)
         """
         key = _RowKey(
             channel_id=event.channel_id,

@@ -65,7 +65,7 @@ _KIND_ICON_NAMES: dict[str, str] = {
 
 # 2026-09-04 v1.6.4:进程内 LRU 缩略图缓存 — 频道头像 + media 共用。
 # `ThumbnailCache` 设计上接受 `(backend, object_key)`;频道头像来源是
-# TDLib 本地缓存绝对路径,固定用 backend="local",key=TDLib 推过来的 path。
+# Telegram 本地缓存绝对路径,固定用 backend="local",key=Telegram 推过来的 path。
 _CHANNEL_THUMB_BACKEND = "local"
 
 
@@ -84,7 +84,7 @@ def _thumbnail_cache() -> ThumbnailCache:
 
 
 def _read_photo_bytes(path: str) -> bytes | None:
-    """读 TDLib 本地缓存头像 bytes。失败(FileNotFoundError / PermissionError /
+    """读 Telegram 本地缓存头像 bytes。失败(FileNotFoundError / PermissionError /
     非文件)返 None — 由 caller 走 kind placeholder。
 
     头像文件通常 ~5-50KB JPEG/PNG,同步读可接受(< 5ms SSD);fail-open 走
@@ -103,7 +103,7 @@ def _kind_icon(
     """频道 list item 图标 — 优先频道头像,失败回 kind emoji 占位。
 
     2026-09-04 v1.6.4:photo 路径走 `ThumbnailCache` LRU;cache miss 时
-    同步读 `photo_local_key`(TDLib 本地缓存绝对路径)。IO 失败或格式
+    同步读 `photo_local_key`(Telegram 本地缓存绝对路径)。IO 失败或格式
     不可解码 → fallback `_kind_emoji_icon(kind)`。
 
     未知 kind 一律 fallback 到 group(user-round)。
@@ -506,7 +506,7 @@ class ChannelWidget(QWidget):
         实时刷新两个卡上对应 item 的图标。
 
         - `local_path` 非 None → `_kind_icon(kind, local_path)` 走
-          `ThumbnailCache` LRU;cache miss 时同步读 TDLib 本地缓存文件
+          `ThumbnailCache` LRU;cache miss 时同步读 Telegram 本地缓存文件
           并 `render_pixmap(bytes, max_size=48)`;失败(IO / 非图格式)→
           fallback `_kind_emoji_icon(kind)`。
         - `local_path` 为 None → 头像被删,退回 emoji 占位。

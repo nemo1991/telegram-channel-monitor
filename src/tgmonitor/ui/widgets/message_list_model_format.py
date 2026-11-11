@@ -23,9 +23,8 @@ def _format_meta_icons(m: MessageDTO) -> str:
     30 字符截断加 `…`(行高可控,避免 100 字备注撑爆单行)。
 
     2026-09-11 v1.7.4:reactions 拼到末尾(`🔥 5  👍 3`)— 由
-    MessageInteractionsChanged event 触发本地刷新,实时性受限于 TDLib
-    `updateMessageInteractionInfo` 推送(bots-only `updateMessageReactions`
-    user client 不收)。
+    MessageInteractionsChanged event 触发本地刷新,实时性受限于 Telegram
+    互动信息推送(bots-only `updateMessageReactions` user client 不收)。
 
     2026-10-16 plan-batch7 目标 2:从 `message_view.py` module-level 整体搬
     到本文件,语义上属 Format 子模块;破循环 import(format mixin 不再

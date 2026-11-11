@@ -1,7 +1,7 @@
 """跨边界传输的纯数据对象(DTO)。
 
 所有跨层(core 内部、core↔UI、core↔Exporter)传输都用 DTO;
-绝不传递 TDLib 原生对象、ORM 行对象或框架特定的类型。
+绝不传递 Telegram 原生对象、ORM 行对象或框架特定的类型。
 """
 
 from __future__ import annotations
@@ -32,12 +32,12 @@ class ChannelDTO:
     created_at: datetime | None = None
     is_subscribed: bool = False
     last_synced_at: datetime | None = None
-    # 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推 TDLib 本地头像文件路径;
+    # 2026-09-03 v1.6.0 PR #Q2:频道头像推送带 Telegram 本地头像文件路径;
     # None = 头像被删 / 从未设。UI `ChannelListCard` 据此决定是否走 placeholder。
     photo_local_key: str | None = None
     # 2026-09-04 v1.6.4:spammer 过滤 UI 用。`is_verified` / `is_scam` /
-    # `is_fake` 是 TDLib `Supergroup` 顶层字段(频道群组都有);`has_protected_content`
-    # 是 `Chat` 顶层字段(channel / private)。basic_group 没这两个字段,
+    # `is_fake` 是 Telegram 频道实体字段(频道群组都有);`has_protected_content`
+    # 是频道 / 私聊实体字段(channel / private)。basic_group 没这两个字段,
     # 固定 False。UI 端 channel list 卡片标徽显示(✓ / ⚠️)。
     is_verified: bool = False
     is_scam: bool = False
@@ -54,7 +54,7 @@ class ChannelDTO:
 
 
 class MediaType(str, Enum):
-    """Telegram 媒体类型枚举(与 TDLib MessageContent 类型对应)。"""
+    """Telegram 媒体类型枚举(与 Telegram MessageContent 类型对应)。"""
 
     PHOTO = "photo"
     VIDEO = "video"
@@ -157,7 +157,7 @@ class ThumbnailDTO:
     「该媒体的缩略图」,生命周期独立(主图 DONE 但 thumb FAILED 是合法
     状态)。文件大小 / sha256 / mime 各算。
 
-    跨边界:UI / VM / Exporter 只传 ThumbnailDTO,不传 ORM 行 / TDLib 原生。
+    跨边界:UI / VM / Exporter 只传 ThumbnailDTO,不传 ORM 行 / Telegram 原生。
     持久化:各后端(SQLITE / POSTGRES)独立存,关联键保证 1:1。
     """
 
@@ -189,8 +189,8 @@ class MessageDTO:
 
     2026-08-27 v1.4.0 PR #9:补 5 个 TDLib Message 字段,详情面板 / 转发
     链 / via bot / 相册 / 置顶 一直空白,本次映射对齐。
-    2026-08-27 v1.4.0 PR #10:加 reactions — TDLib
-    `updateMessageInteractionInfo` 推 reactions 增量时使用。
+    2026-08-27 v1.4.0 PR #10:加 reactions — Telegram
+    推 reactions 增量时使用。
     """
 
     id: int  # 自增主键,DB 分配
@@ -204,7 +204,7 @@ class MessageDTO:
     reply_to_msg_id: int | None = None
     edited: bool = False
     media: list[MediaDTO] = field(default_factory=list)
-    raw: dict[str, Any] | None = None  # 可选:原始 TDLib payload 摘要(供高级导出)
+    raw: dict[str, Any] | None = None  # 可选:原始 Telegram payload 摘要(供高级导出)
     # 2026-08-27 v1.4.0 PR #9:TDLib Message 暴露但 v1.3.0 丢弃的字段。
     forward_origin: dict[str, Any] | None = (
         None  # messageOrigin* 扁平 dict(`{"@type": "messageOriginUser", ...}`)
@@ -212,8 +212,8 @@ class MessageDTO:
     via_bot_user_id: int | None = None  # 通过 inline bot 发送时的 bot id
     media_album_id: int | None = None  # 同一相册的多张图共享,UI 用来分组
     is_pinned: bool = False  # 是否被频道置顶
-    # 2026-08-27 v1.4.0 PR #10:reactions — TDLib
-    # updateMessageInteractionInfo.interactions.reactions[] 扁平为 `ReactionDTO` 列表。
+    # 2026-08-27 v1.4.0 PR #10:reactions — Telegram 互动信息推送的
+    # reactions[] 扁平为 `ReactionDTO` 列表。
     # None = 没推送过(老消息);空 list = 推过但已被撤回干净。
     reactions: list[ReactionDTO] | None = None
     # 2026-09-09 v1.7.2:用户元数据 — 本地存储,不与 TG 同步。
@@ -230,7 +230,7 @@ class MessageDTO:
 
 @dataclass
 class ReactionDTO:
-    """TDLib reaction 单条 → 扁平 dataclass。
+    """Telegram reaction 单条 → 扁平 dataclass。
 
     2026-08-27 v1.4.0 PR #10:
     - `type`:emoji 自定义 emoji(TDLib 区分 `reactionEmoji` /

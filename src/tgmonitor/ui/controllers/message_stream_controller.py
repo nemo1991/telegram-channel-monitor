@@ -51,7 +51,7 @@ class MessageStreamController:
         )
 
     def on_message_edited(self, m: MessageDTO) -> None:
-        """VM:MonitorViewModel 收到 `MessageEdited`(TDLib updateMessageContent)。
+        """VM:MonitorViewModel 收到 `MessageEdited`(Telegram 编辑推送)。
 
         按 (channel_id, telegram_msg_id) 找现有 row 替换 — 不增删。
         2026-08-24 上线,跟 LIVE 流 append 配合:append 跳过同 key,
@@ -62,7 +62,7 @@ class MessageStreamController:
     def on_message_interactions_changed(self, e: object) -> None:
         """VM:reactions / views 增量推送 → LIVE 行局部刷新 + 详情面板同步。
 
-        2026-09-11 v1.7.4 上线。TDLib `updateMessageInteractionInfo` 服务
+        2026-09-11 v1.7.4 上线。Telegram 互动信息的服务
         端推送策略决定延迟;`updateMessageReactions` 是 bots-only,user
         client 不收 — 本路径靠 updateMessageInteractionInfo 拿到
         `reactions` / `views` 变化。Anonymous reactions 永远看不到。

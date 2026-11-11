@@ -122,8 +122,8 @@ class LiveSelectionController:
     def on_live_delete(self, items: list) -> None:
         """右键菜单触发 → 二次确认 → 批量删(LIVE 软删 + media cleanup)。
 
-        走 `AppService.delete_messages_batch`(返成功数);不调 TDLib
-        `deleteMessages`(live 删除本地副本,TG 端不动 — 与 Clear Channel
+        走 `AppService.delete_messages_batch`(返成功数);不调 Telegram
+        服务端删除 API(live 删除本地副本,TG 端不动 — 与 Clear Channel
         行为对齐,v1.7.0 不引入服务端删除)。
         """
         normalized = _normalize_selection_items(items)
@@ -149,7 +149,7 @@ class LiveSelectionController:
         self._ctx.live_view.clear_selection()
 
     def on_live_mark_read(self, items: list) -> None:
-        """右键菜单触发 → 批量标已读(走 TDLib viewMessages)。
+        """右键菜单触发 → 批量标已读(走 Telegram 标已读 API)。
 
         走 `AppService.mark_messages_read`(返成功条数);paused 时返 0
         + log warning,不抛 UI 错误。

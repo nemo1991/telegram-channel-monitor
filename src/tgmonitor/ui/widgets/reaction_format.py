@@ -7,7 +7,7 @@
 - 短串(LIVE 行:`🔥 5  👍 3`,max_show 默认 4 限制宽度)
 - 自己投的用 `[]` 包,详情面板需要(「我投过的」高亮),LIVE 行因宽度
   紧可不传 `is_chosen` 包装(默认)
-- `count=0` 跳过 — TDLib 偶尔推送空 reaction 占位
+- `count=0` 跳过 — Telegram 偶尔推送空 reaction 占位
 
 **Root cause 限制**:TDLib `updateMessageReactions` 是 **bots-only**,
 user client(`TDLib` JSON client,非 bot token)**不会收到**推送。

@@ -83,12 +83,12 @@ class MediaDownloader:
         """下载 → 入 ObjectStore → 返回更新后的 MediaDTO。
 
         skip-if-stored 顺序(2026-08-24):
-          1) storage 已有同 `telegram_file_id` 的 DONE media → 拷字段,不发 TDLib 请求
+          1) storage 已有同 `telegram_file_id` 的 DONE media → 拷字段,不发 Telegram 请求
           2) ObjectStore 已有同 `make_key(media)` → 视为已下载,补 object_key / backend
           3) 两个都 miss → 走原下载流程
 
         `force=True` 时跳过 #1 + #2(2026-08-24 Media Manager retry 路径用):用户
-        显式要求「重新尝试」,即使已下载也再发 TDLib 请求覆盖。调用方有责任
+        显式要求「重新尝试」,即使已下载也再发 Telegram 请求覆盖。调用方有责任
         先 `objects.delete(old_key)` 清理旧 bytes,否则写入会覆盖。
 
         `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
@@ -119,7 +119,7 @@ class MediaDownloader:
             log.debug("skip media msg_pk=%s: no telegram_file_id", msg_pk)
             return failed("无 telegram_file_id")
 
-        # 跳过 #1:storage 已有同 file_id 的成功下载 → 拷字段,不发 TDLib 请求
+        # 跳过 #1:storage 已有同 file_id 的成功下载 → 拷字段,不发 Telegram 请求
         # `force=True`(retry)时跳过 — 用户显式要求重试,即使 prior 已存也走原下载。
         if not force:
             prior = await self.storage.find_media_by_file_id(fid)

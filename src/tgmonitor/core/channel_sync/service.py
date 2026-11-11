@@ -77,7 +77,7 @@ class ChannelSyncService:
         `downloader` / `objects` / `media_policy`(2026-08-24 接入)— sync 媒体
         下载复用 monitor 的 `MediaDownloader`,FULL 策略下 sync 也会下载原文件。
         `downloader.download_one` 已自带 skip-if-stored,所以 re-sync 频道命中
-        storage 已有同 file_id 时不发 TDLib 请求。
+        storage 已有同 file_id 时不发 Telegram 请求。
         """
         self.bus = bus
         self.client = client

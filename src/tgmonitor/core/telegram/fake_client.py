@@ -174,7 +174,7 @@ class FakeTelegramClient(TelegramClient):
         self._all_streams.clear()
 
     async def stop(self) -> None:
-        """2026-09-03 v1.6.1:fake 模拟断 TDLib — 状态回 uninit,留 session
+        """2026-09-03 v1.6.1:fake 模拟断连 — 状态回 uninit,留 session
         给下次 start 复用。不真关流(stop 后 resume 走 start 会重建 stream)。"""
         self._state = "uninit"
 
@@ -317,7 +317,7 @@ class FakeTelegramClient(TelegramClient):
     ) -> None:
         """2026-09-09 v1.7.2:Fake 替身 — 记录 forward 到 `forwarded_log`。
 
-        `msg_ids` 空 = no-op;否则记录 sorted 后的列表(体现 TDLib 顺序约束)。
+        `msg_ids` 空 = no-op;否则记录 sorted 后的列表(体现 Telegram 顺序约束)。
         测试通过 `client.forwarded_log` 断言所有 forward 调用。
         """
         if not msg_ids:

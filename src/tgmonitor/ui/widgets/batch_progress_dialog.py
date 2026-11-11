@@ -6,7 +6,7 @@
 - 订阅 `vm.batch_progress` / `vm.batch_done` signal 更新 QProgressBar
 - 2026-09-10 v1.7.3:加「取消」按钮 → 调 `vm.cancel_current_batch()` →
   `AppService._cancel_event.set()`,批量 facade 下一个 item break。
-  best-effort:已发 TDLib RPC 可能 server-side 仍完成,但 UI 显示
+  best-effort:已发 Telegram RPC 可能 server-side 仍完成,但 UI 显示
   「操作中断:cancelled」+ 自动 close,符合直觉。
 - react / unreact 标题插入 emoji(`"批量回应 😀 中…"`)— `extra` kwarg 传入。
 - 完成(BatchDone) → 自动 close;close 后解除 signal 连接。

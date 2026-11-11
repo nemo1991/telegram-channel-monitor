@@ -137,7 +137,7 @@ class MessageViewAPIMixin:
         telegram_msg_id: int,
         reactions: list[ReactionDTO] | None,
     ) -> None:
-        """2026-09-11 v1.7.4:TDLib push reactions 变化 → 局部刷新一行。
+        """2026-09-11 v1.7.4:Telegram push reactions 变化 → 局部刷新一行。
 
         详见 `MessageListModel.refresh_reactions`(调用同方法)。
         """

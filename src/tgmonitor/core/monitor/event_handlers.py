@@ -51,7 +51,7 @@ class EventHandlers:
         self,
         event: MessageInteractionsChanged,
     ) -> None:
-        """2026-08-27 v1.4.0 PR #10:TDLib `updateMessageInteractionInfo`
+        """2026-08-27 v1.4.0 PR #10:Telegram 互动信息推送
         → storage `update_message_interactions`(views / reactions 增量)。
 
         落库后**不再 republish**(避免无限循环:EventBus.subscribe 自己是
@@ -63,7 +63,7 @@ class EventHandlers:
                 event.channel_id,
                 event.telegram_msg_id,
                 views=event.views,
-                # event.reactions 已是 list[ReactionDTO](TDLib 映射层保证),
+                # event.reactions 已是 list[ReactionDTO](Telegram 映射层保证),
                 # storage 实现负责 list/dict 双形态容错
                 reactions=event.reactions,
             )
@@ -88,7 +88,7 @@ class EventHandlers:
         self,
         event: MessagePinChanged,
     ) -> None:
-        """2026-09-10 v1.7.3:TDLib `updateMessageIsPinned` → 落库 + republish。
+        """2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish。
 
         与 `_handle_interactions_changed` 不同的是:这里**必须** republish
         `MessageEdited` — UI 行的 📌 渲染依赖 in-memory DTO 的 `is_pinned`
@@ -175,7 +175,7 @@ class EventHandlers:
                                 event.member_count,
                             )
                             return
-                # 没找到匹配 username → 静默(可能 TDLib 推了陌生 supergroup)
+                # 没找到匹配 username → 静默(可能 Telegram 推了陌生 supergroup)
                 return
             if event.channel_id == 0:
                 return  # 无 channel_id 又无 username,跳过
@@ -216,10 +216,10 @@ class EventHandlers:
         self,
         event: ChannelTitleChanged,
     ) -> None:
-        """2026-09-03 v1.6.0 PR #Q2:`updateChatTitle` → 落库 title。
+        """2026-09-03 v1.6.0 PR #Q2:频道改名推送 → 落库 title。
 
         UI 端 `ChannelListCard` 同时订阅此事件实时刷卡片;此处只负责
-        storage 持久化。不存在 channel 时 idempotent 不抛(TDLib 偶发对
+        storage 持久化。不存在 channel 时 idempotent 不抛(Telegram 偶发对
         陈年 chat 推 metadata update,落库时机晚于本 update)。
         """
         try:
@@ -243,14 +243,14 @@ class EventHandlers:
         self,
         event: ChannelPhotoChanged,
     ) -> None:
-        """2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` → 落库 photo_local_key。
+        """2026-09-03 v1.6.0 PR #Q2:频道头像推送 → 落库 photo_local_key。
 
         `event.local_path`:
         - 非空 str → 头像本地缓存路径,落库覆盖旧值
         - 空字符串 `""` → 头像被删,**显式**写 NULL 进 storage
         - None → 不动字段(等价于其他字段 None 语义;COALESCE 兜底)
 
-        三态区分让 TDLib 推送「删头像」与「不动头像」可被观测。
+        三态区分让 Telegram 推送「删头像」与「不动头像」可被观测。
         UI 端 `ChannelListCard` 订阅此事件实时刷图标。
         """
         try:
