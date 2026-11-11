@@ -351,6 +351,19 @@ wheels = [
 ]
 
 [[package]]
+name = "cryptg"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/14/c7385e0ed99581cd4f10b3d1f94190d127ea8bf4365af8f034223f0b0850/cryptg-0.6.1.tar.gz", hash = "sha256:f11c256e02a31a8e1f843de309e8e08b522cfc504f18206200c50d048f7ebb38", size = 13045, upload-time = "2026-11-04T06:37:42.416Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/ee/8e766d76b8b4f13a323dc6035547cac1c9d9f6e90deda32cc722eaa40b35/cryptg-0.6.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:58ca0d0eddb15d568ac14a4f10c1f7e341c283facb86052ba000129a6ea715a3", size = 205896, upload-time = "2026-11-05T20:55:24.613Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/a0/ba375d5ebec4a60a8a0a87df2f254fd9daf4b933d7b71f5131be67f3ab9d/cryptg-0.6.1-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:78ef5beb202a54326097e39574ed4453391f268c2181081e09f3356530240345", size = 233121, upload-time = "2026-11-05T20:57:22.605Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/94/d480489d3b0cd5940033d2504db957938969ab09c26082ac9be5614b1aa6/cryptg-0.6.1-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:dafd92c65fe462cb83cb59a4e4fc9059a78b56f93eb166ccd80f03b363b1eb4e", size = 240742, upload-time = "2026-11-05T20:57:42.992Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/5b/368536cabb7addaf2a1901627c4363724b8ef11a2d5115d1b00432f82f71/cryptg-0.6.1-cp313-cp313-win32.whl", hash = "sha256:c93ce30d3bed88afd22923b28d33205b9520049407ff49f3f0a85f9de293beb6", size = 110944, upload-time = "2026-11-05T20:58:07.412Z" },
+    { url = "https://files.pythonhosted.org/packages/58/d1/e64a3ebd884df3aec120fb8c0bbc2e97b59e084e7e0f61e92586646644ca/cryptg-0.6.1-cp313-cp313-win_amd64.whl", hash = "sha256:ab9e7a579ab6ae8e250d888721ee10b4d3fb6d54735aa163a7d8e094d13ff4db", size = 109889, upload-time = "2026-11-05T20:58:09.084Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "50.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -846,6 +859,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pyaes"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/66/2c17bae31c906613795711fc78045c285048168919ace2220daa372c7d72/pyaes-1.6.1.tar.gz", hash = "sha256:02c1b1405c38d3c370b085fb952dd8bea3fadcee6411ad99f312cc129c536d8f", size = 28536, upload-time = "2017-09-20T21:17:54.23Z" }
+
+[[package]]
+name = "pyasn1"
+version = "0.6.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/7e/3c0da41061a2021cac7cd524fd57092adbe5b515e8bf9005702e366802e2/pyasn1-0.6.5.tar.gz", hash = "sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47", size = 155152, upload-time = "2026-10-27T06:32:49.125Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/1f/3eefd5c84c35cae44549ce1c7f7e58f7945b34f5a6bce07a135438522073/pyasn1-0.6.5-py3-none-any.whl", hash = "sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587", size = 84807, upload-time = "2026-10-27T06:32:48.045Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1080,6 +1108,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-socks"
+version = "3.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/5d/57f4f34cba6cd33dabc557096225487bfd977f8831d789b2b81a885f9ed3/python_socks-3.2.1.tar.gz", hash = "sha256:d21618ae6c6734d357be83263b3791666d12af59480ace8f48f2b5fcc8edc987", size = 39934, upload-time = "2026-10-31T11:56:08.117Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/a6/175dbba852d77cf184dd6095a23dd0fe654898be74fb9dc6bfa16e89088f/python_socks-3.2.1-py3-none-any.whl", hash = "sha256:db2c37d4f7aeebfbba91d2d7670718b2d516061b34296fa8498c6f671e87c504", size = 49553, upload-time = "2026-10-31T11:56:06.54Z" },
+]
+
+[[package]]
 name = "pywin32"
 version = "312"
 source = { registry = "https://pypi.org/simple" }
@@ -1152,6 +1189,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f0/1a/4af3e6d659394b809838490b144e4ab8d7ed3b9fecc7ca78f5d2f79b1a3d/responses-0.26.2.tar.gz", hash = "sha256:9c9259b46a8349197edebf43cfa68a87e1a2802ef503ff8b2fecbabc0b45afd8", size = 84030, upload-time = "2026-07-03T16:44:50.325Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/28/693e1d9ebf72baa062ded80d837a035b86ce75eda5a269379e9e2b1008a8/responses-0.26.2-py3-none-any.whl", hash = "sha256:6fdfeabd58e5ec473b98dfe02e6d46d3173bd8dd573eff2ccccf1a05a5135364", size = 35609, upload-time = "2026-07-03T16:44:49.1Z" },
+]
+
+[[package]]
+name = "rsa"
+version = "4.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyasn1" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/da/8a/22b7beea3ee0d44b1916c0c1cb0ee3af23b700b6da9f04991899d0c555d4/rsa-4.9.1.tar.gz", hash = "sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75", size = 29034, upload-time = "2025-04-16T09:51:18.218Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl", hash = "sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762", size = 34696, upload-time = "2025-04-16T09:51:17.142Z" },
 ]
 
 [[package]]
@@ -1236,6 +1285,19 @@ version = "0.1.1"
 source = { editable = "packages/tdlib_json" }
 
 [[package]]
+name = "telethon"
+version = "1.45.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyaes" },
+    { name = "rsa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/07/b23b6cc73cd994763fbd641d196904f56cc966035eda841275b5689c6e5f/telethon-1.45.0.tar.gz", hash = "sha256:4cb7ae269b8ab9dad9fc490b859f0bc2f885121e990f5b20407b1faa0db2a1d9", size = 728057, upload-time = "2026-09-10T14:28:04.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/ac/241c09e6905215f225d8088438ceb1f32cc4b4865f3f49068cb402debfd7/telethon-1.45.0-py3-none-any.whl", hash = "sha256:339e24c83aedc9f12cbe389264627edc49779e4289c535aa90aafc4ce62f7972", size = 804098, upload-time = "2026-09-10T14:28:03.115Z" },
+]
+
+[[package]]
 name = "testcontainers"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1257,12 +1319,15 @@ version = "1.12.3"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "cryptg" },
     { name = "jinja2" },
     { name = "platformdirs" },
     { name = "pydantic-settings" },
     { name = "pyside6" },
+    { name = "python-socks" },
     { name = "qasync" },
     { name = "tdlib-json-client" },
+    { name = "telethon" },
 ]
 
 [package.optional-dependencies]
@@ -1297,12 +1362,15 @@ requires-dist = [
     { name = "aioboto3", marker = "extra == 'objectstore'", specifier = ">=13.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
+    { name = "cryptg", specifier = ">=0.6.1" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "platformdirs", specifier = ">=4.11.0" },
     { name = "pydantic-settings", specifier = ">=2.2" },
     { name = "pyside6", specifier = ">=6.6" },
+    { name = "python-socks", extras = ["asyncio"], specifier = ">=3.2.1" },
     { name = "qasync", specifier = ">=0.27" },
     { name = "tdlib-json-client", editable = "packages/tdlib_json" },
+    { name = "telethon", specifier = ">=1.45.0" },
     { name = "tgmonitor", extras = ["postgres", "objectstore"], marker = "extra == 'all'" },
 ]
 provides-extras = ["postgres", "objectstore", "all"]

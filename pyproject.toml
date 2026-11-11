@@ -19,6 +19,9 @@ dependencies = [
     "Jinja2>=3.1",
     "platformdirs>=4.11.0",
     "aiosqlite>=0.22.1",
+    "telethon>=1.45.0",
+    "cryptg>=0.6.1",
+    "python-socks[asyncio]>=3.2.1",
 ]
 
 [project.optional-dependencies]
@@ -166,6 +169,8 @@ warn_return_any = false
 # 没 .pyi 或 runtime 不影响业务逻辑的依赖 — 全视为 Any
 module = [
     "tdlib_json", "tdlib_json.*",     # 自编译 libtdjson 的 ctypes 绑定
+    "telethon", "telethon.*",         # v2.0.0 Telegram 后端(纯 Python,无 py.typed)
+    "python_socks", "python_socks.*",  # Telethon SOCKS5 代理依赖
     "platformdirs",                # user_data_dir helper
     "pydantic", "pydantic.*",      # pydantic v2 model 字段
     "pydantic_settings",           # .env 加载
