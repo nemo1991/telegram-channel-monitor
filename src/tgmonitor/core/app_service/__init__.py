@@ -1,17 +1,14 @@
-"""AppService package — 2026-10-12 plan-batch3 目标 2 拆分。
+"""AppService package — 组合根 + 生命周期协调。
 
-facade `AppService` 位于 `tgmonitor.core.app_service.app_service`(避免
-与本 package 同名 import 冲突);外部 `from tgmonitor.core.app_service
-import AppService` 走本 __init__ re-export 仍可用。
+`AppService` 位于 `tgmonitor.core.app_service.app_service`(避免与本
+package 同名 import 冲突);外部 `from tgmonitor.core.app_service import
+AppService` 走本 __init__ re-export。
 
-子模块(`_backend_sync` / `_media_actions` / `_batch_ops` / `_lifecycle` /
-`_reconfigure`)各管一块,module-level plain function,接收 `app: AppService`
-作第一参数走 `app._xxx` mutable state 读写。
-
-设计原则:
-- 各子 module 持有 `app: AppService` 作第一参数,直接读 / 写 `app._xxx`
-  mutable state(跟 plan-batch2 monitor/service.py 拆 facade 同构)
-- 公共方法签名 1:1 保留 — UI 现有调用面零变化
+2026-11-11 v2.0.0 Phase 3:域逻辑已拆到独立服务(core/channel_service /
+message_service / batch_service / media_service / auth_service),本 package
+只剩生命周期(`_lifecycle`)、热重载(`_reconfigure`)、后端 swap 传播
+(`_backend_sync`)三个辅助模块 — module-level plain function,接收
+`app: AppService` 作第一参数走 mutable state 读写。
 """
 
 from tgmonitor.core.app_service.app_service import AppService

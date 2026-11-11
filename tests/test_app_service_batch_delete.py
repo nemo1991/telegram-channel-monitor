@@ -51,11 +51,11 @@ async def test_delete_messages_batch_passes_cancel_event_to_monitor(
     items = [(1, 1), (1, 2), (2, 3)]
     await batch_app.delete_messages_batch(items)
 
-    # monitor.delete_messages 应被调一次,参数 = (items, cancel_event=batch_app._cancel_event)
+    # monitor.delete_messages 应被调一次,参数 = (items, cancel_event=batch_app.batch._cancel_event)
     batch_app.monitor.delete_messages.assert_called_once()  # type: ignore[attr-defined]
     call_args = batch_app.monitor.delete_messages.call_args  # type: ignore[attr-defined]
     assert call_args.args[0] == items  # items 位置参数
-    assert call_args.kwargs.get("cancel_event") is batch_app._cancel_event
+    assert call_args.kwargs.get("cancel_event") is batch_app.batch._cancel_event
 
 
 async def test_delete_messages_batch_emits_cancelled_when_cancel_set_before_call(

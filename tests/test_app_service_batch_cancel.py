@@ -17,12 +17,12 @@ from tgmonitor.core.events import BatchDone, BatchProgress, EventBus
 
 async def test_cancel_current_batch_sets_event(batch_app: AppService) -> None:
     """v1.7.3:`cancel_current_batch()` 必须 set `_cancel_event`。"""
-    assert not batch_app._cancel_event.is_set()  # type: ignore[attr-defined]
+    assert not batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
     batch_app.cancel_current_batch()
-    assert batch_app._cancel_event.is_set()  # type: ignore[attr-defined]
+    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
     # 多次调用安全(再次 set 已 set 的 Event)
     batch_app.cancel_current_batch()
-    assert batch_app._cancel_event.is_set()  # type: ignore[attr-defined]
+    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
 async def test_cancel_pin_stops_mid_loop(batch_app: AppService, collected: list) -> None:
@@ -75,7 +75,7 @@ async def test_multiple_cancel_calls_safe(batch_app: AppService) -> None:
     batch_app.cancel_current_batch()
     batch_app.cancel_current_batch()
     batch_app.cancel_current_batch()
-    assert batch_app._cancel_event.is_set()  # type: ignore[attr-defined]
+    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
 
 
 async def test_batch_progress_emits_elapsed_and_rate_for_pin(
@@ -131,19 +131,17 @@ async def test_batch_progress_emits_elapsed_and_rate_for_react(
 async def test_compute_rate_zero_elapsed_returns_zero_rate(batch_app: AppService) -> None:
     """v1.7.4:`_compute_rate` 在 elapsed < 1e-3 时返 0(除零保护)。
 
-    2026-10-12 plan-batch3 step 2.3:facade `_compute_rate` / `_start_batch_timer`
-    抽到 `_batch_ops` 模块,改走 module function + `batch_app` 作第一参数。
+    2026-11-11 v2.0.0 Phase 3:ETA helper 是 BatchService 私有方法,
+    计时起点由 BatchService 自持(`batch_app.batch._batch_started_at`)。
     """
-    from tgmonitor.core.app_service import _batch_ops
-
     # 不调 _start_batch_timer,_batch_started_at = 0(初始),time.monotonic() - 0 = 当前时间(大)
     # 但 processed/elapsed 还是 > 0。真正测除零路径需 mock monotonic。
     # 简化:设 _batch_started_at = time.monotonic() — elapsed ≈ 0 → rate = 0
-    batch_app._batch_started_at = time.monotonic()  # type: ignore[attr-defined]
-    elapsed, rate = _batch_ops._compute_rate(batch_app, 5)
+    batch_app.batch._batch_started_at = time.monotonic()
+    elapsed, rate = batch_app.batch._compute_rate(5)
     assert elapsed >= 0.0
     assert rate == 0.0 or rate > 0.0  # 取决于 timer 精度;_compute_rate 路径不抛即可
     # 更严格:首次调用 `_start_batch_timer()` 后立即 `_compute_rate` 应 rate=0
-    _batch_ops._start_batch_timer(batch_app)
-    elapsed2, rate2 = _batch_ops._compute_rate(batch_app, 5)
+    batch_app.batch._start_batch_timer()
+    elapsed2, rate2 = batch_app.batch._compute_rate(5)
     assert rate2 == 0.0  # elapsed < 1ms

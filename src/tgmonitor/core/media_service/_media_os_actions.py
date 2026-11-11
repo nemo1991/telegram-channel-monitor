@@ -7,15 +7,9 @@
 - `_stage_s3_to_tmp` — S3 bytes 写到 tmp 文件
 - `retry_media` — 重下 FAILED media(走 downloader)
 
-**facade monkeypatch 契约(plan-batch3 + plan-batch6 关键约束)**:
-- `AppService.__init__` 末尾用 `app._media = _media_actions` 形式
-  monkeypatch 绑定 `retry_media` / `reveal_in_folder`(plan-batch3 拆的
-  `_media_actions.py:53-151` 走 `await app._media.<method>(...)`)
-- `_spawn_reveal` 是 `@staticmethod` — 由 `MediaService.__init_subclass__`
-  末尾的 `MediaService._spawn_reveal = staticmethod(_media_os_actions._spawn_reveal)`
-  显式绑定到 facade,保证 `await app._media.reveal_in_folder(...)` 内部
-  调 `self._spawn_reveal(...)` 走 facade
-- 拆分后,公共 method 签名 1:1 保留,`app._media.X` 调用面零变化
+2026-11-11 v2.0.0 Phase 3:本 module 是 retry / reveal 的唯一实现
+(AppService 侧重复实现已删)。`_spawn_reveal` 是 module-level plain
+function,测试 monkeypatch 本 module 属性即可拦截 OS 子进程唤起。
 
 Qt callback 引用走 `_bridge._module_open_url_cb` /
 `_bridge._module_tmp_root_cb`(同 1.1 + 1.2 模式),避免
@@ -216,10 +210,7 @@ def _spawn_reveal(abs_path, platform: str) -> None:
     - Linux / 其它:`xdg-open <abs_path.parent>`(打开父目录,Linux 无
       标准「高亮」API,降级开父目录)
 
-    2026-10-15 plan-batch6-1.4:facade 末尾
-    `MediaService._spawn_reveal = staticmethod(_media_os_actions._spawn_reveal)`
-    显式绑定 — 保持 `app._media.reveal_in_folder(...)` 内部调
-    `self._spawn_reveal(...)` 走 facade。
+    测试 monkeypatch 本 module 的 `_spawn_reveal` 属性即可拦截。
     """
     import subprocess
 
@@ -348,11 +339,6 @@ async def retry_media(
 
     非 FAILED 状态直接返回(不报错,UI 通常 disable Retry 按钮,这里兜底)。
     成功后回写 storage + 发 MediaDownloaded(LIVE view 据此刷新状态)。
-
-    2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
-    `app._media = _media_actions` monkeypatch 契约保留(plan-batch3 已落
-    `_media_actions.py:53-151` 调 `await app._media.retry_media(...)`,
-    facade 签名 1:1 不变)。
     """
     msg = await ms._storage.get_message(channel_id, telegram_msg_id)
     if msg is None or media_idx >= len(msg.media):

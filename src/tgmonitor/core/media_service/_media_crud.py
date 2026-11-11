@@ -11,7 +11,7 @@
 - mutable state 全部走 `ms._bus` / `ms._storage` / `ms._objects` 引用,
   不在本 module 内持副本(避免 stale ref)
 - facade `MediaService.<method>` 1 行 thin delegate `await _crud.<method>(self, ...)`
-- 公共 method 签名 1:1 保留(向后兼容,UI / `_media_actions.py` 调用面零变化)
+- 公共 method 签名 1:1 保留(UI / `app.media.X` 调用面零变化)
 """
 
 from __future__ import annotations

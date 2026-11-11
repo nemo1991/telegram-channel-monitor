@@ -611,23 +611,22 @@ async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
     assert subscribed == []
 
 
-async def test_subscription_service_list_messages_uses_storage_truth() -> None:
-    """DRIFT #C 配套:`SubscriptionService.list_messages` 在新 storage 就绪后,
+async def test_message_service_list_messages_uses_storage_truth() -> None:
+    """DRIFT #C 配套:`MessageService.list_messages` 在新 storage 就绪后,
     默认走 `list_subscribed_channels()`(真理 = storage)。
 
     不应残留 in-memory cache 行为:storage 真理「空」→ 返回空消息列表,
     而不是 in-memory 残留的「已订频道」 → 跨 session 拉到陈旧数据。
     """
     from tgmonitor.core.dto import ChannelDTO
-    from tgmonitor.core.subscription_service import SubscriptionService
+    from tgmonitor.core.message_service import MessageService
 
     bus = EventBus()
     storage = InMemoryRepository()
     await storage.connect()
     await storage.init_schema()
     # 空 storage:无任何 channel → list_subscribed_channels() = []
-    client = FakeTelegramClient()
-    svc = SubscriptionService(bus, client, storage)
+    svc = MessageService(bus, storage)
 
     msgs = await svc.list_messages(channel_ids=None)
     assert msgs == []

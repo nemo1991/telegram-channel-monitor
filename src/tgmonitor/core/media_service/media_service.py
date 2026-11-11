@@ -1,20 +1,22 @@
-"""MediaService — Media Manager 域 façade(从 `AppService` 拆出)。
+"""MediaService — Media Manager 域服务。
 
-2026-08-29 v1.5.0 PR #A2:把 AppService 中所有「media 操作」抽到这里,
-AppService 退化为组合根 + 转发。包含:
+2026-08-29 v1.5.0 PR #A2 从 AppService 拆出;2026-11-11 v2.0.0 Phase 3
+起为媒体域唯一实现(AppService 侧的 retry/reveal 重复实现与
+`_spawn_reveal` monkeypatch 兼容层已删)。包含:
   - 媒体列表 / 计数:`list_media`
   - 媒体 CRUD:`delete_media` / `delete_by_channel` / `preview_delete_by_channel` /
     `retry_media`
-  - 媒体打开:`load_thumbnail_bytes` / `open_media_with_result` / `open_media` /
-    `reveal_in_folder` / `copy_media_path` / `_stage_s3_to_tmp`
+  - 媒体打开:`load_thumbnail_bytes` / `load_media_bytes` /
+    `open_media_with_result` / `open_media` / `reveal_in_folder` /
+    `copy_media_path` / `_stage_s3_to_tmp`
   - 存储健康:`reconcile_orphans`
-  - 内部 helper:`_spawn_reveal`(同步 spawn 子进程唤起 OS 文件管理器)
 
 设计:
   - 持 `bus + storage + objects + downloader`;订阅 / 鉴权 / 同步归其它 service
-  - `_stage_s3_to_tmp` 复用,`open_media_with_result` / `reveal_in_folder` /
-    `copy_media_path` 都按 `isinstance(self._objects, ...)` 分支(本地 / S3)
-  - 公共方法签名 1:1 转发,UI 现有调用面不动
+  - `open_media_with_result` / `reveal_in_folder` / `copy_media_path` 按
+    `isinstance(self._objects, ...)` 分支(本地 / S3)
+  - 实现按职责下沉 `_media_crud` / `_media_bytes` / `_media_os_actions` /
+    `_media_reconcile` 子 module,本类 thin delegate
 """
 
 from __future__ import annotations
@@ -60,8 +62,8 @@ from . import _media_crud as _crud
 # 2026-10-15 plan-batch6-1.4:`open_media` / `open_media_with_result` /
 # `reveal_in_folder` / `_spawn_reveal` / `copy_media_path` /
 # `_stage_s3_to_tmp` / `retry_media` 7 个 method 抽到 `_media_os_actions`
-# 子 module;`_spawn_reveal` 走 facade 末尾的 staticmethod 绑定保持
-# `app._media.X` monkeypatch 契约(plan-batch3 已落地)。
+# 子 module。`_spawn_reveal` 是该 module 的 plain function,测试直接
+# monkeypatch `tgmonitor.core.media_service._media_os_actions._spawn_reveal`。
 from . import _media_os_actions as _os_actions
 
 # 2026-10-15 plan-batch6-1.5:`reconcile_orphans` 抽到 `_media_reconcile` 子 module。
@@ -110,7 +112,7 @@ class MediaService:
     # 2026-10-15 plan-batch6-1.2:`list_media` / `delete_media` /
     # `preview_delete_by_channel` / `delete_by_channel` 4 个 method 下沉到
     # `_media_crud` 子 module,facade 1 行 thin delegate。子 module 走
-    # `ms.X` 引用,不再持副本;签名 1:1 保留,UI / `app._media.X` 调用面零变化。
+    # `ms.X` 引用,不再持副本;签名 1:1 保留,UI / `app.media.X` 调用面零变化。
 
     async def list_media(
         self,
@@ -180,7 +182,6 @@ class MediaService:
         """重下 FAILED media — 2026-08-24 D4。
 
         2026-10-15 plan-batch6-1.4:thin delegate → `core.media_service._media_os_actions`。
-        `app._media = _media_actions` monkeypatch 契约保留(plan-batch3)。
         """
         await _os_actions.retry_media(self, channel_id, telegram_msg_id, media_idx)
 
@@ -226,10 +227,8 @@ class MediaService:
 
     # ---------- 打开 / 预览 ----------
     # 2026-10-15 plan-batch6-1.4:`open_media` / `open_media_with_result` /
-    # `reveal_in_folder` / `_spawn_reveal` / `copy_media_path` /
-    # `_stage_s3_to_tmp` / `retry_media` 7 个 method 抽到
-    # `_media_os_actions` 子 module,facade 1 行 thin delegate。
-    # `_spawn_reveal` 是 staticmethod,绑定走 facade 末尾显式赋值。
+    # `reveal_in_folder` / `copy_media_path` / `_stage_s3_to_tmp` /
+    # `retry_media` 抽到 `_media_os_actions` 子 module,facade 1 行 thin delegate。
 
     async def open_media(
         self,
@@ -272,17 +271,6 @@ class MediaService:
         """
         return await _os_actions.reveal_in_folder(self, channel_id, telegram_msg_id, media_idx)
 
-    @staticmethod
-    def _spawn_reveal(abs_path, platform: str) -> None:
-        """2026-08-27 v1.4.0 PR #16:同步 spawn 子进程唤起文件管理器。
-
-        2026-10-15 plan-batch6-1.4:facade 末尾 `MediaService._spawn_reveal =
-        staticmethod(_media_os_actions._spawn_reveal)` 显式绑定到
-        `_media_os_actions._spawn_reveal`,保持 `app._media.reveal_in_folder`
-        内部调 `self._spawn_reveal(...)` 走 facade。
-        """
-        return _os_actions._spawn_reveal(abs_path, platform)
-
     async def copy_media_path(
         self,
         channel_id: int,
@@ -323,15 +311,3 @@ class MediaService:
         2026-10-15 plan-batch6-1.5:thin delegate → `core.media_service._media_reconcile`。
         """
         return await _reconcile.reconcile_orphans(self, dry_run=dry_run)
-
-
-# 2026-10-15 plan-batch6-1.4:facade 末尾显式绑定 `_spawn_reveal` 静态方法
-# 到 `_media_os_actions._spawn_reveal`,保持 `app._media.reveal_in_folder`
-# 内部 `await asyncio.to_thread(self._spawn_reveal, ...)` 走 facade 静态方法
-# 路径(monkeypatch `app._media = _media_actions` 契约 — plan-batch3 已落地)。
-# 直接在 class 体里 `@staticmethod` 定义会绑到 facade 本体,但本 facade
-# thin delegate 走 `return _os_actions._spawn_reveal(abs_path, platform)`
-# 即可,不需要在 class 体内重复定义。`_spawn_reveal` 在 thin delegate 段
-# 用作 classmethod 装饰只是为了保留公开 API(供 `MediaService._spawn_reveal`
-# 静态访问,subclass override 仍能工作)。
-MediaService._spawn_reveal = staticmethod(_os_actions._spawn_reveal)  # type: ignore[method-assign]

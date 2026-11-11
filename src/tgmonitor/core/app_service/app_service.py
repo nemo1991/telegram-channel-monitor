@@ -1,31 +1,32 @@
-"""AppService — UI 唯一入口门面。
+"""AppService — 组合根 + 生命周期协调(不再是 god facade)。
 
-2026-08-29 v1.5.0 PR #A2:从 1090 行单体 facade 拆为 facade + 3 个子 service
-(MediaService / SubscriptionService / AuthService)。本类仅保留:
-  - 组合根职责(构造 / 装配子 service)
-  - bootstrap(401 rotate + client 重建 — 涉及 self.client swap)
-  - start_monitor / stop_monitor(实时流生命周期)
-  - shutdown(顺序敏感 — 关 monitor → client → storage → objects)
-  - reconfigure / _rebuild_storage / _rebuild_objects / validate_backends
-    (热重载 — 涉及 monitor.update_backends + ChannelSyncService 重建)
-  - sync_channels(转 channel_sync)
-  - 跨域状态:self.client / self.channel_sync / self.downloader / self.auth
+2026-11-11 v2.0.0 Phase 3:745 行 god facade 拆为按域服务,本类只保留:
+  - 组合根职责(构造 / 装配域服务)
+  - 生命周期:bootstrap / start_monitor / stop_monitor / pause / resume /
+    shutdown(跨 client / monitor / storage / objects,顺序敏感)
+  - 热重载:reconfigure / validate_backends(涉及全体服务 backend swap)
+  - 后端持有:client / storage / objects / downloader(property setter 传播)
+  - 导出:export / export_media_list(每次新建轻量 ExportService)
 
-转发原则:其它域方法 → 1 行 `await self._media.<x>` 或 `self._sub.<x>`。
-公共方法签名 1:1 保留,UI 现有调用面不动。
+域服务(UI 直接调,不再经本类转发 — 转发行将在 Phase 3-C2 删除):
+  - `auth`        AuthService        登录鉴权
+  - `channels`    ChannelService     订阅 / 退订 / 白名单
+  - `messages`    MessageService     消息查询 / 收藏 / 标签 / 备注 / 单删
+  - `media`       MediaService       媒体列表 / CRUD / 打开 / retry / reconcile
+  - `batch`       BatchService       7 批量 op + 取消(自持 cancel event)
+  - `channel_sync` ChannelSyncService 手动全量同步
 
-UI 只调这个类的方法,接收 DTO,监听 EventBus。
+UI 只调域服务方法,接收 DTO,监听 EventBus。
 core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用。
 
 生命周期:
-    settings = Settings()
-    settings.ensure_dirs()
+    settings = Settings(); settings.ensure_dirs()
     bus = EventBus()
     storage = build_storage(settings); await storage.connect(); await storage.init_schema()
     objects = build_object_store(settings); await objects.connect()
-    client = build_telegram_client(settings)  # 或 FakeTelegramClient()
-    app = AppService(bus, client, storage, objects, settings)
-    # UI 启动时: app.bootstrap() / app.login(...) / app.start_monitor()
+    client = build_telegram_client(settings)
+    app = AppService(bus, client, storage, objects, settings, monitor=monitor)
+    # UI 启动时: app.bootstrap() / app.auth.submit_phone(...) / app.start_monitor()
 
 热重载:调用 `reconfigure(new_settings)` 可切换 storage / objects(无需重启 app);
        TelegramClient / session / 鉴权状态变更需要登出再登入,UI 应引导。
@@ -33,13 +34,14 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tgmonitor.core.auth_service import AuthService
+from tgmonitor.core.batch_service import BatchService
+from tgmonitor.core.channel_service import ChannelService
 from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import (
     ChannelDTO,
@@ -58,28 +60,28 @@ from tgmonitor.core.dto import (
     SyncOptions,
     SyncResult,
 )
-from tgmonitor.core.events import (
-    EventBus,
-    MessageEdited,
-)
+from tgmonitor.core.events import EventBus, MediaReconcileFinished
 from tgmonitor.core.media_service import MediaService
+from tgmonitor.core.message_service import MessageService
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
-from tgmonitor.core.subscription_service import SubscriptionService
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
 
 if TYPE_CHECKING:
+    from tgmonitor.core.monitor.downloader import MediaDownloader
     from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)
 
 
 class AppService:
-    """UI-facing facade.所有方法都是 async,接受/返回 DTO。
+    """组合根 + 生命周期协调。域操作走 `auth/channels/messages/media/batch`。
 
-    大多数方法 1 行转发给子 service;鉴权转发给 AuthService;bootstrap /
-    start_monitor / stop_monitor / shutdown / reconfigure / validate_backends
-    留在此处(跨子域,跨 client / monitor / storage / objects 生命周期)。
+    本类公开方法分三类:
+    1. 生命周期(bootstrap / start_monitor / stop_monitor / pause_monitor /
+       resume_monitor / shutdown)— 跨子系统协调,留组合根
+    2. 热重载(reconfigure / validate_backends)— 全体服务 backend swap
+    3. 域转发(历史调用面,Phase 3-C2 删除)— UI 应直接调域服务
     """
 
     def __init__(
@@ -90,111 +92,64 @@ class AppService:
         objects: ObjectStore,
         settings: Settings,
         monitor: MonitorService | None = None,
-        # 2026-09-04 v1.6.6:pause 持久化要写 .env — 需要 env_path。
         env_path: Path | None = None,
     ) -> None:
-        """5 个子系统引用 + 内部状态。`channel_sync` 延迟 import 避免循环。
+        """装配域服务。`monitor` 由组合根(app.py / runtime.py)注入。
 
-        构造 3 个子 service:
-        - AuthService(bus + client + settings)— 2026-08-03 微切抽出
-        - SubscriptionService(bus + client + storage)— 2026-08-29 PR #A2 拆出
-        - MediaService(bus + storage + objects + downloader)— 2026-08-29 PR #A2 拆出
-
-        `monitor` 由组合根(app.py)注入(2026-08-18 修热重载):reconfigure
-        要把新 storage/objects/settings 同步给 monitor,否则热重载切 PG 后
-        monitor 仍写旧库,重启才生效。
-
-        2026-09-04 v1.6.6 新增 `env_path`:pause/resume_monitor() 切换时通过
-        `settings_store.update_env_paused(env_path, ...)` 写 .env 单 key。
-        缺失时(env_path=None,如纯测试 AppService)仅 in-memory toggle,跳过 .env
-        写 — 不抛错,与历史行为兼容。
+        `env_path`:pause/resume 持久化写 .env 用;缺失时仅 in-memory toggle。
         """
         self.bus = bus
         self.client = client
-        # 2026-08-29 PR #A2:self.storage / self.objects 是 property,
-        # set 时同步给 _sub / _media,避免测试 / reconfigure / 任何路径 swap
-        # backend 后子 service 仍持旧引用,致 list_messages / reconcile /
-        # open_media_with_result 等仍按旧 backend 分支走。
-        # 显式类型注解让 mypy 知道 _storage / _objects 不可为 None —
-        # 历史 facade 是非 None,保留向后兼容。`objects` property 返回
-        # `| None` 是兼容旧 UI 路径(实际永远非 None)。
         self._storage: StorageRepository = storage
         self._objects: ObjectStore = objects
         self.settings = settings
-        self.monitor = monitor
-        # 内部状态
+        self._monitor: MonitorService | None = monitor
+        # 内部状态(生命周期)
         self._update_streams: list[UpdateStream] = []
         self._running = False
-        # 2026-09-03 v1.6.1:暂停监听状态 — pause 期间 _running 仍 True
-        # (UI 仍能查已订频道历史 / 已下消息),但 _is_paused 标记 TDLib 已断开
-        # + download_queue 已 cancel。resume 走 client.start() + monitor.start()
-        # 2026-09-04 v1.6.6:从 settings.paused 初始化 — app.py 从 .env 读
-        # `TG_PAUSED=true|false`,构造时直接落入 _is_paused,避免重新跑
-        # bootstrap() 时 client.start 干扰(已 paused 不该再连 TDLib)。
         self._is_paused = settings.paused
-        # 2026-09-04 v1.6.6:pause 持久化 .env 写路径 — 由 app.py:_bootstrap
-        # 透传(env_path 由 MainWindow 早已接住,共用同一文件)。
         self.env_path: Path | None = env_path
-        # 重入锁:reconfigure 期间阻止 save_message
         self._reconfiguring = False
-        # 2026-09-10 v1.7.3:批量操作取消 Event — 批量 facade 循环每 item
-        # 前检查 `self._cancel_event.is_set()` → set 时 break;UI 通过
-        # `cancel_current_batch()` 触发 set。不调 task.cancel:批量 facade 已在
-        # 主 task loop 里 await,set Event 即可让循环跳出;task.cancel 会触发
-        # CancelledError 被 run_coro 吞,无法发 BatchDone(error='cancelled')。
-        self._cancel_event: asyncio.Event = asyncio.Event()
 
-        # 2026-09-11 v1.7.4:批量 ETA 计算 — 6 个 facade 开头记 `time.monotonic()`,
-        # 每次 BatchProgress emit 前调 `_compute_rate` 算 elapsed / rate_per_second。
-        self._batch_started_at: float = 0.0
-
-        # 2026-08-24:与 monitor 共享同一个 MediaDownloader 实例(FULL 策略下
-        # sync 也会复用做媒体下载);非 FULL 策略 / 未接线时传 None,sync 跳过下载。
-        self.downloader = monitor.downloader if (monitor is not None) else None
-
-        # 子 service(2026-08-29 PR #A2):Auth / Subscription / Media。
-        # 构造时必建,生命周期 = AppService 本身;shutdown 时不动子 service
-        # 引用,只调它们的 aclose / 关订阅标志。facade 方法直调不需 None 检查。
-        # 2026-08-30 PR #A2 hotfix:类型从 `| None` 改为非 None — 上一版注解
-        # 让 mypy 在所有 await self._sub.<m>() 处报 union-attr(16 处错)。
-        self.auth = AuthService(bus, client, settings)
-        self._sub: SubscriptionService = SubscriptionService(bus, client, storage)
-        self._media: MediaService = MediaService(
-            bus,
-            storage,
-            objects,
-            downloader=self.downloader,
+        # 与 monitor 共享同一个 MediaDownloader(FULL 策略下 sync 复用);
+        # 非 FULL 策略 / 未接线时 None,sync 跳过下载。
+        self._downloader: MediaDownloader | None = (
+            monitor.downloader if (monitor is not None) else None
         )
 
-        # 全量同步服务(用户多选触发)— 延迟初始化避免循环 import
+        # 域服务 — 构造时必建,生命周期 = AppService 本身。
+        self.auth = AuthService(bus, client, settings)
+        self.channels = ChannelService(bus, client, storage, monitor)
+        self.messages = MessageService(bus, storage, monitor)
+        self.media = MediaService(bus, storage, objects, downloader=self._downloader)
+        # BatchService 自持 cancel event + 计时;paused 状态实时读(不持副本)。
+        self.batch = BatchService(bus, client, monitor, is_paused=lambda: self._is_paused)
+
+        # 全量同步服务(用户多选触发)— 延迟 import 避免循环
         from tgmonitor.core.channel_sync import ChannelSyncService
 
         self.channel_sync = ChannelSyncService(
             bus,
             client,
             storage,
-            downloader=self.downloader,
+            downloader=self._downloader,
             objects=objects,
             media_policy=settings.media_policy,
         )
 
-        # 2026-10-12 plan-batch3 step 2.2:`_spawn_reveal` 静态方法从本类
-        # 抽至 `_media_actions` 模块顶层。`reveal_in_folder` 走
-        # `app._spawn_reveal` 间接取,facade `__init__` 末尾默认绑定到
-        # `_media_actions._spawn_reveal`,测试
-        # `app._spawn_reveal = staticmethod(fake)` monkeypatch 模式
-        # 继续生效。
-        from tgmonitor.core.app_service import _media_actions
+    # ---------- 后端持有(property setter 传播给域服务)----------
 
-        self._spawn_reveal = staticmethod(_media_actions._spawn_reveal)
+    @property
+    def monitor(self) -> MonitorService | None:
+        """当前 MonitorService 引用(公开,UI 直接读)。"""
+        return self._monitor
 
-    # ---------- 鉴权(转发 AuthService) ----------
+    @monitor.setter
+    def monitor(self, value: MonitorService | None) -> None:
+        """swap 时同步给 channels / messages / batch — 委托 `_backend_sync.set_monitor`。"""
+        from tgmonitor.core.app_service._backend_sync import set_monitor
 
-    async def get_login_state(self) -> str:
-        """当前登录状态机值(继承自 TelegramClient.state)。"""
-        return self.client.state
-
-    # ---------- objects / storage 同步 property ----------
+        set_monitor(self, value)
 
     @property
     def objects(self) -> ObjectStore:
@@ -203,12 +158,7 @@ class AppService:
 
     @objects.setter
     def objects(self, value: ObjectStore | None) -> None:
-        """swap 时同步给 MediaService — 委托 `_backend_sync.set_objects`。
-
-        触发场景:
-        - 测试 `app.objects = fake_s3`
-        - reconfigure / _rebuild_objects 末尾 `self.objects = new_objects`
-        """
+        """swap 时同步给 MediaService — 委托 `_backend_sync.set_objects`。"""
         from tgmonitor.core.app_service._backend_sync import set_objects
 
         set_objects(self, value)
@@ -220,23 +170,37 @@ class AppService:
 
     @storage.setter
     def storage(self, value: StorageRepository) -> None:
-        """swap 时同步给 SubscriptionService + MediaService — 委托 `_backend_sync.set_storage`。"""
+        """swap 时同步给 channels / messages / media — 委托 `_backend_sync.set_storage`。"""
         from tgmonitor.core.app_service._backend_sync import set_storage
 
         set_storage(self, value)
 
-    async def bootstrap(self) -> tuple[str, str | None]:
-        """应用启动调一次:session 有效直接 ready,无效走 login — 详见 `_lifecycle.bootstrap`。
+    @property
+    def downloader(self) -> MediaDownloader | None:
+        """当前 MediaDownloader 引用(与 monitor 共享)。"""
+        return self._downloader
 
-        401 encryption key 错误 → rotate + rebuild client + 再 start;
-        client swap 影响 `AppService.client`,AuthService 不该碰。
-        """
+    @downloader.setter
+    def downloader(self, value: MediaDownloader | None) -> None:
+        """swap 时同步给 media / channel_sync — 委托 `_backend_sync.set_downloader`。"""
+        from tgmonitor.core.app_service._backend_sync import set_downloader
+
+        set_downloader(self, value)
+
+    # ---------- 鉴权(转发 AuthService)----------
+
+    async def get_login_state(self) -> str:
+        """当前登录状态机值(继承自 TelegramClient.state)。"""
+        return self.client.state
+
+    async def bootstrap(self) -> tuple[str, str | None]:
+        """应用启动调一次:session 有效直接 ready,无效走 login — 详见 `_lifecycle.bootstrap`。"""
         from tgmonitor.core.app_service._lifecycle import bootstrap as _bootstrap
 
         return await _bootstrap(self)
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """委托给 `AuthService.submit_phone`(2026-08-03 微切抽出,统一失败路径)。"""
+        """委托给 `AuthService.submit_phone`。"""
         return await self.auth.submit_phone(phone)
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
@@ -248,55 +212,44 @@ class AppService:
         return await self.auth.submit_password(password)
 
     async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_email`。"""
+        """委托给 `AuthService.submit_email`。"""
         return await self.auth.submit_email(email)
 
     async def submit_email_code(self, code: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_email_code`。"""
+        """委托给 `AuthService.submit_email_code`。"""
         return await self.auth.submit_email_code(code)
 
     async def submit_registration(
         self, first_name: str, last_name: str = ""
     ) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:委托给 `AuthService.submit_registration`。"""
+        """委托给 `AuthService.submit_registration`。"""
         return await self.auth.submit_registration(first_name, last_name)
 
-    # ---------- 频道(转发 SubscriptionService) ----------
+    # ---------- 频道(转发 ChannelService)----------
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
         """已加入 Telegram 频道(best-effort UX,不走 storage)。"""
-        return await self._sub.list_joined_channels()
+        return await self.channels.list_joined_channels()
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        """已订阅频道 — 转发 SubscriptionService(单一真理走 storage)。"""
-        return await self._sub.list_subscribed_channels()
+        """已订阅频道 — 单一真理走 storage。"""
+        return await self.channels.list_subscribed_channels()
 
     async def subscribe_channel(self, channel: ChannelDTO) -> None:
-        """转发 SubscriptionService.subscribe_channel。"""
-        await self._sub.subscribe_channel(channel)
+        """转发 ChannelService.subscribe_channel。"""
+        await self.channels.subscribe_channel(channel)
 
     async def unsubscribe_channel(self, channel_id: int) -> None:
-        """转发 SubscriptionService.unsubscribe_channel。"""
-        await self._sub.unsubscribe_channel(channel_id)
+        """转发 ChannelService.unsubscribe_channel。"""
+        await self.channels.unsubscribe_channel(channel_id)
 
-    # 2026-10-15 plan-batch6-2 副产物:VM 之前绕过 facade 直调
-    # `self.monitor.add_to_whitelist(cid)`(L325) / `self.monitor.remove_from_whitelist(cid)`
-    # (L333) — 违反「UI 只走 AppService facade + DTO」分层。补 2 个 sync 转发
-    # 到 MonitorService 内部 WhitelistMixin(白名单热路径 set 操作,无 await),
-    # 同步签名跟原 WhitelistMixin.add_to_whitelist 一致,VM 改走 `self.app`。
     def add_to_whitelist(self, channel_id: int) -> None:
-        """转发 MonitorService(WhitelistMixin).add_to_whitelist — sync。
-
-        白名单操作在 `bootstrap()` 完成后调,`self.monitor` 必非 None;
-        加 assert 让 mypy 满意 + 启动期退化路径显式报错。
-        """
-        assert self.monitor is not None
-        self.monitor.add_to_whitelist(channel_id)
+        """转发 ChannelService.add_to_whitelist — sync。"""
+        self.channels.add_to_whitelist(channel_id)
 
     def remove_from_whitelist(self, channel_id: int) -> None:
-        """转发 MonitorService(WhitelistMixin).remove_from_whitelist — sync。"""
-        assert self.monitor is not None
-        self.monitor.remove_from_whitelist(channel_id)
+        """转发 ChannelService.remove_from_whitelist — sync。"""
+        self.channels.remove_from_whitelist(channel_id)
 
     async def list_messages(
         self,
@@ -310,14 +263,8 @@ class AppService:
         tag_only: bool = False,
         pinned_only: bool = False,
     ) -> list[MessageDTO]:
-        """转发 SubscriptionService.list_messages。
-
-        - 2026-09-01 v1.5.1 PR #B2 加 `search`
-        - 2026-09-03 v1.5.3 PR #D2 加 `include_unsubscribed`(默认 False 与现状一致)
-        - 2026-09-14 v1.7.5 PR #8 加 `favorite_only` / `tag_only` / `pinned_only`
-          (SearchBar ★/🏷/📌 3 toggle 控制,AND 语义)
-        """
-        return await self._sub.list_messages(
+        """转发 MessageService.list_messages。"""
+        return await self.messages.list_messages(
             channel_ids,
             date_from,
             date_to,
@@ -329,7 +276,7 @@ class AppService:
             pinned_only=pinned_only,
         )
 
-    # ---------- 同步(直接转 channel_sync) ----------
+    # ---------- 同步(直接转 channel_sync)----------
 
     async def sync_channels(
         self,
@@ -340,10 +287,7 @@ class AppService:
     ) -> SyncResult:
         """全量同步 — UI 进度对话框经此调起。
 
-        `options` 用 dataclass,UI 端构造(delay_ms 等覆盖 Settings 默认值)。
-
-        `media_policy`(2026-09-27 接入):非 None 时本轮覆盖 `channel_sync.media_policy`。
-        主要给 CLI `--media-policy` 用,GUI 端不传,仍走 service 默认。
+        `media_policy` 非 None 时本轮覆盖 `channel_sync.media_policy`(CLI 用)。
         """
         return await self.channel_sync.sync_channels(
             channel_ids, options, media_policy=media_policy
@@ -353,7 +297,7 @@ class AppService:
 
     def subscribe_updates(self) -> UpdateStream:
         """订阅实时更新流(转给 UI;关 app 时 stop_monitor 统一 aclose)。"""
-        s = self._sub.subscribe_updates()
+        s = self.client.subscribe_updates()
         self._update_streams.append(s)
         return s
 
@@ -369,60 +313,67 @@ class AppService:
 
         await _stop_monitor(self)
 
-    # ---------- 暂停 / 恢复(2026-09-03 v1.6.1)----------
+    # ---------- 暂停 / 恢复 ----------
 
     @property
     def is_paused(self) -> bool:
         """当前是否处于暂停监听状态。"""
         return self._is_paused
 
-    # ---------- 批量取消 + 7 batch op(2026-09-08~14 v1.7.0~5)----------
-    # 2026-10-12 plan-batch3 step 2.3:抽 `_batch_ops.py` 模块,本节 method
-    # 全部变 1 行委托 — 实现细节在 `_batch_ops.py`,UI 调用面零变化。
-    # 3 ETA helper(`_start_batch_timer` / `_compute_rate` / `_publish_batch_progress`)
-    # 内部 helper 不再 facade 暴露 — 被 7 batch op 在 `_batch_ops.py` 内部直接调。
-
-    def cancel_current_batch(self) -> None:
-        """2026-09-10 v1.7.3:取消当前批量操作 — 详见 `_batch_ops.cancel_current_batch`。
-
-        set `_cancel_event`,7 batch op 下一个 item 检查后 break +
-        发 BatchDone(error='cancelled')。
-        """
-        from tgmonitor.core.app_service._batch_ops import cancel_current_batch as _cancel
-
-        _cancel(self)
-
     async def pause_monitor(self, source: str = "tray") -> None:
-        """2026-09-03 v1.6.1:暂停监听 — 详见 `_lifecycle.pause_monitor`。
-
-        流程: monitor.stop() → client.stop() → _is_paused=True → .env 持久化 → MonitoringPaused 事件。
-        幂等:已 paused 时 no-op。
-        """
+        """暂停监听 — 详见 `_lifecycle.pause_monitor`。幂等。"""
         from tgmonitor.core.app_service._lifecycle import pause_monitor as _pause_monitor
 
         await _pause_monitor(self, source=source)
 
     async def resume_monitor(self, source: str = "tray") -> None:
-        """2026-09-03 v1.6.1:恢复监听 — 详见 `_lifecycle.resume_monitor`。
-
-        流程: client.start() → monitor.start() → _is_paused=False → .env 持久化 → MonitoringResumed 事件。
-        幂等:未 paused 时 no-op。client.start 失败保留 paused 状态。
-        """
+        """恢复监听 — 详见 `_lifecycle.resume_monitor`。幂等。"""
         from tgmonitor.core.app_service._lifecycle import resume_monitor as _resume_monitor
 
         await _resume_monitor(self, source=source)
 
-    # ---------- 导出(由 ExportService 提供实现)— 每次新建轻量 svc ----------
+    # ---------- 批量(转发 BatchService)----------
+
+    def cancel_current_batch(self) -> None:
+        """取消当前批量操作 — 转发 BatchService(set cancel event)。"""
+        self.batch.cancel_current_batch()
+
+    async def delete_messages_batch(self, items: list[tuple[int, int]]) -> int:
+        """批量删 N 条消息 — 转发 BatchService。"""
+        return await self.batch.delete_messages_batch(items)
+
+    async def mark_messages_read(self, items: list[tuple[int, int]]) -> int:
+        """批量标已读 — 转发 BatchService。"""
+        return await self.batch.mark_messages_read(items)
+
+    async def forward_messages(self, items: list[tuple[int, int]], to_chat_id: int) -> int:
+        """批量转发 — 转发 BatchService。"""
+        return await self.batch.forward_messages(items, to_chat_id)
+
+    async def pin_messages(self, items: list[tuple[int, int]]) -> int:
+        """批量钉选 — 转发 BatchService。"""
+        return await self.batch.pin_messages(items)
+
+    async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
+        """批量取消钉选 — 转发 BatchService。"""
+        return await self.batch.unpin_messages(items)
+
+    async def add_reaction(
+        self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
+    ) -> int:
+        """批量 emoji 回应 — 转发 BatchService。"""
+        return await self.batch.add_reaction(items, emoji, is_big=is_big)
+
+    async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
+        """批量取消 emoji 回应 — 转发 BatchService。"""
+        return await self.batch.remove_reaction(items, emoji)
+
+    # ---------- 导出(每次新建轻量 ExportService)----------
 
     async def export(self, request: ExportRequest) -> AsyncIterator[None]:
         """yield 进度心跳(让 UI 不阻塞),正常结束或抛错。"""
         from tgmonitor.core.export.service import ExportService
 
-        # 2026-08-30 PR #A2 hotfix:self.storage / self.objects 类型是
-        # `| None`(property 兼容旧 UI),但 ExportService 构造函数要求
-        # 非 None — UI 启动后到 export 调用期间 facade 必持有真 backend,
-        # 此处用 assert 锁死契约。
-        assert self.storage is not None and self.objects is not None
         svc = ExportService(self.storage, self.objects, self.bus)
         async for _ in svc.run(request):
             yield
@@ -431,23 +382,17 @@ class AppService:
         self,
         request: MediaExportRequest,
     ) -> AsyncIterator[None]:
-        """Media Manager 当前视图(per-media 行)导出 — 2026-08-25 v1.3.0 PR #7。
+        """Media Manager 当前视图(per-media 行)导出。
 
-        `MediaExportRequest` 与 `ExportRequest` 是完全独立的 dataclass,
-        字段语义对应 `storage.list_media`(filter + sort + offset);走
-        ExportService 内部 isinstance 调度。UI 端 fire-and-forget 即可,
         完成 / 失败走 `ExportDone` 事件(`vm.export_done` 已绑)。
         """
         from tgmonitor.core.export.service import ExportService
 
-        assert self.storage is not None and self.objects is not None
         svc = ExportService(self.storage, self.objects, self.bus)
         async for _ in svc.run(request):
             yield
 
-    # ---------- Media Manager(转发 MediaService)— 2026-08-29 PR #A2 拆出 ----
-    # 2026-10-12 plan-batch3 step 2.2:抽 `_media_actions.py` 模块,本节 method
-    # 全部变 1 行委托 — 实现细节在 `_media_actions.py`,UI 调用面零变化。
+    # ---------- Media Manager(转发 MediaService)----------
 
     async def list_media(
         self,
@@ -461,11 +406,8 @@ class AppService:
         sort: SortKey = SortKey.DATE,
         sort_dir: SortDir = SortDir.DESC,
     ) -> tuple[list[tuple[MessageDTO, int, MediaDTO]], int]:
-        """转发 MediaService.list_media — 详见 `_media_actions.list_media`。"""
-        from tgmonitor.core.app_service._media_actions import list_media as _list_media
-
-        return await _list_media(
-            self,
+        """转发 MediaService.list_media。"""
+        return await self.media.list_media(
             channel_id=channel_id,
             status=status,
             media_type=media_type,
@@ -482,124 +424,23 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """转发 MediaService.delete_media — 详见 `_media_actions.delete_media`。"""
-        from tgmonitor.core.app_service._media_actions import delete_media as _delete_media
-
-        await _delete_media(self, channel_id, telegram_msg_id, media_idx)
+        """转发 MediaService.delete_media。"""
+        await self.media.delete_media(channel_id, telegram_msg_id, media_idx)
 
     async def preview_delete_by_channel(
         self,
         channel_id: int,
     ) -> DeleteChannelPreview:
-        """转发 MediaService.preview_delete_by_channel — 详见 `_media_actions.preview_delete_by_channel`。"""
-        from tgmonitor.core.app_service._media_actions import (
-            preview_delete_by_channel as _preview_delete_by_channel,
-        )
-
-        return await _preview_delete_by_channel(self, channel_id)
+        """转发 MediaService.preview_delete_by_channel。"""
+        return await self.media.preview_delete_by_channel(channel_id)
 
     async def delete_by_channel(self, channel_id: int) -> int:
-        """转发 MediaService.delete_by_channel — 详见 `_media_actions.delete_by_channel`。"""
-        from tgmonitor.core.app_service._media_actions import (
-            delete_by_channel as _delete_by_channel,
-        )
-
-        return await _delete_by_channel(self, channel_id)
+        """转发 MediaService.delete_by_channel。"""
+        return await self.media.delete_by_channel(channel_id)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """2026-09-08 v1.7.0:单条消息删除 — 详见 `_media_actions.delete_message`。"""
-        from tgmonitor.core.app_service._media_actions import delete_message as _delete_message
-
-        await _delete_message(self, channel_id, telegram_msg_id)
-
-    async def delete_messages_batch(self, items: list[tuple[int, int]]) -> int:
-        """2026-09-08 v1.7.0:批量删 N 条消息 — 详见 `_batch_ops.delete_messages_batch`。"""
-        from tgmonitor.core.app_service._batch_ops import (
-            delete_messages_batch as _delete_messages_batch,
-        )
-
-        return await _delete_messages_batch(self, items)
-
-    async def mark_messages_read(self, items: list[tuple[int, int]]) -> int:
-        """2026-09-08 v1.7.0:批量标已读 — 详见 `_batch_ops.mark_messages_read`。"""
-        from tgmonitor.core.app_service._batch_ops import (
-            mark_messages_read as _mark_messages_read,
-        )
-
-        return await _mark_messages_read(self, items)
-
-    async def forward_messages(self, items: list[tuple[int, int]], to_chat_id: int) -> int:
-        """2026-09-09 v1.7.2:批量转发 — 详见 `_batch_ops.forward_messages`。"""
-        from tgmonitor.core.app_service._batch_ops import forward_messages as _forward_messages
-
-        return await _forward_messages(self, items, to_chat_id)
-
-    async def pin_messages(self, items: list[tuple[int, int]]) -> int:
-        """2026-09-09 v1.7.2:批量钉选 — 详见 `_batch_ops.pin_messages`。"""
-        from tgmonitor.core.app_service._batch_ops import pin_messages as _pin_messages
-
-        return await _pin_messages(self, items)
-
-    async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
-        """2026-09-09 v1.7.2:批量取消钉选 — 详见 `_batch_ops.unpin_messages`。"""
-        from tgmonitor.core.app_service._batch_ops import unpin_messages as _unpin_messages
-
-        return await _unpin_messages(self, items)
-
-    async def add_reaction(
-        self, items: list[tuple[int, int]], emoji: str, *, is_big: bool = False
-    ) -> int:
-        """2026-09-09 v1.7.2:批量 emoji 回应 — 详见 `_batch_ops.add_reaction`。"""
-        from tgmonitor.core.app_service._batch_ops import add_reaction as _add_reaction
-
-        return await _add_reaction(self, items, emoji, is_big=is_big)
-
-    async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
-        """2026-09-09 v1.7.2:批量取消 emoji 回应 — 详见 `_batch_ops.remove_reaction`。"""
-        from tgmonitor.core.app_service._batch_ops import remove_reaction as _remove_reaction
-
-        return await _remove_reaction(self, items, emoji)
-
-    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
-        """2026-09-09 v1.7.2:单条消息设收藏 — 写本地 storage + publish MessageEdited。
-
-        `MessageEdited` 触发 VM 走 row refresh,UI LIVE 行首添加/移除 ★ icon。
-        """
-        await self._storage.set_favorite(channel_id, telegram_msg_id, value)
-        try:
-            msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        except Exception:  # noqa: BLE001
-            msg = None
-        if msg is not None:
-            await self.bus.publish(MessageEdited(message=msg))
-
-    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
-        """2026-09-09 v1.7.2:单条消息设标签 — 写本地 storage + publish MessageEdited。"""
-        await self._storage.set_tags(channel_id, telegram_msg_id, tags)
-        try:
-            msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        except Exception:  # noqa: BLE001
-            msg = None
-        if msg is not None:
-            await self.bus.publish(MessageEdited(message=msg))
-
-    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
-        """2026-09-09 v1.7.2:单条消息设备注 — 写本地 storage + publish MessageEdited。"""
-        await self._storage.set_notes(channel_id, telegram_msg_id, notes)
-        try:
-            msg = await self._storage.get_message(channel_id, telegram_msg_id)
-        except Exception:  # noqa: BLE001
-            msg = None
-        if msg is not None:
-            await self.bus.publish(MessageEdited(message=msg))
-
-    async def list_favorites(self) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:列出所有收藏消息 — 走 storage.list_favorites。"""
-        return await self._storage.list_favorites()
-
-    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
-        """2026-09-09 v1.7.2:按标签查消息 — 走 storage.list_by_tag。"""
-        return await self._storage.list_by_tag(tag)
+        """单条消息删除 — 转发 MessageService(走 monitor 清理路径)。"""
+        await self.messages.delete_message(channel_id, telegram_msg_id)
 
     async def retry_media(
         self,
@@ -607,18 +448,8 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """重下 FAILED media — 详见 `_media_actions.retry_media`。
-
-        2026-08-29 v1.5.0 PR #A2:**留 facade 实现**(原搬至 MediaService 后
-        测试 `app.downloader = stub` 不生效 — 子 service 仍持旧 downloader)。
-        现在 facade 自己持 `self.downloader` 属性,monkeypatch 后立即生效。
-
-        2026-10-12 plan-batch3 step 2.2:实现下放至 `_media_actions.retry_media`,
-        facade 端薄委托。
-        """
-        from tgmonitor.core.app_service._media_actions import retry_media as _retry_media
-
-        await _retry_media(self, channel_id, telegram_msg_id, media_idx)
+        """重下 FAILED media — 转发 MediaService(downloader 经 setter 传播)。"""
+        await self.media.retry_media(channel_id, telegram_msg_id, media_idx)
 
     async def load_thumbnail_bytes(
         self,
@@ -628,13 +459,8 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> bytes | None:
-        """2026-09-29:转发 MediaService.load_thumbnail_bytes — 详见 `_media_actions.load_thumbnail_bytes`。"""
-        from tgmonitor.core.app_service._media_actions import (
-            load_thumbnail_bytes as _load_thumbnail_bytes,
-        )
-
-        return await _load_thumbnail_bytes(
-            self,
+        """转发 MediaService.load_thumbnail_bytes。"""
+        return await self.media.load_thumbnail_bytes(
             media,
             channel_id=channel_id,
             telegram_msg_id=telegram_msg_id,
@@ -642,10 +468,8 @@ class AppService:
         )
 
     async def load_media_bytes(self, media: MediaDTO) -> bytes | None:
-        """2026-08-31 v1.5.0 PR #A8:Lightbox 全屏预览转发 — 详见 `_media_actions.load_media_bytes`。"""
-        from tgmonitor.core.app_service._media_actions import load_media_bytes as _load_media_bytes
-
-        return await _load_media_bytes(self, media)
+        """Lightbox 全屏预览 — 转发 MediaService.load_media_bytes。"""
+        return await self.media.load_media_bytes(media)
 
     async def open_media(
         self,
@@ -653,10 +477,8 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> bool:
-        """转发 MediaService.open_media — 详见 `_media_actions.open_media`。"""
-        from tgmonitor.core.app_service._media_actions import open_media as _open_media
-
-        return await _open_media(self, channel_id, telegram_msg_id, media_idx)
+        """转发 MediaService.open_media。"""
+        return await self.media.open_media(channel_id, telegram_msg_id, media_idx)
 
     async def open_media_with_result(
         self,
@@ -664,12 +486,8 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> OpenMediaResult:
-        """转发 MediaService.open_media_with_result — 详见 `_media_actions.open_media_with_result`。"""
-        from tgmonitor.core.app_service._media_actions import (
-            open_media_with_result as _open_media_with_result,
-        )
-
-        return await _open_media_with_result(self, channel_id, telegram_msg_id, media_idx)
+        """转发 MediaService.open_media_with_result。"""
+        return await self.media.open_media_with_result(channel_id, telegram_msg_id, media_idx)
 
     async def reveal_in_folder(
         self,
@@ -677,17 +495,8 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> RevealResult:
-        """2026-08-27 v1.4.0 PR #16:在文件管理器中高亮 media 文件 — 详见 `_media_actions.reveal_in_folder`。
-
-        2026-08-29 v1.5.0 PR #A2:**留 facade 实现**(同 retry_media 原因 —
-        测设 `app._spawn_reveal = staticmethod(fake)` 必须 facade 上生效)。
-        2026-10-12 plan-batch3 step 2.2:实现下放至 `_media_actions.reveal_in_folder`,
-        facade `__init__` 末尾 `self._spawn_reveal = staticmethod(_media_actions._spawn_reveal)`
-        默认绑定 — 测试 monkeypatch 模式继续生效。
-        """
-        from tgmonitor.core.app_service._media_actions import reveal_in_folder as _reveal_in_folder
-
-        return await _reveal_in_folder(self, channel_id, telegram_msg_id, media_idx)
+        """文件管理器高亮 media — 转发 MediaService.reveal_in_folder。"""
+        return await self.media.reveal_in_folder(channel_id, telegram_msg_id, media_idx)
 
     async def copy_media_path(
         self,
@@ -695,51 +504,51 @@ class AppService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> CopyResult:
-        """转发 MediaService.copy_media_path — 详见 `_media_actions.copy_media_path`。"""
-        from tgmonitor.core.app_service._media_actions import copy_media_path as _copy_media_path
+        """转发 MediaService.copy_media_path。"""
+        return await self.media.copy_media_path(channel_id, telegram_msg_id, media_idx)
 
-        return await _copy_media_path(self, channel_id, telegram_msg_id, media_idx)
+    async def reconcile_orphans(self, *, dry_run: bool = True) -> MediaReconcileFinished:
+        """转发 MediaService.reconcile_orphans。"""
+        return await self.media.reconcile_orphans(dry_run=dry_run)
 
-    async def reconcile_orphans(self, *, dry_run: bool = True):
-        """转发 MediaService.reconcile_orphans — 详见 `_media_actions.reconcile_orphans`。"""
-        from tgmonitor.core.app_service._media_actions import reconcile_orphans as _reconcile
+    # ---------- 消息标注(转发 MessageService)----------
 
-        return await _reconcile(self, dry_run=dry_run)
+    async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
+        """单条消息设收藏 — 转发 MessageService。"""
+        await self.messages.set_favorite(channel_id, telegram_msg_id, value)
 
-    # ---------- 关闭 ----------
+    async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
+        """单条消息设标签 — 转发 MessageService。"""
+        await self.messages.set_tags(channel_id, telegram_msg_id, tags)
+
+    async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
+        """单条消息设备注 — 转发 MessageService。"""
+        await self.messages.set_notes(channel_id, telegram_msg_id, notes)
+
+    async def list_favorites(self) -> list[MessageDTO]:
+        """列出所有收藏消息 — 转发 MessageService。"""
+        return await self.messages.list_favorites()
+
+    async def list_by_tag(self, tag: str) -> list[MessageDTO]:
+        """按标签查消息 — 转发 MessageService。"""
+        return await self.messages.list_by_tag(tag)
+
+    # ---------- 关闭 / 热重载 ----------
 
     async def shutdown(self) -> None:
-        """app exit — 停 monitor + 关 client / storage / objects — 详见 `_lifecycle.shutdown`。
-
-        2026-09-22 v1.8.x:分阶段超时(每段独立 wait_for),任一超时只 log
-        不上抛(原则:尽力清,不卡死)。client.close() 偶发 hang(macOS
-        CFRunLoop 卡) 给 2s hard timeout。
-        """
+        """app exit — 停 monitor + 关 client / storage / objects — 详见 `_lifecycle.shutdown`。"""
         from tgmonitor.core.app_service._lifecycle import shutdown as _shutdown
 
         await _shutdown(self)
 
-    # ---------- 热重载 ----------
-
     async def reconfigure(self, new_settings: Settings) -> None:
-        """用新 settings 重建 storage / objects — 详见 `_reconfigure.reconfigure`。
-
-        2026-10-12 plan-batch3 step 2.5:实现下放至 `_reconfigure.reconfigure`,
-        facade 端 1 行 thin delegate。公共方法签名 1:1 保留 — UI 现有调用面零变化。
-        """
+        """用新 settings 重建 storage / objects — 详见 `_reconfigure.reconfigure`。"""
         from tgmonitor.core.app_service._reconfigure import reconfigure as _reconfigure
 
         await _reconfigure(self, new_settings)
 
     async def validate_backends(self, new_settings: Settings) -> None:
-        """仅校验后端连通性,**不切换运行时** — 详见 `_reconfigure.validate_backends`。
-
-        供「仅保存到 .env」按钮调用:storage:connect → init_schema → close;
-        objectstore:connect → close。任一失败上抛,调用方据此放弃落盘 .env;
-        成功时 `self.storage` / `self.objects` 完全不受影响。校验中新建
-        的连接失败即关闭,不留泄漏(与 `_rebuild_storage` / `_rebuild_objects`
-        同一套失败清理语义)。
-        """
+        """仅校验后端连通性,不切换运行时 — 详见 `_reconfigure.validate_backends`。"""
         from tgmonitor.core.app_service._reconfigure import validate_backends as _validate
 
         await _validate(self, new_settings)

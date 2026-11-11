@@ -5,7 +5,7 @@
 改名)有兜底。
 
 约定:
-  - 不测内部实现细节(如 `app._media` 字段名)
+  - 不测内部实现细节(如 `app.media` 字段名)
   - 只测「facade.<method> → 子 service.<method> 真被调 + 参数一致」
   - 子 service 真实类型不被断言(避免重构时全坏)
 """
@@ -45,7 +45,7 @@ def _find_sub_service(app: AppService, method_name: str):
     有 list_media 等属性(继承 mock)。需要过滤「构造 AppService 时注入的
     引用」vs「构造时新建的子 service」。
     """
-    expected_classes = {"SubscriptionService", "MediaService"}
+    expected_classes = {"ChannelService", "MessageService", "MediaService", "BatchService"}
     return next(
         (
             v
@@ -75,7 +75,7 @@ async def test_facade_forwards_list_media_to_media_service(app: AppService) -> N
     assert result is expected
 
 
-async def test_facade_forwards_list_messages_to_subscription_service(app: AppService) -> None:
+async def test_facade_forwards_list_messages_to_message_service(app: AppService) -> None:
     """`app.list_messages` 必须真调到子 service(模拟)。"""
     expected = [MagicMock()]
     sub_svc = _find_sub_service(app, "list_messages")
@@ -135,8 +135,8 @@ async def test_facade_objects_setter_syncs_to_media_service(app: AppService) -> 
     assert media_svc._objects is new_objects  # noqa: SLF001 — explicit sync contract
 
 
-async def test_facade_storage_setter_syncs_to_both_sub_services(app: AppService) -> None:
-    """`app.storage = X` 必须同步给 SubscriptionService + MediaService。
+async def test_facade_storage_setter_syncs_to_sub_services(app: AppService) -> None:
+    """`app.storage = X` 必须同步给 ChannelService + MessageService + MediaService。
 
     触发场景:
       - 测试 monkeypatch swap
@@ -145,7 +145,8 @@ async def test_facade_storage_setter_syncs_to_both_sub_services(app: AppService)
     new_storage = MagicMock()
     app.storage = new_storage  # type: ignore[assignment]
     for attr, expected_cls in (
-        ("list_messages", "SubscriptionService"),
+        ("list_subscribed_channels", "ChannelService"),
+        ("list_messages", "MessageService"),
         ("list_media", "MediaService"),
     ):
         sub_svc = next(
@@ -158,6 +159,22 @@ async def test_facade_storage_setter_syncs_to_both_sub_services(app: AppService)
         )
         assert sub_svc is not None, f"未找到 {expected_cls} 子 service"
         assert sub_svc._storage is new_storage  # noqa: SLF001
+
+
+# ---- subscribe_updates(2026-11-11 Phase 3-C1:从 SubscriptionService 收回 facade)----
+
+
+async def test_facade_subscribe_updates_proxies_client(app: AppService) -> None:
+    """`subscribe_updates` 是 sync 方法,直接转 client.subscribe_updates 并登记 stream。"""
+    sentinel = MagicMock()
+    # client 是无 spec 的 AsyncMock — subscribe_updates 默认也是 async mock,
+    # 显式换成 sync MagicMock(Protocol 里它是 sync 方法)。
+    app.client.subscribe_updates = MagicMock(return_value=sentinel)
+
+    result = app.subscribe_updates()
+
+    assert result is sentinel
+    app.client.subscribe_updates.assert_called_once_with()
 
 
 # ---- shutdown 分阶段超时 (2026-09-22 v1.8.x) ----------------------------------

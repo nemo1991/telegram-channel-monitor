@@ -684,6 +684,7 @@ async def test_reveal_in_folder_local_success(
     app: AppService,
     storage: StorageRepository,
     objectstore: ObjectStore,
+    monkeypatch,
 ) -> None:
     """PR #16:Local 后端 + 文件存在 → spawn 子进程成功 → RevealResult(True)。
 
@@ -696,10 +697,10 @@ async def test_reveal_in_folder_local_success(
 
     spawn_calls: list[tuple[object, str]] = []
 
-    def _fake_spawn(abs_path, platform):  # noqa: ANN001 — sync static method
+    def _fake_spawn(abs_path, platform):  # noqa: ANN001 — sync plain function
         spawn_calls.append((abs_path, platform))
 
-    app._spawn_reveal = staticmethod(_fake_spawn)  # type: ignore[assignment]
+    monkeypatch.setattr("tgmonitor.core.media_service._media_os_actions._spawn_reveal", _fake_spawn)
 
     result = await app.reveal_in_folder(100, 1, 0)
     assert result.success is True

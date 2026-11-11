@@ -4,7 +4,7 @@
 
 公共 method(UI 入口):
 - `reconfigure(app, new_settings)` — 切换 storage / objects + 同步 monitor /
-  channel_sync / sub / media,最后发 SettingsChanged
+  channel_sync / channels / messages / media,最后发 SettingsChanged
 - `validate_backends(app, new_settings)` — 仅校验后端连通性,不切换运行时
 
 内部 helper(reconfigure 内部按 diff 调):
@@ -15,7 +15,7 @@ module-level helper(纯函数,reconfigure 末尾 publish SettingsChanged.what �
 - `_what_label(diff)` — diff → "storage+objectstore" / "storage" / "objectstore" /
   "client" / "credentials" 标签
 
-设计原则(同 `_backend_sync` / `_media_actions` / `_batch_ops` / `_lifecycle`):
+设计原则(同 `_backend_sync` / `_lifecycle`):
 - plain module-level function(非 class)
 - 第一参数 `app: AppService`(走 mutable state 引用)
 - 公共方法签名 1:1 保留 — UI 现有调用面零变化
@@ -26,13 +26,12 @@ module-level helper(纯函数,reconfigure 末尾 publish SettingsChanged.what �
 mut state 共享契约:
 4 个 method 直接读写 `app.settings` / `app.storage` / `app.objects` /
 `app.monitor` / `app.downloader` / `app.channel_sync` / `app.client` /
-`app.bus` / `app._sub` / `app._media` / `app.auth` / `app._running` /
-`app._reconfiguring`,不在 module 内持副本(同 plan-batch2 monitor/service.py
-拆 facade 模式)。
+`app.bus` / `app.channels` / `app.messages` / `app.media` / `app.auth` /
+`app._running` / `app._reconfiguring`,不在 module 内持副本。
 
-reconfigure 是唯一会重建 `app._sub` / `app._media` / `app.auth` 的入口 —
-这些子 service 持旧 storage / objects / client 引用,reconfigure 后必须
-重新构造,否则 monitor 实时 / 补拉写旧库(2026-08-18 修)。
+reconfigure 是唯一会重建 `app.channels` / `app.messages` / `app.media` /
+`app.auth` 的入口 — 这些域服务持旧 storage / objects / client 引用,
+reconfigure 后必须重新构造,否则 monitor 实时 / 补拉写旧库(2026-08-18 修)。
 """
 
 from __future__ import annotations
@@ -71,7 +70,7 @@ async def reconfigure(app: AppService, new_settings: Settings) -> None:
       4. objects → `_rebuild_objects`(2026-08-18 起**无条件**跑 — 见下)
       5. 把新 storage/objects/settings 同步给 monitor(含重建下载器 +
          重载白名单)、重建 channel_sync — 否则热重载切 PG 不生效
-      6. 重建 SubscriptionService / MediaService(它们持旧 storage / objects)
+      6. 重建 ChannelService / MessageService / MediaService(持旧 storage / objects)
       7. publish `SettingsChanged` + 提交新 settings
 
     `_rebuild_objects` 无条件执行的背景:之前只在 `objects_changed` 时重建
@@ -116,12 +115,15 @@ async def reconfigure(app: AppService, new_settings: Settings) -> None:
         media_policy=new_settings.media_policy,
     )
 
-    # 6) 重建子 service(它们持旧 storage / objects 引用,必须跟着切)
+    # 6) 重建域服务(它们持旧 storage / objects 引用,必须跟着切)。
+    # BatchService 不重建:client / monitor 身份不变,is_paused 实时读 app。
+    from tgmonitor.core.channel_service import ChannelService
     from tgmonitor.core.media_service import MediaService
-    from tgmonitor.core.subscription_service import SubscriptionService
+    from tgmonitor.core.message_service import MessageService
 
-    app._sub = SubscriptionService(app.bus, app.client, app.storage)
-    app._media = MediaService(
+    app.channels = ChannelService(app.bus, app.client, app.storage, app.monitor)
+    app.messages = MessageService(app.bus, app.storage, app.monitor)
+    app.media = MediaService(
         app.bus,
         app.storage,
         app.objects,

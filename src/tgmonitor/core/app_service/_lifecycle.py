@@ -7,7 +7,7 @@
 - `pause_monitor` / `resume_monitor` — 暂停 / 恢复监听(.env 持久化)
 - `shutdown` — app exit:停 monitor → 关 client → storage → objects
 
-设计原则(同 `_backend_sync` / `_media_actions` / `_batch_ops`):
+设计原则(同 `_backend_sync`):
 - plain module-level function(非 class)
 - 第一参数 `app: AppService`(走 mutable state 引用)
 - 公共方法签名 1:1 保留 — UI 现有调用面零变化
@@ -18,9 +18,8 @@ mut state 共享契约:
 `app.env_path` / `app.settings` / `app.storage` / `app.objects`,
 不在 module 内持副本(同 plan-batch2 monitor/service.py 拆 facade 模式)。
 
-`bootstrap` 是唯一会 swap `app.client` / 重建 `app._sub` / `app.auth`
-的方法 — 401 encryption key 错误时需 rotate + rebuild client。
-子 service 持旧 client 引用,rebuild 后必须重新构造。
+`bootstrap` 不做 client swap — 401 / session 失效由 client 内部自愈
+(Telethon 实现捕获 UnauthorizedError → 删 session 重建 → 重试一次)。
 """
 
 from __future__ import annotations
@@ -179,11 +178,11 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
 async def shutdown(app: AppService) -> None:
     """app exit — 停 monitor + 关 client / storage / objects(顺序敏感)。
 
-    2026-08-30 PR #A2 hotfix:不再清空 self._sub / self._media 引用 —
-    它们是构造时必建,与 facade 同生命周期,置 None 反而让 mypy 在后续
-    方法(若被误调)报 union-attr。shutdown 后整个 facade 随 app 销毁,
-    GC 时一起回收。子 service 持旧 storage/objects 引用也无害
-    (close() 后该引用已不可用,但 facade 已不再有调用入口)。
+    2026-08-30 PR #A2 hotfix:不再清空域服务引用 — 它们构造时必建,
+    与 AppService 同生命周期,置 None 反而让 mypy 在后续方法(若被误调)
+    报 union-attr。shutdown 后整个 AppService 随 app 销毁,GC 时一起回收。
+    域服务持旧 storage/objects 引用也无害(close() 后该引用已不可用,
+    但已不再有调用入口)。
 
     2026-09-22 v1.8.x:**分阶段超时** — 之前整条 `_shutdown_async` 共用
     `app.py:416` 外层 5s wait_for,任何一段 hang 就会让整链被强 cancel,
