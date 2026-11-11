@@ -108,6 +108,26 @@ markers = [
     "integration: requires Docker (testcontainers) or in-process mongomock_motor;off by default",
     "legacy: PR 编号 frozen regression file (test_*_pr*.py) or perf/;behavior covered by main test files, pass --include-legacy to enable",
 ]
+# 2026-10-22 v1.12.4:给**每个** test 加超时上限。
+#
+# 起因:GH Actions 的 ubuntu / macos runner 上 pytest 会在 fixture 阶段(qapp /
+# qloop)无期限 hang —— 2026-10-03 v1.12.1 发版记过一次,2026-10-22 v1.12.3
+# 发版又复现(ubuntu coverage 步骤卡 32 分钟、macOS 卡 40 分钟,两次都只能手动
+# cancel)。windows runner 与本地(macOS dev)从不受影响。
+#
+# 卡住时 CI 不报任何有用信息:job 一直 in_progress 到 6 小时上限,日志里停在
+# 上一个文件的进度点,没人知道是哪个 test。加了超时之后:
+#   - hang 变成一次**指名道姓的失败**(pytest-timeout 打印所有线程栈),
+#     5 分钟内出结果,不再靠人去 cancel
+#   - 这是防御,不是掩盖 —— 真修好那个 hang 之后这里不会触发任何东西
+#
+# 300s 的取值:本地全套 151s、单 test 最慢 < 30s,CI 上插桩后约 2~3 倍,300s
+# 留足余量;integration(testcontainers PG 冷启动)单 job 约 44s,同样安全。
+timeout = 300
+# `thread` 方法跨平台可用(`signal` 在 Windows 不可用,且不能中断卡在 C 层的
+# Qt 调用)。超时后 pytest-timeout 打印全部线程栈,进程以退出码 1 结束
+# (pytest-timeout 没有 `timeout_exit_code` ini 选项,退出码 1 是它的默认值)。
+timeout_method = "thread"
 
 [tool.coverage.run]
 # 仓库内 Python 源码;branch on 看分支覆盖率
@@ -177,4 +197,5 @@ dev = [
     "mongomock_motor>=0.0.21",
     # 2026-09-17 PR 6:property-based tests for storage round-trips + UI invariants.
     "hypothesis>=6.100",
+    "pytest-timeout>=2.3",
 ]
