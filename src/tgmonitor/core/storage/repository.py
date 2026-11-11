@@ -1,13 +1,14 @@
-"""StorageRepository — 消息数据持久化抽象。
+"""存储抽象 — 按域切分的小接口 + 组合门面。
 
-两套实现(Postgres / Mongo)必须提供**等价**的查询语义,
-通过 `StorageRepository` 这一接口对上层透明。
+v2.0.0 重构:原 42 方法单一 `StorageRepository` ABC 按域拆成 7 个小接口
+(Interface Segregation)— 领域服务按需依赖小接口,不再被迫面对全量方法。
+`StorageRepository` 保留为 7 接口的组合,现有装配/调用方不变。
 
-设计原则:
+设计原则(沿用):
 - 接口全部 `async`,core 异步到底。
 - 接收 / 返回 DTO,不暴露 ORM 行对象。
 - `save_message` 幂等(以 `(channel_id, telegram_msg_id)` 为唯一键)。
-- `delete_message` 支持消息撤回;`update_message` 支持编辑。
+- 各后端(SQLite / Postgres)必须提供**等价**的查询语义。
 """
 
 from __future__ import annotations
@@ -30,10 +31,8 @@ from tgmonitor.core.dto import (
 from tgmonitor.core.storage.schema_report import SchemaReport
 
 
-class StorageRepository(ABC):
-    """消息仓储抽象。"""
-
-    # ---- 生命周期 ----
+class SchemaLifecycle(ABC):
+    """连接生命周期 + schema 自检/修复。"""
 
     @abstractmethod
     async def connect(self) -> None:
@@ -47,22 +46,21 @@ class StorageRepository(ABC):
 
     @abstractmethod
     async def introspect_schema(self) -> SchemaReport:
-        """2026-09-23 v1.8.x:启动期 schema 自检 — 比对实际 schema 与
-        `expected_schema.EXPECTED_SCHEMA`,返回 SchemaReport 列出 drift
-        (missing tables / columns / wrong_types / extra columns)。
+        """启动期 schema 自检 — 比对实际 schema 与期望定义,返回 SchemaReport
+        列出 drift(missing tables / columns / wrong_types / extra columns)。
 
         各 backend 实现:
-        - Postgres:`information_schema.columns` 查表 + 列类型
-        - Mongo:`list_indexes()` 检查期望唯一索引
+        - SQLite / Postgres:查系统表(`sqlite_master` / `information_schema`)
+          比对表 + 列类型
         """
         ...
 
     @abstractmethod
     async def repair_schema(self, report: SchemaReport) -> None:
-        """2026-09-23 v1.8.x:基于 SchemaReport 跑幂等修复。
+        """基于 SchemaReport 跑幂等修复。
 
         策略(保守):
-        - missing_columns → `ALTER TABLE ADD COLUMN IF NOT EXISTS`(无锁)
+        - missing_columns → `ALTER TABLE ADD COLUMN`(幂等,无锁)
         - missing_tables → 拒绝(避免 DROP+CREATE 丢数据),让运维手动跑 init_schema
         - wrong_types → 仅 log,不动(类型 ALTER 重写表对大表 lock-heavy)
         - extra_columns → 仅 log,不删
@@ -76,7 +74,14 @@ class StorageRepository(ABC):
         """刷缓存 / 关连接 / 释放资源。"""
         ...
 
-    # ---- 频道 ----
+    @abstractmethod
+    async def ping(self) -> bool:
+        """轻量探活。"""
+        ...
+
+
+class ChannelStore(ABC):
+    """频道元数据 + 订阅标志。"""
 
     @abstractmethod
     async def upsert_channel(self, channel: ChannelDTO) -> None:
@@ -90,6 +95,38 @@ class StorageRepository(ABC):
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
         """只写元数据字段(title/username/kind/member_count/created_at/last_synced_at),
         不碰 is_subscribed 标志。ChannelSyncService 用。
+        """
+        ...
+
+    @abstractmethod
+    async def update_channel_metadata(
+        self,
+        channel_id: int,
+        *,
+        title: str | None = None,
+        username: str | None = None,
+        member_count: int | None = None,
+        photo_local_key: str | None = None,
+        is_verified: bool | None = None,
+        is_scam: bool | None = None,
+        is_fake: bool | None = None,
+        has_protected_content: bool | None = None,
+    ) -> None:
+        """部分更新频道元数据。
+
+        TDLib `updateChannel` / `updateSupergroup` / `updateChatTitle` /
+        `updateChatPhoto` 推送可能只动 1 个字段(如 member_count 改、title
+        不变);`title=None` 表示不动 title。`photo_local_key=None` 表示
+        不动(不是「删头像」 — 删头像语义需走显式参数)。
+
+        与 `upsert_channel_metadata` 不同:本方法**只**动传入字段(其它字段
+        保留旧值);`upsert_channel_metadata` 是覆盖式写入全字段。
+
+        不存在频道 idempotent 不抛(TDLib 偶发对陈年 channel 推 metadata
+        update,落库时机晚于本 update 时跳过即可)。
+
+        4 个 spammer 过滤字段(`is_verified` / `is_scam` / `is_fake` /
+        `has_protected_content`)partial update 语义同其他字段(`None` = 不动)。
         """
         ...
 
@@ -127,11 +164,13 @@ class StorageRepository(ABC):
         """续拉历史用 — 返回该频道已落库的最大 `telegram_msg_id`;None 表示无历史。"""
         ...
 
-    # ---- 全局元数据(meta 表 / 单独文件) ----
+
+class MetaStore(ABC):
+    """全局单值元数据(同步 checkpoint 等)。"""
 
     @abstractmethod
     async def get_meta(self, key: str) -> str | None:
-        """全局单值元数据(同步 checkpoint 等)。"""
+        """全局单值元数据;不存在返 None。"""
         ...
 
     @abstractmethod
@@ -139,7 +178,9 @@ class StorageRepository(ABC):
         """upsert 语义。"""
         ...
 
-    # ---- 消息 ----
+
+class MessageStore(ABC):
+    """消息 CRUD + 查询 + 聚合 + 互动增量。"""
 
     @abstractmethod
     async def save_message(self, message: MessageDTO) -> int:
@@ -152,16 +193,56 @@ class StorageRepository(ABC):
         ...
 
     @abstractmethod
+    async def update_message_interactions(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        *,
+        views: int | None = None,
+        reactions: list[Any] | None = None,
+    ) -> None:
+        """增量更新一条消息的 views / reactions。
+
+        TDLib `updateMessageInteractionInfo` 推送的字段可能只更新一部分
+        (比如只有 reactions 没新 view) — `views=None` 表示不动 views,
+        `reactions=None` 表示不动 reactions。`reactions=[]` 表示清空
+        (推了空 list 表示该消息所有 reaction 都被撤回)。
+
+        不存在消息 idempotent 不抛 — TDLib 偶尔会推陈年历史消息的 view
+        更新,落库时机早于本 update,跳过即可,UI 不感知。
+
+        `reactions` 元素类型:可以是 `ReactionDTO`(新代码)或 dict(兼容老
+        序列化格式);实现内部统一 `ReactionDTO.from_dict()` 处理。
+        """
+        ...
+
+    @abstractmethod
+    async def update_message_pin(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        is_pinned: bool,
+    ) -> None:
+        """更新一条消息的 pin 状态。
+
+        TDLib `updateMessageIsPinned` 推送触发;MonitorService 订阅后调
+        本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 📌
+        图标刷新。不存在消息 idempotent 不抛(与 `update_message_interactions`
+        一致 — 落库时机早于本 update 的旧历史消息)。
+        """
+        ...
+
+    @abstractmethod
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;不存在不抛(idempotent)。"""
         ...
 
     @abstractmethod
     async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-08 v1.7.0:批量删单频道 N 条消息。
+        """批量删单频道 N 条消息。
 
         不存在不抛(idempotent)。子 media 通过各后端固有机制清理
-        (Postgres FK CASCADE / Mongo sub-doc / InMemory 内联)。
+        (SQL FK CASCADE / InMemory 内联)。
         """
         ...
 
@@ -186,20 +267,18 @@ class StorageRepository(ABC):
         """按时间升序返回。两实现必须排序一致。
 
         `limit`:只返回**最近** N 条(取排序尾部,仍按时间升序)。
-        `offset`:跳过前 N 条(2026-08-27 v1.4.0 PR #12 — export 真分页)。
+        `offset`:跳过前 N 条(export 真分页)。
         `offset` 与 `limit` 组合:跳过 offset 后取 limit 条(从尾取仍升序)。
         注意:`offset` 是相对排序后的位置,与 channel_ids 顺序无关。
 
-        `search` (2026-09-01 v1.5.1 PR #B2):子串过滤(大小写不敏感),匹配
-        `text` 或 `media.file_name` 任一字段即命中。默认 `""` 不过滤,
-        向后兼容所有现有调用方;Postgres / Mongo LIKE/REGRESS 通配符
-        必须 escape 防止注入。
+        `search`:子串过滤(大小写不敏感),匹配 `text` 或 `media.file_name`
+        任一字段即命中。默认 `""` 不过滤,向后兼容所有现有调用方;
+        SQL LIKE 通配符必须 escape 防止注入。
 
-        2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
-        3 个用户元数据过滤(对应 SearchBar ★/🏷/📌 3 toggle)。默认 False
-        不过滤;True 时仅返回满足条件的消息 — UI AND 语义:任一 True 字段
-        必须命中。`tag_only=True` 表示「有任意 tag 即可」,精细 tag 选择
-        留 v1.7.6。
+        `favorite_only` / `tag_only` / `pinned_only`:3 个用户元数据过滤
+        (对应 SearchBar ★/🏷/📌 3 toggle)。默认 False 不过滤;True 时仅返回
+        满足条件的消息 — UI AND 语义:任一 True 字段必须命中。
+        `tag_only=True` 表示「有任意 tag 即可」。
         """
         ...
 
@@ -210,19 +289,22 @@ class StorageRepository(ABC):
 
     @abstractmethod
     async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
-        """2026-08-27 v1.4.0 PR #15:一次拉多频道聚合统计(messages / media /
-        done_media / last_date),消除 Dashboard N+1 round-trip。
+        """一次拉多频道聚合统计(messages / media / done_media / last_date),
+        消除 Dashboard N+1 round-trip。
 
         实现要点:
-        - Postgres:`GROUP BY channel_id` 单 SELECT + JOIN media
-        - Mongo:`$match + $group` aggregate pipeline
+        - SQLite / Postgres:`GROUP BY channel_id` 单 SELECT + JOIN media
         - InMemory:扫订阅 channel 一次,聚合 4 个 count
         - 缺失 channel_id 在返 dict 里**不**存在(调用方按需 default zero)
 
-        大 channel_ids 列表(>1000)性能:Postgres `channel_id = ANY($1)`
-        是 O(1),Mongo `$in` 仍是 O(N) scan;MVP 不优化,docstring 注明。
+        大 channel_ids 列表(>1000)性能:SQL `IN` 是 O(N) scan;
+        MVP 不优化,docstring 注明。
         """
         ...
+
+
+class MediaStore(ABC):
+    """媒体引用查询(二进制在 ObjectStore)。"""
 
     @abstractmethod
     async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
@@ -251,17 +333,16 @@ class StorageRepository(ABC):
         sort: SortKey = SortKey.DATE,
         sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-        """列媒体(2026-08-25 PR #3)— 应用层扁平 + 后端下沉到此处。
+        """列媒体 — 应用层扁平 + 后端下沉到此处。
 
         返回 `(msg, idx, media)` 三元组 list;`idx` 是 media 在 message.media 数组
         中的位置(0-based)。所有 filter 都是 AND 关系,空值视作不过滤。
 
-        排序(2026-08-25 v1.3.0 PR #6 新增):`sort` 选 3 key(`DATE`/`SIZE`/
-        `STATUS`),`sort_dir` 选 `ASC`/`DESC`。默认 `DATE DESC`(v1.2.0 行为)。
-        tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
+        排序:`sort` 选 3 key(`DATE`/`SIZE`/`STATUS`),`sort_dir` 选 `ASC`/`DESC`。
+        默认 `DATE DESC`。tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
 
         分页:`offset` 跳过 N 条;`limit` 限制返数。MVP 阶段各后端实现可简化
-        (InMemory 顺序扫 + slice;Postgres / Mongo 用 SQL/aggregate 偏移)。
+        (InMemory 顺序扫 + slice;SQL 用 LIMIT/OFFSET)。
         """
         ...
 
@@ -274,43 +355,42 @@ class StorageRepository(ABC):
         media_type: MediaType | None = None,
         search: str = "",
     ) -> int:
-        """数媒体(2026-08-25 v1.3.0 PR #6)— 与 list_media 用同一组 filter,
-        但不带 sort/limit/offset。供分页 UI 显示 "total"。
+        """数媒体 — 与 list_media 用同一组 filter,但不带 sort/limit/offset。
+        供分页 UI 显示 "total"。
 
         各后端实现要点:
         - InMemory:复用 list_media 的 filter helper,只数不取
-        - Postgres:同样 JOIN,去掉 ORDER/LIMIT/OFFSET,换 `SELECT count(*)`
-        - Mongo:独立 aggregate,同 match 条件但无 `$sort`/`$skip`/`$limit`,
-          末尾 `$count`
+        - SQL:同样 JOIN,去掉 ORDER/LIMIT/OFFSET,换 `SELECT count(*)`
         """
         ...
 
     @abstractmethod
     async def count_media_by_object_key(self, object_key: str) -> int:
-        """同 `object_key` 引用次数(2026-08-25 PR #3)— refcount 用。
+        """同 `object_key` 引用次数 — refcount 用。
 
-        应用层 `_count_media_with_object_key` 在此 PR 删除,改调本方法。
-        Postres/Mongo 用 SQL/aggregate count,O(1);InMemory 走顺序扫
-        (与原来应用层实现一致)。
+        SQL 走 count;InMemory 走顺序扫。
         """
         ...
 
     @abstractmethod
     async def count_media_by_channel(self, channel_id: int) -> int:
-        """该频道全部媒体数(2026-08-25 v1.3.0 PR #8)— 含 PENDING/FAILED。
+        """该频道全部媒体数 — 含 PENDING/FAILED。
 
         用途:`ClearChannelPreview.media_count`。比 `list_media(
-        channel_ids=[id]) + len()` 更便宜,4 后端各自走 SQL/aggregate count
+        channel_ids=[id]) + len()` 更便宜,各后端走 SQL count
         而非把 row 拉回内存。
         """
         ...
 
-    # ---- 缩略图(2026-09-29 独立存储) ----
-    # 关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组 — 与父
-    # `MessageDTO.media[media_idx]` 1:1。各后端各自存:PG `thumbnails`
-    # 表,Mongo `thumbnails` collection,InMemory 内嵌 `thumbnails` dict。
-    # ObjectStore 端 key 走独立顶层 prefix `thumb/<sha256>.<ext>`,跟
-    # `media/<sha256>.<ext>` 平行。
+
+class ThumbnailStore(ABC):
+    """缩略图独立存储。
+
+    关联键 `(channel_id, telegram_msg_id, media_idx)` 三元组 — 与父
+    `MessageDTO.media[media_idx]` 1:1。各后端各自存:SQL `thumbnails`
+    表,InMemory 内嵌 `thumbnails` dict。ObjectStore 端 key 走独立顶层
+    prefix `thumb/<sha256>.<ext>`,跟 `media/<sha256>.<ext>` 平行。
+    """
 
     @abstractmethod
     async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
@@ -343,8 +423,8 @@ class StorageRepository(ABC):
     ) -> None:
         """删 thumb 行;不存在不抛(idempotent)。
 
-        调用方:PG `delete_message` 走 FK CASCADE 自动调(Mongo / InMemory 没
-        FK 概念,各自在 `delete_message` 内手工调本方法级联)。
+        调用方:SQL `delete_message` 走 FK CASCADE 自动调(InMemory 没
+        FK 概念,在 `delete_message` 内手工调本方法级联)。
         """
         ...
 
@@ -354,7 +434,7 @@ class StorageRepository(ABC):
         channel_id: int,
         telegram_msg_id: int,
     ) -> list[ThumbnailDTO]:
-        """一条消息的全部 thumb(2026-09-29)— 通常 0 或 1 条。
+        """一条消息的全部 thumb — 通常 0 或 1 条。
 
         HTML / ZIP exporter 用:列消息的所有 thumb,跟 media 循环对齐。空 list
         表示该消息没 thumb(voice_note / 无 thumbnail 的 media type)。
@@ -363,7 +443,7 @@ class StorageRepository(ABC):
 
     @abstractmethod
     async def count_thumbnails_by_object_key(self, object_key: str) -> int:
-        """同 `object_key` 引用次数(2026-09-29)— `reconcile_orphans` refcount 用。
+        """同 `object_key` 引用次数 — `reconcile_orphans` refcount 用。
 
         应用层:`reconcile_orphans` 把 ObjectStore key 减去 referenced 集合,
         剩下的才是真孤儿(没 thumb 或 storage 引用)。语义跟
@@ -371,7 +451,9 @@ class StorageRepository(ABC):
         """
         ...
 
-    # ---- 用户元数据(2026-09-09 v1.7.2) ----
+
+class UserMetaStore(ABC):
+    """用户元数据(收藏 / 标签 / 备注)— 本地存储,不与 TG 同步。"""
 
     @abstractmethod
     async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
@@ -398,90 +480,34 @@ class StorageRepository(ABC):
         """按 `tag` 查消息(标签精确匹配) — 跨频道,按 date DESC。"""
         ...
 
-    # ---- 互动增量(2026-08-27 v1.4.0 PR #10) ----
 
-    @abstractmethod
-    async def update_message_interactions(
-        self,
-        channel_id: int,
-        telegram_msg_id: int,
-        *,
-        views: int | None = None,
-        reactions: list[Any] | None = None,
-    ) -> None:
-        """增量更新一条消息的 views / reactions(2026-08-27 PR #10)。
+class StorageRepository(
+    SchemaLifecycle,
+    ChannelStore,
+    MetaStore,
+    MessageStore,
+    MediaStore,
+    ThumbnailStore,
+    UserMetaStore,
+    ABC,
+):
+    """组合门面 — 7 个小接口的全集,现有装配/调用方继续用此类型。
 
-        TDLib `updateMessageInteractionInfo` 推送的字段可能只更新一部分
-        (比如只有 reactions 没新 view) — `views=None` 表示不动 views,
-        `reactions=None` 表示不动 reactions。`reactions=[]` 表示清空
-        (推了空 list 表示该消息所有 reaction 都被撤回)。
-
-        不存在消息 idempotent 不抛 — TDLib 偶尔会推陈年历史消息的 view
-        更新,落库时机早于本 update,跳过即可,UI 不感知。
-
-        `reactions` 元素类型:可以是 `ReactionDTO`(新代码)或 dict(兼容老
-        序列化格式);实现内部统一 `ReactionDTO.from_dict()` 处理。
-        """
-        ...
-
-    @abstractmethod
-    async def update_message_pin(
-        self,
-        channel_id: int,
-        telegram_msg_id: int,
-        is_pinned: bool,
-    ) -> None:
-        """2026-09-10 v1.7.3:更新一条消息的 pin 状态。
-
-        TDLib `updateMessageIsPinned` 推送触发;MonitorService 订阅后调
-        本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 📌
-        图标刷新。不存在消息 idempotent 不抛(与 `update_message_interactions`
-        一致 — 落库时机早于本 update 的旧历史消息)。
-        """
-        ...
-
-    # ---- 频道元数据(2026-08-27 v1.4.0 PR #14) ----
-
-    @abstractmethod
-    async def update_channel_metadata(
-        self,
-        channel_id: int,
-        *,
-        title: str | None = None,
-        username: str | None = None,
-        member_count: int | None = None,
-        photo_local_key: str | None = None,
-        is_verified: bool | None = None,  # 2026-09-04 v1.6.4
-        is_scam: bool | None = None,
-        is_fake: bool | None = None,
-        has_protected_content: bool | None = None,
-    ) -> None:
-        """部分更新频道元数据(2026-08-27 PR #14)。
-
-        TDLib `updateChannel` / `updateSupergroup` / `updateChatTitle` /
-        `updateChatPhoto` 推送可能只动 1 个字段(如 member_count 改、title
-        不变);`title=None` 表示不动 title。`photo_local_key=None` 表示
-        不动(不是「删头像」 — 删头像语义需走显式参数,见 PR #Q2 设计)。
-
-        与 `upsert_channel_metadata` 不同:本方法**只**动传入字段(其它字段
-        保留旧值);`upsert_channel_metadata` 是覆盖式写入全字段。
-
-        不存在频道 idempotent 不抛(TDLib 偶发对陈年 channel 推 metadata
-        update,落库时机晚于本 update 时跳过即可)。
-
-        2026-09-04 v1.6.4 加 4 个 spammer 过滤字段(`is_verified` /
-        `is_scam` / `is_fake` / `has_protected_content`),TDLib `Supergroup`
-        / `Chat` 顶层字段,partial update 语义同其他字段(`None` = 不动)。
-        """
-        ...
-
-    # ---- 健康检查 ----
-
-    @abstractmethod
-    async def ping(self) -> bool:
-        """轻量探活。"""
-        ...
+    新代码(领域服务)应按需依赖单个小接口,而不是本组合。
+    """
 
 
 # MediaDTO 在此包内被引用,显式 re-export 避免循环
-__all__ = ["StorageRepository", "ChannelDTO", "MessageDTO", "MediaDTO"]
+__all__ = [
+    "SchemaLifecycle",
+    "ChannelStore",
+    "MetaStore",
+    "MessageStore",
+    "MediaStore",
+    "ThumbnailStore",
+    "UserMetaStore",
+    "StorageRepository",
+    "ChannelDTO",
+    "MessageDTO",
+    "MediaDTO",
+]
