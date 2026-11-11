@@ -187,7 +187,7 @@ class LoginDialog(QDialog):
             self.status_label.setText(self.tr("注册新账号(需 first_name)"))
             self.stack.setCurrentIndex(5)
             self.in_reg_first.setFocus()
-        elif state in ("phone_required", "closed", "uninit", "tdlib_parameters"):
+        elif state in ("phone_required", "closed", "uninit"):
             self.status_label.setText(self.tr("输入手机号(含 + 国家区号)"))
             self.stack.setCurrentIndex(0)
             self.in_phone.setFocus()

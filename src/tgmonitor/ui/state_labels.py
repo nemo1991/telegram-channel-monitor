@@ -23,8 +23,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication
 
-# 13 个 TDLib 登录状态 — 上游 `TdlibTelegramClient.start()` 返回值 + 状态机过渡。
-# 完整流程:uninit → tdlib_parameters → phone_required → code_required
+# 12 个登录状态 — 上游 client.start() 返回值 + 状态机过渡。
+# 完整流程:uninit → phone_required → code_required
 #           → password_required → ready
 # 稀有分支:WaitEmailAddress → email_required → email_code_required
 #           WaitRegistration → registration_required
@@ -43,7 +43,6 @@ STATE_DOT: dict[str, str] = {
     "closed": "⚪",
     "logging_out": "⏳",
     "closing": "⏳",
-    "tdlib_parameters": "⚪",
     "uninit": "⚪",
 }
 
@@ -62,7 +61,6 @@ STATE_LABEL_SRC: dict[str, str] = {
     "closed": "会话关闭",
     "logging_out": "登出中…",
     "closing": "关闭中…",
-    "tdlib_parameters": "初始化中…",
     "uninit": "启动中…",
 }
 
@@ -79,7 +77,6 @@ STATE_HINT_SRC: dict[str, str] = {
     "closed": "已登出;打开设置 → 账户 重新登录",
     "logging_out": "正在登出…",
     "closing": "正在关闭…",
-    "tdlib_parameters": "正在初始化 TDLib — 若长时间停留请检查 API ID / Hash 后重启",
     "uninit": "未启动 — 正常情况会在 1-2 秒内到 ready",
 }
 

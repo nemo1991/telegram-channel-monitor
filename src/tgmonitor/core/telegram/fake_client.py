@@ -89,8 +89,6 @@ class FakeTelegramClient(TelegramClient):
         self._forwarded_log: list[tuple[int, int, list[int]]] = []
         self._pinned_log: dict[int, list[int]] = {}
         self._reactions_log: list[tuple[int, int, str, bool]] = []
-        # 2026-09-24 v1.8.3:TDLib optimizeStorage RPC 注入记录(test 用)
-        self.optimize_storage_calls: list[dict] = []
 
     # ---- 鉴权 ----
     async def login(self, phone: str) -> str:
@@ -110,32 +108,6 @@ class FakeTelegramClient(TelegramClient):
         """Fake 已经"启动"了 — 直接返当前 state(无网络)。"""
         # Fake 已经"启动"了 — 直接返回状态
         return self._state, None
-
-    async def nuke_and_rebuild(self, rotate_key: bool = False) -> None:
-        """Fake 重置:state 回到 `phone_required`(rotate_key 忽略)。"""
-        self._state = "phone_required"
-
-    async def optimize_storage(
-        self,
-        *,
-        size: int = -1,
-        ttl: int = -1,
-        count: int = -1,
-        immunity_delay: int = -1,
-    ) -> int:
-        """2026-09-24 v1.8.3:Fake stub — 记录调用,返 0。
-
-        `optimize_storage_calls` 暴露给 test 断言 RPC 是否被发出。
-        """
-        self.optimize_storage_calls.append(
-            {
-                "size": size,
-                "ttl": ttl,
-                "count": count,
-                "immunity_delay": immunity_delay,
-            }
-        )
-        return 0
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:
         """`code="00000"` 走 2FA 分支;其它进 `ready`。

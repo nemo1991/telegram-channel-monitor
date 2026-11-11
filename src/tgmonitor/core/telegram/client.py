@@ -1,9 +1,9 @@
 """TelegramClient — 业务侧接口(Protocol)。
 
-唯一接触 TDLib 的 `core/telegram` 子包把 TDLib 封装在这里,
-其他模块只见这层接口,不见 TDLib 类型。
+`core/telegram` 子包把 Telegram 后端封装在这里,
+其他模块只见这层接口,不见后端类型。
 
-实现见 `tdlib_client.py`;UI / 测试用 `FakeTelegramClient`。
+实现见 `telethon_client.py`;UI / 测试用 `FakeTelegramClient`。
 """
 
 from __future__ import annotations
@@ -20,30 +20,6 @@ class TelegramClient(Protocol):
     # ---- 鉴权 ----
     async def start(self) -> tuple[str, str | None]:
         """应用启动入口。返回 (state, detail)。state ∈ {ready, phone_required, error, ...}。"""
-        ...
-
-    async def nuke_and_rebuild(self, *, rotate_key: bool = False) -> None:
-        """清掉 session db(可选旋转加密 key),杀掉内部 TDLib。调用方负责重建。"""
-        ...
-
-    async def optimize_storage(
-        self,
-        *,
-        size: int = -1,
-        ttl: int = -1,
-        count: int = -1,
-        immunity_delay: int = -1,
-    ) -> int:
-        """2026-09-24 v1.8.3:TDLib `optimizeStorage` RPC。
-
-        立即触发一次存储优化(压缩 database WAL + 清文件引用 + 释放过期
-        file cache 引用)。不丢 session / auth_key。
-
-        所有参数默认 -1 = 用 TDLib 默认阈值。
-
-        返回值:实现可返 0 / TDLib 报告的释放字节数 / 不关心的负数。
-        UI 不强依赖具体数值,只用于展示。
-        """
         ...
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:

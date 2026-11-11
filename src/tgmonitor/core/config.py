@@ -78,11 +78,6 @@ class Settings(BaseSettings):
     # 中国国内网络直连 Telegram 不通,走代理常用。
     proxy: str | None = Field(default=None, description="socks5://[user:pass@]host:port")
 
-    # TDLib 内部日志级别:0=fatal,1=error,2=warning,3=info,4=debug,5=verbose。
-    # 默认 0 — 故障排查时调到 3 能在 tdlib_json logger 看到 TDLib 自己报的
-    # 401/429 等内部错误。
-    tdlib_verbosity: int = Field(default=0, ge=0, le=1023)
-
     # ---- 数据库后端 ----
     # v2.0.0 默认 SQLITE:单文件零部署;POSTGRES 留给多设备/大规模场景。
     db_backend: DBBackend = Field(default=DBBackend.SQLITE)

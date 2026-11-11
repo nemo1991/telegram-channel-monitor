@@ -14,16 +14,12 @@
   7. 🌐 语言       — 2026-09-07 v1.6.8 新增(FormSection: language)
   8. 🎨 外观       — 主题 3 选(FormSection: appearance)
   9. ⌨ 快捷键      — 2026-09-07 v1.6.9 新增(**老路径,14 个 QKeySequenceEdit**)
- 10. 📦 TDLib 缓存 — 2026-09-24 v1.8.3(**老路径**,文件 / database 大小 + 清理)
- 11. 储存按钮栏
+ 10. 储存按钮栏
 
 ## 2026-10-10 plan-batch2 目标 4 重写说明
 
-8 个标 FormSection 的分组用 form_section.py 抽象拼装,2 个保留老路径:
+8 个标 FormSection 的分组用 form_section.py 抽象拼装,1 个保留老路径:
 
-- **cache 保留老路径**:`_cache_label` / `_btn_clear_cache` / `_refresh_cache_label()`
-  三个属性测试直接 getattr,以及「off-loop 异步填充 + 动态大小」模式 FormSection
-  难表达。Phase C 之后可改 ActionDef,但属性名必保留。
 - **keybindings 保留老路径**:14 个 `QKeySequenceEdit` 走 `DEFAULT_BINDINGS` 动态
   循环,`_keybinding_label(action)` 内 14 个字面 `self.tr(<literal>)` 是 lupdate
   静态扫描的关键(挪走会漏抽到翻译)。
@@ -92,7 +88,7 @@ class SettingsPage(QWidget):
         env_path: Path,
         parent: QWidget | None = None,
     ) -> None:
-        """建 10 个分组(8 FormSection + cache/keybindings 老路径)+ 底部按钮 + 加载当前设置。
+        """建 9 个分组(8 FormSection + keybindings 老路径)+ 底部按钮 + 加载当前设置。
 
         `env_path` 是「保存到 .env」按钮的写入路径(platform-native 由 app.py 注入)。
         """
@@ -100,8 +96,6 @@ class SettingsPage(QWidget):
         self._app = app
         self._loop = loop
         self._env_path = env_path
-        # 2026-09-24 v1.8.3:TDLib 缓存组 — tdlib 子目录绝对路径,refresh / 清理用
-        self._td_dir = app.settings.session_dir / "tdlib"
         # 8 个 FormSection + 持有 self 引用,collect / load 通用循环
         self._sections: list[FormSection] = []
 
@@ -109,7 +103,7 @@ class SettingsPage(QWidget):
         self._load_from_settings()
 
     # ============================================================
-    # _build 装配 — 8 FormSection + 2 老路径 + 顶部/底部
+    # _build 装配 — 8 FormSection + 1 老路径 + 顶部/底部
     # ============================================================
 
     def _build(self) -> None:
@@ -143,9 +137,8 @@ class SettingsPage(QWidget):
         self._build_sync(form_root)
         self._build_language(form_root)
         self._build_appearance(form_root)
-        # 2 个保留老路径(cache / keybindings)
+        # 1 个保留老路径(keybindings)
         self._build_keybindings(form_root)
-        self._build_cache(form_root)
 
         form_root.addStretch(1)
         scroll.setWidget(scroll_content)
@@ -534,7 +527,7 @@ class SettingsPage(QWidget):
             log.exception("write theme to .env failed")
 
     # ============================================================
-    # 2 个保留老路径 — cache / keybindings
+    # 1 个保留老路径 — keybindings
     # ============================================================
 
     def _build_keybindings(self, root: QVBoxLayout) -> None:
@@ -618,107 +611,6 @@ class SettingsPage(QWidget):
         if action == "show_window":
             return self.tr("显示主窗口(tray)")
         return action
-
-    def _build_cache(self, root: QVBoxLayout) -> None:
-        """2026-09-24 v1.8.3:📦 TDLib 缓存 — 走老路径,属性名测试直接读。
-
-        `_cache_label` / `_btn_clear_cache` / `_refresh_cache_label()` 必保留。
-        """
-        g = QGroupBox(self.tr("📦 TDLib 缓存"))
-        f = QFormLayout(g)
-        f.setSpacing(6)
-
-        # 当前占用 label — 初始占位「计算中…」
-        self._cache_label = QLabel(self.tr("计算中…"))
-        self._cache_label.setObjectName("cacheSizeLabel")
-        f.addRow(self.tr("当前占用:"), self._cache_label)
-
-        # 按钮 — 同一行右侧
-        self._btn_clear_cache = QPushButton(self.tr("🧹 清理缓存"))
-        self._btn_clear_cache.setObjectName("btnClearCache")
-        self._btn_clear_cache.setToolTip(
-            self.tr(
-                "删除 TDLib 文件分片缓存 + 触发 TDLib optimizeStorage 压缩数据库。"
-                "session/auth_key 不丢,无需重新登录。"
-            )
-        )
-        self._btn_clear_cache.clicked.connect(self._on_clear_cache)
-        f.addRow(self.tr("操作:"), self._btn_clear_cache)
-
-        root.addWidget(g)
-
-        # 首次填充 label(异步)
-        self._refresh_cache_label()
-
-    def _refresh_cache_label(self) -> None:
-        """2026-09-24 v1.8.3:off-loop 计算 files/database 子目录大小,setText。
-
-        走 `asyncio.to_thread` 避免大目录 stat 阻塞 qasync 事件循环。
-        失败时显示「(无法读取)」,不弹窗(用户没主动操作,静默降级)。
-        """
-        td_dir = self._td_dir
-
-        async def _go() -> str:
-            from tgmonitor.core._fs_utils import dir_size, format_bytes
-
-            files = await asyncio.to_thread(dir_size, td_dir / "files")
-            db = await asyncio.to_thread(dir_size, td_dir / "database")
-            return f"files: {format_bytes(files)} / database: {format_bytes(db)}"
-
-        def _done(text: str) -> None:
-            self._cache_label.setText(text)
-
-        run_coro(
-            self._loop,
-            _go(),
-            on_success=_done,
-            on_error=lambda e: self._cache_label.setText(self.tr("(无法读取)")),
-            error_label="cache_size_refresh",
-        )
-
-    def _on_clear_cache(self) -> None:
-        """2026-09-24 v1.8.3:清理缓存按钮 slot,触发两动作 + 弹窗反馈。"""
-        self._btn_clear_cache.setEnabled(False)
-        self._cache_label.setText(self.tr("清理中…"))
-
-        client = self._app.client
-
-        async def _go() -> tuple[int, int]:
-            freed_files = await client.clean_files()
-            freed_db = await client.optimize_storage()
-            return freed_files, freed_db
-
-        def _done(result: tuple[int, int]) -> None:
-            from tgmonitor.core._fs_utils import format_bytes
-
-            f, d = result
-            QMessageBox.information(
-                self,
-                self.tr("清理完成"),
-                self.tr("已释放:files {0}(optimizeStorage 报告 {1})").format(
-                    format_bytes(f), format_bytes(d)
-                ),
-            )
-            self._refresh_cache_label()
-            self._btn_clear_cache.setEnabled(True)
-
-        def _fail(exc: BaseException) -> None:
-            log.exception("cache clear failed")
-            QMessageBox.critical(
-                self,
-                self.tr("清理失败"),
-                self.tr("操作未完成:{0}").format(exc),
-            )
-            self._refresh_cache_label()
-            self._btn_clear_cache.setEnabled(True)
-
-        run_coro(
-            self._loop,
-            _go(),
-            on_success=_done,
-            on_error=_fail,
-            error_label="cache_clear",
-        )
 
     # ============================================================
     # 后端切换显隐 — 用 form_section.find_form_row 走跨 group 隔离
@@ -1147,14 +1039,6 @@ class SettingsPage(QWidget):
             self.btn_test_proxy.setText(self.tr("测试连接"))
         else:
             self.btn_test_proxy.setText(self.tr("测试中…"))
-
-        # TDLib 缓存按钮(双态)
-        if self._btn_clear_cache.isEnabled():
-            self._btn_clear_cache.setText(self.tr("🧹 清理缓存"))
-        else:
-            self._btn_clear_cache.setText(self.tr("🧹 清理中…"))
-        # 静默刷新:retranslate 后大小仍是真实数字,无需弹窗
-        self._refresh_cache_label()
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt 命名
         """2026-09-07 v1.6.8:LanguageChange → retranslateUi 全文重译。

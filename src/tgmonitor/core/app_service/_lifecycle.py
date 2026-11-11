@@ -29,10 +29,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from tgmonitor.core.auth_service import AuthService
 from tgmonitor.core.events import ErrorOccurred, MonitoringPaused, MonitoringResumed
 from tgmonitor.core.settings_store import update_env_paused
-from tgmonitor.core.subscription_service import SubscriptionService
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -45,8 +43,9 @@ async def bootstrap(app: AppService) -> tuple[str, str | None]:
 
     返回 (state, detail)。
 
-    401 加密 key 错误 → rotate + rebuild client + 再 start;client swap
-    留在此方法(影响 `AppService.client`,AuthService 不该碰)。
+    401 / session 失效由 client 内部自愈(Telethon 实现捕获
+    UnauthorizedError → 删 session 文件重建 → 重试一次),bootstrap
+    不再做 client swap。
 
     注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
     现在所有「订阅真理」都走 `storage.list_subscribed_channels()` —
@@ -68,24 +67,6 @@ async def bootstrap(app: AppService) -> tuple[str, str | None]:
     except Exception as e:  # noqa: BLE001
         await app.bus.publish(ErrorOccurred(source="bootstrap", message=str(e), exception=e))
         return "error", str(e)
-    # 如果 start 失败 + 检测到 401 → 让底层的 nuke_and_rebuild 接管,
-    # rotate 加密 key + 重建 client + 再 start 一次
-    if state == "error" and detail and "encryption key" in detail:
-        log.warning("bootstrap: 401 detected — rotating key and rebuilding client")
-        await app.client.nuke_and_rebuild(rotate_key=True)
-        from tgmonitor.core.telegram.factory import build_telegram_client
-
-        await app.client.close()
-        app.client = build_telegram_client(
-            app.settings,
-            use_fake=False,
-            event_bus=app.bus,
-        )
-        # client swap 后必须重建 SubscriptionService(它持有旧 client)
-        app._sub = SubscriptionService(app.bus, app.client, app.storage)
-        # AuthService 持旧 client 引用,重建
-        app.auth = AuthService(app.bus, app.client, app.settings)
-        state, detail = await app.client.start()
     # client 端已经 publish 过 LoginStateChanged,这里只 fail-safe 再发一次终态
     if state == "error":
         await app.bus.publish(
@@ -205,24 +186,18 @@ async def shutdown(app: AppService) -> None:
     (close() 后该引用已不可用,但 facade 已不再有调用入口)。
 
     2026-09-22 v1.8.x:**分阶段超时** — 之前整条 `_shutdown_async` 共用
-    `app.py:416` 外层 5s wait_for,任何一段 hang(尤其 `client.close()` 走
-    tdlib_json 内部 CFRunLoop,macOS 偶发卡)就会让整链被强 cancel,
-    TDLib 子进程没 join、storage 连接没 close → 下次启动触发 401 →
-    `nuke_and_rebuild` 重建 session → 用户被踢回登录。改为每阶段独立
+    `app.py:416` 外层 5s wait_for,任何一段 hang 就会让整链被强 cancel,
+    连接没 close → 下次启动可能触发 401。改为每阶段独立
     短超时,任一超时只 log 不上抛,继续往下走(原则:尽力清,不卡死)。
     `monitor.stop()` 内部已有 2s 自带超时(参见 service.py:200-228),
     这里不再包。
     """
     await stop_monitor(app)
-    # 关 TelegramClient — tdlib_json 走 CFRunLoop (macOS) / eventfd+IOCP
-    # (Linux/Windows),偶发 hang 给 2s hard timeout,失败仅 log。
+    # 关 TelegramClient — 偶发 hang 给 2s hard timeout,失败仅 log。
     try:
         await asyncio.wait_for(app.client.close(), timeout=2.0)
     except TimeoutError:
-        log.error(
-            "client.close() 超时(2s)— TDLib thread 可能残留,下次启动若 401 "
-            "会走 nuke_and_rebuild 重建 session"
-        )
+        log.error("client.close() 超时(2s)— 后台任务可能残留,下次启动 client 自愈 401")
     except Exception:  # noqa: BLE001
         log.exception("client.close() failed")
     await app.storage.close()
