@@ -1,64 +1,53 @@
-"""白名单管理 mixin — `MonitorService` 的频道白名单 + reconfigure 路径。
+"""白名单管理组件 — `MonitorService` 的频道白名单 + reconfigure 路径。
 
-2026-10-10 v1.12.x plan-batch2 目标 2 从 `MonitorService` 抽提:白名单
-管理是低风险分组(无共享热路径状态),抽到独立 mixin 后 `MonitorService`
-组合 4 mixin + 主处理逻辑,文件从 1,278 → 700 LOC。
+2026-11-11 v2.0.0 Phase 3-C3:从 `WhitelistMixin` 改为显式组合组件。
+组件持 `svc: MonitorService` 引用,状态单一所有权仍在 MonitorService
+(`_whitelist` 等),组件只读写 `self._svc.*` — 不再有 mixin MRO 魔法,
+mypy 经 `MonitorService` 类型看到全部契约,无需 `type: ignore[attr-defined]`。
 
-为什么用 mixin 不是组合对象:
-- `MonitorService` 内部大量 method 互相调 `_whitelist` / `_seen_ids` /
-  `_handled` 等实例状态,改成组合对象要传 `self` 引用,反而繁
-- mixin 加 method 不动 `__init__`,`MonitorService.__init__` 一处
-  管所有状态初始化
-- 4 mixin 文件各自只关心自己方法的逻辑,无重叠
-
-依赖:`Mixin` 期望宿主类持有 `bus: EventBus` / `client: TelegramClient` /
-`storage: StorageRepository` / `objects: ObjectStore` /
-`settings: Settings` / `downloader: MediaDownloader | None`,
-本文件不直接引用 `MonitorService`(避免循环),只列协议契约。
+`MonitorService` 保留同名 delegate(`set_whitelist` / `add_to_whitelist` /
+`remove_from_whitelist` / `subscribed_ids` / `update_backends`)转发到本组件,
+公开调用面与测试 seam 不变。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from tgmonitor.core.config import Settings
-from tgmonitor.core.events import EventBus
 from tgmonitor.core.monitor.downloader import MediaDownloader
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
-from tgmonitor.core.telegram.client import TelegramClient
+
+if TYPE_CHECKING:
+    from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)
 
 
-class WhitelistMixin:
-    """白名单管理 — 5 个 method 集中:`set_whitelist` / `add_to_whitelist` /
+class WhitelistManager:
+    """白名单管理 — 5 个 method:`set_whitelist` / `add_to_whitelist` /
     `remove_from_whitelist` / `subscribed_ids` / `update_backends`。
 
-    依赖宿主属性:`self.bus / client / storage / objects / settings /
-    downloader / _whitelist`。
+    经 `self._svc` 访问宿主状态:`bus / client / storage / objects /
+    settings / downloader / _whitelist`。
     """
 
-    bus: EventBus
-    client: TelegramClient
-    storage: StorageRepository
-    objects: ObjectStore
-    settings: Settings
-    downloader: MediaDownloader | None
-    _whitelist: set[int]
+    def __init__(self, svc: MonitorService) -> None:
+        self._svc = svc
 
     def set_whitelist(self, channel_ids: Iterable[int]) -> None:
         """替换白名单 — 由 AppService 启动 monitor 时调。"""
-        self._whitelist = set(channel_ids)
+        self._svc._whitelist = set(channel_ids)
 
     def add_to_whitelist(self, channel_id: int) -> None:
         """增量加一个频道到白名单(订阅后立即生效)。"""
-        self._whitelist.add(channel_id)
+        self._svc._whitelist.add(channel_id)
 
     def remove_from_whitelist(self, channel_id: int) -> None:
         """从白名单摘掉一个频道(退订;不存在 idempotent 不抛)。"""
-        self._whitelist.discard(channel_id)
+        self._svc._whitelist.discard(channel_id)
 
     @property
     def subscribed_ids(self) -> frozenset[int]:
@@ -68,7 +57,7 @@ class WhitelistMixin:
         `remove_from_whitelist` 维护;每次访问返回一个新 `frozenset` 副本,
         UI 端不会意外修改内部状态。
         """
-        return frozenset(self._whitelist)
+        return frozenset(self._svc._whitelist)
 
     async def update_backends(
         self,
@@ -84,12 +73,13 @@ class WhitelistMixin:
         这里同步替换引用 + 重建 MediaDownloader(新 storage/objects/
         max_bytes)+ 从新 storage 重载白名单(订阅真理随存储切换)。
         """
-        self.storage = storage
-        self.objects = objects
-        self.settings = settings
-        if self.downloader is not None:
-            self.downloader = MediaDownloader(
-                self.client,
+        svc = self._svc
+        svc.storage = storage
+        svc.objects = objects
+        svc.settings = settings
+        if svc.downloader is not None:
+            svc.downloader = MediaDownloader(
+                svc.client,
                 storage,
                 objects,
                 max_bytes=settings.media_max_bytes,

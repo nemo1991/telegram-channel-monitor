@@ -90,9 +90,8 @@ class ChannelsMixin(_Base):
         if not isinstance(e, ChannelSubscribed) or e.channel is None:
             return
         self.known_channels[e.channel.id] = e.channel
-        # 2026-10-15 plan-batch6-2 副产物:走 AppService facade 转发
-        # 到 MonitorService 内部 WhitelistMixin(sync),不再绕过 facade
-        # 直调 `self.monitor.add_to_whitelist(cid)`。
+        # 走 ChannelService → MonitorService 内部 WhitelistManager(sync),
+        # 不绕过领域服务直调 `self.monitor.add_to_whitelist(cid)`。
         self.app.channels.add_to_whitelist(e.channel.id)
         self.channels_changed.emit()
         # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅

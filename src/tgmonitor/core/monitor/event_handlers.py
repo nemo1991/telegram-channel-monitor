@@ -1,14 +1,15 @@
-"""6 个 EventBus 订阅 handler — 频道 / 互动 / pin / 删事件。
+"""5 个 EventBus 订阅 handler 组件 — 频道 / 互动 / pin 事件。
 
-2026-10-10 v1.12.x plan-batch2 目标 2 从 `MonitorService` 抽出(~270 LOC)。
-抽提原因:handler 互相独立(各管一事件),无共享热路径状态(都是
-`await storage.X()` 后 publish ErrorOccurred),放 `service.py` 反而成
-信息噪音 —— reader 翻 1,000+ LOC 只想找核心消息处理时,handler 散在
-中间挡路。
+2026-11-11 v2.0.0 Phase 3-C3:从 `EventHandlerMixin` 改为显式组合组件。
+组件持 `svc: MonitorService` 引用,经 `self._svc.bus / storage` 访问宿主
+依赖 — 不再有 mixin MRO 魔法。handler 互相独立(各管一事件),无共享
+热路径状态(都是 `await storage.X()` 后 publish ErrorOccurred)。
 
-设计:Mixin + 契约(同 `WhitelistMixin`)。宿主类期望持有
-`self.bus / storage / client`,handler 用到就调;事件 payload 由 bus
-dispatcher 注入。
+`MessageDeleted` handler(第 6 个)在 `DeleteManager`(`core/monitor/delete.py`),
+与 `delete_message` 公开 API / orphan 清理紧耦合,不放本文件。
+
+`MonitorService` 保留同名 delegate 转发到本组件,测试可直接调
+`monitor._handle_pin_changed` 等 seam 不变。
 """
 
 from __future__ import annotations
@@ -26,14 +27,13 @@ from tgmonitor.core.events import (
 )
 
 if TYPE_CHECKING:
-    from tgmonitor.core.events import EventBus
-    from tgmonitor.core.storage.repository import StorageRepository
+    from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)
 
 
-class EventHandlerMixin:
-    """5 个 EventBus 订阅 handler 集中,按事件分 5 方法:
+class EventHandlers:
+    """5 个 EventBus 订阅 handler,按事件分 5 方法:
 
     - `_handle_interactions_changed` — reactions / views 增量
     - `_handle_pin_changed` — server-side pin / unpin
@@ -41,15 +41,11 @@ class EventHandlerMixin:
     - `_handle_channel_title_changed` — `updateChatTitle`
     - `_handle_channel_photo_changed` — `updateChatPhoto`
 
-    `MessageDeleted` handler(原第 6 个)在 `DeleteMixin`(同处
-    `core/monitor/delete.py`),与 `delete_message` 公开 API / orphan
-    清理紧耦合,不放本文件。
-
-    依赖宿主属性:`self.bus / storage`。
+    经 `self._svc` 访问宿主依赖:`bus / storage`。
     """
 
-    bus: EventBus
-    storage: StorageRepository
+    def __init__(self, svc: MonitorService) -> None:
+        self._svc = svc
 
     async def _handle_interactions_changed(
         self,
@@ -63,7 +59,7 @@ class EventHandlerMixin:
         落库前/落库后两条事件同 payload,UI 自取所需时点。
         """
         try:
-            await self.storage.update_message_interactions(
+            await self._svc.storage.update_message_interactions(
                 event.channel_id,
                 event.telegram_msg_id,
                 views=event.views,
@@ -80,7 +76,7 @@ class EventHandlerMixin:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("update interactions failed: %s", e)
-            await self.bus.publish(
+            await self._svc.bus.publish(
                 ErrorOccurred(
                     source="monitor.interactions",
                     message=str(e),
@@ -107,19 +103,19 @@ class EventHandlerMixin:
         from tgmonitor.core.events import MessageEdited
 
         try:
-            await self.storage.update_message_pin(
+            await self._svc.storage.update_message_pin(
                 event.channel_id,
                 event.telegram_msg_id,
                 event.is_pinned,
             )
             # 重新从 storage 拉完整 DTO(落库可能改变其它字段,虽然本方法
             # 只动 is_pinned;为防 schema 漂移,re-fetch 是稳妥做法)。
-            updated = await self.storage.get_message(
+            updated = await self._svc.storage.get_message(
                 event.channel_id,
                 event.telegram_msg_id,
             )
             if updated is not None:
-                await self.bus.publish(MessageEdited(message=updated))
+                await self._svc.bus.publish(MessageEdited(message=updated))
             log.debug(
                 "pin updated: channel=%s msg=%s pinned=%s",
                 event.channel_id,
@@ -128,7 +124,7 @@ class EventHandlerMixin:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("update pin failed: %s", e)
-            await self.bus.publish(
+            await self._svc.bus.publish(
                 ErrorOccurred(
                     source="monitor.pin",
                     message=str(e),
@@ -158,9 +154,9 @@ class EventHandlerMixin:
                 # username。生产可加索引;MVP 接受 O(N) 扫。
                 # v1.4.0 MVP:仅 username 不为 None 时反查。
                 if event.username:
-                    for c in await self.storage.list_channels():
+                    for c in await self._svc.storage.list_channels():
                         if c.username == event.username:
-                            await self.storage.update_channel_metadata(
+                            await self._svc.storage.update_channel_metadata(
                                 c.id,
                                 title=event.title,
                                 username=event.username,
@@ -183,7 +179,7 @@ class EventHandlerMixin:
                 return
             if event.channel_id == 0:
                 return  # 无 channel_id 又无 username,跳过
-            await self.storage.update_channel_metadata(
+            await self._svc.storage.update_channel_metadata(
                 event.channel_id,
                 title=event.title,
                 username=event.username,
@@ -208,7 +204,7 @@ class EventHandlerMixin:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelMetadataChanged failed: %s", e)
-            await self.bus.publish(
+            await self._svc.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_metadata",
                     message=str(e),
@@ -227,7 +223,7 @@ class EventHandlerMixin:
         陈年 chat 推 metadata update,落库时机晚于本 update)。
         """
         try:
-            await self.storage.update_channel_metadata(event.channel_id, title=event.new_title)
+            await self._svc.storage.update_channel_metadata(event.channel_id, title=event.new_title)
             log.debug(
                 "channel title updated: channel=%s new_title=%r",
                 event.channel_id,
@@ -235,7 +231,7 @@ class EventHandlerMixin:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelTitleChanged failed: %s", e)
-            await self.bus.publish(
+            await self._svc.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_title",
                     message=str(e),
@@ -265,7 +261,7 @@ class EventHandlerMixin:
             # 非 None(包含空串):显式写真值。
             # 空串 "" → 视为「头像被删」→ 写 NULL;非空 → 写真路径。
             photo_to_set: str | None = event.local_path if event.local_path else None
-            await self.storage.update_channel_metadata(
+            await self._svc.storage.update_channel_metadata(
                 event.channel_id, photo_local_key=photo_to_set
             )
             log.debug(
@@ -276,7 +272,7 @@ class EventHandlerMixin:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelPhotoChanged failed: %s", e)
-            await self.bus.publish(
+            await self._svc.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_photo",
                     message=str(e),

@@ -1,4 +1,4 @@
-"""MonitorService — 监听服务核心(facade)。
+"""MonitorService — 监听服务核心(组合根 + 热路径)。
 
 职责:
 1. 订阅 `TelegramClient.subscribe_updates()` 的实时更新
@@ -9,20 +9,20 @@
 
 启动/停止:`start()` / `stop()`,由 `AppService.start_monitor()` 调用。
 
-2026-10-10 v1.12.x plan-batch2 目标 2:1,278 → 707 LOC facade,4 个 mixin
-子模块按职责分离:
-  - `whitelist.py`      — 白名单 / 后端热重载(WhitelistMixin)
-  - `backfill.py`       — 周期补拉 / reconnect kick(BackfillMixin)
-  - `orchestrator.py`   — start/stop/主循环/心跳(OrchestratorMixin)
-  - `event_handlers.py` — 5 个 bus 订阅(EventHandlerMixin)
-  - `delete.py`         — 删 + 孤儿 bytes 清理(DeleteMixin)
+2026-11-11 v2.0.0 Phase 3-C3:5 个 mixin 改为显式组合组件。状态单一
+所有权在本类(`__init__` 一处初始化),组件持 `svc` 引用经 `self._svc.*`
+读写 — 消除 mixin MRO 魔法与 `type: ignore[attr-defined]`:
+  - `whitelist.py`      — 白名单 / 后端热重载(WhitelistManager)
+  - `orchestrator.py`   — start/stop/主循环/心跳(Orchestrator)
+  - `backfill.py`       — 周期补拉 / reconnect kick(BackfillRunner)
+  - `event_handlers.py` — 5 个 bus 订阅(EventHandlers)
+  - `delete.py`         — 删 + 孤儿 bytes 清理(DeleteManager)
 
-本文件仅保留:
+本类保留:
   - 核心消息处理:`_handle` / `_handle_edited` / `_download_worker` /
-    `_maybe_download_thumb`(热路径,3 个互相依赖,放一起不动)
-  - 状态字段:`__init__` + 中间状态字段(5 个 mixin 都依赖)
-  - 公共常量:`_BACKFILL_*` / `_HEARTBEAT_INTERVAL`
-  - 公开 type 门面:`MonitorService` class(组合 5 mixin)
+    `_maybe_download_thumb`(热路径,互相依赖,放一起不动)
+  - 状态字段 + 公共常量(`_BACKFILL_*` / `_HEARTBEAT_INTERVAL`)
+  - 公开 / 测试 seam 的 delegate(转发到组件,调用面不变)
 
 `MediaDownloader` 仍从此模块 re-export,保持向后兼容
 (`from tgmonitor.core.monitor.service import MediaDownloader`)。
@@ -34,22 +34,30 @@ import asyncio
 import collections
 import dataclasses
 import logging
+from typing import Iterable
 
 from tgmonitor.core.config import MediaPolicy, Settings
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MessageDTO
 from tgmonitor.core.events import (
+    ChannelMetadataChanged,
+    ChannelPhotoChanged,
+    ChannelTitleChanged,
+    ConnectionStateChanged,
     EventBus,
     MediaDownloaded,
     MediaDownloadProgress,
+    MessageDeleted,
     MessageEdited,
+    MessageInteractionsChanged,
+    MessagePinChanged,
     MessageReceived,
 )
-from tgmonitor.core.monitor.backfill import BackfillMixin
-from tgmonitor.core.monitor.delete import DeleteMixin
+from tgmonitor.core.monitor.backfill import BackfillRunner
+from tgmonitor.core.monitor.delete import DeleteManager
 from tgmonitor.core.monitor.downloader import MediaDownloader  # noqa: F401  # re-export
-from tgmonitor.core.monitor.event_handlers import EventHandlerMixin
-from tgmonitor.core.monitor.orchestrator import OrchestratorMixin
-from tgmonitor.core.monitor.whitelist import WhitelistMixin
+from tgmonitor.core.monitor.event_handlers import EventHandlers
+from tgmonitor.core.monitor.orchestrator import Orchestrator
+from tgmonitor.core.monitor.whitelist import WhitelistManager
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
@@ -59,23 +67,16 @@ __all__ = ["MonitorService", "MediaDownloader"]  # MediaDownloader re-export
 log = logging.getLogger(__name__)
 
 
-class MonitorService(
-    WhitelistMixin,
-    OrchestratorMixin,
-    BackfillMixin,
-    EventHandlerMixin,
-    DeleteMixin,
-):
+class MonitorService:
     """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。
 
     除了实时流,还会以 `_BACKFILL_INTERVAL` 周期对白名单频道做一轮补拉
     (见 `_backfill`):TDLib 的 `updateNewMessage` 只推送连接期间的新消息,
     断线 / 重启期间的消息不会重放,补拉负责兜底,避免监测不全 / 长空窗。
 
-    类继承 5 个 mixin 顺序:
-    `WhitelistMixin → OrchestratorMixin → BackfillMixin →
-     EventHandlerMixin → DeleteMixin`
-    — 都只 mixin methods,不重 `__init__`;`__init__` 集中在本类。
+    显式组合 5 个组件(WhitelistManager / Orchestrator / BackfillRunner /
+    EventHandlers / DeleteManager),状态单一所有权在本类;组件经 `svc`
+    引用读写状态。公开 / 测试 seam 方法以 delegate 转发到组件,调用面不变。
     """
 
     # 周期补拉参数(测试可 monkeypatch 调小)
@@ -112,7 +113,7 @@ class MonitorService(
         self._handled = 0  # 累计成功落库消息数(心跳日志用)
         self._last_heartbeat = 0.0  # time.monotonic() 上次心跳时间(周期节流用)
         # reconnect 立即 kick 补拉后,设 True 跳过紧接的周期 tick
-        # (避免重复回拉 — 在 BackfillMixin._handle_connection_state 里设)。
+        # (避免重复回拉 — 在 BackfillRunner._handle_connection_state 里设)。
         self._skip_next_tick = False
         # 补拉中判定"频道不可访问"的 channel_id(每频道只 warning 一次,
         # 避免每 30s 轮刷日志);某频道补拉成功后从集合移除,可重新 warning。
@@ -127,9 +128,116 @@ class MonitorService(
         # miss 走 _handle。OrderedDict 限长 10000,超长 evict 最旧。
         self._seen_ids: collections.OrderedDict[tuple[int, int], None] = collections.OrderedDict()
 
+        # 组合组件 — 状态已就绪后装配,各持 self 引用经 self._svc.* 读写。
+        self._whitelist_mgr = WhitelistManager(self)
+        self._orchestrator = Orchestrator(self)
+        self._backfill_runner = BackfillRunner(self)
+        self._events = EventHandlers(self)
+        self._delete_mgr = DeleteManager(self)
+
+    # ---------- 白名单 delegate(WhitelistManager)----------
+
+    def set_whitelist(self, channel_ids: Iterable[int]) -> None:
+        """替换白名单 — 转发 WhitelistManager。"""
+        self._whitelist_mgr.set_whitelist(channel_ids)
+
+    def add_to_whitelist(self, channel_id: int) -> None:
+        """增量加频道到白名单 — 转发 WhitelistManager。"""
+        self._whitelist_mgr.add_to_whitelist(channel_id)
+
+    def remove_from_whitelist(self, channel_id: int) -> None:
+        """从白名单摘频道 — 转发 WhitelistManager。"""
+        self._whitelist_mgr.remove_from_whitelist(channel_id)
+
+    @property
+    def subscribed_ids(self) -> frozenset[int]:
+        """订阅频道 id 快照 — 转发 WhitelistManager。"""
+        return self._whitelist_mgr.subscribed_ids
+
+    async def update_backends(
+        self,
+        storage: StorageRepository,
+        objects: ObjectStore,
+        settings: Settings,
+    ) -> None:
+        """热重载同步后端 — 转发 WhitelistManager。"""
+        await self._whitelist_mgr.update_backends(storage, objects, settings)
+
+    # ---------- 生命周期 delegate(Orchestrator)----------
+
+    async def start(self) -> None:
+        """启动主循环 — 转发 Orchestrator。"""
+        await self._orchestrator.start()
+
+    async def stop(self) -> None:
+        """停 monitor — 转发 Orchestrator。"""
+        await self._orchestrator.stop()
+
+    # ---------- 补拉 delegate(BackfillRunner)----------
+
+    async def _backfill(self, channel_id: int) -> None:
+        """补拉单频道 — 转发 BackfillRunner。"""
+        await self._backfill_runner._backfill(channel_id)
+
+    async def _backfill_all(self) -> None:
+        """扫白名单补拉一轮 — 转发 BackfillRunner(测试可替换 seam)。"""
+        await self._backfill_runner._backfill_all()
+
+    async def _backfill_loop(self) -> None:
+        """周期补拉主循环 — 转发 BackfillRunner。"""
+        await self._backfill_runner._backfill_loop()
+
+    async def _handle_connection_state(self, event: ConnectionStateChanged) -> None:
+        """reconnect kick 补拉 — 转发 BackfillRunner。"""
+        await self._backfill_runner._handle_connection_state(event)
+
+    # ---------- bus 事件 handler delegate(EventHandlers / DeleteManager)----------
+
+    async def _handle_interactions_changed(self, event: MessageInteractionsChanged) -> None:
+        """reactions / views 增量 — 转发 EventHandlers。"""
+        await self._events._handle_interactions_changed(event)
+
+    async def _handle_pin_changed(self, event: MessagePinChanged) -> None:
+        """server-side pin — 转发 EventHandlers。"""
+        await self._events._handle_pin_changed(event)
+
+    async def _handle_channel_metadata(self, event: ChannelMetadataChanged) -> None:
+        """频道元数据增量 — 转发 EventHandlers。"""
+        await self._events._handle_channel_metadata(event)
+
+    async def _handle_channel_title_changed(self, event: ChannelTitleChanged) -> None:
+        """chat 改名 — 转发 EventHandlers。"""
+        await self._events._handle_channel_title_changed(event)
+
+    async def _handle_channel_photo_changed(self, event: ChannelPhotoChanged) -> None:
+        """chat 改头像 — 转发 EventHandlers。"""
+        await self._events._handle_channel_photo_changed(event)
+
+    async def _handle_message_deleted(self, event: MessageDeleted) -> None:
+        """TG 端删消息 — 转发 DeleteManager。"""
+        await self._delete_mgr._handle_message_deleted(event)
+
+    # ---------- 删除 delegate(DeleteManager)----------
+
+    async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删单条 + 清孤儿 + 发 MessageDeleted — 转发 DeleteManager。"""
+        await self._delete_mgr.delete_message(channel_id, telegram_msg_id)
+
+    async def delete_messages(
+        self,
+        items: list[tuple[int, int]],
+        cancel_event: asyncio.Event | None = None,
+    ) -> int:
+        """批量删(支持 cancel_event)— 转发 DeleteManager。"""
+        return await self._delete_mgr.delete_messages(items, cancel_event=cancel_event)
+
+    async def _delete_with_orphan_check(self, channel_id: int, telegram_msg_id: int) -> None:
+        """删 row + refcount + 孤儿 bytes — 转发 DeleteManager(测试可替换 seam)。"""
+        await self._delete_mgr._delete_with_orphan_check(channel_id, telegram_msg_id)
+
     # ---- 核心消息流(_handle / _handle_edited / _download_worker) ----
     # 注:3 个 method 互相依赖(共享 _seen_ids / 共享下载队列 / 共享 _handled),
-    # 故意不放 mixin —— 拆开会让 facade 转发 3 层,反而增加阅读跳数。
+    # 故意不拆到组件 —— 拆开会让 delegate 转发 3 层,反而增加阅读跳数。
 
     async def _handle(self, msg: MessageDTO) -> None:
         """新消息路径(2026-08-24):已存/已编辑的消息在 `_run` 处已路由到 `_handle_edited`。
