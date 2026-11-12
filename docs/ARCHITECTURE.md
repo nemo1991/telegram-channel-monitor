@@ -181,7 +181,7 @@ MediaStore · ThumbnailStore · UserMetaStore  →  StorageRepository
 | 部署 | 单文件 `tgmonitor.db`,零配置 | 需 PG 服务 + `TG_DB_DSN` |
 
 **media 一律只存引用**(`object_key` + `object_backend` + `thumb_key` + `thumb_backend`),不存 BLOB。
-`factory.py:build_storage` 按 `Settings.db_backend` 分发;旧 `.env` 设 `mongo` 启动期即报 ValidationError。
+`factory.py:build_storage` 按 `Settings.db_backend` 分发;旧 `.env` 的 `mongo` / `jsonl` 等非法值由 `Settings.load_tolerant()` 启动时回退 SQLITE 并提示,不阻断启动。
 
 ### 3.6 `core/objectstore/` — 对象存储
 

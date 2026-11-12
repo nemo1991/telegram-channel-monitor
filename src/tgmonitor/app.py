@@ -19,12 +19,15 @@ import os
 import signal
 import sys
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.config import Settings
 from tgmonitor.core.events import ErrorOccurred
 from tgmonitor.core.monitor.service import MonitorService
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QWidget
 
 # 2026-09-27 refactor:`_bootstrap` 与 `_shutdown_async` 抽到
 # `tgmonitor.core.runtime`,CLI / GUI 共用同一份 composition root。
@@ -118,6 +121,32 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
         log.exception("setup-failure dialog raised")
 
 
+def _show_config_warning_dialog(warnings: list[str], parent: QWidget | None = None) -> None:
+    """配置非法字段已回退默认值 — 非致命提示,引导用户去设置页修正。
+
+    与 `_show_setup_failure_dialog` 同原则:lazy import、任何内层失败仅
+    log 不 raise(弹窗本身绝不能成为新的启动失败点)。
+    必须非模态 show():本函数在 `_setup_then_show` task 内被调,模态
+    exec() 的嵌套事件循环会让 qasync 抛 "Cannot enter into task ..."。
+    """
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("配置已重置")
+        box.setText(
+            "以下配置项非法,已回退为默认值:\n\n"
+            + "\n".join(f"  • {w}" for w in warnings)
+            + "\n\n请到 设置 页修正后保存。原始值仍保留在 .env 文件中。"
+        )
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.show()
+    except Exception:  # noqa: BLE001
+        log.exception("config-warning dialog raised")
+
+
 def run() -> None:
     """启动 GUI。
 
@@ -165,9 +194,11 @@ def run() -> None:
     # 了完整逻辑但全工程没人调,tr() 形同虚设。这里同步构造 Settings 读
     # `lang` 字段(env TG_LANG,默认 zh_CN),然后装翻译;`_bootstrap` 后面会
     # 再读一次 Settings(同一份 .env,幂等)。
+    # 容错加载:.env 非法值(如旧版 TG_DB_BACKEND=jsonl)回退默认值并记
+    # warnings,不阻断启动 — 用户可在设置页修正后保存。
     from tgmonitor.i18n import install_translator
 
-    early_settings = Settings()
+    early_settings, config_warnings = Settings.load_tolerant()
     install_translator(qt_app, locale=early_settings.lang)
     log.info("[i18n] locale=%s 已装翻译器", early_settings.lang)
 
@@ -270,6 +301,11 @@ def run() -> None:
             # 后台启动服务(白名单 + monitor + bootstrap)— win 可见之后异步跑,
             # 不阻塞主窗口出现。activity label 滚动显示当前步骤。
             asyncio.create_task(_background_startup(app_svc, monitor, win))
+
+            # 配置容错提示 — 放在后台启动 task 之后,用户阅读弹窗期间
+            # 监听服务已在后台拉起;弹窗是非致命提示,不影响启动流程。
+            if config_warnings:
+                _show_config_warning_dialog(config_warnings, win)
         except BaseException as e:  # noqa: BLE001
             # 不能 raise 出 setup_then_show —— 没人在 await 它,异常会被
             # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出

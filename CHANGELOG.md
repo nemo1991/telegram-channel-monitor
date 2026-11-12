@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **非法配置不再阻断 GUI 启动**:`Settings.load_tolerant()` 容错加载 —
+  `.env` / 环境变量中的非法字段(如旧版遗留 `TG_DB_BACKEND=jsonl` / `mongo`)
+  回退声明默认值并弹一次性提示,其余字段(凭据等)保留;`.env` 原值不改写,
+  用户在设置页修正保存后落盘。此前此类值在启动早期直接 ValidationError 退出。
+
 ## [2.0.0] - 2026-11-11
 
 主题:**全方位重构 v2.0.0** — Telegram 后端 TDLib → Telethon(纯 Python,零原生编译)、

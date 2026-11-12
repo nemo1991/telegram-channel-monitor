@@ -177,7 +177,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
   - Linux:`$XDG_DATA_HOME/tgmonitor`(默认 `~/.local/share/tgmonitor`)
   - Windows:`%APPDATA%/tgmonitor`
 - 子目录:`session/`(Telethon session,`tgmonitor.session`)、`media/`;SQLite 数据库文件 `tgmonitor.db` 与 `.env` 也在该目录。
-- 数据库:`TG_DB_BACKEND=sqlite`(默认)/ `postgres`;`TG_SQLITE_PATH` 自定义 SQLite 路径;`TG_DB_DSN` 配 PG。旧 `mongo` 值启动期即报 ValidationError。
+- 数据库:`TG_DB_BACKEND=sqlite`(默认)/ `postgres`;`TG_SQLITE_PATH` 自定义 SQLite 路径;`TG_DB_DSN` 配 PG。旧 `mongo` / `jsonl` 等非法值启动时由 `Settings.load_tolerant()` 回退默认 SQLITE 并弹提示,不阻断启动(GUI);CLI 路径仍严格校验。
 - 代理:SOCKS5 走 `TG_PROXY`(`parse_socks5_proxy` → python-socks tuple → Telethon `proxy=`)。
 
 ## 安全注意事项

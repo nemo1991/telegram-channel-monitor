@@ -6,21 +6,25 @@ UI 永远不直接读环境变量,所有配置都通过 `AppService.config()` �
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from platformdirs import user_data_dir
-from pydantic import Field
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
 
 
 class DBBackend(str, Enum):
     """消息仓储后端选择。
 
     v2.0.0:SQLITE 为默认(单文件,零部署);POSTGRES 可选(多设备/大规模)。
-    Mongo 后端已删 — 旧 .env 设 `TG_DB_BACKEND=mongo` 启动期即报 ValidationError。
+    Mongo / JSONL 后端已删 — 旧 .env 的 `mongo` / `jsonl` 等非法值由
+    `Settings.load_tolerant()` 在启动时回退 SQLITE 并提示,不阻断启动。
     """
 
     SQLITE = "sqlite"
@@ -238,3 +242,35 @@ class Settings(BaseSettings):
         s = cls(**defaults)
         s.ensure_dirs()
         return s
+
+    @classmethod
+    def load_tolerant(cls) -> tuple[Settings, list[str]]:
+        """启动容错加载 — 非法字段回退默认值,不让配置错误阻断启动。
+
+        合法配置等价于 `cls()`;遇 ValidationError(如旧版遗留
+        `TG_DB_BACKEND=jsonl`)时,把非法字段以声明默认值覆盖后重试一次
+        (init kwargs 优先级高于 env / .env),其余字段(凭据等)保留。
+        返回 `(settings, warnings)`,warnings 为每个被重置字段的中文说明,
+        供启动方提示用户去设置页修正。不改写 .env — 原值保留,用户在
+        设置页保存后才落盘。
+        """
+        try:
+            return cls(), []
+        except ValidationError as exc:
+            overrides: dict = {}
+            warnings: list[str] = []
+            for err in exc.errors():
+                loc = err.get("loc") or ()
+                name = loc[0] if loc else None
+                if not isinstance(name, str) or name not in cls.model_fields:
+                    continue
+                if name in overrides:
+                    continue
+                default = cls.model_fields[name].get_default(call_default_factory=True)
+                overrides[name] = default
+                shown = default.value if isinstance(default, Enum) else default
+                warnings.append(f"TG_{name.upper()}={err.get('input')!r} 非法,已回退默认值 {shown}")
+            settings = cls(**overrides)
+            for w in warnings:
+                log.warning("[config] %s", w)
+            return settings, warnings

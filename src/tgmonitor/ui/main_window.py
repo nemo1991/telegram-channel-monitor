@@ -459,16 +459,16 @@ class MainWindow(QMainWindow):
     # ======================== closeEvent (保持原逻辑) ========================
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        """窗口关闭 — 同步阻塞等 async shutdown(≤10s 超时)再放行。
+        """窗口关闭 — 同步等 async shutdown(≤10s 超时)再放行。
 
-        2026-09-23 v1.8.x:`run_shutdown_coro_sync` helper 改为永远走
-        `fut.result(timeout)` 阻塞等,不嵌套 QEventLoop pump —
-        macOS 26.x arm64 CI 镜像(`macos-26-arm64` 20260728)嵌套 exec
-        偶发 segfault,Windows 真机平台插件更稳定触发。helper 在
-        qasync 主线程上调用 `run_coroutine_threadsafe`,协程被调度到
-        qasync loop(同线程,但 Qt 不在主线程 pump 它——qasync 自己 tick);
-        主线程只 `fut.result(timeout)` 等,Qt 事件分发暂停但 shutdown
-        协程仍能推进。
+        2026-09-23 v1.8.x:`run_shutdown_coro_sync` helper 不嵌套 QEventLoop
+        exec — macOS 26.x arm64 CI 镜像(`macos-26-arm64` 20260728)嵌套 exec
+        偶发 segfault,Windows 真机平台插件更稳定触发。
+
+        qasync 的 loop 就跑在 Qt 主线程上(与 closeEvent 同线程),asyncio 回调
+        由 Qt timer / queued signal 驱动。helper 在等 future 的同时用
+        `QApplication.processEvents()` 泵 Qt 事件让 shutdown 协程推进 —— 既不死等
+        阻塞 loop(那会必然超时),也不嵌套 exec。详见 `tgmonitor.ui.shutdown`。
 
         任何意外(`RuntimeError` / `BaseException` 含 `CancelledError`)由
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回

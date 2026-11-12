@@ -6,10 +6,10 @@
 - cb 抛异常不阻止 quit(只 log,不弹框)
 - cb 慢于 closeEvent 的轮询上限时,closeEvent 不挂死
 
-注:closeEvent 里 `run_coroutine_threadsafe(...).result(timeout=...)` 需要目标
-loop 在另一个线程上跑(否则 closeEvent 同步等时,loop 永远不会被 tick —
-Qt 在 closeEvent 处理过程中不 pump 自己的事件)。这里用后台线程 + QApplication
-processEvents 模拟生产(qasync 主线程 loop 在另一个线程里)。
+注:这里用后台线程跑 loop 作为测试简化 —— 后台 loop 自己 tick,closeEvent
+同步等时协程仍能推进。但**生产里 qasync loop 跑在 Qt 主线程上**(与 closeEvent
+同线程),死等 fut.result() 会卡死 loop;helper 改用 processEvents 泵 Qt 事件
+驱动协程。主线程同 loop 的真实回归见 `tests/test_shutdown_main_thread.py`。
 """
 
 from __future__ import annotations
