@@ -37,7 +37,7 @@
 ### 准备
 
 1. Fork & clone
-2. 创建分支:`git checkout -b feat/my-feature` 或 `fix/my-bug`
+2. 创建分支:`git checkout -b feat/my-feature` 或 `fix/my-bug`(命名规范见「🌿 分支与 tag 规范」)
 3. 安装开发环境(uv 一步搞定,跟 CI 一致):
    ```bash
    uv sync --all-extras --group dev
@@ -102,6 +102,32 @@
 3. CI 必须绿
 4. 等待 review
 5. Squash merge
+
+---
+
+## 🌿 分支与 tag 规范
+
+**分支**
+
+- `main` — 唯一长期分支,始终可发布;改动经 PR squash merge 进入。
+- 主题分支 — 短命,命名 `<type>/<kebab-描述>`,type ∈ {feat, fix, refactor, docs, chore, test, perf}。
+  例:`feat/sqlite-default`、`fix/telethon-reconnect`。**不带版本号 / PR 号**
+  (旧 `feat/v1.5.2-pr-b5`、`v175-pr1` 式命名已废弃)。一分支一主题,合并后立即删(本地 + 远端)。
+- `dependabot/*` — bot 自动管理,有活跃 PR 时保留,合并后自删。
+
+**tag**
+
+- 语义化版本 `vX.Y.Z`(如 `v2.0.0`),只打在 `main` 上;打 tag 即触发 `build.yml` 三平台打包 + Release。
+- 历史 release tag(`v1.x`)永久保留,不删不改;命名规范只约束未来新 tag。
+
+**清理遗留分支**(维护者,合并后定期跑):
+
+```bash
+git fetch --prune
+git branch --merged main          # 已并入 main 的本地分支
+git branch -d <branch>            # -d 只删已合并,安全
+git push origin --delete <branch> # 删远端遗留分支(保留 dependabot 活跃 PR)
+```
 
 ---
 

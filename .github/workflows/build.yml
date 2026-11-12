@@ -1,11 +1,7 @@
 name: Build packages
 
-# v2.0.0:Telegram 后端切 Telethon(纯 Python),无原生库编译 —
-# 打包只需 uv sync + PyInstaller,三平台分钟级完成。
-#
-# 触发:
-#   - tag v*  → 完整打包 + GitHub Release
-#   - workflow_dispatch → 同上手动打包
+# 纯 Python 后端(Telethon),无原生库编译:uv sync + PyInstaller,三平台分钟级。
+# tag v* → 打包 + GitHub Release;workflow_dispatch → 手动打包(不建 Release)。
 on:
   push:
     tags: ["v*"]
@@ -20,6 +16,7 @@ jobs:
     name: build (${{ matrix.os }}, py${{ matrix.python-version }})
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +33,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      # Linux:Qt offscreen / AppImage 工具链
+      # Linux:Qt offscreen 系统库 + AppImage 工具链(rsvg-convert / appimagetool)。
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -50,33 +47,12 @@ jobs:
             libsm6 libice6 \
             librsvg2-bin \
             file
-          # appimagetool 一次性下到 /usr/local/bin
-          # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool)
-          # -k / --retry:runner 偶发自签证书与网络抖动,资产源可信故跳过校验
+          # appimagetool 仅 Linux 用;-k/--retry:runner 自签证书 + 网络抖动。
           curl -fkSL --retry 3 -o /usr/local/bin/appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /usr/local/bin/appimagetool
 
-      - name: Install system deps (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          # appimagetool 一次性下到 /usr/local/bin
-          # (AppImageCommunity/AppImageKit 已迁移到 AppImage/appimagetool,
-          #  旧 continuous release 链接已 404)
-          # -k:runner egress 代理是自签证书,curl 校验会 60 SSL error
-          # --retry:间歇性网络失败自动重试
-          curl -fkSL --retry 3 -o /usr/local/bin/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /usr/local/bin/appimagetool
-
-      # 2026-09-20:必须早于 uv sync —— pyproject.toml 的
-      # [tool.hatch.build.targets.wheel.force-include] 列了 .qm,hatchling
-      # editable build 读不到源文件就整体失败(.qm 被 .gitignore 排除,CI 拉源码
-      # 后没有)。此前 3 个平台的 build job 全卡在这里,导致 v1.7.5 的
-      # GitHub Release 根本没生成。同 ci.yml 的处理。
-      #
-      # 顺带修一个更早的问题:PyInstaller 打出的包里此前**从来没有 .qm**
-      # (从没编译过),打包版的 i18n 一直是 fallback 原文。现在补上。
+      # .qm 必须早于 uv sync:hatchling force-include 读 .qm 源文件,缺则 sync 失败。
       - name: Compile Qt translation files (.ts → .qm)
         uses: ./.github/actions/compile-qt-translations
 
@@ -84,8 +60,7 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Run PyInstaller
-        # `PYTHONPATH=src` 是 bash 语法;Windows runner 默认 pwsh 不认,
-        # 显式切 bash(windows-latest 自带 Git Bash)
+        # PYTHONPATH=src 是 bash 语法;Windows 默认 pwsh 不认,显式切 bash。
         shell: bash
         run: PYTHONPATH=src uv run pyinstaller --clean -y tgmonitor.spec
 
@@ -138,6 +113,7 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

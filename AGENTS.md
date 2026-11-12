@@ -124,7 +124,7 @@ PYTHONPATH=src uv run pytest tests/test_channel_sync.py -v -k <名字>
 # lint / typecheck
 uv tool run --from "ruff>=0.5" ruff check src tests
 uv tool run --from "ruff>=0.5" ruff format --check src tests
-uv run mypy src/tgmonitor          # 本地全量;CI 按 8 入口矩阵逐个跑(见下)
+uv run mypy src/tgmonitor          # 本地全量;CI 单 job 整包跑(见下)
 
 # 覆盖率(有分支覆盖,但 CI 不设阈值)
 PYTHONPATH=src uv run pytest --cov=tgmonitor
@@ -143,9 +143,10 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 - 语法按 Python 3.10+ 写:`dataclass(slots=True)`、`str | None` 联合类型等。
 - 函数第一行是 docstring(中文);`core/` 内日志用 `logging` 模块,不要 `print`。
 - **ruff**:line-length 100,`select=["E","F","I","B","UP","N","SIM","ASYNC"]`,ignore E501/UP042/UP035/SIM105/N818/B008,零容忍(CI 不通过即报错)。
-- **mypy**:低严格度(`disallow_untyped_defs=false`),第三方模块按 overrides 忽略(telethon / python_socks / PySide6 / qasync / pydantic 等);PySide6 的 stub 噪声(扁平 enum 别名 / form helper 返回 QWidget)用文件头 `# mypy: disable-error-code="attr-defined"` 屏蔽。CI mypy 8 入口矩阵:`core/monitor`、`core/storage`、`core/export`、`core/objectstore`、`core/telegram`、`ui`、`app.py`、`src`(× ubuntu/macos)。
+- **mypy**:低严格度(`disallow_untyped_defs=false`),第三方模块按 overrides 忽略(telethon / python_socks / PySide6 / qasync / pydantic 等);PySide6 的 stub 噪声(扁平 enum 别名 / form helper 返回 QWidget)用文件头 `# mypy: disable-error-code="attr-defined"` 屏蔽。CI mypy 单 job 整包跑 `uv run mypy src/tgmonitor`(ubuntu;原 8 模块 × 2 OS 矩阵已收敛)。
 - **i18n**:翻译源是 `src/tgmonitor/i18n/*.ts`,`.qm` 是 `pyside6-lrelease` 编译产物(**gitignore**,CI 用 `compile-qt-translations` composite action 现编)。**严禁跑全量 `pyside6-lupdate`**(会破坏运行时翻译),只做外科式 `.ts` 编辑。
 - commit 格式:`type(scope): subject`,type ∈ feat/fix/docs/refactor/test/chore/perf。
+- 分支/tag:`main` 唯一长期分支;主题分支 `<type>/<kebab-描述>`(不带版本号/PR 号),合并即删;tag `vX.Y.Z` 只打 main,历史 v1.x tag 永久保留。详见 CONTRIBUTING.md「🌿 分支与 tag 规范」。
 - 编码约定:4 空格缩进、LF 行尾、100 列上限(.editorconfig)。
 
 ## 测试策略
@@ -159,7 +160,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job(check + format)、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。
+- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13,pytest + coverage 一遍跑完)、ruff job(check + format)、mypy 单 job 整包、coverage 分支统计(不设阈值)。各 job 设 timeout-minutes。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。
 - **build.yml**(tag `v*` + 手动触发):三平台 `uv sync` → 编译 Qt 翻译(.ts→.qm)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → `release` job 建 GitHub Release + SHA256SUMS。**纯 Python,无原生库编译,分钟级完成**。
 - **audit.yml**(每周一 09:30 UTC):`uv export --no-emit-project --no-hashes` → `pip-audit --strict -r`(全量供应链含 dev)。pip-audit 不直接读 uv.lock,必须先 export;裸 `pip-audit --strict` 会误审计工具自身环境。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。

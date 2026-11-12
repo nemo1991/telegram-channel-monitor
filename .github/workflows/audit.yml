@@ -1,10 +1,5 @@
-# Supply-chain audit — 周一跑一次 pip-audit(基于 uv.lock)。
-#
-# 时机:在 Dependabot(09:00)开 PR 之后跑(09:30 UTC = 17:30 Asia/Shanghai,
-# 留 8h 给 Dependabot 处理),作为 baseline。
-# --strict:任何 CVE 都 fail;漏洞发现即在 GitHub 通知,人工评估后再发 fix。
-#
-# 不挡主 CI(`test` / `lint`):单独 cron workflow。
+# 周一 pip-audit 全量供应链审计(含 dev),--strict 任何 CVE 即 fail。
+# 独立 cron,不挡主 CI;在 Dependabot(09:00)开 PR 后跑作为 baseline。
 
 name: supply-chain audit
 
@@ -18,6 +13,7 @@ jobs:
   audit:
     name: pip-audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v5
@@ -32,10 +28,8 @@ jobs:
       - name: Install pip-audit (uv-managed tool)
         run: uv tool install pip-audit
 
-      # pip-audit 不直接读 uv.lock(2.10 仍不支持 PEP 751 lock 解析,裸跑会
-      # 误审计工具自身环境)。先 `uv export` 成 requirements.txt(含 dev 全量
-      # 供应链),再喂给 pip-audit。--no-emit-project 跳过 tgmonitor 自身
-      # (未上 PyPI,否则报 "Dependency not found")。
+      # pip-audit 不读 uv.lock,先 export 成 requirements(含 dev 全量);
+      # --no-emit-project 跳过未上 PyPI 的 tgmonitor 自身。
       - name: Export uv.lock to requirements
         run: uv export --no-emit-project --no-hashes --format requirements-txt -o requirements-audit.txt
 
