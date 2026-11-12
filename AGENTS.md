@@ -85,11 +85,9 @@ core(AppService 组合根/生命周期 + 领域服务)
 
 ```
 ├── src/tgmonitor/              # 全部源码(src 布局,见上表)
-├── tests/                      # pytest 测试(1594 用例);conftest.py + fixtures/ 提供公共 fixtures
+├── tests/                      # pytest 测试(1604 用例);conftest.py + fixtures/ 提供公共 fixtures
 │   ├── fixtures/               # settings/storage/objectstore/bus/client/monitor/app/make_* 等
-│   ├── integration/            # 真 PG 集成(testcontainers,CI-only,默认 skip)
-│   ├── golden/                 # 视觉回归黄金图(png,仅本地 macOS)
-│   └── fonts/                  # 测试字体资源
+│   └── integration/            # 真 PG 集成(testcontainers,CI-only,默认 skip)
 ├── scripts/build_appimage.sh   # Linux AppImage 构建(唯一脚本;无 libtdjson 编译)
 ├── tgmonitor.spec              # PyInstaller 打包配置(纯 Python,binaries=[])
 ├── docs/ARCHITECTURE.md        # 架构详解
@@ -156,13 +154,12 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 - pytest-asyncio 全局 `asyncio_mode="auto"`,`addopts="-ra -q -m 'not integration'"`,`timeout=300` / `timeout_method="thread"`(配置在 pyproject;防 CI fixture hang)。
 - `tests/fixtures/` 常用 fixtures:`settings`(stub 配置)、`storage`(InMemoryRepository)、`objectstore`、`bus`、`client`(FakeTelegramClient)、`monitor`、`app`、`make_message` / `make_photo` 工厂。`Settings.for_test()` 默认 SQLite + METADATA + LOCAL,离线可跑。
 - **UI 测试必须 `QT_QPA_PLATFORM=offscreen`**(无头环境跑 Qt;Windows CI 用原生 `windows` 插件);测试系统库依赖见 CI workflow。
-- 视觉回归(仅本地 macOS,不进 CI):`tests/test_visual_regression.py` skipif 非 darwin,8 张黄金图在 `tests/golden/`,0.5% 容差 + 内置 DejaVu Sans 字体锁像素 + dpr 1×。改动 UI 后本地 `UPDATE_GOLDENS=1 PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest tests/test_visual_regression.py` 重生成并人工比对。golden 跨机渲染不稳,故不进 CI;仍走 git 管理、本地维护。
 - 集成测试(`tests/integration/`,真 PG via testcontainers)默认 skip,CI 用 `-m integration` 显式跑;本地无 Docker 自动 skip。
 - 新增领域逻辑尽量走纯 core 单测(offline),不靠 UI 测试覆盖。
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job(check + format)、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。视觉回归(`tests/test_visual_regression.py`)不进 CI,`pytest` 统一 `--ignore`。
+- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13)、ruff job(check + format)、mypy 8 入口矩阵、coverage 分支统计(不设阈值)。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。
 - **build.yml**(tag `v*` + 手动触发):三平台 `uv sync` → 编译 Qt 翻译(.ts→.qm)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → `release` job 建 GitHub Release + SHA256SUMS。**纯 Python,无原生库编译,分钟级完成**。
 - **audit.yml**(每周一 09:30 UTC):`uv export --no-emit-project --no-hashes` → `pip-audit --strict -r`(全量供应链含 dev)。pip-audit 不直接读 uv.lock,必须先 export;裸 `pip-audit --strict` 会误审计工具自身环境。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。

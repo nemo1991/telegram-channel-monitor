@@ -2,7 +2,7 @@
 
 `MonitorViewModel` 订阅 `MediaDownloadProgress` 事件 → emit Qt
 `media_download_progress` signal。UI 端 media_manager 接到后刷新
-status label。这里只测 VM 层透传,UI 渲染走 visual_regression。
+status label。这里只测 VM 层透传,不覆盖 UI 渲染。
 
 **PR 1a**:`_FakeApp` 已 promote 到 `tests/fixtures/_fake_app.py`,此处 import 用。
 """

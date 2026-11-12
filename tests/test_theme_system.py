@@ -31,8 +31,7 @@ def reset_theme() -> None:
 
     2026-09-07 v1.6.8:teardown 显式调 `ThemeManager.apply(Theme.LIGHT)` —
     不调的话 `_current = LIGHT` 只改 Python 端,`QApplication.setStyleSheet`
-    仍挂着 DARK QSS,污染后续 test_visual_regression 的 golden 比对(8 widget
-    全部 size mismatch / 颜色翻转)。
+    仍挂着 DARK QSS,污染后续 UI 测试的渲染(颜色翻转 / 尺寸漂移)。
     """
     ThemeManager._current = Theme.LIGHT
     ThemeManager._system_listener_connected = False

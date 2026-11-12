@@ -222,8 +222,6 @@ uv run pyinstaller --clean -y tgmonitor.spec   # 产出 onedir zip
 > 测试全用 fake(`FakeTelegramClient` / `InMemoryRepository` / `LocalObjectStore`),
 > 不加载真实 Telegram 后端,windows-latest 无需任何引擎即可跑 pytest;打包侧
 > build.yml 的 windows-latest 直接 PyInstaller 产出 onedir zip。
-> 视觉回归(`tests/test_visual_regression.py`)只在本地 macOS 跑(golden
-> 跨机渲染不稳,不进任何 CI)。
 
 ### Windows + WSL2(推荐)
 

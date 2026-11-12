@@ -330,8 +330,6 @@ ExportDialog 选参数 ──► AppService.export(req)
 - core 单测**不**起 Postgres/S3/真实 Telegram 服务(全 fake,离线)
 - UI 测试(QMainWindow / QListWidget / MessageView)在 `QT_QPA_PLATFORM=offscreen`
   下运行 —— 见 `.github/workflows/ci.yml`。CI 默认 offscreen,本地装 dev 依赖后直接 `pytest` 即可
-- **视觉回归**(`tests/test_visual_regression.py`)仅本地 macOS 跑(skipif 非 darwin),
-  8 张黄金图 + 0.5% 容差 + 内置 DejaVu Sans 字体锁像素;golden 跨机渲染不稳,不进 CI
 - 真实集成(可选,CI-only)用 `testcontainers`:
   - PostgresRepo + testcontainers/postgres(`tests/integration/`)
   - S3Store + moto(mock,离线)

@@ -14,6 +14,13 @@
   回退声明默认值并弹一次性提示,其余字段(凭据等)保留;`.env` 原值不改写,
   用户在设置页修正保存后落盘。此前此类值在启动早期直接 ValidationError 退出。
 
+### 移除
+
+- **视觉回归测试**(`tests/test_visual_regression.py` + `tests/golden/` 黄金图 +
+  `tests/fonts/` 内置 DejaVu Sans):golden 跨机渲染不稳(字体 hinting / emoji
+  anti-aliasing 漂移),长期需人工维护且进不了 CI,收益不抵成本,整体移除。
+  UI 行为仍由 offscreen 功能测试覆盖。
+
 ## [2.0.0] - 2026-11-11
 
 主题:**全方位重构 v2.0.0** — Telegram 后端 TDLib → Telethon(纯 Python,零原生编译)、

@@ -161,6 +161,6 @@ class MessageViewAPIMixin:
 
     def _format(self, m: MessageDTO) -> str:
         """2026-09-02 v1.5.3 PR #D1:test shim,暴露 `MessageListModel._format`
-        给 golden / 视觉测试(head 行 split("\n")[0] 断言用)。
+        给测试(head 行 split("\n")[0] 断言用)。
         """
         return self._model._format(m)

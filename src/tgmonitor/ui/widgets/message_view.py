@@ -161,10 +161,7 @@ class MessageView(MessageViewAPIMixin, QListView):
         self._empty_overlay_widget.setGeometry(self.rect())
         # 2026-10-15 plan-batch7-B:backward compat — 测试 fixture 直接读
         # `view._empty_overlay.isHidden()`,代理到 widget 内部 overlay
-        # 引用,避免 4 个 test 改路径(test_empty_overlay_shown_when_no_messages
-        # / test_empty_overlay_hidden_after_first_append /
-        # test_empty_overlay_reappears_after_clear / test_message_view_empty
-        # 视觉回归黄金图比对)。
+        # 引用,避免 test_empty_overlay_* 系列 test 改路径。
         self._empty_overlay = self._empty_overlay_widget._empty_overlay
         self._empty_overlay_widget.floating_clicked.connect(self.scrollToTop)
         # 2026-10-15 plan-batch7-B:widget 自身 raise_ 到 view 顶部 Z-order

@@ -31,8 +31,8 @@ from __future__ import annotations
 
 import os
 
-# 2026-09-04 v1.6.5:macOS offscreen QPA 在 HiDPI 主屏下继承 dpr=2.0,
-# 导致 widget.grab().toImage() 返 2× 像素,golden 比对炸。
+# macOS offscreen QPA 在 HiDPI 主屏下继承 dpr=2.0,widget.grab().toImage()
+# 会返 2× 像素。锁 dpr=1 让 offscreen 渲染几何跨机确定。
 # 必须在 PySide6 首次 import 之前设 — 否则 QApplication 内部走 HiDPI
 # 初始化,后续 setAttribute(Qt.AA_DisableHighDpiScaling) 太晚。
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
@@ -74,7 +74,6 @@ def qapp():
     - `qapp_no_locale_force`(test_i18n_runtime.py + test_media_manager_i18n.py):
       i18n 测试要切语言,反 `force_zh_cn_locale` autouse fixture。
     - `qapp_16`(test_channel_widget.py):只是命名过时,改用 `qapp`。
-    - `test_visual_regression.py` 自造同名 `qapp`(macOS-only,CI --ignore,保留)。
     """
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 

@@ -111,14 +111,7 @@ jobs:
           # -v 看每个 case 名;--tb=short 失败时压栈长度可控;
           # `uv run` 自动激活 venv(PYTHONPATH 也透传),装好的 editable 项目
           # 在 .venv 里直接可用,无需 python -m pip install -e 再来一次
-          #
-          # **视觉回归不进 CI**(2026-08-12):`tests/test_visual_regression.py`
-          # 只在本地跑(UPDATE_GOLDENS=1 重生成 golden 后人工比对)。macOS CI
-          # runner(macos-26-arm64)与开发机对系统 emoji 字体的渲染存在固定
-          # 差异(settings_page 1.08% > 0.5% 容差,message_view ⏱ 0.4%),golden
-          # 跨机比对无法稳定 → 从 CI 摘除,golden 仍走 git 管理、本地维护。
-          uv run python -m pytest -v --tb=short \
-            --ignore=tests/test_visual_regression.py
+          uv run python -m pytest -v --tb=short
 
       # 再跑一次只为收集 branch coverage + 产 xml 报告(不设阈值门控)
       - name: Run pytest with coverage
@@ -130,8 +123,7 @@ jobs:
         shell: bash
         run: |
           # coverage 已经在 --group dev 里装好;`uv run` 注入 PATH。
-          # 视觉回归不进 CI(见 Run pytest),不参与覆盖率统计
-          uv run coverage run -m pytest -q --ignore=tests/test_visual_regression.py
+          uv run coverage run -m pytest -q
           uv run coverage xml -o coverage.xml
 
       # 以 OS + Python 版本为名,跨矩阵下不互相覆盖;若 coverage.xml
