@@ -160,7 +160,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13,pytest + coverage 一遍跑完)、ruff job(check + format)、mypy 单 job 整包、coverage 分支统计(不设阈值)。各 job 设 timeout-minutes。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。
+- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13,三平台统一裸 `python -m pytest`)、coverage 独立 job(仅 ubuntu,`coverage run -m pytest` 收分支覆盖率 → 单份 `coverage.xml` artifact,不设阈值、`continue-on-error` 与平台门控隔离)、ruff job(check + format)、mypy 单 job 整包。各 job 设 timeout-minutes。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。coverage 插桩曾在 runner 上引发无限 hang,故只保留在观测 job,平台门控一律裸跑。
 - **build.yml**(tag `v*` + 手动触发):三平台 `uv sync` → 编译 Qt 翻译(.ts→.qm)→ PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → `release` job 建 GitHub Release + SHA256SUMS。**纯 Python,无原生库编译,分钟级完成**。
 - **audit.yml**(每周一 09:30 UTC):`uv export --no-emit-project --no-hashes` → `pip-audit --strict -r`(全量供应链含 dev)。pip-audit 不直接读 uv.lock,必须先 export;裸 `pip-audit --strict` 会误审计工具自身环境。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。
