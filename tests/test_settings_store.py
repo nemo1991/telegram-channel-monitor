@@ -218,6 +218,9 @@ def test_diff_settings_session_dir_change_needs_restart():
 
 def test_editable_sqlite_path_roundtrip():
     """EditableSettings.sqlite_path 显式路径 → to_settings 保留。"""
+    # Path 在 Windows 上会把 "/..." 规范化成平台分隔符,期望值按当前平台取
+    # str(Path(...));断言的是 roundtrip 一致性,不是硬编码 POSIX 路径。
+    expected = str(Path("/custom/dir/my.db"))
     e = EditableSettings(
         api_id=1,
         api_hash="h" * 32,
@@ -228,7 +231,7 @@ def test_editable_sqlite_path_roundtrip():
     s = e.to_settings()
     assert s.sqlite_path == Path("/custom/dir/my.db")
     # from_settings 回读一致
-    assert EditableSettings.from_settings(s).sqlite_path == "/custom/dir/my.db"
+    assert EditableSettings.from_settings(s).sqlite_path == expected
 
 
 def test_editable_sqlite_path_empty_falls_back_to_default():
@@ -243,7 +246,7 @@ def test_settings_to_pairs_includes_sqlite_path():
     """settings_to_pairs 序列化 TG_SQLITE_PATH(写回 .env 用)。"""
     s = _settings(db_backend=DBBackend.SQLITE, sqlite_path=Path("/x/y.db"))
     pairs = settings_to_pairs(s)
-    assert pairs["TG_SQLITE_PATH"] == "/x/y.db"
+    assert pairs["TG_SQLITE_PATH"] == str(Path("/x/y.db"))
 
 
 def test_diff_settings_sqlite_path_change():

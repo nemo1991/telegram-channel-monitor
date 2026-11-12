@@ -67,13 +67,31 @@ jobs:
           print(f"{entry.name} -> {entry.value}")
           PY
 
-      # 一遍跑完测试 + branch coverage(coverage run 包裹 pytest,免跑两遍)。
-      - name: Run pytest with coverage
+      # 每个 job 仍只跑一遍测试,但覆盖率按平台分流:Windows 裸 pytest,
+      # 其余平台 coverage run 包裹并产 coverage.xml。
+      # 2026-11-12:Windows runner 在 coverage 插桩下,LocalObjectStore.put
+      # 的 asyncio.to_thread 写盘与 ProactorEventLoop 的 IOCP 完成通知互等,
+      # 卡在 test_media_downloader.py 第 8 个用例直到 300s timeout 判红
+      # (main + 3 个 dependabot PR 稳定复现于同一位置)。裸跑从未复现
+      # (10-22 CI 的 Windows 两遍都过)。覆盖率只是观测指标,三平台无需
+      # 各收一份;Windows 仍跑全套用例,门控不放松。恢复 Windows coverage
+      # 前需先在 runner 上做裸跑 / coverage 对照实验。
+      - name: Run pytest (Windows, no coverage)
+        if: runner.os == 'Windows'
         env:
           PYTHONPATH: src
-          # Windows 用原生 windows 插件:offscreen 在 windows-latest 下
+          # 原生 windows 插件:offscreen 在 windows-latest 下
           # processEvents() 会 access violation(issue #20)。
-          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
+          QT_QPA_PLATFORM: windows
+          QT_LOGGING_RULES: "*.warning=false"
+        shell: bash
+        run: uv run python -m pytest -v --tb=short
+
+      - name: Run pytest with coverage
+        if: runner.os != 'Windows'
+        env:
+          PYTHONPATH: src
+          QT_QPA_PLATFORM: offscreen
           QT_LOGGING_RULES: "*.warning=false"
         shell: bash
         run: |
@@ -81,6 +99,7 @@ jobs:
           uv run coverage xml -o coverage.xml
 
       - name: Upload coverage artifact
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v5
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
