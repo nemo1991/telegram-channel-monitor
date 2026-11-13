@@ -373,7 +373,9 @@ class LightboxDialog(QDialog):
         self._movie = None
         buf.close()
         pix = QPixmap()
-        if pix.loadFromData(ba, b"GIF"):
+        # 省略 format,让 Qt 按 magic bytes 自动探测。该参数在 6.11 stub 要 bytes、
+        # 6.12 起运行时要 str,显式传值无法跨版本;省略在两个版本都成立。
+        if pix.loadFromData(ba):
             self._apply_scaled_pixmap(pix)
         else:
             self._show_unavailable()
@@ -899,7 +901,8 @@ class LightboxDialog(QDialog):
             # GIF 走第一帧 + 旋转 — 静态显示
             ba = QByteArray(item.animated)
             pix = QPixmap()
-            if pix.loadFromData(ba, b"GIF"):
+            # 省略 format 以兼容 6.11/6.12 不同的参数类型(同 _fallback_gif_to_first_frame)
+            if pix.loadFromData(ba):
                 self._apply_scaled_pixmap(pix)
 
     def _save_current(self) -> None:
