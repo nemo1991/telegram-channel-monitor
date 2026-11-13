@@ -37,10 +37,24 @@
 
 > **PySide6 上限 `<6.12`**(2026-11-13 锁定):6.12.0 的 `QPixmap.loadFromData` format
 > 参数**运行时**由 `bytes` 改为 `str`(不只是 mypy stub 变严),显式传 `b"GIF"` 直接
-> `TypeError`;解释器 shutdown 时 Qt 对象销毁顺序收紧,测试里大量未显式销毁的 widget
-> 会随机 SIGSEGV(CI 上 1537 passed 后 exit 139);meta 包还新增 WebEngine/PDF 硬依赖。
-> 解禁前需先系统性治理测试里的 Qt 对象生命周期,详见 `pyproject.toml` 依赖注释与
-> PR #30 / #35 的关闭评论。GIF 首帧解码已改为省略 format 让 Qt 自动探测,跨版本成立。
+> `TypeError`;解释器 shutdown 时 Qt 对象销毁顺序收紧;meta 包还新增 WebEngine/PDF
+> 硬依赖。GIF 首帧解码已改为省略 format 让 Qt 自动探测,跨版本成立。
+>
+> **归因结论(同日,6.12.0 隔离 worktree 实测,详见归因 PR 与
+> `scripts/diagnostics/pyside6_shutdown_probe.py`)**:不跑 pytest 的探针三档(纯 Qt /
+> 生产 MainWindow / 跨线程残留)共 60 次**零崩**;全套 pytest 5 次里 4 次 SIGSEGV
+> (3 次在 100% 后的纯 C++ 析构 `<no Python frame>`,1 次在 17% 的 `qloop_16` fixture
+> teardown)、1 次 timeout hang;UI 三文件合跑 8/8 崩、非 Qt 四文件 8/8 正常、三个 UI
+> 文件各自单跑 5/5 正常;faulthandler 栈指向 `qloop` / `LoopThread` 的跨线程 future
+> 等待或 fixture teardown,无生产代码帧 → **直接触发者是测试侧跨线程 loop fixture +
+> widget 累积到进程退出**,生产启动/退出路径本次未复现。但被析构对象是生产 widget
+> 实例,且 6.11 时代生产侧另有未根治的 segfault 记录(`ui/shutdown.py` / `closeEvent` /
+> `processEvents`),不能 100% 排除参与,需单独治理。
+>
+> **解禁前治理顺序**:① 统一/替换 `qloop` 类 fixture(别每 test 起后台 daemon loop,
+> PR #33 只修了 `stop()` drain);② per-test 显式销毁 widget + `qapp` teardown(PR #35
+> 的 session teardown 在 Windows 因 `closeEvent()` 依赖已关 loop 报错,需调整清理顺序);
+> ③ 连跑全套多轮确认零崩;④ 再评估 WebEngine/PDF 打包体积。
 
 可选依赖组:`postgres`(asyncpg)、`objectstore`(aioboto3,配 S3)、`all`。**无 mongo**。
 dev 组:pytest、pytest-asyncio、ruff、mypy>=2.3.0、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=3.7、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。
