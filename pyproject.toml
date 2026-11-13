@@ -9,7 +9,16 @@ authors = [{ name = "forcetone" }]
 
 dependencies = [
     # UI
-    "PySide6>=6.6",
+    # 2026-11-13:锁 <6.12。核实见 PR #30 / #35 的关闭评论,6.12.0 有两类破坏性变更:
+    # (1) QPixmap.loadFromData 的 format 参数运行时由 bytes 改为 str(不只是 mypy
+    #     stub 变严)—— 原 GIF 首帧解码传 b"GIF" 会直接 TypeError;
+    # (2) 解释器 shutdown 时 Qt 对象销毁顺序收紧,测试里大量未显式销毁的 widget
+    #     会随机 SIGSEGV:CI 上 1537 passed 之后 exit 139,本地 6.12 全套连跑
+    #     7 次有 4 次崩(补 session teardown 后仍 2 次里 1 次崩)。
+    # 另:6.12 的 meta 包新增 pyside6-webengine(macOS wheel 约 250MB)/
+    # pyside6-pdf 硬依赖,本项目只用 QtCore/Gui/Widgets/Multimedia/Svg/Test。
+    # 解禁前需先系统性治理测试里的 Qt 对象生命周期(显式销毁 / per-test 清理)。
+    "PySide6>=6.6,<6.12",
     "qasync>=0.27",
     # Telegram 后端(纯 Python MTProto;cryptg 加速加密,python-socks 走 SOCKS5)
     "telethon>=1.45.0",

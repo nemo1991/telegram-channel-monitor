@@ -25,7 +25,7 @@
 
 | 依赖 | 版本 | 用途 |
 |---|---|---|
-| PySide6 | >=6.6 | Qt GUI |
+| PySide6 | >=6.6,<6.12 | Qt GUI |
 | qasync | >=0.27 | Qt 事件循环接 asyncio |
 | telethon | >=1.45.0 | 纯 Python MTProto Telegram 后端 |
 | cryptg | >=0.6.1 | Telethon 加密加速(C 扩展,可选但默认装) |
@@ -34,6 +34,13 @@
 | Jinja2 | >=3.1 | HTML 导出模板 |
 | platformdirs | >=4.11.0 | 平台数据目录 |
 | aiosqlite | >=0.22.1 | 默认 SQLite 后端(WAL) |
+
+> **PySide6 上限 `<6.12`**(2026-11-13 锁定):6.12.0 的 `QPixmap.loadFromData` format
+> 参数**运行时**由 `bytes` 改为 `str`(不只是 mypy stub 变严),显式传 `b"GIF"` 直接
+> `TypeError`;解释器 shutdown 时 Qt 对象销毁顺序收紧,测试里大量未显式销毁的 widget
+> 会随机 SIGSEGV(CI 上 1537 passed 后 exit 139);meta 包还新增 WebEngine/PDF 硬依赖。
+> 解禁前需先系统性治理测试里的 Qt 对象生命周期,详见 `pyproject.toml` 依赖注释与
+> PR #30 / #35 的关闭评论。GIF 首帧解码已改为省略 format 让 Qt 自动探测,跨版本成立。
 
 可选依赖组:`postgres`(asyncpg)、`objectstore`(aioboto3,配 S3)、`all`。**无 mongo**。
 dev 组:pytest、pytest-asyncio、ruff、mypy>=2.3.0、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=3.7、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。
