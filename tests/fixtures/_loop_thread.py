@@ -41,6 +41,9 @@ class LoopThread:
     # 2026-10-03 v1.12.1:windows runner 慢,5s 不够 → thread is_alive=True →
     # daemon leak → 下一 test 调度到受污染 loop 卡死。10s 在 win runner 实测够。
     _JOIN_TIMEOUT_S = 10.0
+    # 2026-11-13:drain 单独用短超时 — loop 真卡死时不要拖住 teardown,
+    # 失败就落到 stop + join 兜底(与原行为一致)。
+    _DRAIN_TIMEOUT_S = 2.0
 
     def __init__(self) -> None:
         self.loop = asyncio.new_event_loop()
@@ -59,14 +62,35 @@ class LoopThread:
         self.loop.run_forever()
 
     def stop(self) -> None:
-        """同步停止后台 loop — 必 join 上 + 必 close。
+        """同步停止后台 loop — cancel → drain → stop → join → close。
 
-        顺序:1) call_soon_threadsafe(loop.stop) → 2) join thread → 3) close loop。
-        加足够 join timeout(CI runner 慢,5s 才够)。
-        若 join 超时,loop 还活着 → 不能 close,daemon thread 在 process exit 时回收。
+        2026-11-13 补齐文件头注释里早就写明的 cancel/drain 两步:原实现只做
+        `stop → join → close`,`run_coroutine_threadsafe` 超时 Future 留下的
+        coroutine 会挂在 loop 的 ready queue 里既不被 await 也不被 cancel,
+        慢 runner 上 thread 因此 10s join 不上(daemon leak),下一个 test
+        调度到受污染环境 → `fut.result(timeout=5.0)` 偶发 TimeoutError。
         """
         if self.loop.is_closed():
             return
+
+        async def _cancel_pending() -> None:
+            """取消所有残留 task 并等它们处理完 CancelledError。"""
+            pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        drain = None
+        try:
+            drain = asyncio.run_coroutine_threadsafe(_cancel_pending(), self.loop)
+            drain.result(timeout=self._DRAIN_TIMEOUT_S)
+        except Exception:  # noqa: BLE001
+            # loop 已停 / 已卡死时不阻塞 teardown;撤掉未执行的 drain 后走兜底。
+            if drain is not None:
+                drain.cancel()
+            log.warning("LoopThread drain failed — fallback to stop/join", exc_info=True)
+
         try:
             self.loop.call_soon_threadsafe(self.loop.stop)
         except RuntimeError:

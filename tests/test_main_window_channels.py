@@ -139,9 +139,18 @@ def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> b
         try:
             ok = fut.result(timeout=step)
         except Exception:  # noqa: BLE001
+            # 2026-11-13:0.02s 的 step 在 CI runner 上几乎必然超时,原实现
+            # 既不 cancel 也不等后台 loop 执行,_check() coroutine 会堆在
+            # ready queue 里变成 "never awaited" 垃圾,污染后续 test 的
+            # qloop 调度时序。撤掉 future 并让出主线程,每次只留 1 个。
+            fut.cancel()
             ok = False
         if ok:
             return True
+        remaining = deadline - _t.monotonic()
+        if remaining <= 0:
+            break
+        _t.sleep(min(step, remaining))
     return False
 
 
@@ -307,7 +316,6 @@ def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
 
 def test_list_joined_waits_for_state_to_become_ready_via_telethon_client(
     qapp,
-    qloop,
     tmp_path,
 ):
     """直接打 TelethonTelegramClient.list_joined_channels:生产代码确实有
@@ -326,6 +334,14 @@ def test_list_joined_waits_for_state_to_become_ready_via_telethon_client(
 
     v2.0.0:从 TdlibTelegramClient 迁到 TelethonTelegramClient(mock 后端,
     iter_dialogs 只记录「被调到」)。
+
+    2026-11-13:本用例是全套裸跑下唯一稳定偶发红的用例(macOS runner 连续
+    两次 `fut.result(timeout=5.0)` TimeoutError + teardown 报
+    `LoopThread cleanup timeout: thread still alive after 10.0s — daemon leak`),
+    单独跑 5 次全过 → 跨 test 的 qloop 残留污染,不是生产代码 bug。
+    沿用本文件已有 3 处 `temp_loop` 先例:setup 完全自包含(不碰 Qt /
+    不跨线程),改走一次性临时 loop;并用 `wait_for` 做总超时,保证超时时
+    连伴随的 `_delay_ready` task 一起 cancel,不留 pending。
     """
     from unittest.mock import MagicMock
 
@@ -359,12 +375,26 @@ def test_list_joined_waits_for_state_to_become_ready_via_telethon_client(
             await asyncio.sleep(0.3)
             client._set_state("ready")
 
-        asyncio.ensure_future(_delay_ready())
+        ready_task = asyncio.ensure_future(_delay_ready())
+        try:
+            return await client.list_joined_channels()
+        finally:
+            # list_joined_channels 若提前返回,_delay_ready 仍是 pending;
+            # 显式 cancel + await 收掉,避免 close loop 时留 "Task was destroyed"。
+            ready_task.cancel()
+            try:
+                await ready_task
+            except asyncio.CancelledError:
+                pass
 
-        return await client.list_joined_channels()
-
-    fut = asyncio.run_coroutine_threadsafe(_setup_and_go(), qloop)
-    fut.result(timeout=5.0)
+    # 一次性临时 loop:不依赖 qloop fixture,`wait_for` 超时会连
+    # _setup_and_go 一起 cancel,不会把残留 task 留给后续 test。
+    temp_loop = asyncio.new_event_loop()
+    try:
+        temp_loop.run_until_complete(asyncio.wait_for(_setup_and_go(), timeout=5.0))
+    finally:
+        if not temp_loop.is_closed():
+            temp_loop.close()
     # 如果 list_joined_channels 是 fire-and-forget "先看 state, 非 ready 立即 []",
     # 那 _setup_and_go 会立即返回 [] 且 iter_dialogs 永远不会被调
     assert captured["called"], "list_joined_channels 没有等到 state 走到 ready,而是在中间态就 []"
