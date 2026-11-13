@@ -67,28 +67,61 @@ jobs:
           print(f"{entry.name} -> {entry.value}")
           PY
 
-      # 每个 job 仍只跑一遍测试,但覆盖率按平台分流:Windows 裸 pytest,
-      # 其余平台 coverage run 包裹并产 coverage.xml。
-      # 2026-11-12:Windows runner 在 coverage 插桩下,LocalObjectStore.put
-      # 的 asyncio.to_thread 写盘与 ProactorEventLoop 的 IOCP 完成通知互等,
-      # 卡在 test_media_downloader.py 第 8 个用例直到 300s timeout 判红
-      # (main + 3 个 dependabot PR 稳定复现于同一位置)。裸跑从未复现
-      # (10-22 CI 的 Windows 两遍都过)。覆盖率只是观测指标,三平台无需
-      # 各收一份;Windows 仍跑全套用例,门控不放松。恢复 Windows coverage
-      # 前需先在 runner 上做裸跑 / coverage 对照实验。
-      - name: Run pytest (Windows, no coverage)
-        if: runner.os == 'Windows'
+      # 三平台统一裸 pytest,覆盖率交给下方独立的 coverage job(仅 ubuntu)。
+      # 2026-11-12:coverage 插桩在 runner 上多次引发无限 hang —— Windows 的
+      # ProactorEventLoop + asyncio.to_thread 稳定卡在 test_media_downloader.py
+      # 第 8 个用例;pyproject.toml 也记着 10-03 / 10-22 ubuntu 卡 32 分钟、
+      # macOS 卡 40 分钟,两次都只能手动 cancel。插桩只留在观测 job,
+      # 平台门控一律裸跑,测试集合与参数三平台完全一致。
+      - name: Run pytest
         env:
           PYTHONPATH: src
-          # 原生 windows 插件:offscreen 在 windows-latest 下
+          # Windows 用原生 windows 插件:offscreen 在 windows-latest 下
           # processEvents() 会 access violation(issue #20)。
-          QT_QPA_PLATFORM: windows
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'offscreen' }}
           QT_LOGGING_RULES: "*.warning=false"
         shell: bash
         run: uv run python -m pytest -v --tb=short
 
+  coverage:
+    # 覆盖率是纯观测指标(不设阈值、暂无 codecov),同一份代码三平台各收一份
+    # 只是重复;单独在 ubuntu 收一份即可。独立 job 还把插桩的 hang 风险与
+    # 平台门控隔离:即使该 job 超时或挂起,也不会让 push / PR 的测试门控变红,
+    # 且能单独重跑。若它连续失败需单独排查,不要直接恢复平台内插桩。
+    name: coverage (ubuntu, py3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # 与 test job 的 ubuntu 前置保持一致(Qt offscreen 系统库)。
+      - name: Install system dependencies (Qt offscreen)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
+            libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-icccm4 libxcb-image0 libxcb-util1 \
+            libsm6 libice6 libpulse0
+          sudo ldconfig
+
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
+      - name: Install dependencies
+        run: uv sync --all-extras --group dev -q
+
       - name: Run pytest with coverage
-        if: runner.os != 'Windows'
         env:
           PYTHONPATH: src
           QT_QPA_PLATFORM: offscreen
@@ -99,10 +132,9 @@ jobs:
           uv run coverage xml -o coverage.xml
 
       - name: Upload coverage artifact
-        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v5
         with:
-          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          name: coverage-ubuntu-py3.13
           path: coverage.xml
           if-no-files-found: warn
 
