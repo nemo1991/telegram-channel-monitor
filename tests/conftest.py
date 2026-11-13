@@ -69,15 +69,36 @@ def qapp():
     现统一到 conftest.py:
     - Session-scope:整个 test run 一个 QApplication,避免 widget leak。
     - offscreen QPA 已由外部 `QT_QPA_PLATFORM=offscreen` env 启用(CI + 本地)。
+    - teardown 确定性清理残留 top-level widget(PySide6 >= 6.12 必须,见下方)。
 
     变体(仍本地):
     - `qapp_no_locale_force`(test_i18n_runtime.py + test_media_manager_i18n.py):
       i18n 测试要切语言,反 `force_zh_cn_locale` autouse fixture。
     - `qapp_16`(test_channel_widget.py):只是命名过时,改用 `qapp`。
     """
+    import gc
+
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    try:
+        yield app
+    finally:
+        # PySide6 >= 6.12 收紧了解释器 shutdown 时的对象销毁顺序。测试里创建的
+        # widget 从不显式销毁,只靠 Python 引用存活;GC 回收它们时 QApplication
+        # 的 C++ 对象可能已经析构,Qt 解引用已释放内存 → 全套用例打印 passed
+        # 之后进程仍以 139(SIGSEGV)退出(PR #30:ubuntu/macOS 1537 passed 后崩)。
+        # 修法:趁 app 还活着把销毁顺序固定下来 —— 关闭并投递 deleteLater,
+        # gc.collect() 把悬空 Python 引用转成 DeferredDelete 事件,再显式派发,
+        # 这样 widget 一定先于 QApplication 销毁。
+        for widget in app.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+        gc.collect()
+        # 0 = 派发所有 posted events(含 DeferredDelete)。刻意不调 processEvents():
+        # 它会触发残留的 QTimer / qasync 回调,而那些 QObject 此刻已 deleteLater,
+        # 6.12 下实测会在这一步 Bus error。
+        app.sendPostedEvents(None, 0)
 
 
 @pytest.fixture

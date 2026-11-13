@@ -373,7 +373,10 @@ class LightboxDialog(QDialog):
         self._movie = None
         buf.close()
         pix = QPixmap()
-        if pix.loadFromData(ba, b"GIF"):
+        # Qt C++ 侧一直是 const char* format;PySide6 6.12 把该参数的 stub
+        # 从 bytes/bytearray/memoryview 修正为 str,传 b"GIF" 会触发 mypy
+        # call-overload。用 str 才能同时满足 6.12 stub 与运行时。
+        if pix.loadFromData(ba, "GIF"):
             self._apply_scaled_pixmap(pix)
         else:
             self._show_unavailable()
@@ -899,7 +902,8 @@ class LightboxDialog(QDialog):
             # GIF 走第一帧 + 旋转 — 静态显示
             ba = QByteArray(item.animated)
             pix = QPixmap()
-            if pix.loadFromData(ba, b"GIF"):
+            # format 用 str(PySide6 6.12 stub 修正,同 _fallback_gif_to_first_frame)
+            if pix.loadFromData(ba, "GIF"):
                 self._apply_scaled_pixmap(pix)
 
     def _save_current(self) -> None:
