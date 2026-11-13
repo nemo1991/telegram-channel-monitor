@@ -22,3 +22,5 @@ tgmonitor.app.zip
 # i18n 编译产物(2026-09-02 v1.5.3 PR #D3)— pyside6-lrelease 从 .ts 编,本地重生成;
 # wheel / PyInstaller 打包在 hatch / spec 显式声明
 src/tgmonitor/i18n/*.qm
+# WorkBuddy 会话数据(工作区记忆/配置,非临时缓存,不要删也不纳入版本控制)
+.workbuddy/
