@@ -16,13 +16,6 @@ updates:
     labels:
       - "dependencies"
 
-    # 临时保险:评估 PySide6 6.12 解禁期间,挡住 dependabot 强行提 6.12+ 的 PR。
-    # pyproject 的 `<6.12` 上限本已限制常规更新;此 ignore 防安全更新 / 版本策略
-    # 突破上限。真正解禁(<6.12 上限去掉)时,连同本 ignore 一起删除。
-    ignore:
-      - dependency-name: "pyside6"
-        versions: [">=6.12"]
-
   # Actions 单独周扫,避免 setup-uv / checkout 落后 major。
   - package-ecosystem: "github-actions"
     directory: "/"
