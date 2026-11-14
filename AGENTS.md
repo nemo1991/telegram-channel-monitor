@@ -51,10 +51,18 @@
 > 实例,且 6.11 时代生产侧另有未根治的 segfault 记录(`ui/shutdown.py` / `closeEvent` /
 > `processEvents`),不能 100% 排除参与,需单独治理。
 >
-> **解禁前治理顺序**:① 统一/替换 `qloop` 类 fixture(别每 test 起后台 daemon loop,
-> PR #33 只修了 `stop()` drain);② per-test 显式销毁 widget + `qapp` teardown(PR #35
-> 的 session teardown 在 Windows 因 `closeEvent()` 依赖已关 loop 报错,需调整清理顺序);
-> ③ 连跑全套多轮确认零崩;④ 再评估 WebEngine/PDF 打包体积。
+> **反向验证(2026-11-14,治理后,6.12.0 隔离 worktree)**:`tests/fixtures/_qt_runtime.py`
+> 把 4 处 `qloop` + 1 处 `bg_loop` 统一成**全会话共享 1 个后台 loop**,并 per-test
+> `deleteLater()` 顶层 widget(不调 `close()`,避开 PR #35 的 `closeEvent` 报错)、
+> `pytest_sessionfinish` 停掉 loop 线程。同一组实验:UI 三文件合跑 3/3 `rc=0`
+> (基线 8/8 SIGSEGV)、全套 3/3 `rc=0` 且跑到 100%、无 fatal 无 hang(基线
+> 4× SIGSEGV + 1× hang)、非 Qt 四文件 1/1 正常 → **归因结论被反向验证坐实**。
+>
+> **解禁前剩余动作**(原顺序 ①② 已完成):③ 三平台 CI 复验共享 loop + widget 清理
+> (尤其 Windows `windows` QPA 下的 `sendPostedEvents(DeferredDelete)`);④ 评估 6.12
+> 新增 WebEngine/PDF 硬依赖对三平台打包体积的影响(`tgmonitor.spec` 目前
+> `excludes=[]`,`dist/` 6.11 基线 361M);⑤ 单独治理生产侧历史 segfault;⑥ 以上都
+> 过了才去掉 `<6.12`。**当前仍保留 `<6.12` 约束,治理 PR 不动依赖声明**。
 
 可选依赖组:`postgres`(asyncpg)、`objectstore`(aioboto3,配 S3)、`all`。**无 mongo**。
 dev 组:pytest、pytest-asyncio、ruff、mypy>=2.3.0、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=3.7、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。
