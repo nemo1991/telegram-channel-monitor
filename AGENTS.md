@@ -51,6 +51,18 @@
 > 实例,且 6.11 时代生产侧另有未根治的 segfault 记录(`ui/shutdown.py` / `closeEvent` /
 > `processEvents`),不能 100% 排除参与,需单独治理。
 >
+> **2026-11-14 结论修正**(基于 PR #38 反向验证 + 生产退出路径探针):
+> - 治理后崩溃在 6.12 完全消失(`qloop` 共享 + per-test `deleteLater`),触发条件
+>   就是测试侧累积状态 —— 已从"推断"升为"实测坐实"。
+> - 生产退出路径探针(真 `MainWindow` → `closeEvent` → `run_shutdown_coro_sync`
+>   → `processEvents`,60 次独立进程)在 6.12 下**零崩**,证明生产对象图在
+>   "启动 → 关闭 → 退出"路径上 6.12 可用。
+> - 那批"历史 segfault"是 6.11 时代且**已有绕开**:Windows offscreen `processEvents`
+>   必崩 → 已改 `windows` 插件;嵌套 `QEventLoop.exec()` segfault → 已改 `processEvents`
+>   而非 exec;`test_login_dialog` 跨线程 asyncio GC race → 已 `skipif(win32)`。
+>   **均不阻塞 6.12 解禁**,但属独立质量债(CHANGELOG:300 那个 `skipif` 根因原文
+>   "留给 v1.12.3")仍建议后续单独治理,不在解禁阻塞项内。
+>
 > **反向验证(2026-11-14,治理后,6.12.0 隔离 worktree)**:`tests/fixtures/_qt_runtime.py`
 > 把 4 处 `qloop` + 1 处 `bg_loop` 统一成**全会话共享 1 个后台 loop**,并 per-test
 > `deleteLater()` 顶层 widget(不调 `close()`,避开 PR #35 的 `closeEvent` 报错)、
@@ -58,11 +70,25 @@
 > (基线 8/8 SIGSEGV)、全套 3/3 `rc=0` 且跑到 100%、无 fatal 无 hang(基线
 > 4× SIGSEGV + 1× hang)、非 Qt 四文件 1/1 正常 → **归因结论被反向验证坐实**。
 >
-> **解禁前剩余动作**(原顺序 ①② 已完成):③ 三平台 CI 复验共享 loop + widget 清理
-> (尤其 Windows `windows` QPA 下的 `sendPostedEvents(DeferredDelete)`);④ 评估 6.12
-> 新增 WebEngine/PDF 硬依赖对三平台打包体积的影响(`tgmonitor.spec` 目前
-> `excludes=[]`,`dist/` 6.11 基线 361M);⑤ 单独治理生产侧历史 segfault;⑥ 以上都
-> 过了才去掉 `<6.12`。**当前仍保留 `<6.12` 约束,治理 PR 不动依赖声明**。
+> **解禁前剩余动作**(2026-11-14 收尾):
+> - ① ②(治理 `qloop` 共享 + per-test `deleteLater`)已完成并被反向验证坐实。
+> - ③ 三平台 CI 复验共享 loop + widget 清理 —— 将在"去掉 `<6.12`"那一步的 PR 由
+>   CI 三平台(含 Windows `windows` QPA 的 `sendPostedEvents(DeferredDelete)`)实跑
+>   承担,无需单独预跑。
+> - ④ 评估 6.12 新增 WebEngine/PDF 对打包体积的影响 —— **实测结论:无影响,划掉**。
+>   6.12 隔离环境打包 `dist/` = 361M(与 6.11 基线完全一致),WebEngine **0 文件**
+>   进包(PyInstaller 按 import 收集,本应用不 import `QtWebEngine`);QtPdf 被拉入
+>   但体积不变。且 6.11 的 `PySide6` 包本身已含 606M 的 `QtWebEngineCore`
+>   (6.11 总 1.2G / 6.12 总 1.2G 一致)——"6.12 新增硬依赖致体积膨胀"是 PR #37 的
+>   误判,特此纠正。**`tgmonitor.spec` 的 `excludes=[]` 保持不动,无需为 6.12 加排除**。
+> - ⑤ 生产侧历史 segfault(`CHANGELOG:300/1414`、`ui/shutdown.py` 嵌套 exec /
+>   Windows `processEvents`)—— 诊断结论:**不阻塞解禁**(均有绕开:
+>   `skipif(win32)` / 改 `windows` 插件 / 用 `processEvents` 而非 exec;生产退出
+>   路径真 `MainWindow` 探针 60 次零崩)。属独立质量债,建议后续单独治理。
+> - ⑥ 去掉 `<6.12>` 属重大依赖升级,需用户拍板;解禁 PR 的 CI 三平台即为跨平台
+>   验证(6.12 反证目前只在 macOS / Python 3.13.14 做过)。
+> - 临时保险:`.github/dependabot.yml` 已加 `pyside6 >=6.12` 的 `ignore`,评估期
+>   间挡住 dependabot 强行提 6.12+;真正解禁时连同本 ignore 一起删除。
 
 可选依赖组:`postgres`(asyncpg)、`objectstore`(aioboto3,配 S3)、`all`。**无 mongo**。
 dev 组:pytest、pytest-asyncio、ruff、mypy>=2.3.0、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=3.7、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。
