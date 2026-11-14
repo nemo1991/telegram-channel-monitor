@@ -26,30 +26,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: E402
 
-
-class _LoopThread:
-    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
-
-    def __init__(self) -> None:
-        from tests.fixtures._loop_thread import LoopThread
-
-        self._inner = LoopThread()
-        self.loop = self._inner.loop
-        self._thread = self._inner._thread
-
-
-@pytest.fixture
-def qloop() -> asyncio.AbstractEventLoop:
-    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。
-
-    2026-10-03 v1.12.1:cleanup 改走 `LoopThread.stop()`,统一 cancel → drain
-    → stop → join → close,跨 test 不 leak 残留 thread/loop。
-    """
-    lt = _LoopThread()
-    try:
-        yield lt.loop
-    finally:
-        lt._inner.stop()
+# 2026-11-14:删掉本地 `_LoopThread` + function-scope `qloop`,统一用
+# `tests.fixtures._qt_runtime` 的 session-scope 共享 loop,避免每 test 起
+# 一个后台 daemon 线程。测试函数参数名 `qloop` 保持不变。
 
 
 def _make_dlg(qloop, *, submit_phone=None):

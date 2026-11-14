@@ -23,41 +23,16 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import EventBus
 
 # ---------------------------------------------------------------------------
-# fixtures(本地,复用其它 test 的 qapp / qloop 模式,不放 conftest 是 scope 不同)
+# fixtures
+# 2026-11-14:删掉本地 `_LoopThread` + function-scope `qloop_16`,统一用
+# `tests.fixtures._qt_runtime` 的 session-scope 共享 loop(避免每 test 起
+# 一个后台 daemon 线程)。测试函数参数名 `qloop_16` 保持不变。
 # ---------------------------------------------------------------------------
-
-
-class _LoopThread:
-    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
-
-    def __init__(self) -> None:
-        from tests.fixtures._loop_thread import LoopThread
-
-        self._inner = LoopThread()
-        self.loop = self._inner.loop
-        self._thread = self._inner._thread
-
-    def start(self) -> None:
-        # backward compat — 已经 start 了
-        return None
-
-    def stop(self) -> None:
-        self._inner.stop()
-
-
-@pytest.fixture
-def qloop_16() -> _LoopThread:
-    lt = _LoopThread()
-    try:
-        yield lt.loop
-    finally:
-        lt.stop()
 
 
 def _build_widget(qapp, qloop_16):  # noqa: ANN001 — 测试 helper

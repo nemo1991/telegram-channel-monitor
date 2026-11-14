@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 from typing import Any
 
@@ -19,16 +18,9 @@ import pytest
 
 from tgmonitor.ui.async_bridge import run_coro
 
-
-@pytest.fixture
-def bg_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
-    """真在跑的事件 loop,跑在 background 线程,跟 caller 跨线程调 run_coro。"""
-    loop = asyncio.new_event_loop()
-    t = threading.Thread(target=loop.run_forever, daemon=True)
-    t.start()
-    yield loop
-    loop.call_soon_threadsafe(loop.stop)
-    t.join(timeout=2)
+# 2026-11-14:删掉本地 `bg_loop`(原来每 test 起一个 daemon 线程),统一用
+# `tests.fixtures._qt_runtime` 的 session-scope 共享 loop。测试函数参数名
+# `bg_loop` 保持不变。
 
 
 def _wait_callbacks(ms: int = 100) -> None:

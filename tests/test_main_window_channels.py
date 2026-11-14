@@ -19,7 +19,6 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 from PySide6.QtCore import Qt  # noqa: E402
 
 # 跟 conftest 同步,避免每次新 test 都 inline import。
@@ -46,31 +45,6 @@ def _window_settings(base: Path) -> Settings:
         db_root=base / "m",
         objectstore_root=base / "o",
     )
-
-
-class _LoopThread:
-    """历史兼容 wrapper — 2026-10-03 v1.12.1 把 inline 定义集中到
-    `tests.fixtures._loop_thread.LoopThread`,旧 API(`lt.loop` /
-    `lt.asyncio_loop`)保留,新测试用 `LoopThread` 直接。
-    """
-
-    def __init__(self) -> None:
-        from tests.fixtures._loop_thread import LoopThread
-
-        self._inner = LoopThread()
-        self.loop = self._inner.loop
-        self._thread = self._inner._thread
-
-    def _run(self) -> None:
-        # 占位 — 实际跑在 LoopThread._run
-        return None
-
-    def stop(self) -> None:
-        self._inner.stop()
-
-    @property
-    def asyncio_loop(self) -> asyncio.AbstractEventLoop:
-        return self.loop
 
 
 def _build_setup(
@@ -108,18 +82,9 @@ def _build_setup(
     return _go()
 
 
-@pytest.fixture
-def qloop() -> _LoopThread:
-    """后台线程 + run_forever loop — 模拟 qasync 主线程 loop。
-
-    2026-10-03 v1.12.1:cleanup 改走 `LoopThread.stop()`,统一 cancel → drain
-    → stop → join → close,跨 test 不 leak 残留 thread/loop。
-    """
-    lt = _LoopThread()
-    try:
-        yield lt.loop
-    finally:
-        lt.stop()
+# 2026-11-14:删掉本地 function-scope `qloop`,统一用
+# `tests.fixtures._qt_runtime` 的 session-scope 共享 loop(全会话只 1 个
+# 后台线程)。测试函数参数名 `qloop` 保持不变。
 
 
 def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> bool:
