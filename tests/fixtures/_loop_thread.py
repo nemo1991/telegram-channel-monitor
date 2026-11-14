@@ -12,7 +12,11 @@
   → 3) stop loop → 4) join thread → 5) close loop
 - `join timeout=10.0`(原 2.0 在 CI runner 上不够)
 - 任一步失败不抛 — daemon thread 兜底,测试不因 cleanup 失败挂掉
-- 不复用:每个 fixture 调用 new `LoopThread()`,避免跨 test 状态污染
+
+2026-11-14(承接 6.12 shutdown SIGSEGV 归因 PR #37):**不再每个 test new 一个**。
+改由 `tests.fixtures._qt_runtime` 全会话共享唯一实例,per-test drain 保证
+跨 test 无污染,`pytest_sessionfinish` 时 stop。本类仍可被
+`test_loop_thread_cleanup.py` 直接实例化,验证 cleanup 契约本身。
 """
 
 from __future__ import annotations
@@ -60,6 +64,11 @@ class LoopThread:
         # 调用方用 `asyncio.run_coroutine_threadsafe(coro, lt.loop)` 显式传
         # loop 引用,不依赖 thread-local。
         self.loop.run_forever()
+
+    @property
+    def asyncio_loop(self) -> asyncio.AbstractEventLoop:
+        """历史 API — 部分测试文件经本地 wrapper 暴露过这个属性名。"""
+        return self.loop
 
     def stop(self) -> None:
         """同步停止后台 loop — cancel → drain → stop → join → close。

@@ -62,31 +62,9 @@ class _FakeMainWindow(MainWindow):
         self._tray_first_close_hint_shown = False
 
 
-class _LoopThread:
-    """2026-10-03 v1.12.1:inline 版本 → delegate 到 `LoopThread`(统一 cleanup)。"""
-
-    def __init__(self) -> None:
-        from tests.fixtures._loop_thread import LoopThread
-
-        self._inner = LoopThread()
-        self.loop = self._inner.loop
-        self._thread = self._inner._thread
-
-    def stop(self) -> None:
-        self._inner.stop()
-
-    @property
-    def asyncio_loop(self) -> asyncio.AbstractEventLoop:
-        return self.loop
-
-
-@pytest.fixture
-def loop_thread():
-    lt = _LoopThread()
-    try:
-        yield lt
-    finally:
-        lt.stop()
+# 2026-11-14:删掉本地 `_LoopThread` + function-scope `loop_thread`,统一用
+# `tests.fixtures._qt_runtime` 的 session-scope 共享 LoopThread(暴露
+# `.asyncio_loop`)。测试函数参数名 `loop_thread` 保持不变。
 
 
 # ---- 默认路径:没挂 cb → 直接关 ----
