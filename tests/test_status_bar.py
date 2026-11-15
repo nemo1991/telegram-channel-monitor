@@ -44,8 +44,17 @@ from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     _StatsLabel,
 )
 
+
+def _paint_race_skipped() -> bool:
+    # `TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)强制不跳过,在 Windows 上
+    # 实跑这些测试,验证 6.12 + qloop 治理后 race 是否消失。
+    if os.environ.get("TG_WIN32_PAINT_PROBE"):
+        return False
+    return os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32"
+
+
 windows_qt_paint_skip = pytest.mark.skipif(
-    os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32",
+    _paint_race_skipped(),
     reason=(
         "Qt offscreen paint path race 在 `asyncio.run` 嵌套 `qapp.processEvents()`"
         "触发:CI 的 Qt offscreen 平台(QT_QPA_PLATFORM=offscreen) + Windows `windows`"
