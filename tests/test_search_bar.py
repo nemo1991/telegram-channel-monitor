@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
 
+
 # 2026-09-23 v1.8.x:Windows 真机 Qt `windows` QPA 偶发 paint path
 # segfault(同 test_media_manager_i18n.py / test_media_manager_widget.py)。
 #
@@ -29,8 +30,16 @@ from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
 # 真机(cocoa/xcb)不触发,仍跑;CI 用 offscreen、Windows `windows` QPA 仍偶发 → 跳。
 # 2026-11-15:去掉强制 `offscreen`,并把 `sys.platform` 三平台无差别跳过改为按 QPA
 # 精确跳过,恢复本地真机覆盖(PR #45 同法;详见 test_media_manager_i18n.py)。
+def _paint_race_skipped() -> bool:
+    # `TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)强制不跳过,在 Windows 上
+    # 实跑这些测试,验证 6.12 + qloop 治理后 race 是否消失。
+    if os.environ.get("TG_WIN32_PAINT_PROBE"):
+        return False
+    return os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32"
+
+
 pytestmark = pytest.mark.skipif(
-    os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32",
+    _paint_race_skipped(),
     reason=(
         "Qt offscreen paint path race 在 `SearchBar.show() + "
         "qapp.processEvents()` 时触发:CI 的 Qt offscreen 平台(QT_QPA_PLATFORM=offscreen)"

@@ -83,6 +83,39 @@ jobs:
         shell: bash
         run: uv run python -m pytest -v --tb=short
 
+  windows-paint-probe:
+    # 探索性:验证 PySide6 6.12 + qloop 治理后,Windows `windows` QPA 下的 paint/processEvents
+    # race 是否消失。`TG_WIN32_PAINT_PROBE=1` 让 4 个 win32 跳过的测试强制在 Windows 上实跑。
+    # continue-on-error:崩了不阻塞 main 合并,仅作证据;绿了再正式撤 win32 跳过。
+    name: pytest (windows-paint-probe, py3.13)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Compile Qt translation files (.ts → .qm)
+        uses: ./.github/actions/compile-qt-translations
+
+      - name: Install dependencies
+        run: uv sync --all-extras --group dev -q
+
+      - name: Run paint-race tests with probe override
+        env:
+          PYTHONPATH: src
+          QT_QPA_PLATFORM: windows
+          QT_LOGGING_RULES: "*.warning=false"
+          TG_WIN32_PAINT_PROBE: "1"
+        shell: bash
+        run: uv run python -m pytest -v --tb=short tests/test_media_manager_i18n.py tests/test_search_bar.py tests/test_status_bar.py tests/test_login_dialog.py
+
   coverage:
     # 覆盖率是纯观测指标(不设阈值、暂无 codecov),同一份代码三平台各收一份
     # 只是重复;单独在 ubuntu 收一份即可。独立 job 还把插桩的 hang 风险与

@@ -42,7 +42,11 @@ from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 # CI 三平台 QPA 见 ci.yml(ubuntu/macos=offscreen,Windows=windows)。故按 QPA + 平台
 # 精确跳过:offscreen QPA / Windows 平台跳,本地真机(cocoa/xcb,非 offscreen)执行。
 def _qt_paint_path_unsafe() -> bool:
-    """offscreen QPA 或 Windows 平台下 `show()+processEvents()` 触发 Qt paint race。"""
+    """offscreen QPA 或 Windows 平台下 `show()+processEvents()` 触发 Qt paint race。
+    `TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)强制不跳过,在 Windows 上
+    实跑这些测试,验证 6.12 + qloop 治理后 race 是否消失。"""
+    if os.environ.get("TG_WIN32_PAINT_PROBE"):
+        return False
     return os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen" or sys.platform == "win32"
 
 

@@ -193,13 +193,14 @@ def test_registration_required_state_shows_reg_page(qapp, qloop):
 
 
 @pytest.mark.skipif(
-    sys.platform == "win32",
+    sys.platform == "win32" and not os.environ.get("TG_WIN32_PAINT_PROBE"),
     reason=(
         "Windows + PySide6 6.11 offscreen 已知 race:`_wait_until + qapp.processEvents()` "
         "跨 thread asyncio 触发 GC 时偶发 SIGSEGV(plan-batch2 v1.12.1 已记)。"
         "本地 Qt 6.11+ macOS 真机 + Linux 真机仍过;GH Actions windows-latest 触发。"
         "xfail 拦不住 native segfault,改 skipif 让 windows runner 完全不跑。"
-        "race 真修完时此 skip 自然消失。"
+        "`TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)下强制跑,验证 6.12 + "
+        "qloop 治理后 race 是否消失;race 真修完时此 skip 自然消失。"
     ),
 )
 def test_submit_email_invokes_app_and_unlocks(qapp, qloop):
