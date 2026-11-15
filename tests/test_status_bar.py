@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 # 2026-10-02 v1.12.1:`test_bell_button_auth_error_shows_and_counts` 在 Windows offscreen
 # 平台 `qapp.processEvents()` 后偶发 access violation / SIGSEGV(v1.12.0 push 后
 # CI 首次爆,与 `test_main_window_delete_feedback` / `test_media_manager_i18n`
 # 三个 qt offscreen paint path race 同根:`asyncio.run` 跑完后 nested Qt
-# event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`(v1.8.3
-# 起扩到 (win32, linux, darwin))。
+# event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`。
+# 2026-11-15:去掉强制 `offscreen`,并把 `windows_qt_paint_skip` 从 `sys.platform`
+# 三平台无差别跳过改为按 QPA 精确跳过,恢复本地真机覆盖(PR #45 同法)。
 import sys
 from datetime import UTC, datetime  # noqa: E402
 
@@ -45,13 +44,12 @@ from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     _StatsLabel,
 )
 
-_PAINT_PATH_RACE_PLATFORMS = ("win32", "linux", "darwin")
 windows_qt_paint_skip = pytest.mark.skipif(
-    sys.platform in _PAINT_PATH_RACE_PLATFORMS,
+    os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32",
     reason=(
         "Qt offscreen paint path race 在 `asyncio.run` 嵌套 `qapp.processEvents()`"
-        "触发:GH Actions ubuntu/macos/windows runner 的 Qt offscreen 平台都受影响。"
-        "本地 Qt 6.11+ macOS 真机 + linux 真机仍过(不属本 race)。"
+        "触发:CI 的 Qt offscreen 平台(QT_QPA_PLATFORM=offscreen) + Windows `windows`"
+        "QPA 仍偶发。本地 macOS/Linux 真机(cocoa/xcb)不属本 race,仍跑。"
     ),
 )
 

@@ -10,11 +10,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import sys
+from datetime import datetime
 
 import pytest  # noqa: E402
 from PySide6.QtCore import QDate, QDateTime, QTime  # noqa: E402
@@ -28,15 +25,16 @@ from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
 # 2026-09-25 v1.8.3 发版解阻塞:同根因也影响 GH Actions ubuntu/macos runner 的
 # Qt offscreen 平台 —— test_search_bar_text_changed_fires 在 0b6003b CI macos
 # 偶发 `RuntimeError: Event loop is closed`(QScrollArea.changeEvent 链)。
-# 扩 skip 到 3 平台 —— 本地 Qt 6.11+ macOS 真机 + linux 真机不触发,仍跑;
-# CI offscreen 平台 + Windows 'windows' QPA 跳。CI 绿后打 v1.8.3 tag。
+# 根因是 **Qt offscreen QPA** 的 paint path race,非 OS 本身:本地 macOS/Linux
+# 真机(cocoa/xcb)不触发,仍跑;CI 用 offscreen、Windows `windows` QPA 仍偶发 → 跳。
+# 2026-11-15:去掉强制 `offscreen`,并把 `sys.platform` 三平台无差别跳过改为按 QPA
+# 精确跳过,恢复本地真机覆盖(PR #45 同法;详见 test_media_manager_i18n.py)。
 pytestmark = pytest.mark.skipif(
-    sys.platform in ("win32", "linux", "darwin"),
+    os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32",
     reason=(
         "Qt offscreen paint path race 在 `SearchBar.show() + "
-        "qapp.processEvents()` 时触发:Windows 真机 `windows` QPA、"
-        "GitHub Actions ubuntu/macos runner 的 Qt offscreen 平台都受影响。"
-        "本地 Qt 6.11+ macOS 真机 + linux 真机仍过(不属本 race)。"
+        "qapp.processEvents()` 时触发:CI 的 Qt offscreen 平台(QT_QPA_PLATFORM=offscreen)"
+        " + Windows `windows` QPA 仍偶发。本地 macOS/Linux 真机(cocoa/xcb)不属本 race,仍跑。"
     ),
 )
 
