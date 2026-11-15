@@ -180,15 +180,15 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.2.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
-    "mypy>=2.3.0",
+    "mypy>=2.4.1",
     "coverage>=7.15.4",
     "pyinstaller>=6.21.0",
     "moto[s3]>=5",
     # 2026-08-29 v1.5.0 PR #A1:本地 pre-commit 钩子(可选用,CI 不依赖)
-    "pre-commit>=3.7",
+    "pre-commit>=4.7.0",
     # 集成测试 — testcontainers 启动真 PG 服务(CI-only;本地无 Docker 跑会 skip)。
     "testcontainers[postgres]>=4.8",
     # 2026-09-17 PR 6:property-based tests for storage round-trips + UI invariants.
