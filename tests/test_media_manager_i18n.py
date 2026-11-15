@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import QApplication
 
 from tgmonitor.i18n import install_translator
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
+
 
 # 2026-09-20:此文件曾在 Windows 上 skip —— `w.show()` + `qapp.processEvents()`
 # 在 windows-latest **offscreen** 下 access violation(exit 139,中断整个 pytest)。
@@ -34,14 +36,23 @@ from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 # Qt offscreen 平台(77c013f CI 11/11 pass,0168a9d CI ubuntu/macos 5+2 fail)。
 # 扩 skip 到 3 平台 —— 本地 Qt 6.11+ macOS 真机 + linux 真机不触发,仍跑;
 # CI offscreen 平台 + Windows 'windows' QPA 跳。CI 绿后打 v1.8.3 tag。
-_PAINT_PATH_RACE_PLATFORMS = ("win32", "linux", "darwin")
+# 2026-11-15 修正 over-skip:原 `("win32","linux","darwin")` 无差别三平台全跳,连本地
+# macOS/Linux 真机都跳,与上方「本地真机仍跑」自相矛盾 —— 这 5 个 i18n 测试实际从不在
+# 任何地方执行(白写)。根因是 Qt **offscreen QPA** 的 paint path race(非 OS 本身),
+# CI 三平台 QPA 见 ci.yml(ubuntu/macos=offscreen,Windows=windows)。故按 QPA + 平台
+# 精确跳过:offscreen QPA / Windows 平台跳,本地真机(cocoa/xcb,非 offscreen)执行。
+def _qt_paint_path_unsafe() -> bool:
+    """offscreen QPA 或 Windows 平台下 `show()+processEvents()` 触发 Qt paint race。"""
+    return os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen" or sys.platform == "win32"
+
+
 windows_qt_paint_skip = pytest.mark.skipif(
-    sys.platform in _PAINT_PATH_RACE_PLATFORMS,
+    _qt_paint_path_unsafe(),
     reason=(
         "Qt offscreen paint path race 在 `MediaManagerWidget.show() + "
-        "qapp.processEvents()` 时触发:Windows 真机 `windows` QPA、"
-        "GitHub Actions ubuntu/macos runner 的 Qt offscreen 平台都受影响。"
-        "本地 Qt 6.11+ macOS 真机 + linux 真机仍过(不属本 race)。"
+        "qapp.processEvents()` 时触发:offscreen QPA(CI ubuntu/macos runner)与 "
+        "Windows 平台(`windows` QPA 仍偶发 segfault)受影响。"
+        "本地 macOS/Linux 真机(cocoa/xcb,非 offscreen)不触发,正常执行。"
     ),
 )
 
