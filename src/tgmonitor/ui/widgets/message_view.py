@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import (
     QModelIndex,
+    Qt,
     Signal,
 )
 
@@ -104,6 +105,10 @@ class MessageView(MessageViewAPIMixin, QListView):
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(False)  # delegate 动态 size
         self.setWordWrap(True)
+        # 2026-11-16:消息由 delegate 的 QTextDocument 折行渲染(见
+        # message_item_delegate._plain_to_html / sizeHint),视图本身永远
+        # 不需要横向滚动。显式关掉,兜住任何残留的撑宽路径。
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 2026-11-16 v2.0.2:LIVE 页只读化 — 多选/批量操作整体移除,
         # 回退 SingleSelection。单击只做 current 选中,MessageDetail 仍走
         # message_selected signal 显示详情。

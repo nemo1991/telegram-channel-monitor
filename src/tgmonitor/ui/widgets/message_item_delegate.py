@@ -141,7 +141,11 @@ class MessageItemDelegate(QStyledItemDelegate):
             doc.setDefaultFont(option.font)
             doc.setHtml(self._plain_to_html(text))
             doc.setTextWidth(width)
-            size = QSize(int(doc.idealWidth()), int(doc.size().height()) + 8)
+            # 2026-11-16:宽度必须用容器宽,不能用 `doc.idealWidth()`。
+            # idealWidth 是「不换行的理想宽度」— 长消息会返回几千 px,
+            # QListView 据此撑出横向滚动条。setTextWidth 后 doc 已按容器
+            # 宽折行,size().height() 就是折行后的真实高度。
+            size = QSize(int(width), int(doc.size().height()) + 8)
             self._size_hint_cache[cache_key] = size
             return size
         # 没 DTO(model 直接给 FormattedRole)→ 走老路径
@@ -150,8 +154,8 @@ class MessageItemDelegate(QStyledItemDelegate):
         doc.setHtml(self._plain_to_html(text))
         width = option.rect.width() if option.rect.width() > 0 else 280
         doc.setTextWidth(width)
-        # 高度 = 内容 + 上下各 4px padding
-        return QSize(int(doc.idealWidth()), int(doc.size().height()) + 8)
+        # 高度 = 折行后内容 + 上下各 4px padding
+        return QSize(int(width), int(doc.size().height()) + 8)
 
     @staticmethod
     def _plain_to_html(text: str) -> str:
@@ -161,4 +165,11 @@ class MessageItemDelegate(QStyledItemDelegate):
         旧实现 `QListWidgetItem.text` 自动处理换行 + escape;这里需要手动。
         """
         esc = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return f"<pre style='margin:0; padding:0;'>{esc.replace(chr(10), '<br>')}</pre>"
+        # 2026-11-16:`<pre>` 默认 `white-space: pre` 不折行 → 长行撑宽视图
+        # 产生横向滚动条。改 `pre-wrap` 保留等宽字体 / 空格语义的同时允许
+        # 自动折行,`break-word` 让无空格长串(URL / 哈希)也能断行。
+        # 手工 `\n` 已转 `<br>`,与自动折行不冲突。
+        return (
+            "<pre style='margin:0; padding:0; white-space:pre-wrap; "
+            f"word-wrap:break-word;'>{esc.replace(chr(10), '<br>')}</pre>"
+        )

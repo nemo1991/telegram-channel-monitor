@@ -636,6 +636,52 @@ def test_plain_to_html_escapes_special_chars(qapp):
     assert "<br>" in out  # 换行
 
 
+def test_plain_to_html_allows_wrapping(qapp):
+    """2026-11-16:`<pre>` 必须允许自动折行,长消息才不撑出横向滚动条。"""
+    out = MessageItemDelegate._plain_to_html("a very long line")
+    assert "pre-wrap" in out, f"pre 需允许折行,实际 {out!r}"
+    assert "break-word" in out, f"无空格长串需可断行,实际 {out!r}"
+    assert "<br>" in MessageItemDelegate._plain_to_html("a\nb")
+
+
+def test_long_message_size_hint_wraps_to_viewport_width(qapp):
+    """2026-11-16:长消息 sizeHint 宽度 = 容器宽、高度按折行后真实行数。
+
+    回归点:旧实现用 `doc.idealWidth()`(不折行的理想宽度),实测一条长消息
+    在 638px viewport 里返回 2895px 宽 → QListView 撑出横向滚动条。
+    """
+    view = MessageView()
+    view.append(_make_msg(1, 1))  # text="x" 短消息做基准
+    view.append(make_message(channel_id=1, msg_id=2, text="很长的消息内容" * 40))
+    qapp.processEvents()
+
+    opt = QStyleOptionViewItem()
+    opt.rect = QRect(0, 0, 300, 60)
+    opt.font = view.font()
+    delegate = view.itemDelegate()
+    # append 是 head-insert:用 key 定位,不假设行序
+    short_row = view.row_of_key(1, 1)
+    long_row = view.row_of_key(1, 2)
+    assert short_row is not None and long_row is not None
+    short_hint = delegate.sizeHint(opt, view.model().index(short_row, 0))
+    long_hint = delegate.sizeHint(opt, view.model().index(long_row, 0))
+
+    assert long_hint.width() == opt.rect.width(), (
+        f"sizeHint 宽度应等于容器宽 300,实际 {long_hint.width()}"
+    )
+    assert long_hint.height() > short_hint.height() * 2, (
+        f"长消息应折成多行(短 {short_hint.height()} / 长 {long_hint.height()})"
+    )
+
+
+def test_horizontal_scrollbar_is_disabled(qapp):
+    """2026-11-16:LIVE 列表永不显示横向滚动条(消息自动折行)。"""
+    from PySide6.QtCore import Qt
+
+    view = MessageView()
+    assert view.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
 def test_replace_message_updates_row_in_place(qapp):
     """PR #D1:replace_message 编辑事件 — 已存在 row 重 format 不增行。"""
     view = MessageView()
