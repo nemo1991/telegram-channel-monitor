@@ -115,3 +115,21 @@ def test_floating_new_message_button_stays_clickable(qapp, qloop, tmp_path):
     )
     qapp.processEvents()
     assert clicks == [1], "浮条点击必须仍能触发 floating_clicked(view.scrollToTop)"
+
+
+def test_floating_new_message_button_interpolates_count(qapp, qloop, tmp_path):
+    """浮条计数文案必须插值出真实数字,不能显示字面量 `%d`。
+
+    2026-11-16 修复:`set_messages_count` 原用 `"%d 条新消息 ↓".format(n)` —
+    printf 占位符配 str.format 不插值,用户往下翻页时新消息到达会看到
+    "%d 条新消息 ↓"。本用例锁死文案含真实计数、不含 `%d` 字面量。
+    """
+    win = build_real_main_window(qloop, tmp_path)
+    overlay = win.live_view._empty_overlay_widget
+
+    overlay.set_messages_count(7)
+    text = overlay._floating_btn.text()
+
+    assert "7" in text, f"文案应含真实计数 7,实际 {text!r}"
+    assert "%d" not in text, f"文案不应残留 %d 占位符,实际 {text!r}"
+    assert overlay.messages_count() == 7
