@@ -150,23 +150,29 @@ class MessageView(MessageViewAPIMixin, QListView):
         # 状态(单一 owner 在 widget)。
         # 2026-09-14 v1.7.5 PR #5 (P0-L + P0-I):三态 overlay + 新消息浮条 —
         # 未订阅 / 搜索无结果 / LIVE 空 + 「N 条新消息 ↓」浮动按钮。
-        self._empty_overlay_widget = MessageEmptyOverlay(parent=self)
-        # 2026-10-15 plan-batch7-B:widget 自身 setGeometry 覆盖整个 view —
+        # 2026-11-16 v2.0.1:painter 层级必须挂在 viewport 上,不能挂在
+        # QListView 自身。overlay 覆盖整个列表且可见;若 parent=view,真实
+        # 鼠标点击会被它截获,Qt 只沿父链把事件传给 view,**不会**传给兄弟
+        # viewport → clicked 永不 emit → 点消息没反应(用户报的 bug 2)。
+        # parent=viewport 后,overlay 未处理的鼠标事件自然传播到 viewport,
+        # QListView 照常 emit clicked;浮条按钮 accept 事件,不会误选消息行。
+        self._empty_overlay_widget = MessageEmptyOverlay(parent=self.viewport())
+        # 2026-10-15 plan-batch7-B:widget 自身 setGeometry 覆盖整个列表 —
         # MessageEmptyOverlay 内 empty_hint 默认 sizeHint 在 size=0 parent
         # 里不显示(QWidget 不渲染 size=0 子 widget),必须让 widget 自身
-        # 至少与 view 同大,`reposition(w, h)` 计算的居中位置才生效。
+        # 至少与 viewport 同大,`reposition(w, h)` 计算的居中位置才生效。
         # 原 message_view 的 empty_hint 显式 `setGeometry(x, y, hint_w,
         # hint_h)` 给 overlay 本体,不依赖 parent 渲染;widget 嵌套后
         # empty_hint 改在 widget 内,需 widget 自身先有 geometry。
-        self._empty_overlay_widget.setGeometry(self.rect())
+        self._empty_overlay_widget.setGeometry(self.viewport().rect())
         # 2026-10-15 plan-batch7-B:backward compat — 测试 fixture 直接读
         # `view._empty_overlay.isHidden()`,代理到 widget 内部 overlay
         # 引用,避免 test_empty_overlay_* 系列 test 改路径。
         self._empty_overlay = self._empty_overlay_widget._empty_overlay
         self._empty_overlay_widget.floating_clicked.connect(self.scrollToTop)
-        # 2026-10-15 plan-batch7-B:widget 自身 raise_ 到 view 顶部 Z-order
-        # — widget 内部 empty_hint raise_ 只到 widget,widget 自身需主动
-        # raise_ 到 view(parent)才能让 empty_hint 渲染在列表之上。
+        # 2026-10-15 plan-batch7-B:widget 自身 raise_ 到 viewport 顶部
+        # Z-order — widget 内部 empty_hint raise_ 只到 widget,widget 自身
+        # 需主动 raise_ 到 viewport(parent)才能让 empty_hint 渲染在列表之上。
         # 原 message_view L566 `_empty_overlay.raise_()` 的等价行为。
         self._empty_overlay_widget.raise_()
         # 默认 state — MainWindow 登录后通过 `live_view.set_empty_state(...)`
@@ -264,12 +270,15 @@ class MessageView(MessageViewAPIMixin, QListView):
         self._live_actions.show_context_menu(event.globalPos())
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        """窗口尺寸变 → widget 覆盖 view 整个区域 + overlay/浮条重定位。"""
+        """窗口尺寸变 → widget 覆盖 viewport 整个区域 + overlay/浮条重定位。"""
         super().resizeEvent(event)
-        # 2026-10-15 plan-batch7-B:widget 自身 size 跟 view 同步(否则 size=0
-        # widget 内 empty_hint 不渲染),reposition 内计算居中位置。
-        self._empty_overlay_widget.setGeometry(self.rect())
-        self._empty_overlay_widget.reposition(self.width(), self.height())
+        # 2026-10-15 plan-batch7-B:widget 自身 size 跟 viewport 同步(否则
+        # size=0 widget 内 empty_hint 不渲染),reposition 内计算居中位置。
+        # 坐标用 viewport 的 rect — overlay 是 viewport 的子 widget,用 view
+        # 的 rect 会多算 frame 宽度(1~2px),浮条贴边位置会偏。
+        viewport = self.viewport()
+        self._empty_overlay_widget.setGeometry(viewport.rect())
+        self._empty_overlay_widget.reposition(viewport.width(), viewport.height())
 
     # ---- 2026-10-15 plan-batch7-B:thin delegate 给 widget ----
 
