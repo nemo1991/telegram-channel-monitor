@@ -101,9 +101,27 @@ class MessageDetail(QScrollArea):
         # 自由拖到 1/2 屏幕宽度(原 280-420 锁死,加锁 splitter 会被强制回弹)。
 
         self._current: MessageDTO | None = None
+        # 2026-11-16:频道名映射,与 LIVE 列表共用同一份数据源
+        # (MainWindow._refresh_state / MessageStreamController.on_message_received
+        # 同步注入)。详情面板不再硬编码 `#channel_id`。
+        self._channel_titles: dict[int, str] = {}
         # 2026-09-14 v1.7.5 PR #4 (P0-H):删 setMaximumWidth(420) —
         # 让 QSplitter 接管,用户拖拽自由(原 280-420 锁死)。保留 min=280。
         self._build_empty_state()
+
+    def set_channel_titles(self, titles: dict[int, str]) -> None:
+        """同步频道名映射(名称优先、无名称回退 #id)。
+
+        与 `MessageView.set_channel_titles` 同签名,由 MainWindow /
+        MessageStreamController 在同一处同时喂两个 widget,避免列表显示
+        名称、详情又变回 id 的割裂。
+        """
+        self._channel_titles = dict(titles)
+
+    def _channel_label(self, channel_id: int) -> str:
+        """详情面板频道展示:有 title 用 `[title]`,无则 `[#id]` 兜底。"""
+        title = self._channel_titles.get(channel_id)
+        return f"[{title}]" if title else f"[#{channel_id}]"
 
     def _build_empty_state(self) -> None:
         """无选中时的占位 UI。"""
@@ -180,9 +198,8 @@ class MessageDetail(QScrollArea):
             meta_layout.addWidget(_FieldRow(self.tr("时间"), _to_local_str(m.date)))
         if m.author:
             meta_layout.addWidget(_FieldRow(self.tr("作者"), m.author))
-        meta_layout.addWidget(_FieldRow(self.tr("频道"), f"#{m.channel_id}"))
-        if m.views:
-            meta_layout.addWidget(_FieldRow(self.tr("浏览"), f"{m.views:,}"))
+        meta_layout.addWidget(_FieldRow(self.tr("频道"), self._channel_label(m.channel_id)))
+        # 2026-11-16:移除「浏览」字段 — 只读看板里浏览数无实际意义。
         if m.forwards:
             meta_layout.addWidget(_FieldRow(self.tr("转发"), f"{m.forwards:,}"))
         if m.reply_to_msg_id:

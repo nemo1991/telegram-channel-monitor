@@ -625,7 +625,10 @@ class MainWindow(QMainWindow):
         subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.subscribed_ids]
         self.channel_panel.set_subscribed(subscribed)
 
-        self.live_view.set_channel_titles({cid: ch.title for cid, ch in all_known.items()})
+        # 2026-11-16:列表 + 详情共用同一份频道名映射(名称优先、id 兜底)。
+        titles = {cid: ch.title for cid, ch in all_known.items()}
+        self.live_view.set_channel_titles(titles)
+        self.message_detail.set_channel_titles(titles)
         # 2026-09-14 v1.7.5 PR #5 (P0-L):订阅数为 0 → no_subscribed overlay;
         # > 0 → live_empty(LIVE 流空状态)。搜索无结果 by search handler 切。
         if not subscribed:

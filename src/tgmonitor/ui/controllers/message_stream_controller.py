@@ -37,9 +37,11 @@ class MessageStreamController:
         活动指示器:限频 1.5s/次,避免大流量刷屏(`throttle_activity` 内部
         走 key+min_interval_ms 节流,单 key 在窗口内只更新一次 label)。
         """
-        self._ctx.live_view.set_channel_titles(
-            {cid: ch.title for cid, ch in self._ctx.vm.known_channels.items()}
-        )
+        # 2026-11-16:同一份频道名映射同时喂列表和详情面板,避免列表显示
+        # 名称、详情又硬编码 #id 的割裂。
+        titles = {cid: ch.title for cid, ch in self._ctx.vm.known_channels.items()}
+        self._ctx.live_view.set_channel_titles(titles)
+        self._ctx.message_detail.set_channel_titles(titles)
         self._ctx.live_view.append(m)
         ch_title = self._ctx.vm.known_channels.get(m.channel_id)
         title = ch_title.title if ch_title else f"#{m.channel_id}"

@@ -96,6 +96,17 @@ def test_on_message_received_calls_set_channel_titles_and_append() -> None:
     refs["live_view"].append.assert_called_once_with(m)
 
 
+def test_on_message_received_syncs_channel_titles_to_detail() -> None:
+    """2026-11-16:频道名映射同时喂详情面板,避免列表显示名称、详情变回 id。"""
+    ch = ChannelDTO(id=100, title="Tech News")
+    ctx, refs = _make_ctx(known_channels={100: ch})
+    ctrl = MessageStreamController(ctx)
+    ctrl.on_message_received(_make_msg(channel_id=100))
+    expected = {100: "Tech News"}
+    refs["live_view"].set_channel_titles.assert_called_once_with(expected)
+    refs["message_detail"].set_channel_titles.assert_called_once_with(expected)
+
+
 def test_on_message_received_throttles_activity_with_channel_title() -> None:
     """新消息 → throttle_activity 用 vm.known_channels 里的频道标题。"""
     ch = ChannelDTO(id=100, title="Tech News")
