@@ -9,7 +9,7 @@
   4: 设置(SETTINGS)   — 所有配置(凭据/存储/代理/媒体/同步)
 
 设计:
-- 在浅色和暗色模式下都用深色底 — 形成稳定的"导航锚点",不被主题切换影响
+- 固定深色底 — 形成稳定的"导航锚点",不随系统设置变化
 - 每个按钮 = 24px 图标 + 10px 标签文字(竖直堆叠)
 - 选中态:白色图标+文字 + 左侧 3px accent 条 + 浅蓝渐变叠层
 - 悬停态:微亮背景(永远比 idle 亮、永远比 active 暗)
@@ -29,11 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.ui.icon import tinted_action_icon
-from tgmonitor.ui.theme import Theme, ThemeManager
 
-# 2026-09-07 v1.6.8:标签改走 `QCoreApplication.translate` 让 en_US locale
-# 生效。NavBar 是 module-level 容器,无 QObject 实例,跟 state_labels 同样
-# 走 translate() 函数路径。
+# 标签走 `QCoreApplication.translate`,与其余 UI 文案写法一致。
 _NAV_LABELS_SRC = ("实时流", "大盘", "频道", "媒体", "设置")
 
 
@@ -52,27 +49,16 @@ _NAV_ICONS = ("nav_live", "nav_dashboard", "nav_channels", "nav_media", "nav_set
 
 
 def _nav_items() -> list[tuple[str, str]]:
-    """当前 locale 下的 (icon_name, label) 列表。"""
+    """导航项 (icon_name, label) 列表。"""
     return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(5)), strict=True))
 
 
-# ---- 配色 token(直接 hex,不走 ThemeManager accent(),让本文件自包含) ----
-# 主题切换时按 DARK/LIGHT 二选一,新主题再加分支即可。
+# ---- 配色 token(直接 hex,固定样式,本文件自包含) ----
 #
 # 关键设计:**active 用纯 accent 实色填充**,跟父级 nav 底(#1e1e2e)有
 # 强烈对比。原来 active 也用深色,跟父级同色,用户根本看不出选中。
 # 3 态(active / hover / idle)必须有清晰对比:
 #   active  >  hover  >  idle
-_DARK = {
-    # 父级 nav bg = #1a1a26(由 QSS `#navBar` 设)
-    "active_bg": "#5b9cf5",  # accent 实色 — 强烈对比,选中立刻可见
-    "hover_bg": "#2c2c45",  # 比 idle 亮 1 阶
-    "idle_bg": "transparent",
-    "active_fg": "#ffffff",  # 白字在蓝实色上,WCAG 5.3:1
-    "inactive_fg": "#b0b5c8",  # 浅灰(WCAG AA 对 #1a1a26)
-    "accent": "#5b9cf5",
-    "accent_soft": "rgba(91,156,245,0.18)",  # hover 用(在 dark active 上太亮反而刺眼)
-}
 _LIGHT = {
     # 父级 nav bg = #1a1a26(浅色主题 nav 底故意保持深色做"锚点")
     "active_bg": "#5b9cf5",  # accent 实色 — 强对比
@@ -86,7 +72,7 @@ _LIGHT = {
 
 
 def _palette() -> dict:
-    return _DARK if ThemeManager.current() == Theme.DARK else _LIGHT
+    return _LIGHT
 
 
 class _NavButton(QWidget):
@@ -189,7 +175,7 @@ class _NavButton(QWidget):
 
 
 class VerticalNavBar(QWidget):
-    """暗色垂直导航栏,容纳 5 个 _NavButton。"""
+    """深色垂直导航栏,容纳 5 个 _NavButton。"""
 
     current_changed = Signal(int)
 
@@ -233,11 +219,6 @@ class VerticalNavBar(QWidget):
         self.current_changed.emit(idx)
 
     def set_current(self, idx: int) -> None:
-        """外部切 tab 的入口(Ctrl+1/2/3/4 快捷键)— 越界静默忽略。"""
+        """外部切 tab 的入口 — 越界静默忽略。"""
         if 0 <= idx < len(self._buttons):
             self._on_btn_clicked(idx)
-
-    def refresh_theme(self) -> None:
-        """主题切换后调用,刷新所有按钮颜色 + 图标。"""
-        for btn in self._buttons:
-            btn._refresh_style()

@@ -43,7 +43,6 @@ class ClearChannelPreviewDialog(QDialog):
         super().__init__(parent)
         self._preview = preview
         self._channel_title = channel_title
-        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
         self.setWindowTitle(self.tr("Clear Channel — 二次确认"))
         self.setModal(True)
         self._build()

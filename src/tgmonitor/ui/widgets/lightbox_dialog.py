@@ -604,7 +604,7 @@ class LightboxDialog(QDialog):
             self._btn_slideshow.toggle()
             return
         if key in (Qt.Key_Question, Qt.Key_F1):
-            self._show_shortcut_help()
+            self._show_key_help()
             return
         super().keyPressEvent(event)
 
@@ -662,10 +662,10 @@ class LightboxDialog(QDialog):
         else:
             self._slideshow_timer.stop()
 
-    def _show_shortcut_help(self) -> None:
-        """2026-09-09 v1.7.2:快捷键帮助弹层 — modal QDialog + QLabel 列所有快捷键。"""
+    def _show_key_help(self) -> None:
+        """按键帮助弹层 — modal QDialog + QLabel 列查看器按键。"""
         dlg = QDialog(self)
-        dlg.setWindowTitle(self.tr("快捷键帮助"))
+        dlg.setWindowTitle(self.tr("按键帮助"))
         layout = QVBoxLayout(dlg)
         text = self.tr(
             "Esc          关闭\n"

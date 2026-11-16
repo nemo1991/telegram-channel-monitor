@@ -46,7 +46,6 @@ class ExportProgressDialog(QDialog):
         """
         super().__init__(parent)
         self._vm = vm
-        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
         self.setWindowTitle(self.tr("导出中"))
         # 非模态:用户导出时可继续操作其它面板(导出是 fire-and-forget)
         self.setModal(False)

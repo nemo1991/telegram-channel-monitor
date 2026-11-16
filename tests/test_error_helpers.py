@@ -3,7 +3,7 @@
 `_extract_error_detail(e)` 的链式 fallback:`.message` → `str(e)` → "未知错误"。
 用 Telethon RPCError(带 .message)+ 普通 Exception 覆盖各分支。
 
-原 TDLib 版还测 `_translate_boot_error`(TDLib boot 错误码翻译)—
+原 TDLib 版还测 `_translate_boot_error`(TDLib boot 错误码映射)—
 该函数随 TDLib 后端删除,Telethon 无对应概念。
 """
 

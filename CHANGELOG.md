@@ -20,6 +20,15 @@
   `tests/fonts/` 内置 DejaVu Sans):golden 跨机渲染不稳(字体 hinting / emoji
   anti-aliasing 漂移),长期需人工维护且进不了 CI,收益不抵成本,整体移除。
   UI 行为仍由 offscreen 功能测试覆盖。
+- **可配置能力回退(2.0.1)**:移除快捷键编辑与热重载、深浅色主题切换、界面语言切换
+  三项功能及其全部落点 —— 源码模块(`core/keybinding.py`、`ui/theme.py`、两个
+  controller、`src/tgmonitor/i18n/`、`style_dark.qss`)、设置页 3 个分组与头栏按钮、
+  16 个配置字段、7 个测试文件、CI 翻译编译 composite action 与 6 处调用、wheel
+  `force_include` 与 PyInstaller datas、`.env.example` 示例键及相关注释文档。
+  界面固定简体中文 + 固定浅色 `style.qss`,启动时显式固定 `QLocale(zh_CN)`;
+  `tr()` / `QCoreApplication.translate` 作为 Qt 标准文案写法保留。
+- **升级说明**:存量 `.env` 里的 `TG_LANG` / `TG_THEME` / `TG_KEY_*` 键**不主动清理**,
+  保形读写会原样保留但不再被解析、不再生效;无数据库 schema 变更,无需重新登录。
 
 ## [2.0.0] - 2026-11-11
 

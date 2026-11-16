@@ -2,7 +2,6 @@
 
 2026-10-01 v1.12.x 从 `MainWindow` 抽出(原 `_SelectionToolbar`,`main_window.py:2119`):
 默认 hidden,`selection_count_changed > 0` 时被 MainWindow show 出来。视觉与
-`HeaderBar` 一致 — 浅色卡片背景,暗色模式对应反转。不复用 QToolBar(自定义
 QWidget 视觉更紧凑,与现有风格统一)。
 
 按钮 9 颗:全选 / 反选 / 清除 / (分隔) / 标记已读 / 导出 / 删除 / 转发 / 钉选 / 表情回应。
@@ -99,20 +98,3 @@ class SelectionToolbar(QWidget):
         `tr("已选 {0} 条").format(n)` 不行(中英文数字混排),用 `%d` 兼容。
         """
         self._count_label.setText(self.tr("已选 %d 条") % n)
-
-    def retranslateUi(self) -> None:  # noqa: N802 — Qt 命名
-        """2026-09-08 v1.7.0:语言切换 — 重建 label 文案。
-
-        与 `HeaderBar` / `MessageDetail` 一致;setText 调 set_count 触发
-        label refresh。
-        """
-        # 计数 label:由 MainWindow 持有 selection,这里无法 — 让外部重调
-        # set_count 即可,无需 rebuild。
-        # 按钮 label 全是 setText 在 __init__ 时设过;这里走 setText 重新
-        # tr() 即可,保持与 `HeaderBar` 一致的 idiom。
-        self._btn_select_all.setText(self.tr("全选"))
-        self._btn_invert.setText(self.tr("反选"))
-        self._btn_clear.setText(self.tr("清除选择"))
-        self._btn_mark_read.setText(self.tr("✓ 标记已读"))
-        self._btn_export.setText(self.tr("📤 导出选中"))
-        self._btn_delete.setText(self.tr("🗑 删除选中"))

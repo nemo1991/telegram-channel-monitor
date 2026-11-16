@@ -21,18 +21,16 @@
 - **`FormSection`** — 持有 `title` + 一组 `FieldDef`,build() 返 QGroupBox,
   提供 get/set/retranslate/set_visible 通用 API。
 - **`ActionDef`**(frozen, 非字段按钮)— 「测试连接 / 清理缓存」类
-  副作用按钮,自带 enabled/disable 双态重译。
 
 ### kind 枚举(10 种)
 
 `int` / `text` / `secret` / `path` / `choice` / `choice_pairs` / `bool` /
-`static_label` / `keyseq`(走老路径,FormSection 不抽)/ `action`(走老路径)。
+`static_label` / `action`。
 
-### i18n 约束(必读)
+### 文案约定
 
-所有 `label` / `placeholder` / `tooltip` 由 **caller 提供已 tr() 过的字串**。
-`FormSection` **不二次 tr**(避免 lupdate 静态扫描漏抽 / context 错配
-成 "form_section" 而非 "SettingsPage")。
+所有 `label` / `placeholder` / `tooltip` 由 caller 提供已包装好的字串,
+`FormSection` 不再二次包装。
 
 ### `set_visible` 跨 group 隔离
 
@@ -79,16 +77,14 @@ class FieldKind(str, Enum):
     CHOICE_PAIRS = "choice_pairs"  # Iterable[(data, display)],data 自定
     BOOL = "bool"  # QCheckBox
     STATIC_LABEL = "static_label"  # 只读 QLabel hint
-    KEYSEQ = "keyseq"  # QKeySequenceEdit,走老路径,FormSection 不抽
     ACTION = "action"  # 非字段按钮,走 ActionDef
 
 
 @dataclass(frozen=True)
 class FieldDef:
-    """一个字段的描述 — 10 种 kind 之一。
+    """一个字段的描述 — 9 种 kind 之一。
 
-    `label` / `placeholder` / `tooltip` 由 caller 传**已 tr() 过的字串**
-    (保持 i18n context "SettingsPage",不让 lupdate 抽到 form_section)。
+    `label` / `placeholder` / `tooltip` 由 caller 传已包装好的字串。
 
     `visible_when` 是 key→bool 条件(例如 `{"is_local": True}` →
     只在本地后端时显示);`set_visible` 走本模块隔离逻辑,不会跨 group 误隐藏。
@@ -134,7 +130,6 @@ class FormSection:
     排好;caller 直接 `vbox.addWidget(section.build(parent))` 即可。
 
     `get_value(key)` / `set_value(key, val)` 通用访问 widget 当前值;
-    `retranslate()` 重译所有 label + action 按钮双态;
     `set_visible(key, bool)` 走 `findChildren(QGroupBox)` 隔离单字段。
     """
 
@@ -212,12 +207,9 @@ class FormSection:
             if fdef.key in values:
                 self.set_value(fdef.key, values[fdef.key])
 
-    # ---- 重译 ----
-
     def retranslate(self) -> None:
-        """重译 groupbox title + action 按钮双态 + static label 文字。
+        """刷新 groupbox title + action 按钮双态 + static label 文字。
 
-        字段 label / placeholder / tooltip **不重译** — caller 已在构造时
         传已 tr() 过的字串;此处不动它们(context 保持 "SettingsPage")。
         """
         if self._groupbox is not None:
@@ -231,7 +223,7 @@ class FormSection:
                 btn.setText(adef.label_idle)
             else:
                 btn.setText(adef.label_busy)
-        # static_label 文字(若 title 是动态的,例如「快捷键帮助:」,需重译)
+        # static_label 文字刷新
         for fdef in self.fields:
             if fdef.kind == FieldKind.STATIC_LABEL and fdef.label:
                 widget = self._widgets.get(fdef.key)

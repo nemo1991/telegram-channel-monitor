@@ -7,18 +7,13 @@
    的所有 fixture 子模块;子模块名以下划线开头,pytest 默认不收。
 2. 公开 API re-export — `InMemoryRepository` / `make_message` / `make_photo`
    保持 `from tests.conftest import X` 兼容,12 个现有引用零改动。
-3. `force_zh_cn_locale` autouse fixture — 2026-09-03 v1.5.3 PR #D3:强制
-   zh_CN locale,保持现有 30+ 处 `widget.text() == "中文"` 断言兼容
-   (zh_CN 默认翻译 = 原文,fixture 保护下不撞英文)。
-   v1.6.8 i18n 二期保留这个 fixture —— 新加的 i18n 测试自己用
-   `monkeypatch.setenv("TG_LANG", "en_US")` 切语言并 reload,
-   旧的中文断言零改动继续 pass。
+3. `fixed_zh_cn_locale` autouse fixture — 固定默认区域为 zh_CN,保证日期/数字
+   格式与 `widget.text() == "中文"` 断言稳定。
 
 **PR 1a — Test infra 整合(2026-09-15)**:
 4. `qapp` 中心 fixture — session-scope QApplication 单例。原 21 个测试文件
    各自重定义 `def qapp()`(body 完全相同);集中到 conftest.py,删本地副本。
-   保留 2 个语义变体:`qapp_no_locale_force`(2 个 i18n 测试文件用)和
-   `qapp_16`(test_channel_widget.py 用过时的命名)。
+   保留本地变体 `qapp_16`(test_channel_widget.py 用过时的命名)。
 5. `legacy` marker + `pytest_collection_modifyitems` hook — 自动给
    `tests/test_*_pr*.py` PR 编号文件打 `@pytest.mark.legacy`,默认 skip。
    `--include-legacy` 显式启用(保留 git 历史回归)。
@@ -71,31 +66,11 @@ def qapp():
     - Session-scope:整个 test run 一个 QApplication,避免 widget leak。
     - offscreen QPA 已由外部 `QT_QPA_PLATFORM=offscreen` env 启用(CI + 本地)。
 
-    变体(仍本地):
-    - `qapp_no_locale_force`(test_i18n_runtime.py + test_media_manager_i18n.py):
-      i18n 测试要切语言,反 `force_zh_cn_locale` autouse fixture。
-    - `qapp_16`(test_channel_widget.py):只是命名过时,改用 `qapp`。
+    本地变体 `qapp_16`(test_channel_widget.py)只是命名过时,改用 `qapp`。
     """
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
     return QApplication.instance() or QApplication([])
-
-
-@pytest.fixture
-def qapp_no_locale_force(qapp, monkeypatch):
-    """反 `force_zh_cn_locale` autouse + 切到 zh_CN 翻译器 — i18n 测试专用。
-
-    2026-09-18 PR cleanup:从 test_i18n_runtime.py + test_media_manager_i18n.py
-    各 1 份 11 行重复 fixture 集中到 conftest,2 个文件改 import 即可。
-    """
-    from tgmonitor.i18n import install_translator  # noqa: PLC0415
-
-    for k in ("TG_LANG", "LANG", "LC_ALL", "LANGUAGE"):
-        monkeypatch.delenv(k, raising=False)
-    qapp.be_volatile = True  # type: ignore[attr-defined]
-    install_translator(qapp, locale="zh_CN")
-    yield qapp
-    install_translator(qapp, locale="zh_CN")  # teardown:还原默认
 
 
 # ---- legacy marker hook(PR 1a) ---------------------------------------
@@ -142,7 +117,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-# ---- i18n locale fixture(PR #D3) --------------------------------------
+# ---- 区域 / Qt 回调 autouse fixture ------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -163,37 +138,14 @@ def _reset_qt_callbacks_per_test():
 
 
 @pytest.fixture(autouse=True)
-def force_zh_cn_locale() -> None:
-    """2026-09-03 v1.5.3 PR #D3 + 2026-09-07 v1.6.8 二期:强制 zh_CN locale。
+def fixed_zh_cn_locale() -> None:
+    """固定默认区域为 zh_CN,保证日期/数字格式与 widget 文本断言稳定。
 
-    v1.5.3:防 CI 切 LANG 撞英文,zh_CN 默认翻译 = 原文,现有 30+ 处
-    `widget.text() == "中文"` 断言在本 fixture 保护下保持兼容。
-
-    v1.6.8:保留这个 fixture —— 新加的 i18n 测试自己用 monkeypatch +
-    Settings reload 切语言,旧的中文断言零改动继续 pass。`autouse=True`
-    自动 apply 到所有 test。
-
-    2026-10-04 plan 阶段 3.3:`test_main_window_batch_confirm.py` 的 i18n 测试
-    调用 `install_translator("en_US")` 后,QTranslator(loaded from en_US.qm)
-    + QLocale.setDefault("en_US") 都改了,且 QTranslator 实例已
-    `qt_app.installTranslator(...)`。下一个 test 进 fixture 仅 setDefault
-    不卸 QTranslator,`QCoreApplication.translate("MainWindow", src)` 仍
-    走 en_US 翻译 → LiveSelectionController `_on_live_react` 的 `%(n, emoji)`
-    报 `TypeError: %d format: a real number is required, not str`(en_US 翻译
-    的占位符顺序 `%s %d` 跟中文 / 控制器 `(int, str)` 入参不一致)。
-    修法:fixture 走 `install_translator("zh_CN")` 全套恢复,idempotent 同 locale
-    跳过(`install_translator` 内部已 cache `_current_locale`)。
+    autouse 自动应用到所有 test;QLocale.setDefault 不依赖 QApplication 是否已创建。
     """
-    try:
-        from PySide6.QtCore import QCoreApplication  # noqa: PLC0415
+    from PySide6.QtCore import QLocale  # noqa: PLC0415
 
-        if QCoreApplication.instance() is not None:
-            from tgmonitor.i18n import install_translator  # noqa: PLC0415
-
-            install_translator(QCoreApplication.instance(), locale="zh_CN")
-    except ImportError:
-        # 无 Qt 环境(headless service test)→ 跳过
-        pass
+    QLocale.setDefault(QLocale("zh_CN"))
 
 
 # ---- backward-compat re-export ----------------------------------------

@@ -6,7 +6,7 @@ bug fix(reveal/copy 之前用 `self._qloop`,从未赋值,本 PR 改 `ctx.loop` �
 其它 handler 一致)。
 
 设计:沿用 `LiveSelectionController` 模板(plain class + `MainWindowCtx`)。
-翻译走 `QCoreApplication.translate("MainWindow", src)` 保留 i18n 上下文。
+文案走 `QCoreApplication.translate("MainWindow", src)` 包装文案。
 
 信号契约(全部连到 controller 公开方法):
 - `media_manager.refresh_requested` → `on_media_refresh`
@@ -502,7 +502,7 @@ class MediaActionsController:
     # ============================================================
 
     def _tr(self, src: str) -> str:
-        """翻译入口 — 保留 `MainWindow` context,沿用现有 zh_CN.ts / en_US.ts 翻译。
+        """文案入口 — 保留 `MainWindow` context。
 
         原 MainWindow 自有 `self.tr(src)`,context = `MainWindow`;controller
         没 QWidget 引用,走 `QCoreApplication.translate` 全局入口。

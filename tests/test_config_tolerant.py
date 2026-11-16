@@ -59,11 +59,10 @@ def test_legacy_mongo_backend_via_env_var(env_file: Path, monkeypatch: pytest.Mo
 
 
 def test_multiple_invalid_fields_all_reset(env_file: Path) -> None:
-    """枚举 / Literal / int 范围 / int 类型多种非法同时出现,各自回退默认。"""
+    """枚举 / int 范围 / int 类型多种非法同时出现,各自回退默认。"""
     env_file.write_text(
         "TG_MEDIA_POLICY=bogus\n"
         "TG_SYNC_CHAT_DELAY_MS=1\n"  # ge=50
-        "TG_LANG=fr\n"
         "TG_API_ID=not-a-number\n"
         "TG_PHONE=+8613800000000\n",
         encoding="utf-8",
@@ -73,12 +72,11 @@ def test_multiple_invalid_fields_all_reset(env_file: Path) -> None:
 
     assert s.media_policy is MediaPolicy.THUMBNAIL
     assert s.sync_chat_delay_ms == 500
-    assert s.lang == "zh_CN"
     assert s.api_id == 0
     assert s.phone == "+8613800000000"
-    assert len(warnings) == 4
+    assert len(warnings) == 3
     joined = "\n".join(warnings)
-    for key in ("TG_MEDIA_POLICY", "TG_SYNC_CHAT_DELAY_MS", "TG_LANG", "TG_API_ID"):
+    for key in ("TG_MEDIA_POLICY", "TG_SYNC_CHAT_DELAY_MS", "TG_API_ID"):
         assert key in joined
 
 
@@ -96,7 +94,7 @@ def test_invalid_bool_reset(env_file: Path) -> None:
 def test_valid_config_passthrough(env_file: Path) -> None:
     """全部合法时等价于 Settings(),无 warnings。"""
     env_file.write_text(
-        "TG_DB_BACKEND=postgres\nTG_API_ID=42\nTG_LANG=en_US\n",
+        "TG_DB_BACKEND=postgres\nTG_API_ID=42\n",
         encoding="utf-8",
     )
 
@@ -105,7 +103,6 @@ def test_valid_config_passthrough(env_file: Path) -> None:
     assert warnings == []
     assert s.db_backend is DBBackend.POSTGRES
     assert s.api_id == 42
-    assert s.lang == "en_US"
 
 
 def test_missing_env_file_ok(env_file: Path) -> None:

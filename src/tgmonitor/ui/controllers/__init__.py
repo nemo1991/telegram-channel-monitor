@@ -1,6 +1,6 @@
 """Per-domain controller 包 — `MainWindow` 拆细后业务逻辑落点。
 
-2026-10-01 v1.12.x:6 个低风险 controller(theme / tray / header_action /
+2026-10-01 v1.12.x:低风险 controller(tray / header_action /
 settings_reaction / export / sync)。
 2026-10-04 plan 阶段 3.3:抽 `SearchController`(模板)+ `LiveSelectionController`
 + `MediaActionsController`(MediaManagerWidget 入口 + VM media event)+
@@ -23,23 +23,19 @@ from tgmonitor.ui.controllers.media_actions_controller import MediaActionsContro
 from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
 from tgmonitor.ui.controllers.search_controller import SearchController
 from tgmonitor.ui.controllers.settings_reaction_controller import SettingsReactionController
-from tgmonitor.ui.controllers.shortcut_controller import ShortcutController
 from tgmonitor.ui.controllers.sync_controller import SyncController
 from tgmonitor.ui.controllers.sync_flow_controller import SyncFlowController
-from tgmonitor.ui.controllers.theme_controller import ThemeController
 from tgmonitor.ui.controllers.tray_controller import TrayController
 
 __all__ = [
     "MainWindowCtx",
     "AppStateController",
-    "ThemeController",
     "TrayController",
     "HeaderActionController",
     "SettingsReactionController",
     "ExportController",
     "SyncController",
     "SyncFlowController",
-    "ShortcutController",
     "LifecycleController",
     "SearchController",
     "LiveSelectionController",

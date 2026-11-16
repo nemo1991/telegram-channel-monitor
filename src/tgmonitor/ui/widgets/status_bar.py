@@ -52,7 +52,6 @@ log = logging.getLogger(__name__)
 
 # 2026-09-07 v1.6.8:conn state 翻译表 — module-level,跟 state_labels 同样
 # 走 QCoreApplication.translate 路径,无需 QObject。这样 test 用 _FakeWindow
-# (无 tr()) 也能正确取到 zh_CN / en_US 译文。
 _CONN_STATE_LABEL_SRC: dict[str, str] = {
     "waiting_for_network": "TG 等待网络",
     "connecting": "TG 连接中…",

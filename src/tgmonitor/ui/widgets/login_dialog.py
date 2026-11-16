@@ -145,7 +145,6 @@ class LoginDialog(QDialog):
         # 按钮
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
-        # 2026-09-07 v1.6.8:tr() 包裹让 button text 跟当前 locale。
         self.btn_submit = bb.addButton(self.tr("提交"), QDialogButtonBox.AcceptRole)
         self.btn_submit.clicked.connect(self._on_submit)
         root.addWidget(bb)

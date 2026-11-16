@@ -220,7 +220,7 @@ def test_update_env_paused_preserves_other_keys(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(
-        "TG_API_ID=12345\nTG_THEME=dark\n# 注释行\n\nTG_PAUSED=false\n",
+        "TG_API_ID=12345\nTG_SYNC_CHAT_DELAY_MS=500\n# 注释行\n\nTG_PAUSED=false\n",
         encoding="utf-8",
     )
 
@@ -228,7 +228,7 @@ def test_update_env_paused_preserves_other_keys(tmp_path: Path) -> None:
 
     content = env_path.read_text(encoding="utf-8")
     assert "TG_API_ID=12345" in content
-    assert "TG_THEME=dark" in content
+    assert "TG_SYNC_CHAT_DELAY_MS=500" in content
     assert "# 注释行" in content  # 注释保留
     assert "TG_PAUSED=true" in content
 

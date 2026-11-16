@@ -11,8 +11,7 @@
 (facade 要 import mixin,mixin 又要 import facade)。独立 module 是唯一
 干净解,依赖单向(facade / mixin → `_mm_base`,反向 0 依赖)。
 
-**不抽 tr 字面量**:本 module 全部为纯常量与纯函数,0 处 `self.tr()` ——
-i18n 面不受影响(见 `media_manager_widget.py` 模块 docstring 的 i18n 约束说明)。
+**不含 UI 文案**:本 module 全部为纯常量与纯函数。
 """
 
 from __future__ import annotations

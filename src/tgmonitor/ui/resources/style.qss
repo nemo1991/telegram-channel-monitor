@@ -1,7 +1,6 @@
 /* tgmonitor — 现代 UI 样式表(浅色主题)
  *
  * 设计原则:
- *   1. 暗色导航 + 亮色内容区 — 现代工具标配(GitHub/Linear/Notion)
  *   2. 卡片式统计(Dashboard)圆角 + 浅阴影
  *   3. 清晰层级:标题/正文/提示三档字号
  *   4. 保留状态点颜色体系
@@ -11,10 +10,10 @@
  *   进行中→ #f59e0b
  *   错误  → #dc2626
  *   未配  → #94a3b8
- *   强调  → {accent}(由 ThemeManager 注入;浅色=#5b9cf5 / 暗色=#7bb4ff)
+ *   强调  → {accent}(由 app.py 注入;固定 #5b9cf5)
  *
- * 暗色模式:ThemeManager.apply(DARK) 时换 style_dark.qss,accent 占位符
- * 同步替换。Nav bar 通过 nav_bar.py 的 setStyleSheet 内联样式,不在此处。
+ * 单一样式:固定浅色 style.qss,accent 占位符由 app.py 替换。
+ * Nav bar 通过 nav_bar.py 的 setStyleSheet 内联样式,不在此处。
  */
 
 /* ===== 全局 ===== */
@@ -569,7 +568,7 @@ QLabel#emptyHintIcon {
 }
 
 /* ===== 搜索框(2026-09-11 v1.7.5:从 SearchBar 内联样式迁到 QSS,
-   主题切换不破皮) ===== */
+   保持样式一致) ===== */
 #searchBar {
     background: #f0f1f5;
     border: 1px solid #e2e4e9;

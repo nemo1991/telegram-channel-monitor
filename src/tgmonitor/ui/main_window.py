@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
+from typing import TYPE_CHECKING, Awaitable, Callable, cast
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent
@@ -64,10 +64,8 @@ from tgmonitor.ui.controllers import (
     MessageStreamController,
     SearchController,
     SettingsReactionController,
-    ShortcutController,
     SyncController,
     SyncFlowController,
-    ThemeController,
     TrayController,
 )
 from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
@@ -149,23 +147,17 @@ class MainWindow(QMainWindow):
         self._assembler = UiAssembler(self)
         self._build_ui()
         # 2026-10-12 plan-batch3-1.3:_build_menu 31 LOC + _build_tray 15 LOC
-        # 抽到 UiAssembler。act_show / act_quit 仍是 self. 属性(ShortcutController
-        # 热重载 setShortcut 走 `main_window.act_X`,无 widget 抽象层可走)。
+        # 抽到 UiAssembler。act_show / act_quit 仍是 self. 属性。
         menu = self._assembler.build_menu()
         self.act_show = cast(QAction, menu["act_show"])
         self.act_quit = cast(QAction, menu["act_quit"])
         self._tray = self._assembler.build_tray()
-        # 2026-10-12 plan-batch3-1.5:_wire_events 40 LOC + _wire_theme_change_signal
-        # 4 LOC 抽到 UiAssembler.wire_events;MainWindow 编排只剩 1 行调。
+        # 2026-10-12 plan-batch3-1.5:_wire_events 抽到 UiAssembler.wire_events;
+        # MainWindow 编排只剩 1 行调。
         self._assembler.wire_events()
         self._refresh_state()
         self._vm.bootstrap_ui()
         self._setup_controllers()
-        # 2026-10-09 v1.12.x 下一 plan 目标 1.3:快捷键绑定挪到
-        # `_setup_controllers` 之后,因 `ShortcutController` 在那里实例化
-        # 且需要 `act_show` / `act_quit`(`_build_menu` 必建) + `self._ctx`
-        # 已就位。
-        self._wire_shortcuts()
 
     def _setup_core(
         self,
@@ -223,7 +215,7 @@ class MainWindow(QMainWindow):
         """2026-10-04 plan 阶段 3.2:装配 MainWindowCtx + 6 controller。
 
         controller 间无顺序依赖(各自只读 ctx 字段),按当前 alphabetical
-        顺序排(export / header_action / settings_reaction / theme / tray / sync)。
+        顺序排(export / header_action / settings_reaction / tray / sync)。
 
         2026-10-04 plan 阶段 3.3:搜索 domain 全部就近 — debounce timer 创建
         + MainWindowCtx 装配 + 7 个 signal wire + SearchController 实例化都
@@ -279,7 +271,6 @@ class MainWindow(QMainWindow):
             search_debounce=self._search_debounce,
             media_refresh_debounce=self._media_refresh_debounce,
         )
-        self._theme_ctrl = ThemeController(self._ctx)
         self._tray_ctrl = TrayController(self._ctx)
         self._header_action_ctrl = HeaderActionController(self._ctx)
         self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
@@ -292,10 +283,6 @@ class MainWindow(QMainWindow):
         # 2026-10-09 plan 目标 1.2:抽 `AppStateController` — 接管 C+D 类 82 LOC
         # (VM login/conn/error + EventBus notification/login + bell/clear)。
         self._app_state_ctrl = AppStateController(self._ctx)
-        # 2026-10-09 plan 目标 1.3:抽 `ShortcutController` — 接管 F 类 94 LOC
-        # (`_wire_shortcuts` 38 + `reload_shortcuts` 40 + `_ACTION_SLOTS` 16)。
-        # 实际 bind 由 `__init__` 末尾的 `_wire_shortcuts()` thin delegate 触发。
-        self._shortcut_ctrl = ShortcutController(self._ctx)
         # 2026-10-10 plan 目标 1.4:抽 `LifecycleController` — 接管 F 类 110 LOC
         # (show_and_raise / quit_app / switch_tab / on_nav_changed /
         # focus_search / on_global_escape / copy_current_message_text)。
@@ -594,18 +581,6 @@ class MainWindow(QMainWindow):
         """
         await self._app_state_ctrl.on_notification_fallback(event)
 
-    def _wire_shortcuts(self) -> None:
-        """2026-10-09 v1.12.x:thin delegate `ShortcutController.bind_shortcuts`。
-        保留方法名以保持测试夹具引用稳定。
-        """
-        self._shortcut_ctrl.bind_shortcuts()
-
-    def reload_shortcuts(self, settings: Any) -> None:
-        """v1.6.9:SettingsPage「保存并应用」成功后调此热重载快捷键 — 2026-10-09
-        转给 `ShortcutController.reload_shortcuts`。
-        """
-        self._shortcut_ctrl.reload_shortcuts(settings)
-
     def _switch_tab(self, idx: int) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.switch_tab`。
         保留方法名以保持测试夹具 + 内部 call site 引用稳定。
@@ -620,27 +595,19 @@ class MainWindow(QMainWindow):
 
     def _focus_search(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.focus_search`。
-        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
+        保留方法名以保持调用点引用稳定。
         """
         self._lifecycle_ctrl.focus_search()
 
-    def _on_theme_toggle(self) -> None:
-        """切换浅色/暗色主题 — 委托 `ThemeController`。(2026-10-01 v1.12.x)"""
-        self._theme_ctrl.toggle()
-
-    def _on_theme_changed(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:ThemeManager 主题变 → UI 同步 — 委托 controller。"""
-        self._theme_ctrl.on_theme_changed()
-
     def _on_global_escape(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.on_global_escape`。
-        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
+        保留方法名以保持调用点引用稳定。
         """
         self._lifecycle_ctrl.on_global_escape()
 
     def _copy_current_message_text(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.copy_current_message_text`。
-        保留方法名以保持 `_ACTION_SLOTS` 工厂引用稳定。
+        保留方法名以保持调用点引用稳定。
         """
         self._lifecycle_ctrl.copy_current_message_text()
 

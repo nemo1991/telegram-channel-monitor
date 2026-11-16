@@ -103,11 +103,6 @@ def test_core_does_not_import_qt_or_qasync(py_file: Path) -> None:
     """`src/tgmonitor/core/` 下任何 .py 文件,任何位置(顶层 / lazy / try 块)
     都禁止 import PySide6 或 qasync。
 
-    2026-10-04 时已知违规:
-      - core/keybinding.py:22 `from PySide6.QtGui import QKeySequence`
-      - core/media_service.py:499/500/703 三个 lazy import
-      - (阶段 2 修复后会清零)
-
     何时会触发失败:任何阶段新增的 core/ 模块不慎 import Qt。
     """
     hits = _scan_forbidden_imports(py_file)
