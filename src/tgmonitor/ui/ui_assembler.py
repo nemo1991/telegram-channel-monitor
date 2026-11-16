@@ -183,14 +183,18 @@ class UiAssembler:
         # 自定义状态栏(2026-10-01 v1.11.x 组件化重构) — 替代 Qt QStatusBar,
         # 9 个子组件(LEFT 5 + RIGHT 4)由 `StatusBar` widget 自管;MainWindow
         # 只做 1 行装配 + 后续 signal 绑 setter。
+        # 2026-11-16 v2.0.1:parent 必须给 right 且要 addWidget 进
+        # right_layout。只给 parent 不会加入布局 —— 状态栏会成为 MainWindow
+        # 的直接子 widget,geometry 停在 (0,0) 浮在窗口顶部(用户报的 bug 1)。
         from tgmonitor.ui.widgets.status_bar import StatusBar
 
         status_bar = StatusBar(
             self._mw.app,
             self._mw._vm,
             objects_error=self._mw._objects_error,
-            parent=self._mw,
+            parent=right,
         )
+        right_layout.addWidget(status_bar)
 
         # Media Manager 批量删除 debounce(2026-09-28 fix):100 条连续 MediaDeleted
         # 只刷一次 widget。timer 放在 MainWindow 上,与 StatusBar 解耦。

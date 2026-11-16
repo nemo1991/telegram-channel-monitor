@@ -9,6 +9,17 @@
 
 ### 修复
 
+- **状态栏归位到窗口底部**:`UiAssembler.build_central()` 原先只把
+  `StatusBar(parent=MainWindow)` 挂进对象树,没有 `addWidget` 到 `right_layout`
+  —— parent 不等于加入布局,状态栏几何停在 `(0, 0, 100, 30)` 浮在窗口左上角。
+  现在 parent 改为内容区并加入布局,排在 `QStackedWidget` 之后,缩窗后仍贴底。
+- **实时流点击消息可打开详情**:`MessageEmptyOverlay` 原先作为 `MessageView`
+  的直接子 widget 覆盖整个列表;真实鼠标点击被它截获后只沿父链传给 view,
+  **不会**传给兄弟 `viewport`,`QListView.clicked` 永不 emit,右侧详情始终停在
+  占位面板。改为挂在 `viewport()` 下后,未处理的鼠标事件自然传播到 viewport,
+  点击链路恢复;「N 条新消息 ↓」浮条按钮仍可点击。
+  新增真实 `MainWindow` 端到端用例(`test_status_bar_layout.py` /
+  `test_live_message_detail_e2e.py`)守护两条装配契约。
 - **非法配置不再阻断 GUI 启动**:`Settings.load_tolerant()` 容错加载 —
   `.env` / 环境变量中的非法字段(如旧版遗留 `TG_DB_BACKEND=jsonl` / `mongo`)
   回退声明默认值并弹一次性提示,其余字段(凭据等)保留;`.env` 原值不改写,
