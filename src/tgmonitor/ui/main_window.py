@@ -58,17 +58,14 @@ from tgmonitor.ui.controllers import (
     ExportController,
     HeaderActionController,
     LifecycleController,
-    LiveSelectionController,
     MainWindowCtx,
     MediaActionsController,
     MessageStreamController,
-    SearchController,
     SettingsReactionController,
     SyncController,
     SyncFlowController,
     TrayController,
 )
-from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 from tgmonitor.ui.ui_assembler import UiAssembler
@@ -79,7 +76,6 @@ from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
-from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.status_bar import StatusBar
 
@@ -92,12 +88,7 @@ log = logging.getLogger(__name__)
 ShutdownCb = Callable[[], Awaitable[None]]
 
 # ---- 状态映射 ----
-
-# 2026-09-08 v1.7.0:右键菜单 / 详情按钮传上来的 items 形状是
-# list[tuple[cid, mid]] 或 list[(cid, mid, idx)](media manager 风格)。
-# LIVE 多选统一成 list[tuple[int, int]] 传给 AppService。
-# 2026-10-04 plan 阶段 3.3:_normalize_selection_items 抽到
-# `LiveSelectionController`(只有 live_selection 用)。
+# 2026-11-16 v2.0.2:LIVE 多选 / 右键菜单整体移除,原 items 归一化逻辑随之删除。
 
 
 class MainWindow(QMainWindow):
@@ -207,40 +198,21 @@ class MainWindow(QMainWindow):
         # 2026-09-03 v1.6.1:暂停 / 恢复信号 — status bar label + window title 后缀
         self._vm.monitoring_paused.connect(self._on_monitoring_paused)
         self._vm.monitoring_resumed.connect(self._on_monitoring_resumed)
-        # 2026-09-08 v1.7.0:LIVE 多选 toolbar 缓存最近一次 selection —
-        # 2026-10-04 plan 阶段 3.3:挪到 `LiveSelectionController._last_live_selection`
-        # (MainWindow 不再持有)。
 
     def _setup_controllers(self) -> None:
-        """2026-10-04 plan 阶段 3.2:装配 MainWindowCtx + 6 controller。
+        """装配 MainWindowCtx + controller。
 
-        controller 间无顺序依赖(各自只读 ctx 字段),按当前 alphabetical
-        顺序排(export / header_action / settings_reaction / tray / sync)。
-
-        2026-10-04 plan 阶段 3.3:搜索 domain 全部就近 — debounce timer 创建
-        + MainWindowCtx 装配 + 7 个 signal wire + SearchController 实例化都
-        在本方法内,避免跨 `_wire_signals` / `_setup_controllers` 拆碎。
+        controller 间无顺序依赖(各自只读 ctx 字段)。2026-11-16 v2.0.2
+        LIVE 只读化后移除 SearchController / LiveSelectionController /
+        LiveActionsController,搜索 debounce timer 与相关 signal wire 一并删除。
         """
 
-        # 2026-09-02 v1.5.2 PR #B5:300ms debounce — 文本输入 300ms 内无新
-        # 字符才触发 vm.search_messages。parent=self 确保 MainWindow 关闭
-        # 时 timer deleteLater 自然清理,无悬挂。
-        self._search_debounce = QTimer(self)
-        self._search_debounce.setSingleShot(True)
-        self._search_debounce.setInterval(300)
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除搜索 debounce timer、
+        # LiveActionsController(右键菜单 + 选区广播)装配。
+        # QTimer 仍用于 media_refresh_debounce(见 UiAssembler.build_central)。
 
-        # 2026-10-15 plan-batch7-C-α:LiveActionsController(QObject)持
-        # view 单 forward dep,8 Signal(selection_count_changed /
-        # selection_messages_changed / export_requested / delete_requested /
-        # mark_read_requested / favorite_requested / tags_requested /
-        # notes_requested)+ 右键菜单 6 动作 + selectionModel().selectionChanged
-        # emit 整体从这里装配。view._live_actions 同步注入。
-        self.live_actions: LiveActionsController = LiveActionsController(self.live_view)
-        self.live_view._live_actions = self.live_actions
-
-        # ======================== 6 controller 装配(2026-10-01 v1.12.x) ========================
-        # 复杂 4 个(live_selection / media_actions / search / message_stream)
-        # 留 main_window.py 自身。
+        # ======================== controller 装配 ========================
+        # 复杂 2 个(media_actions / message_stream)留 main_window.py 自身。
         # 2026-10-04 plan 阶段 3.4:反向调用通道注入 `window_title_setter` /
         # `quit_app` lambda,controller 不再持 `main_window` 反向调出去。
         self._ctx = MainWindowCtx(
@@ -253,14 +225,8 @@ class MainWindow(QMainWindow):
             window_title_setter=self.setWindowTitle,
             quit_app=self._quit_app,
             live_view=self.live_view,
-            # 2026-10-15 plan-batch7-C-α:LiveActionsController(QObject)—
-            # 8 Signal + 右键菜单 + 选区广播从 MessageView 抽出,公开
-            # API 锁由 controller 持有;`live_view._live_actions` 也同步
-            # 注入,view.contextMenuEvent 转发到 controller。
-            live_actions=self.live_actions,
             message_detail=self.message_detail,
             media_manager=self.media_manager,
-            selection_toolbar=self._selection_toolbar,
             dashboard=self.dashboard,
             channel_panel=self.channel_panel,
             header=self.header,
@@ -268,7 +234,6 @@ class MainWindow(QMainWindow):
             nav=self.nav,
             stack=self.stack,
             tray=self._tray,
-            search_debounce=self._search_debounce,
             media_refresh_debounce=self._media_refresh_debounce,
         )
         self._tray_ctrl = TrayController(self._ctx)
@@ -287,75 +252,9 @@ class MainWindow(QMainWindow):
         # (show_and_raise / quit_app / switch_tab / on_nav_changed /
         # focus_search / on_global_escape / copy_current_message_text)。
         self._lifecycle_ctrl = LifecycleController(self._ctx)
-        # 2026-10-04 plan 阶段 3.3:搜索 controller(模板)— 抽 8 个 handler
-        # (`_on_search_*` + `_run_search_query`)到独立 plain class。
-        self._search_ctrl = SearchController(self._ctx)
-        # 搜索 signal wire(controller 实例化之后立即连,顺序敏感:
-        # 若 `_search_ctrl` 未就位就调 `.on_search_*` 会触发 AttributeError)。
-        self._search_debounce.timeout.connect(self._search_ctrl.on_debounce_fire)
-        self.header.search_bar.text_changed.connect(self._search_ctrl.on_search_changed)
-        # 2026-09-02 v1.5.2 PR #B5:date_from/to 折叠面板变化 → 立即拉
-        # (不需要 debounce — 用户主动调日历 = 期望立刻响应)
-        self.header.search_bar.date_changed.connect(self._search_ctrl.on_search_date_changed)
-        # 2026-09-03 v1.5.3 PR #D2:scope toggle(已订阅/全部)→ 走同一
-        # debounce 重拉(不 clear view,让用户对比已订 vs 全部结果)
-        self.header.search_bar.scope_changed.connect(self._search_ctrl.on_search_scope_changed)
-        # 2026-09-14 v1.7.5 PR #8:★/🏷/📌 3 filter toggle → 走同一 debounce
-        # 重拉(不 clear view,即时 LIVE narrow + 异步权威结果到位)。
-        self.header.search_bar.favorite_toggled.connect(
-            self._search_ctrl.on_search_favorite_toggled
-        )
-        self.header.search_bar.tag_toggled.connect(self._search_ctrl.on_search_tag_toggled)
-        self.header.search_bar.pinned_toggled.connect(self._search_ctrl.on_search_pinned_toggled)
-        # 2026-10-04 plan 阶段 3.3:live_selection controller — 抽 14 _on_live_*
-        # handler + 7 _run_live_* helper + _show_batch_progress_dialog +
-        # _normalize_selection_items 到独立 plain class。controller 自持
-        # `_last_live_selection` 共享 state。
-        self._live_selection_ctrl = LiveSelectionController(self._ctx)
-        # ---- LIVE 多选 signal wire(顺序敏感:controller 先实例化) ----
-        # 2026-10-15 plan-batch7-C-α:8 Signal 全在 LiveActionsController
-        # 上,wire 从 self.live_view.X 改 self.live_actions.X。
-        # selection state
-        self.live_actions.selection_count_changed.connect(
-            self._live_selection_ctrl.on_selection_count_changed
-        )
-        self.live_actions.selection_messages_changed.connect(
-            self._live_selection_ctrl.on_selection_messages_changed
-        )
-        # 右键菜单 6 入口(带 items)
-        self.live_actions.export_requested.connect(self._live_selection_ctrl.on_live_export)
-        self.live_actions.delete_requested.connect(self._live_selection_ctrl.on_live_delete)
-        self.live_actions.mark_read_requested.connect(self._live_selection_ctrl.on_live_mark_read)
-        # 2026-09-09 v1.7.2:用户元数据右键菜单 → AppService facade。
-        self.live_actions.favorite_requested.connect(self._live_selection_ctrl.on_live_favorite)
-        self.live_actions.tags_requested.connect(self._live_selection_ctrl.on_live_tags)
-        self.live_actions.notes_requested.connect(self._live_selection_ctrl.on_live_notes)
-        # toolbar 6 按钮(读 controller 内部 _last_live_selection)
-        self._selection_toolbar.export_clicked.connect(
-            self._live_selection_ctrl.on_live_export_selected
-        )
-        self._selection_toolbar.delete_clicked.connect(
-            self._live_selection_ctrl.on_live_delete_selected
-        )
-        self._selection_toolbar.mark_read_clicked.connect(
-            self._live_selection_ctrl.on_live_mark_read_selected
-        )
-        # 2026-09-09 v1.7.2:批量动作扩展 — 转发 / 钉选 / 表情回应。
-        self._selection_toolbar.forward_clicked.connect(
-            self._live_selection_ctrl.on_live_forward_selected
-        )
-        self._selection_toolbar.pin_clicked.connect(self._live_selection_ctrl.on_live_pin_selected)
-        self._selection_toolbar.react_clicked.connect(
-            self._live_selection_ctrl.on_live_react_selected
-        )
-        # 详情顶部 3 按钮 — 单条操作入口
-        self.message_detail.export_current_requested.connect(
-            self._live_selection_ctrl.on_live_export_current
-        )
-        self.message_detail.delete_current_requested.connect(
-            self._live_selection_ctrl.on_live_delete_current
-        )
-        self.message_detail.copy_text_requested.connect(self._live_selection_ctrl.on_live_copy_text)
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除 SearchController、
+        # LiveSelectionController(批量动作 + 右键 + 详情导出/删除)及其全部接线。
+        # 详情仅保留「复制文本」toast —— 内联到 MainWindow 本地槽。
 
         # 2026-10-04 plan 阶段 3.3:media_actions controller — 抽 11 MediaManagerWidget
         # signal + 2 helper(clear_channel dialog / lightbox decoder)+ 4 VM media event
@@ -404,6 +303,9 @@ class MainWindow(QMainWindow):
         # MessageDetail 媒体卡 click → Lightbox(与 media_manager.preview_requested
         # 走同一个加载器)
         self.message_detail.preview_requested.connect(self._media_actions_ctrl.on_media_preview)
+        # 2026-11-16 v2.0.2:详情「复制文本」toast — 实际 clipboard 写入在
+        # MessageDetail._on_copy_text 内完成,这里只做状态栏提示。
+        self.message_detail.copy_text_requested.connect(self._on_detail_copy_text)
         # ---- VM media 事件回调(下载结束 / 重试 / 删除 + debounce timer) ----
         self._vm.media_downloaded.connect(self._media_actions_ctrl.on_media_downloaded)
         self._vm.media_retried.connect(self._media_actions_ctrl.on_media_retried)
@@ -528,7 +430,6 @@ class MainWindow(QMainWindow):
         self.nav = cast(VerticalNavBar, widgets["nav"])
         self.header = cast(HeaderBar, widgets["header"])
         self.stack = cast(QStackedWidget, widgets["stack"])
-        self._selection_toolbar = cast(SelectionToolbar, widgets["selection_toolbar"])
         self.live_view = cast(MessageView, widgets["live_view"])
         self.message_detail = cast(MessageDetail, widgets["message_detail"])
         self.dashboard = cast(DashboardWidget, widgets["dashboard"])
@@ -594,10 +495,10 @@ class MainWindow(QMainWindow):
         self._lifecycle_ctrl.on_nav_changed(idx)
 
     def _focus_search(self) -> None:
-        """2026-10-10 v1.12.x:thin delegate `LifecycleController.focus_search`。
-        保留方法名以保持调用点引用稳定。
+        """2026-11-16 v2.0.2:搜索已移除 — 保留方法名以维持 thin delegate
+        契约(test_main_window_thin_delegates_preserved),行为降级为切回 LIVE 页。
         """
-        self._lifecycle_ctrl.focus_search()
+        self._lifecycle_ctrl.switch_tab(0)
 
     def _on_global_escape(self) -> None:
         """2026-10-10 v1.12.x:thin delegate `LifecycleController.on_global_escape`。
@@ -627,6 +528,10 @@ class MainWindow(QMainWindow):
 
     def _on_logout_clicked(self) -> None:
         run_coro(self.loop, self.app.auth.logout(), error_label="logout")
+
+    def _on_detail_copy_text(self, text: str) -> None:
+        """详情「复制文本」toast — clipboard 写入已在 MessageDetail 内完成。"""
+        self.status_bar.show_message(self.tr("已复制"), 2000)
 
     def _on_header_action(self) -> None:
         """头栏「登录」按钮 — 弹 LoginDialog。委托 `HeaderActionController`(v1.12.x)。"""

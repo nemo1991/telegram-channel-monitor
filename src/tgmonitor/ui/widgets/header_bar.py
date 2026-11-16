@@ -1,10 +1,12 @@
-"""顶部紧凑 Header — 标题 + 搜索 + 状态徽章 + 操作按钮。
+"""顶部紧凑 Header — 标题 + 状态徽章 + 操作按钮。
 
 2026-10-01 v1.12.x 从 `MainWindow` 抽出(原 `_HeaderBar`,inline 在 `main_window.py:2118`):
 不再用 QToolBar,改为自定义 widget,视觉更紧凑。子组件:
   - 左:`tgmonitor` 标题
-  - 中:`SearchBar` 搜索框(共用 `widgets/search_bar.py`)
-  - 右:状态徽章(state_dot + state_label) + 操作按钮(登录 / 验证码 / 2FA / 登出)+ 主题切换
+  - 右:状态徽章(state_dot + state_label) + 操作按钮(登录 / 验证码 / 2FA / 登出)
+
+2026-11-16 v2.0.2:移除中部 `SearchBar`(功能减法 — 搜索无实际用处且位置不合理,
+LIVE 页收敛为只读监听状态看板)。状态徽章与登录/登出保留(运行必需)。
 """
 
 from __future__ import annotations
@@ -12,14 +14,13 @@ from __future__ import annotations
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from tgmonitor.ui.state_labels import state_dot, state_label
-from tgmonitor.ui.widgets.search_bar import SearchBar
 
 
 class HeaderBar(QWidget):
-    """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
+    """顶部紧凑信息栏:左标题 + 右登录状态 + 操作。
 
-    类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action/search_bar`,
-    mypy 看到实例属性 = QPushButton / SearchBar 而非 X | None,清掉 21 处 union-attr。
+    类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action`,
+    mypy 看到实例属性 = QPushButton 而非 X | None,清掉 union-attr。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -36,9 +37,6 @@ class HeaderBar(QWidget):
         title.setObjectName("appTitle")
         hbox.addWidget(title)
 
-        # 搜索条
-        self.search_bar = SearchBar()
-        hbox.addWidget(self.search_bar)
         hbox.addStretch(1)
 
         # 右: 状态 + 操作

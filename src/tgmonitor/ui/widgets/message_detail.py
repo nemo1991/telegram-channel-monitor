@@ -86,9 +86,8 @@ class MessageDetail(QScrollArea):
     # 后处理流程同 `_on_media_preview`(复用 main_window.py 内的加载器)。
     preview_requested = Signal(int, int, int)
 
-    # 2026-09-08 v1.7.0:详情顶部 3 按钮 — 单条操作也走这里
-    export_current_requested = Signal(int, int)  # (cid, mid)
-    delete_current_requested = Signal(int, int)  # (cid, mid)
+    # 2026-09-08 v1.7.0:详情顶部按钮 — 2026-11-16 v2.0.2 只读化后仅剩复制文本
+    # (导出 / 删除随 LIVE 页只读化移除,core 层能力保留)
     copy_text_requested = Signal(str)  # 文本内容
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -247,20 +246,7 @@ class MessageDetail(QScrollArea):
         # 关闭按钮(顶部右上角 — 不在主视图,做成行内)
         v.addStretch(1)
         close_row = QHBoxLayout()
-        # 2026-09-08 v1.7.0:顶部 3 按钮(导出 / 删除 / 复制文本)— 左对齐
-        # 2026-09-08 v1.7.0:顶部 3 按钮(导出 / 删除 / 复制文本)— 左对齐
-        self._btn_export = QPushButton(self.tr("📤 导出"))
-        self._btn_export.setObjectName("detailActionBtn")
-        self._btn_export.setEnabled(True)  # m is not None at this point
-        self._btn_export.clicked.connect(self._on_export_current)
-        close_row.addWidget(self._btn_export)
-
-        self._btn_delete = QPushButton(self.tr("🗑 删除"))
-        self._btn_delete.setObjectName("detailDeleteBtn")
-        self._btn_delete.setEnabled(True)
-        self._btn_delete.clicked.connect(self._on_delete_current)
-        close_row.addWidget(self._btn_delete)
-
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除导出 / 删除按钮,仅保留复制文本(A3 已确认)
         self._btn_copy_text = QPushButton(self.tr("📋 复制文本"))
         self._btn_copy_text.setObjectName("detailActionBtn")
         self._btn_copy_text.setEnabled(bool(m.text))  # 空文本无意义,灰掉
@@ -317,25 +303,7 @@ class MessageDetail(QScrollArea):
                 lines.append(self.tr(f"   原因: {med.download_error}"))
         return "\n".join(lines)
 
-    # ---- 2026-09-08 v1.7.0:顶部 3 按钮 handler ----
-
-    def _on_export_current(self) -> None:
-        """当前消息详情 → 导出。emit `(cid, mid)` 给上层(MainWindow 拼
-        ExportRequest.selected_messages=[(cid, mid)])。
-
-        若 `_current` 已被 reset(切到空状态) → no-op,不抛。
-        """
-        if self._current is None:
-            return
-        self.export_current_requested.emit(self._current.channel_id, self._current.telegram_msg_id)
-
-    def _on_delete_current(self) -> None:
-        """当前消息详情 → 删除。emit `(cid, mid)`,MainWindow 弹 QMessageBox
-        二次确认后调 `app.messages.delete_message` 并关详情面板。
-        """
-        if self._current is None:
-            return
-        self.delete_current_requested.emit(self._current.channel_id, self._current.telegram_msg_id)
+    # ---- 详情按钮 handler(2026-11-16 v2.0.2 只读化后仅剩复制文本) ----
 
     def _on_copy_text(self) -> None:
         """当前消息详情 → 复制文本到系统剪贴板。emit 文本给上层做 toast / 日志。

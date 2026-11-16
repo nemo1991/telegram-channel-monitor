@@ -74,9 +74,9 @@ class MonitorViewModel(
     #   `quit_requested` / `monitoring_paused` / `monitoring_resumed`)
     #   + 2 statusbar sub-component(`selected_channel_changed` /
     #   `backend_label_changed`)
-    # - MessagesMixin(6):`message_received` / `message_edited` /
-    #   `message_interactions_changed` / `message_search_results` /
-    #   `last_message_received` / `stats_changed`
+    # - MessagesMixin(5):`message_received` / `message_edited` /
+    #   `message_interactions_changed` / `last_message_received` / `stats_changed`
+    #   (2026-11-16 v2.0.2:移除 `message_search_results` — 顶部搜索功能删除)
     # - MediaMixin(10):media 域全部 signal
     # - ExportMixin(6):export 域全部 signal
     #

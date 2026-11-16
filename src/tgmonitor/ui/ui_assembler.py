@@ -60,7 +60,6 @@ from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
-from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
@@ -93,9 +92,9 @@ class UiAssembler:
         原 `MainWindow._build_central_widget`(115 LOC) body 整体搬过来。
 
         Returns: dict[str, object] — key → widget 引用,key 名跟原 MainWindow
-        属性名一致(nav / header / stack / selection_toolbar / live_view /
-        message_detail / dashboard / channel_panel / media_manager /
-        settings_page / status_bar / media_refresh_debounce / central)。
+        属性名一致(nav / header / stack / live_view / message_detail /
+        dashboard / channel_panel / media_manager / settings_page / status_bar /
+        media_refresh_debounce / central)。
         """
         central = QWidget()
         root = QHBoxLayout(central)
@@ -122,18 +121,14 @@ class UiAssembler:
         stack.setFrameShape(QFrame.NoFrame)
 
         # 0: 实时流(MessageView + MessageDetail 横向并排)
-        # 2026-09-08 v1.7.0:LIVE 顶部增加 _SelectionToolbar(默认 hidden,
-        # 多选 >0 才 show)。从单层 QHBoxLayout → QVBoxLayout 嵌套:
-        # 上 toolbar / 下 body(QSplitter[live_view, message_detail])。
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除顶部 SelectionToolbar(多选/批量
+        # 操作),回到单层 body(QSplitter[live_view, message_detail])。
         # 2026-09-14 v1.7.5 PR #4 (P0-H):QHBoxLayout → QSplitter,用户可拖
         # 详情面板宽度自由(原 280-420 锁死)。splitter 比例 2:1(live 占大头)。
         live_page = QWidget()
         live_layout = QVBoxLayout(live_page)
         live_layout.setContentsMargins(0, 0, 0, 0)
         live_layout.setSpacing(0)
-        selection_toolbar = SelectionToolbar()
-        selection_toolbar.setVisible(False)
-        live_layout.addWidget(selection_toolbar)
         body = QSplitter(Qt.Horizontal)
         body.setContentsMargins(0, 0, 0, 0)
         body.setHandleWidth(1)
@@ -215,7 +210,6 @@ class UiAssembler:
             "nav": nav,
             "header": header,
             "stack": stack,
-            "selection_toolbar": selection_toolbar,
             "live_view": live_view,
             "message_detail": message_detail,
             "dashboard": dashboard,
@@ -286,16 +280,13 @@ class UiAssembler:
     def wire_signals(self) -> None:
         """集中所有信号连接(原 `MainWindow._wire_signals`,2026-10-04 plan 阶段 3.1)。
 
-        5 大类:
-        - nav / header / search bar → MainWindow 内部槽
+        4 大类(2026-11-16 v2.0.2:LIVE 只读化后不再有搜索 / 多选类):
+        - nav / header → MainWindow 内部槽
         - Dashboard / ChannelWidget → 业务回调
         - MediaManagerWidget → vm 或本地回调
-        - MessageView / MessageDetail → selection + 详情
-        - SelectionToolbar + 详情顶部按钮 → 批量动作入口
+        - MessageView / MessageDetail → 点击显示详情
 
-        搜索 / 多选 等「依赖 controller」的连接**留在** `_setup_controllers` 完成
-        (避免提前引用 `_search_ctrl` / `_live_selection_ctrl` 触发 AttributeError,
-        同 SearchController / LiveSelectionController 模式)。
+        依赖 controller 的连接**留在** `_setup_controllers` 完成。
         """
         mw = self._mw
         # ---- 信号连接 ----
@@ -320,14 +311,7 @@ class UiAssembler:
         # MessageView → MessageDetail(点击消息显示详情)
         mw.live_view.message_selected.connect(mw.message_detail.show_message)
 
-        # 2026-09-08 v1.7.0:多选浮层 + 详情顶部 3 按钮 — 走同一 selection
-        # 入口。toolbar 默认 hidden,count>0 时 show 并更新计数 label;
-        # count=0 时 hide(selectionCleared 也走同一槽,toolbar.clear 复用)。
-        # 2026-10-04 plan 阶段 3.3:全部委托 `LiveSelectionController`,实际
-        # 连接在 `_setup_controllers` 完成(controller 实例化后立即连,顺序
-        # 敏感:避免 wire_signals 提前引用 `_live_selection_ctrl` 触发
-        # AttributeError,同 SearchController 模式)。
-        mw._selection_toolbar.clear_clicked.connect(mw.live_view.clear_selection)
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 多选浮层 / 批量操作入口整体移除。
 
     def wire_events(self) -> None:
         """ViewModel 事件绑定(原 `MainWindow._wire_events`)。
@@ -367,5 +351,4 @@ class UiAssembler:
         mw._vm.sync_progress.connect(mw._on_sync_progress)
         mw._vm.sync_done.connect(mw._on_sync_done)
         mw._vm.export_progress.connect(mw._on_export_progress)
-        # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
-        mw._vm.message_search_results.connect(mw.live_view.set_messages)
+        # 2026-11-16 v2.0.2:VM 搜索结果信号随顶部搜索功能移除。

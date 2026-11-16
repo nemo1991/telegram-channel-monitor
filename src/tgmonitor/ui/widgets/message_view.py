@@ -26,15 +26,6 @@ signal / `_seen` / `count()` / `MAX_ITEMS`,`main_window._copy_current_message_te
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # 2026-10-15 plan-batch7-C-α:循环 import 防护 — controller
-    # 文件顶部 `from message_view import MessageListModel` 已触发本 module
-    # 加载,运行时 view 不直接 import controller(只 type annotation),
-    # MainWindow / fixture 显式 `from tgmonitor.ui.controllers.live_actions_controller
-    # import LiveActionsController` 后通过 `view._live_actions = ctl(view)` 注入。
-    from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
-
 from PySide6.QtCore import (
     QModelIndex,
     Signal,
@@ -104,13 +95,8 @@ class MessageView(MessageViewAPIMixin, QListView):
     # 是 `currentRowChanged` signal,不在 plan-batch7-C-α 8 Signal 范围)
     message_selected = Signal(object)
 
-    # 2026-10-15 plan-batch7-C-α:8 Signal(selection_count_changed /
-    # selection_messages_changed / export_requested / delete_requested /
-    # mark_read_requested / favorite_requested / tags_requested /
-    # notes_requested)整体搬到 `LiveActionsController(QObject)`,
-    # 公开 API 锁由 controller 持有。view contextMenuEvent 转发到
-    # controller,持 `_live_actions: LiveActionsController | None` 引用
-    # (MainWindow 启动时注入,fixture / 测试也可显式 attach)。
+    # 2026-11-16 v2.0.2:右键菜单 / 多选广播整体移除(LIVE 页只读化),
+    # 不再持有 LiveActionsController 引用,contextMenuEvent 走 Qt 默认(无菜单)。
 
     def __init__(self) -> None:
         """初始化 model + delegate + channel_titles + filter + empty overlay。"""
@@ -118,9 +104,10 @@ class MessageView(MessageViewAPIMixin, QListView):
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(False)  # delegate 动态 size
         self.setWordWrap(True)
-        # 2026-09-08 v1.7.0:切 ExtendedSelection — Ctrl/Shift 多选开箱。
-        # 单一 current 选中(MessageDetail 仍走 message_selected signal 不受影响)。
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # 2026-11-16 v2.0.2:LIVE 页只读化 — 多选/批量操作整体移除,
+        # 回退 SingleSelection。单击只做 current 选中,MessageDetail 仍走
+        # message_selected signal 显示详情。
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         self._model = MessageListModel(self)
         self.setModel(self._model)
@@ -135,14 +122,7 @@ class MessageView(MessageViewAPIMixin, QListView):
         # 点击 → 取 DTO → emit
         self.clicked.connect(self._on_clicked)
 
-        # 2026-10-15 plan-batch7-C-α:`selectionChanged` → 信号 emit
-        # 整体搬到 LiveActionsController,view 不再监听
-        # selectionModel().selectionChanged(由 controller 自己接)。
-
-        # 2026-10-15 plan-batch7-C-α:LiveActionsController 由 MainWindow
-        # 启动时注入,默认 None。fixture / 测试可显式 attach
-        # (`view._live_actions = LiveActionsController(view)`)。
-        self._live_actions: LiveActionsController | None = None
+        # 2026-11-16 v2.0.2:多选广播 / 右键菜单移除,view 不监听 selectionChanged。
 
         # 2026-10-15 plan-batch7-B:空 overlay + 浮条已抽到 MessageEmptyOverlay
         # widget,主类通过 setter API(set_state / set_messages_count /
@@ -207,67 +187,9 @@ class MessageView(MessageViewAPIMixin, QListView):
         if isinstance(dto, MessageDTO):
             self.message_selected.emit(dto)
 
-    # ---- v1.7.0 多选 + 右键菜单 ----
-
-    def selected_messages(self) -> list[tuple[int, int]]:
-        """返 `[(channel_id, telegram_msg_id), ...]` — 按 row 顺序。
-
-        2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.selected_messages` —
-        无 controller 时本地 fallback(fixture / 单测未 attach 路径)。
-        """
-        if self._live_actions is not None:
-            return self._live_actions.selected_messages()
-        out: list[tuple[int, int]] = []
-        sel_model = self.selectionModel()
-        if sel_model is None:
-            return out
-        for idx in sel_model.selectedRows():
-            dto = self._model.data(idx, MessageListModel.DtoRole)
-            if isinstance(dto, MessageDTO):
-                out.append((dto.channel_id, dto.telegram_msg_id))
-        return out
-
-    def selection_count(self) -> int:
-        """2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.selection_count` —
-        无 controller 时本地 fallback。
-        """
-        if self._live_actions is not None:
-            return self._live_actions.selection_count()
-        sel_model = self.selectionModel()
-        return len(sel_model.selectedRows()) if sel_model is not None else 0
-
-    def clear_selection(self) -> None:
-        """2026-10-16 plan-batch7 目标 3 commit A:委托 `LiveActionsController.clear_selection` —
-        无 controller 时本地 fallback。
-        """
-        if self._live_actions is not None:
-            self._live_actions.clear_selection()
-            return
-        sel_model = self.selectionModel()
-        if sel_model is not None:
-            sel_model.clear()
-
-    # ---- 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ----
-
-    @property
-    def live_actions(self):
-        """2026-10-15 plan-batch7-C-α:公开 getter 给 LiveActionsController
-        (QObject)— 持 8 Signal + 右键菜单 + 选区广播。MainWindow 启动时
-        注入,默认 None。测试 fixture 可显式 attach。
-        """
-        return self._live_actions
-
-    def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt API
-        """2026-09-08 v1.7.0:右键菜单 — thin delegate 给 LiveActionsController。
-
-        2026-10-15 plan-batch7-C-α:右键菜单 6 动作(导出 / 删除 / 标记已读 /
-        收藏 / 标签 / 备注)构造逻辑整体搬到 controller,view 仅转发
-        event.globalPos() 给 controller.show_context_menu。
-        `_live_actions` 未注入时(测试 fixture 默认)no-op。
-        """
-        if self._live_actions is None:
-            return
-        self._live_actions.show_context_menu(event.globalPos())
+    # 2026-11-16 v2.0.2:多选 helper(selected_messages / selection_count /
+    # clear_selection)、live_actions property、contextMenuEvent 整体移除 —
+    # LIVE 页只读化,右键菜单与批量操作不再存在。
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
         """窗口尺寸变 → widget 覆盖 viewport 整个区域 + overlay/浮条重定位。"""

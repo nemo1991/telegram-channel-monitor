@@ -8,10 +8,11 @@ window/quit/escape/copy/focus/navigation 6 个动作:
   → `_shutdown_then_quit` 同步等完成)
 - `switch_tab`:切 nav(`_on_nav_changed` 自动 emit → stack 跟随)
 - `on_nav_changed`:切到 MEDIA 页(3)触发一次列表刷新
-- `focus_search`:聚焦到搜索框 + 切到 LIVE 页 + 全选
-- `on_global_escape`:Esc 键(搜索框 focus → 清空 + 失焦;
-  其它页 → 回 LIVE)
+- `on_global_escape`:Esc 键(其它页 → 回 LIVE);搜索分支随 2.0.2 移除
 - `copy_current_message_text`:Ctrl+C 复制当前 LIVE 选中消息 text
+
+2026-11-16 v2.0.2:顶部搜索移除 → 删除 `focus_search`,
+`on_global_escape` 去掉搜索框 focus 分支。
 
 设计:plain class + `MainWindowCtx`。与 `ShortcutController` 不同,本
 controller **不通过 thin delegate 保留方法名** — 7 个 method 全是
@@ -95,37 +96,12 @@ class LifecycleController:
             # 拉一次」的语义,又保留节流行为。
             self._ctx.media_refresh_debounce.start()
 
-    def focus_search(self) -> None:
-        """聚焦到搜索框 + 自动切到 LIVE 页(搜索只在消息视图里有意义)"""
-        self.switch_tab(0)
-        self._ctx.header.search_bar.edit.setFocus()
-        self._ctx.header.search_bar.edit.selectAll()
-
     # ---- 全局 Esc ----
 
     def on_global_escape(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:Esc 键。
-
-        优先级:
-        1. 搜索框有 focus → 清空搜索 + 失焦(回 LIVE)
-        2. 设置页 / 子 dialog 有 focus → 退到默认(LIVE)
-        3. 否则 no-op(避免误清 LIVE 选中)
-
-        2026-09-02 v1.5.2 PR #B5:搜索框 clear 同时清 date panel + 折叠按钮 +
-        stop debounce timer(避免 stale fetch 跑到空 query 上)。
+        """Esc 键 — 2026-11-16 v2.0.2 移除搜索相关分支后仅保留:
+        当前不在 LIVE 页 → 回 LIVE(用户感知的「取消」);在 LIVE 页 → no-op。
         """
-        sb = self._ctx.header.search_bar.edit
-        if sb.hasFocus():
-            # 2026-09-02 PR #B5:stop timer 防 stale search 在 clear 后继续
-            # 触发(用户在 300ms 内按 Esc 但 search 已 emit 过);直接 clear()
-            # 会走 SearchBar._on_text_changed → 启新 timer,这里提前 stop。
-            self._ctx.search_debounce.stop()
-            self._ctx.header.search_bar.clear()  # SearchBar.clear() 重置 text + dates + adv
-            sb.clearFocus()
-            # 主动 emit `[]` → 清空视图(后续 live 消息自然 append 重建 LIVE 流)
-            self._ctx.live_view.set_messages([])
-            return
-        # 若当前不在 LIVE,回 LIVE(简化 — 用户感知的「取消」)
         if self._ctx.stack.currentIndex() != 0:
             self.switch_tab(0)
 

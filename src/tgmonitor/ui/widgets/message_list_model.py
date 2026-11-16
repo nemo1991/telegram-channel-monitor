@@ -180,4 +180,6 @@ class MessageListModel(
     # 2026-09-03 v1.5.4 PR #P1:实验性 bump(原 1000,CHANGELOG v1.5.3 PR #D1 已埋钩子)
     # 2026-10-16 plan-batch7 目标 2:语义搬到 MessageListModel(主类),
     # MessageView 端 `MAX_ITEMS = MessageListModel.MAX_ITEMS` alias 兼容 test。
-    MAX_ITEMS = 10000
+    # 2026-11-16 v2.0.2:LIVE 页收敛为"最近 100 条已落地消息"滚动窗口 ——
+    # 10000 → 100,与 `load_recent_messages(limit=100)` 口径一致。
+    MAX_ITEMS = 100
