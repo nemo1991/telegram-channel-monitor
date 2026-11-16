@@ -115,7 +115,10 @@ class MessageEmptyOverlay(QWidget):
     def set_messages_count(self, n: int) -> None:
         """改 label 文字(不自动 show — 由调用方决定 show_floating_btn)。"""
         self._new_msg_count = n
-        self._floating_btn.setText(self.tr("%d 条新消息 ↓").format(n))
+        # 2026-11-16 修复:原 `%d 条新消息 ↓`.format(n) — printf 占位符配
+        # str.format 不会插值,浮条永远显示字面量 "%d 条新消息 ↓"。统一走
+        # 项目惯例的 {n} 命名占位符。
+        self._floating_btn.setText(self.tr("{n} 条新消息 ↓").format(n=n))
 
     def messages_count(self) -> int:
         return self._new_msg_count
