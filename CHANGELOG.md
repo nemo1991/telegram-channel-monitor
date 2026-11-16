@@ -5,7 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [2.0.1] - 2026-11-16
+
+主题:**功能回退 + 装配修复**。基于 2.0.0(PR #53 + PR #54):移除快捷键编辑、
+深浅色主题切换、界面语言切换三项可配置能力;修复状态栏浮在窗口顶部、
+实时流点击消息无反应。无数据库 schema 变更,无需重新登录。存量 `.env` 中的
+`TG_LANG` / `TG_THEME` / `TG_KEY_*` 键不主动清理,也不再解析生效。
 
 ### 修复
 
