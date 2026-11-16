@@ -50,7 +50,6 @@ class SyncOptionsDialog(QDialog):
         `defaults` 来自 `app.settings.sync_*`(UI 可改后由 `_on_ok` 收集回
         `SyncOptions`)。"""
         super().__init__(parent)
-        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
         self.setWindowTitle(self.tr("全量同步选项"))
         self.setModal(True)
         self._channel_ids = channel_ids
@@ -154,7 +153,6 @@ class SyncProgressDialog(QDialog):
         `app.channel_sync.cancel` — 立刻唤醒 ChannelSyncService 内部 sleep。
         """
         super().__init__(parent)
-        # 2026-09-07 v1.6.8:tr() 包裹让 window title 跟当前 locale。
         self.setWindowTitle(self.tr("全量同步中…"))
         self.setModal(True)
         self.setMinimumWidth(560)

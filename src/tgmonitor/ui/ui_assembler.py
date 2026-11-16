@@ -41,7 +41,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -231,8 +231,7 @@ class UiAssembler:
         """File menu — 「显示主窗口 / 暂停监听 / 退出」(2026-08-30 v1.5.0 PR #A4)。
 
         原 `MainWindow._build_menu`(31 LOC)body 整体搬过来。`act_show` /
-        `act_quit` 由 MainWindow 显式赋值给 self 属性(ShortcutController
-        热重载 setShortcut 走 `main_window.act_X`)。`act_pause` 是
+        `act_quit` 由 MainWindow 显式赋值给 self 属性。`act_pause` 是
         lambda-bound,不需要持久属性。
 
         Returns:
@@ -242,7 +241,6 @@ class UiAssembler:
         menu_bar = self._mw.menuBar()
         file_menu = menu_bar.addMenu("&File")
         act_show = QAction(self._mw.tr("显示主窗口"), self._mw)
-        act_show.setShortcut(QKeySequence("Ctrl+0"))
         act_show.triggered.connect(self._mw._show_and_raise)
         file_menu.addAction(act_show)
         file_menu.addSeparator()
@@ -252,7 +250,6 @@ class UiAssembler:
         )
         file_menu.addAction(act_pause)
         act_quit = QAction(self._mw.tr("退出"), self._mw)
-        act_quit.setShortcut(QKeySequence("Ctrl+Q"))
         act_quit.triggered.connect(self._mw._quit_app)
         file_menu.addAction(act_quit)
 
@@ -286,7 +283,7 @@ class UiAssembler:
         """集中所有信号连接(原 `MainWindow._wire_signals`,2026-10-04 plan 阶段 3.1)。
 
         5 大类:
-        - nav / header / search bar / theme → MainWindow 内部槽
+        - nav / header / search bar → MainWindow 内部槽
         - Dashboard / ChannelWidget → 业务回调
         - MediaManagerWidget → vm 或本地回调
         - MessageView / MessageDetail → selection + 详情
@@ -306,7 +303,6 @@ class UiAssembler:
         # 2026-10-04 plan 阶段 3.3:搜索信号连接在 `_setup_controllers` 里
         # 完成(controller 实例化之后立即连),避免 wire_signals 提前引用
         # `_search_ctrl` 触发 AttributeError。
-        mw.header.btn_theme.clicked.connect(mw._on_theme_toggle)
 
         # Dashboard 快速操作
         mw.dashboard.on_refresh = mw._on_refresh_channels
@@ -330,8 +326,7 @@ class UiAssembler:
         mw._selection_toolbar.clear_clicked.connect(mw.live_view.clear_selection)
 
     def wire_events(self) -> None:
-        """ViewModel + ThemeManager 事件绑定(原 `MainWindow._wire_events` 40 LOC + `_
-        wire_theme_change_signal` 4 LOC)。
+        """ViewModel 事件绑定(原 `MainWindow._wire_events`)。
 
         5 大类:
         - VM download progress → media_manager
@@ -339,7 +334,6 @@ class UiAssembler:
         - VM media_list / reconcile / channel_cleared → media_manager
         - VM media_downloaded / media_retry / media_deleted → MediaActionsController
           (signal wire 在 `_setup_controllers`,避免提前引用 `_media_actions_ctrl`)
-        - ThemeManager.theme_changed → MainWindow._on_theme_changed
 
         注释里记录的「提前引用 controller 触发 AttributeError」约束:搜索 / 多选
         / message_stream 等依赖 controller 的连接**仍在** `_setup_controllers`
@@ -371,11 +365,3 @@ class UiAssembler:
         mw._vm.export_progress.connect(mw._on_export_progress)
         # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 → 批量替换 LIVE view。
         mw._vm.message_search_results.connect(mw.live_view.set_messages)
-
-        # ---- ThemeManager signal → MainWindow ----
-        # 2026-08-30 v1.5.0 PR #A5:ThemeManager.theme_changed → nav_bar 重画。
-        # SYSTEM 态 OS 切色时 `_on_system_scheme_changed` 也会 emit —
-        # nav bar / channel panel 按新主题重 tint。
-        from tgmonitor.ui.theme import ThemeManager
-
-        ThemeManager._instance().theme_changed.connect(mw._on_theme_changed)

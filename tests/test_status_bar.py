@@ -3,7 +3,7 @@
 2026-10-01 v1.11.x 状态栏组件化重构后,所有子组件(LEFT 5 + RIGHT 4)独立可测,
 不再依赖 MainWindow 桩。覆盖:
 
-- 子组件 setter / 显示文案 / 翻译
+- 子组件 setter / 显示文案 / 文案映射
 - throttle / timeout / ring buffer cap
 - EventBus 直接订阅(AuthErrorOccurred → _ErrorBellButton)
 - StatusBar show_message / clear_message 自管 transient
@@ -18,8 +18,7 @@ import os
 
 # 2026-10-02 v1.12.1:`test_bell_button_auth_error_shows_and_counts` 在 Windows offscreen
 # 平台 `qapp.processEvents()` 后偶发 access violation / SIGSEGV(v1.12.0 push 后
-# CI 首次爆,与 `test_main_window_delete_feedback` / `test_media_manager_i18n`
-# 三个 qt offscreen paint path race 同根:`asyncio.run` 跑完后 nested Qt
+# CI 首次爆,与 `test_main_window_delete_feedback` 同根:`asyncio.run` 跑完后 nested Qt
 # event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`。
 # 2026-11-15:去掉强制 `offscreen`,并把 `windows_qt_paint_skip` 从 `sys.platform`
 # 三平台无差别跳过改为按 QPA 精确跳过,恢复本地真机覆盖(PR #45 同法)。
@@ -233,7 +232,7 @@ def test_connection_label_default(qapp: QApplication) -> None:
     ],
 )
 def test_conn_state_label_mapping(qapp: QApplication, state: str, expected: str) -> None:
-    """翻译表与 main_window 原版本兼容。"""
+    """状态文案映射与 main_window 原版本兼容。"""
     label = _conn_state_label(state)
     assert label == expected
 

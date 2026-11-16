@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -108,8 +108,7 @@ class MessageDetail(QScrollArea):
 
     def _build_empty_state(self) -> None:
         """无选中时的占位 UI。"""
-        # 2026-09-07 v1.6.8:全部走 tr()。每次 rebuild 都重查 locale,语言切换后
-        # 由 retranslateUi 主动调一次 _build_empty_state() 刷新。
+        # 用户可见文案统一走 tr() 包装。
         wrap = QWidget()
         v = QVBoxLayout(wrap)
         v.setContentsMargins(24, 24, 24, 24)
@@ -119,7 +118,7 @@ class MessageDetail(QScrollArea):
         icon = QLabel("💬")
         icon.setAlignment(Qt.AlignCenter)
         # 用 objectName 而不是 setStyleSheet:空状态 icon 走全局 QSS
-        # (`QLabel#emptyHintIcon { font-size: 36px; }`),保持主题切换一致
+        # (`QLabel#emptyHintIcon { font-size: 36px; }`),保持全局样式一致
         # + 也被 `form_row.empty_hint` 复用(同一 selector)。
         icon.setObjectName("emptyHintIcon")
         v.addWidget(icon)
@@ -140,8 +139,7 @@ class MessageDetail(QScrollArea):
     def show_message(self, m: MessageDTO | None) -> None:
         """显示一条消息的详情。None = 回到占位。
 
-        2026-09-07 v1.6.8:所有用户可见 label 走 tr();每次 rebuild 自然用当前
-        locale;LanguageChange 由 retranslateUi() 主动触发重建。
+        所有用户可见 label 走 tr() 包装。
         2026-09-14 v1.7.5 PR #4 (P2 bonus):同 cid+mid 已显示 → 跳过
         rebuild,保留 QScrollArea 滚动位置(用户切到别的消息再切回时,
         不再被甩回顶部)。
@@ -288,10 +286,7 @@ class MessageDetail(QScrollArea):
             self.show_message(cur)
 
     def _section_label(self, text: str) -> QLabel:
-        """Section header — 正文 / 媒体 / 原始 JSON 小节标题。
-
-        走全局 QSS `#detailSectionLabel`(浅色 / 暗色 各一份)。
-        """
+        """Section header — 正文 / 媒体 / 原始 JSON 小节标题。"""
         lbl = QLabel(text)
         lbl.setObjectName("detailSectionLabel")
         return lbl
@@ -321,24 +316,6 @@ class MessageDetail(QScrollArea):
             if med.download_error:
                 lines.append(self.tr(f"   原因: {med.download_error}"))
         return "\n".join(lines)
-
-    # ---- 2026-09-07 v1.6.8:retranslateUi + changeEvent ----
-
-    def retranslateUi(self) -> None:  # noqa: N802 — Qt 命名
-        """2026-09-07 v1.6.8:语言切换 → 重建当前视图(空状态或详情)。
-
-        show_message 每次都是 setWidget(new_wrap),所以重新 build 即生效。
-        """
-        if self._current is None:
-            self._build_empty_state()
-        else:
-            self.show_message(self._current)
-
-    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt 命名
-        """2026-09-07 v1.6.8:LanguageChange → retranslateUi。"""
-        if event.type() == QEvent.Type.LanguageChange:
-            self.retranslateUi()
-        super().changeEvent(event)
 
     # ---- 2026-09-08 v1.7.0:顶部 3 按钮 handler ----
 

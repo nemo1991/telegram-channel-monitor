@@ -18,7 +18,7 @@ from tgmonitor.ui.widgets.search_bar import SearchBar
 class HeaderBar(QWidget):
     """顶部紧凑信息栏:左标题 + 搜索 + 右登录状态 + 操作。
 
-    类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action/btn_theme/search_bar`,
+    类变量无 None 占位 — `__init__` 内必建 `btn_logout/btn_action/search_bar`,
     mypy 看到实例属性 = QPushButton / SearchBar 而非 X | None,清掉 21 处 union-attr。
     """
 
@@ -59,17 +59,6 @@ class HeaderBar(QWidget):
         self.btn_logout.setObjectName("headerActionBtn")
         self.btn_logout.setVisible(False)
         hbox.addWidget(self.btn_logout)
-
-        # 主题切换按钮 — 显示「当前切到该主题后会变成什么」
-        from tgmonitor.ui.theme import ThemeManager
-
-        cur = ThemeManager.current()
-        self.btn_theme = QPushButton("🌙" if cur.value == "light" else "☀")
-        self.btn_theme.setObjectName("headerActionBtn")
-        self.btn_theme.setFixedWidth(36)
-        # 2026-09-07 v1.6.8:tooltip 走 tr()(「切换主题」随 locale 翻译)。
-        self.btn_theme.setToolTip(self.tr("切换主题(Ctrl+T)"))
-        hbox.addWidget(self.btn_theme)
 
     def update_state(self, state: str, detail: str = "") -> None:
         dot = state_dot(state)

@@ -164,7 +164,7 @@ def test_auth_error_qmessagebox_warning_called(qapp: QApplication) -> None:
 
 
 def test_auth_error_qmessagebox_warning_for_password(qapp: QApplication) -> None:
-    """P0-K:source=password → kind 翻译为「两步验证密码错误」。"""
+    """P0-K:source=password → kind 映射为「两步验证密码错误」。"""
     bell = _make_bell(qapp)
     with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
         _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="password", message="2fa bad")))

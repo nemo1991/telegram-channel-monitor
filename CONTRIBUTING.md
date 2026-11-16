@@ -278,7 +278,7 @@ git push origin v2.0.0
 ```
 
 - `build.yml`(tag `v*` 或 `workflow_dispatch`):三平台矩阵(Linux/macOS/Windows)
-  `uv sync` → 编译 Qt 翻译(.ts→.qm)→ PyInstaller 打包 → Linux AppImage +
+  `uv sync` → PyInstaller 打包 → Linux AppImage +
   macOS .app zip + Windows onedir zip → `release` job 自动建 GitHub Release 并附
   `SHA256SUMS`。
 - v2.0.0 起后端纯 Python,**无原生库编译**,三平台分钟级完成;不再有

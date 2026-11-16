@@ -40,7 +40,6 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
-from tgmonitor.ui.theme import Theme, ThemeManager
 from tgmonitor.ui.thumbnail import (
     ThumbnailCache,
     render_pixmap,
@@ -125,11 +124,10 @@ def _kind_icon(
 def _kind_emoji_icon(kind: str) -> QIcon:
     """频道类型 fallback 图标 —— Lucide 单色(2026-08-27 PR #Q2)。
 
-    fg 跟当前主题:QListWidget 在 light 主题用 #1a1a2e,dark 主题用 #f0f1fa。
-    Qt 的 QSvgRenderer 不解析 currentColor,所以走 tinted_action_icon
-    显式注入 hex,避免图标在 list row 上渲染成黑团。
+    fg 固定浅色 #1a1a2e。Qt 的 QSvgRenderer 不解析 currentColor,
+    所以走 tinted_action_icon 显式注入 hex,避免图标渲染成黑团。
     """
-    fg = "#f0f1fa" if ThemeManager.current() == Theme.DARK else "#1a1a2e"
+    fg = "#1a1a2e"
     return tinted_action_icon(
         _KIND_ICON_NAMES.get(kind, _KIND_ICON_NAMES["group"]),
         QColor(fg),
@@ -586,16 +584,3 @@ class ChannelWidget(QWidget):
             QMessageBox.information(self, "全量同步", "已监听列表为空,先订阅频道")
             return
         self.sync_requested.emit(ids)
-
-    def refresh_theme(self) -> None:
-        """主题切换后调用 — 重渲两个 list 的频道类型图标(tinted color 跟主题变)。
-
-        数据缓存 _joined / _subscribed_ids 不动,只是 setIcon 重画一次。
-        """
-        joined = list(self._joined.values())
-        if joined:
-            self.set_joined(joined)
-        if self._subscribed_ids:
-            sub = [c for cid, c in self._joined.items() if cid in self._subscribed_ids]
-            if sub:
-                self.set_subscribed(sub)

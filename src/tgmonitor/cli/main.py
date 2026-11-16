@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     返回退出码:0 成功 / 1 错误 / 130 SIGINT(沿用 `__main__` 既有约定)。
     """
-    # Windows 中文 locale 下 argparse 打印会因 cp1252 编码炸,先 reconfigure
+    # Windows 中文环境下 argparse 打印会因 cp1252 编码炸,先 reconfigure
     _ensure_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)

@@ -111,7 +111,7 @@ class SearchBar(QWidget):
         # 2026-09-03 v1.5.3 PR #D2
         # 2026-09-11 v1.7.5:加 dynamic property `scopeActive` 配合 QSS,
         # 切 checked 时立即刷新样式 — QSS selector `[scopeActive="true"]`
-        # 在 style.qss / style_dark.qss 里加背景色区分(肉眼能看)。
+        # 在 style.qss 里加背景色区分(肉眼能看)。
         self.scope_btn = QToolButton()
         self.scope_btn.setText("🌐")
         self.scope_btn.setCheckable(True)
@@ -124,7 +124,6 @@ class SearchBar(QWidget):
 
         # 2026-09-14 v1.7.5 PR #8:★ favorite / 🏷 tag / 📌 pinned 3 filter toggle。
         # 每个独立 checkable + checked → filterActive="true" QSS 高亮
-        # (浅色:#fff3cd / 暗色:#5a4a00)。emit 各自 bool signal — MainWindow 接。
         self.favorite_btn = self._build_filter_btn("★", self.tr("只看收藏"), "favoriteActive")
         self.tag_btn = self._build_filter_btn("🏷", self.tr("只看有标签"), "tagActive")
         self.pinned_btn = self._build_filter_btn("📌", self.tr("只看置顶"), "pinnedActive")
@@ -180,8 +179,7 @@ class SearchBar(QWidget):
         self.pinned_btn.toggled.connect(self._on_pinned_toggled)
 
         # 2026-09-11 v1.7.5:删 inline styleSheet — 之前硬编码 #f0f1f5 / #8a8d92
-        # 浅色,暗色主题下 SearchBar 破皮。改走全局 style.qss / style_dark.qss
-        # 的 `#searchBar` selector(QPalette 主题感知)。
+        # 浅色,改走全局 style.qss 的 `#searchBar` selector。
 
     def text(self) -> str:
         """当前输入文本(strip 首尾空白)— 给 caller 直接读用。"""
@@ -279,7 +277,6 @@ class SearchBar(QWidget):
         """2026-09-11 v1.7.5:刷 dynamic property `scopeActive` 让 QSS 区分。
 
         QSS selector `QToolButton[scopeActive="true"]` 配不同背景色
-        (浅色:`#e3f2fd` / 暗色:`#1e3a5f`)。unpolish/repolish 让 QSS 立刻应用。
         """
         self.scope_btn.setProperty("scopeActive", "true" if checked else "false")
         # unpolish/repolish 让 QSS 重新应用(单纯 setProperty 不触发)

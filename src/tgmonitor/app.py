@@ -190,17 +190,14 @@ def run() -> None:
     loop = QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
 
-    # 2026-09-07 v1.6.8:接 install_translator —— 之前 v1.5.3 PR #D3 定义
-    # 了完整逻辑但全工程没人调,tr() 形同虚设。这里同步构造 Settings 读
-    # `lang` 字段(env TG_LANG,默认 zh_CN),然后装翻译;`_bootstrap` 后面会
-    # 再读一次 Settings(同一份 .env,幂等)。
     # 容错加载:.env 非法值(如旧版 TG_DB_BACKEND=jsonl)回退默认值并记
     # warnings,不阻断启动 — 用户可在设置页修正后保存。
-    from tgmonitor.i18n import install_translator
-
     early_settings, config_warnings = Settings.load_tolerant()
-    install_translator(qt_app, locale=early_settings.lang)
-    log.info("[i18n] locale=%s 已装翻译器", early_settings.lang)
+
+    # 界面固定简体中文:固定区域设置,避免日期 / 数字格式随系统设置漂移。
+    from PySide6.QtCore import QLocale
+
+    QLocale.setDefault(QLocale("zh_CN"))
 
     # 应用图标(macOS dock / 任务栏 / 任务管理器)
     # PySide6 没有 setApplicationIcon,用 QGuiApplication.setWindowIcon(静态)。
@@ -211,18 +208,17 @@ def run() -> None:
 
     QGuiApplication.setWindowIcon(load_app_icon())
 
-    # 全局 QSS — 字号 / 间距 / 状态色(由 ThemeManager 统一管理)
+    # 全局 QSS — 单一浅色样式表,含字号 / 间距 / 状态色。
     try:
-        # 读 TG_THEME 环境变量决定启动主题(默认 LIGHT)
-        import os as _os
+        from importlib import resources
 
-        from tgmonitor.ui.theme import Theme, ThemeManager
-
-        env_theme = _os.environ.get("TG_THEME", "light").lower()
-        start_theme = Theme.DARK if env_theme == "dark" else Theme.LIGHT
-        ThemeManager.apply(start_theme)
+        qss = resources.files("tgmonitor.ui.resources").joinpath("style.qss").read_text("utf-8")
+        qss = qss.replace("{accent}", "#5b9cf5").replace("{accentHover}", "#4a8be4")
+        qss_app = QApplication.instance()
+        if isinstance(qss_app, QApplication):
+            qss_app.setStyleSheet(qss)
     except Exception:  # noqa: BLE001
-        log.warning("failed to load theme; falling back to default")
+        log.warning("failed to load stylesheet; falling back to default")
 
     # 容器:由 setup_then_show 填充,shutdown 时消费
     state: dict[str, AppService | MonitorService | object] = {}

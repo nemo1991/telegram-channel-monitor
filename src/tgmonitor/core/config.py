@@ -10,7 +10,6 @@ import logging
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from platformdirs import user_data_dir
 from pydantic import Field, ValidationError
@@ -141,40 +140,6 @@ class Settings(BaseSettings):
     # 丢数据 / 类型 ALTER 重写表对大表 lock-heavy)。
     # .env 字段:TG_SCHEMA_AUTO_REPAIR=true|false。
     schema_auto_repair: bool = Field(default=False)
-
-    # 2026-09-03 v1.5.4 PR #P4:主题持久化(空 = 不持久化,ThemeManager 走 session 内应用)。
-    # 填 v1.5.0 PR #A5 的尾巴:settings_page 加 checkbox,勾选时启动从 .env 读
-    # 主题并在 ThemeManager.apply 时回写;空字符串 = 与 v1.5.0 行为一致(不持久化)。
-    key_theme: str = Field(default="", description="persisted Theme name; '' = session only")
-
-    # 2026-09-07 v1.6.8:UI 语言(.env 字段 TG_LANG),默认 zh_CN(项目母语,中文
-    # 用户零配置)。en_US 提供完整英文翻译。`install_translator(qt_app,
-    # settings.lang)` 在 app.py:run() 内调用装翻译 + QLocale.setDefault。
-    # 中文用户即使没有 TG_LANG env 行也走默认值,行为不变。
-    lang: Literal["zh_CN", "en_US"] = Field(
-        default="zh_CN",
-        description="UI language: zh_CN (default) or en_US",
-    )
-
-    # 2026-09-07 v1.6.9:快捷键持久化(.env 字段 TG_KEY_*)。空串 = 用
-    # `tgmonitor.core.keybinding.DEFAULT_BINDINGS` 的硬编码默认(与
-    # `key_theme=""` 同语义)。SettingsPage「快捷键」分组编辑,保存到
-    # .env 后下次启动生效;运行时 SettingsPage「保存并应用」成功后
-    # `MainWindow.reload_shortcuts()` 热重绑。
-    key_tab_live: str = Field(default="", description="LIVE tab shortcut")
-    key_tab_dashboard: str = Field(default="", description="DASHBOARD tab shortcut")
-    key_tab_channels: str = Field(default="", description="CHANNELS tab shortcut")
-    key_tab_media: str = Field(default="", description="MEDIA tab shortcut")
-    key_tab_settings: str = Field(default="", description="SETTINGS tab shortcut")
-    key_refresh: str = Field(default="", description="refresh channels shortcut")
-    key_search: str = Field(default="", description="focus search bar shortcut")
-    key_export: str = Field(default="", description="export current view shortcut")
-    key_toggle_theme: str = Field(default="", description="toggle theme shortcut")
-    key_quit: str = Field(default="", description="quit app shortcut")
-    key_settings: str = Field(default="", description="open settings tab shortcut")
-    key_escape: str = Field(default="", description="global escape shortcut")
-    key_copy: str = Field(default="", description="copy current message shortcut")
-    key_show_window: str = Field(default="", description="show main window shortcut")
 
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。

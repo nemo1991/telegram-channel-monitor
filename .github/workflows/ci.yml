@@ -46,10 +46,6 @@ jobs:
             libsm6 libice6 libpulse0
           sudo ldconfig
 
-      # .qm 必须早于 uv sync:hatchling force-include 读 .qm 源文件,缺则 sync 失败。
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
-
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
 
@@ -101,9 +97,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
-
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
 
@@ -114,7 +107,7 @@ jobs:
           QT_LOGGING_RULES: "*.warning=false"
           TG_WIN32_PAINT_PROBE: "1"
         shell: bash
-        run: uv run python -m pytest -v --tb=short tests/test_media_manager_i18n.py tests/test_search_bar.py tests/test_status_bar.py tests/test_login_dialog.py
+        run: uv run python -m pytest -v --tb=short tests/test_search_bar.py tests/test_status_bar.py tests/test_login_dialog.py
 
   coverage:
     # 覆盖率是纯观测指标(不设阈值、暂无 codecov),同一份代码三平台各收一份
@@ -147,9 +140,6 @@ jobs:
             libxcb-icccm4 libxcb-image0 libxcb-util1 \
             libsm6 libice6 libpulse0
           sudo ldconfig
-
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
 
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
@@ -211,9 +201,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
-
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
 
@@ -254,9 +241,6 @@ jobs:
             libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb-randr0 libxcb-render-util0 libxcb-render0 \
             libglib2.0-0t64 libsm6 libice6 libpulse0
-
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
 
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q

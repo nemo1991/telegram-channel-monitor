@@ -8,8 +8,7 @@
 `LoginDialog`,复用现有代码。
 
 设计:controller 通过 `ctx.main_window` 访问 MainWindow 私有成员
-(`_refresh_state`),不需要 callback 注入 — 跟 `tray_controller` /
-`theme_controller` 同模式。
+(`_refresh_state`),不需要 callback 注入 — 跟 `tray_controller` 同模式。
 """
 
 from __future__ import annotations

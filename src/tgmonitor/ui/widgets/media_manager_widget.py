@@ -19,24 +19,6 @@
 - 所有用户操作 → emit Qt Signal → MainWindow 调 VM
 - 后台线程安全:VM 用 run_coro 在 qasync 主 loop 触发,UI 端只读数据
 
-i18n 硬约束(2026-10-20 plan-batch10 实证,**改代码前必读**):
-- 本类 38 条翻译挂在 `.ts` 的 `MediaManagerWidget` context 下,`en_US.ts` /
-  `zh_CN.ts` 的 `<location>` 全部指向本文件。
-- **lupdate 静态扫描按「enclosing class name」定 context,不认
-  `QCoreApplication.translate(ctx, src)` 的第一个参数。** 反证:
-  `status_bar.py` 11 处双字面量 `translate("status_bar", "…")`,
-  `.ts` 历史里从未出现过 `status_bar` context;`nav_bar` / `state_labels`
-  用变量 src,context 列表里同样没有这两个名字。
-- 因此**本文件里所有 `self.tr("字面量")` 必须物理留在 `MediaManagerWidget`
-  类体内**。挪进 `_mm_render.RenderMixin` 等 mixin,下次有人跑
-  `lupdate -extensions py` 时这 38 条会被标 `type="vanished"` →
-  `lrelease` 产出空 `.qm` → **i18n 全炸**(2026-09-07 已踩过,见
-  CHANGELOG 「pyside6-lupdate 默认 extensions 不含 .py」事故)。
-- 需要给 mixin 供文案时,走 facade 里的 `_tr_xxx()` accessor(字面量仍写
-  在本类体内,mixin 侧只调 accessor 取已译字串),不要在 mixin 里直接写
-  字面量。house rule 同 `widgets/form_section.py` 「caller 提供已 tr()
-  过的字串」。
-- 守门:`tests/test_media_manager_i18n.py` 双向校验「源码字面量 ↔ .ts source」。
 """
 
 # mypy: disable-error-code="attr-defined"
@@ -45,7 +27,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -105,14 +87,14 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     """Media Manager 主页:筛选 + 列表 + 工具栏。
 
     2026-10-20 plan-batch10 起本类是 **facade**(1149 → 523 LOC)。运行时
-    行为拆到 3 个 mixin,本类只留「对外契约 + 静态装配 + i18n 真理源」。
+    行为拆到 3 个 mixin,本类只留「对外契约 + 静态装配 + 文案访问器」。
     `QWidget` 必须在 MRO 末尾(Shiboken 要求)。
 
     ## 分布索引(改代码前先看这里,别在 facade 里找运行逻辑)
 
     | 归属 | 文件 | 内容 |
     |---|---|---|
-    | **facade(本类)** | `media_manager_widget.py` | 14 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ `changeEvent` / `retranslateUi`(test 用 `__dict__` 断言强制留本类)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` i18n 字面量真理源** |
+    | **facade(本类)** | `media_manager_widget.py` | 14 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` 文案访问器** |
     | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_known_channels` |
     | `RenderMixin` | `_mm_render.py` | 16 method — VM 注入 / 缩略图 LRU / 列表重渲 / 行构建 / meta 列 / 行内按钮 / 下载进度 |
     | `ActionsMixin` | `_mm_actions.py` | 11 method — 选中集 / 批量重试·删除·清频道 / CSV·ZIP 导出 |
@@ -123,9 +105,8 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     1. **Signal 全留 facade**(偏离 plan-batch9 的「Signal 下沉 mixin」):
        14 个全被 `main_window` connect,是对外公开契约,留本类让 API 一眼可见。
        Mixin 侧只 `self.<signal>.emit(...)`,不定义也不改 Signal。
-    2. **i18n 字面量必须留 facade 类体内**:lupdate 按 enclosing class 定
-       context,挪进 mixin 会让 `.ts` 的 38 条变 `vanished`(CHANGELOG:1474)。
-       Mixin 侧一律调 `self._tr_xxx()` 取已翻译字串。
+    2. **文案访问器留 facade 类体内**:mixin 侧一律调 `self._tr_xxx()`
+       取字串,保持 facade 作为对外契约的唯一入口。
     3. **单点 init**:10 个实例字段全在 `__init__` 赋值,mixin **不写**
        `__init__`、类体**禁止** mutable default(`= {}` / `= []` 会跨实例共享,
        plan-batch9-η 为此红过 3 个 test)。
@@ -222,63 +203,6 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         # 3) 底部 toolbar + status
         root.addLayout(self._build_toolbar())
 
-    # ---- 2026-09-11 v1.7.5:LanguageChange 触发 retranslateUi ----
-
-    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt override
-        """Qt 在 LanguageChange 事件 → 重调 retranslateUi 刷新所有文案。"""
-        super().changeEvent(event)
-        if event.type() == QEvent.Type.LanguageChange:
-            self.retranslateUi()
-
-    def retranslateUi(self) -> None:  # noqa: N802 — Qt naming
-        """2026-09-11 v1.7.5:语言切换后重建所有动态 tr() 文案。
-
-        直接重设 `self.cmb_*` 的 item(避免触发 currentIndexChanged),toolbar 按钮
-        text/tooltip,status label 重翻译。筛选条件(value)不变 — user 不感知。
-
-        设计:combo 的「全部频道/全部类型/全部状态」index 0 是 None 占位,
-        不能简单 clear+repopulate(会触发信号 + 漏掉占位),改用 setItemText
-        精准改 index 0 文字。
-        """
-        # filter combo index 0 placeholder
-        self.cmb_channel.setItemText(0, self.tr("全部频道"))
-        self.cmb_type.setItemText(0, self.tr("全部类型"))
-        self.cmb_status.setItemText(0, self.tr("全部状态"))
-        # sort key labels(index 0..N 一一对应 SortKey 枚举顺序)
-        sort_keys = list(SortKey)
-        for i, sk in enumerate(sort_keys, start=0):
-            label = {
-                "date": self.tr("日期"),
-                "size": self.tr("大小"),
-                "status": self.tr("状态"),
-            }[sk.value]
-            self.cmb_sort.setItemText(i, label)
-        # dir
-        self.cmb_dir.setItemText(0, self.tr("↓ 降序"))
-        self.cmb_dir.setItemText(1, self.tr("↑ 升序"))
-        # search placeholder
-        self.edit_search.setPlaceholderText(self.tr("搜索文件名…"))
-        # pagination + refresh
-        self.btn_prev.setToolTip(self.tr("上一页"))
-        self.btn_next.setToolTip(self.tr("下一页"))
-        self.btn_refresh.setText(self.tr("🔄 刷新"))
-        self.btn_refresh.setToolTip(self.tr("重新载入媒体列表(F5)"))
-        # toolbar 操作
-        self.btn_select_all.setText(self.tr("全选"))
-        self.btn_retry_sel.setText(self.tr("重试所选"))
-        self.btn_delete_sel.setText(self.tr("删除所选"))
-        self.btn_clear_channel.setText(self.tr("🗑 清空频道"))
-        self.btn_clear_channel.setToolTip(self.tr("删除该频道全部消息(不可撤销)"))
-        self.btn_export_csv.setText(self.tr("📤 导出 CSV"))
-        self.btn_export_csv.setToolTip(self.tr("导出当前筛选/排序视图到 CSV(全部页)"))
-        self.btn_export_zip.setText(self.tr("📦 导出 ZIP"))
-        self.btn_export_zip.setToolTip(
-            self.tr("把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip"),
-        )
-        self.btn_prune.setText(self.tr("🧹 清理孤儿"))
-        # chk_zip_thumbs:label 已建时 tr 过,重建得走一次 tr 刷新
-        self.chk_zip_thumbs.setText(self.tr("含缩略图"))
-
     def _build_filter_bar(self) -> QHBoxLayout:
         """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search🔍] [◀ Page N/M ▶] [Refresh]。"""
         hbox = QHBoxLayout()
@@ -295,7 +219,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         hbox.addWidget(self._build_prev_button())
         hbox.addWidget(self._build_page_label())
         hbox.addWidget(self._build_next_button())
-        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语都覆盖
+        # 刷新按钮(文案走 tr() 包装)
         hbox.addWidget(self._build_refresh_button())
         return hbox
 
@@ -394,7 +318,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         return btn
 
     def _build_refresh_button(self) -> QPushButton:
-        """2026-09-11 v1.7.5:刷新按钮 — 走 self.tr() 让 en_US / zh_CN 双语都覆盖。"""
+        """刷新按钮(文案走 tr() 包装)。"""
         btn = QPushButton(self.tr("🔄 刷新"))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip(self.tr("重新载入媒体列表(F5)"))
@@ -415,7 +339,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(8)
 
-        # 2026-09-11 v1.7.5:Media Manager 整页 i18n — 走 self.tr() 让 en_US / zh_CN 双语覆盖
+        # 工具栏按钮(文案走 tr() 包装)
         self.btn_select_all = QPushButton(self.tr("全选"))
         self.btn_select_all.setCursor(Qt.PointingHandCursor)
         self.btn_select_all.clicked.connect(self._on_select_all)
@@ -492,15 +416,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self.lbl_status = lbl
         return lbl
 
-    # ---- i18n 字面量真理源(供 mixin 侧取「已翻译」字串)----
-    # 2026-10-20 plan-batch10-γ/δ:被搬进 `_mm_actions.ActionsMixin` /
-    # `_mm_render.RenderMixin` 的 9 处 tr 字面量必须物理留在本类体内 ——
-    # lupdate 静态扫描按 **enclosing class name** 定 context,挪进 mixin 会让
-    # `.ts` 的 38 条 MediaManagerWidget 翻译在下次 lupdate 时被标
-    # type="vanished" → lrelease 产出空 .qm → i18n 全炸(CHANGELOG:1474 已踩过)。
-    # Mixin 侧只调本组 accessor 取**已翻译**字串,遵循 form_section.py:31-35
-    # 「caller 提供已 tr() 过的字串,FormSection 不二次 tr」house rule。
-    # 守门见 tests/test_media_manager_i18n.py::test_all_widget_tr_literals_exist_in_ts。
+    # ---- 文案访问器(供 mixin 侧取字串)----
 
     # ---- ActionsMixin 用(10-γ)----
 

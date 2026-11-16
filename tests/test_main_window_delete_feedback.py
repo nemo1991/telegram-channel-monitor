@@ -57,8 +57,7 @@ from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
 #    不再挂钟等 100ms、不再进任何事件循环
 #
 # `QEventLoop().exec()` 在本文件已彻底消失 —— segfault 的触发条件不存在了。
-# 同类写法见 `test_status_bar.py`(asyncio.run + processEvents)与
-# `test_media_manager_i18n.py`,那些仍在 skip,根因不同,各自单独跟踪。
+# 同类写法见 `test_status_bar.py`(asyncio.run + processEvents)。
 
 
 class _FakeSignal:

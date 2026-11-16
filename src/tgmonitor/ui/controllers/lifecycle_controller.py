@@ -1,5 +1,5 @@
 # mypy: disable-error-code=attr-defined
-"""窗口生命周期 + 全局快捷键行为 controller。
+"""窗口生命周期 + 键盘行为 controller。
 
 2026-10-10 v1.12.x 从 `MainWindow` 抽提。F 类 110 LOC 集中
 window/quit/escape/copy/focus/navigation 6 个动作:
@@ -9,7 +9,7 @@ window/quit/escape/copy/focus/navigation 6 个动作:
 - `switch_tab`:切 nav(`_on_nav_changed` 自动 emit → stack 跟随)
 - `on_nav_changed`:切到 MEDIA 页(3)触发一次列表刷新
 - `focus_search`:聚焦到搜索框 + 切到 LIVE 页 + 全选
-- `on_global_escape`:Esc 全局快捷键(搜索框 focus → 清空 + 失焦;
+- `on_global_escape`:Esc 键(搜索框 focus → 清空 + 失焦;
   其它页 → 回 LIVE)
 - `copy_current_message_text`:Ctrl+C 复制当前 LIVE 选中消息 text
 
@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 
 class LifecycleController:
-    """窗口生命周期 + 全局快捷键行为(quit/show/escape/copy/focus/nav)。"""
+    """窗口生命周期 + 键盘行为(quit/show/escape/copy/focus/nav)。"""
 
     def __init__(self, ctx: MainWindowCtx) -> None:
         self._ctx = ctx
@@ -104,7 +104,7 @@ class LifecycleController:
     # ---- 全局 Esc ----
 
     def on_global_escape(self) -> None:
-        """2026-08-30 v1.5.0 PR #A5:Esc 全局快捷键。
+        """2026-08-30 v1.5.0 PR #A5:Esc 键。
 
         优先级:
         1. 搜索框有 focus → 清空搜索 + 失焦(回 LIVE)

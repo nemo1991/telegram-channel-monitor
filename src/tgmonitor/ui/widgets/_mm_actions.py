@@ -8,21 +8,6 @@
   / `_on_clear_channel` / `_on_export_csv` / `_on_export_zip`
   / `on_channel_cleared` / `_row_is_failed`
 
-## i18n:5 处 tr 字面量为什么不跟过来
-
-本 mixin 原本含 5 处 `tr()` 调用(2 个 QFileDialog 标题 + 2 个 filter
-串 + 1 条 status 文案)。它们**不能**直接搬进本文件 —— lupdate 静态扫描
-按 **enclosing class name** 定 context,写在这里会变成 `ActionsMixin`,
-下次跑 `lupdate -extensions py` 时 `.ts` 的 38 条 `MediaManagerWidget`
-翻译会被标 `type="vanished"` → `lrelease` 产出空 `.qm` → i18n 全炸
-(2026-09-07 已踩过,见 CHANGELOG「pyside6-lupdate 默认 extensions 不含
-.py」事故;实证 `status_bar.py` 11 处双字面量 `QCoreApplication.translate`
-从未被抽进 `.ts`)。
-
-因此字面量留在 facade 的 `_tr_*()` accessor 里,mixin 侧只调 accessor
-取**已翻译**字串 —— 遵循 `widgets/form_section.py:31-35` 的 house rule
-「caller 提供已 tr() 过的字串,FormSection 不二次 tr」。详见
-`media_manager_widget.py` 模块 docstring 的 i18n 硬约束章节。
 
 MRO:`class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin,
 QWidget)` —— `QWidget` 在末尾。本 mixin 是 plain class,**不写

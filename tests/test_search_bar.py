@@ -21,15 +21,15 @@ from tgmonitor.ui.widgets.search_bar import SearchBar  # noqa: E402
 
 
 # 2026-09-23 v1.8.x:Windows 真机 Qt `windows` QPA 偶发 paint path
-# segfault(同 test_media_manager_i18n.py / test_media_manager_widget.py)。
+# segfault(同 test_media_manager_widget.py)。
 #
 # 2026-09-25 v1.8.3 发版解阻塞:同根因也影响 GH Actions ubuntu/macos runner 的
 # Qt offscreen 平台 —— test_search_bar_text_changed_fires 在 0b6003b CI macos
-# 偶发 `RuntimeError: Event loop is closed`(QScrollArea.changeEvent 链)。
+# 偶发 `RuntimeError: Event loop is closed`(QScrollArea 重绘链)。
 # 根因是 **Qt offscreen QPA** 的 paint path race,非 OS 本身:本地 macOS/Linux
 # 真机(cocoa/xcb)不触发,仍跑;CI 用 offscreen、Windows `windows` QPA 仍偶发 → 跳。
 # 2026-11-15:去掉强制 `offscreen`,并把 `sys.platform` 三平台无差别跳过改为按 QPA
-# 精确跳过,恢复本地真机覆盖(PR #45 同法;详见 test_media_manager_i18n.py)。
+# 精确跳过,恢复本地真机覆盖(PR #45 同法)。
 def _paint_race_skipped() -> bool:
     # `TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)强制不跳过,在 Windows 上
     # 实跑这些测试,验证 6.12 + qloop 治理后 race 是否消失。

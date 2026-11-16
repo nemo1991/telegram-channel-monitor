@@ -33,12 +33,10 @@ _SPEC_DIR = Path(SPECPATH)
 # (源目录, 目标目录)。PyInstaller 对目录型 (src, dest) 会递归拷贝整棵树,
 # 子目录结构原样保留。目标目录必须与运行时定位逻辑一致:
 #   - icon.py:    `importlib.resources.files("tgmonitor.resources")`
-#   - theme.py:   `importlib.resources.files("tgmonitor.ui.resources")`
+#   - app.py:     `importlib.resources.files("tgmonitor.ui.resources")`
 _DATA_DIRS = [
     (_SPEC_DIR / "src/tgmonitor/resources", "tgmonitor/resources"),
     (_SPEC_DIR / "src/tgmonitor/ui/resources", "tgmonitor/ui/resources"),
-    # 2026-09-02 v1.5.3 PR #D3:i18n 翻译文件(.*.qm — pyside6-lrelease 编译产物)
-    (_SPEC_DIR / "src/tgmonitor/i18n", "tgmonitor/i18n"),
 ]
 
 datas = []

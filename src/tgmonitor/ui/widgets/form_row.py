@@ -158,9 +158,8 @@ def path_field(
     默认按钮:`on_default` 是无参 callable(典型用法 `lambda: edit.setText(...)`),
     None = 不显示「默认」按钮。
 
-    2026-09-07 v1.6.8:`default_tooltip` 和按钮文本「浏览…」走
-    `QCoreApplication.translate()` 让 en_US locale 生效。`label` / `placeholder`
-    由 caller 提供,通常已是 tr() 过的字符串。
+    `default_tooltip` 和按钮文本走 `QCoreApplication.translate()`;
+    `label` / `placeholder` 由 caller 提供。
 
     Returns the QLineEdit so caller 可调 `.text()` / `.setText()` 等。
     """
@@ -261,7 +260,6 @@ def empty_hint(
         ico = QLabel(icon)
         ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # `font-size: 36px` 走全局 QSS `QLabel#emptyHintIcon`(跟 message_detail
-        # 占位 icon 同一 selector);主题切换一致、避免内联样式被覆盖的烦恼。
         ico.setObjectName("emptyHintIcon")
         v.addWidget(ico)
 

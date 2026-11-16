@@ -216,7 +216,6 @@ CI 上无追溯。
 - **安全审查**:`session` 文件落盘、`.env` 读 / 写权限、`TG_API_*` 处理——
   这是 `security-review` skill 的事
 - **性能基准**:TDLib 请求频次、SOCKS5 握手延迟、Qt 渲染瓶颈等
-- **i18n**:`tr()` / Qt linguist / 单复数
 - **打包 / 安装**:PyInstaller spec / RPM 包 / Homebrew formula / winget
 - **CI 平台迁移**:自托管 runner / Coverage 平台 codecov 集成(本 PR 只产 artifact)
 

@@ -7,7 +7,7 @@ SearchController(plain class + `MainWindowCtx`,无 MainWindow 引用)。
 设计要点:
 - `_last_live_selection` 由 controller 持有(原 MainWindow 上)— toolbar 6
   个按钮按需读;selectionModel 已 clear 时不依赖 `live_view` 当前状态
-- 翻译走 `QCoreApplication.translate("MainWindow", src)` 沿用 zh_CN.ts / en_US.ts
+- 文案走 `QCoreApplication.translate("MainWindow", src)` 包装文案
 - `parent=self`(MainWindow)显式参数化:`QMessageBox.warning(self.main_window, ...)`
   与 `ChannelPickerDialog.pick_channel(self.main_window, channels)` 等需要
   Qt parent widget 的对话框走 `ctx.main_window` 拿
@@ -137,7 +137,7 @@ class LiveSelectionController:
             mw,
             self._tr("删除确认"),
             # 2026-09-08 v1.7.0:%d 占位 — `self.tr()` 返回翻译后再 `% n` 插值。
-            # 不能用 f-string(lupdate 抽的是模板,翻译后 `{n}` 不再被替换)。
+            # 不能用 f-string(占位符 `{n}` 需在包装后替换)。
             self._tr("确定删除选中的 %d 条消息?\n删除后无法撤销。") % n,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -493,7 +493,7 @@ class LiveSelectionController:
         dlg.show()
 
     def _tr(self, src: str) -> str:
-        """翻译入口 — 保留 `MainWindow` context,沿用现有 zh_CN.ts / en_US.ts 翻译。
+        """文案入口 — 保留 `MainWindow` context。
 
         原 MainWindow 自有 `self.tr(src)`,context = `MainWindow`;controller
         没 QWidget 引用,走 `QCoreApplication.translate` 全局入口。

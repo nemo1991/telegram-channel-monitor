@@ -420,7 +420,7 @@ def test_on_live_copy_text_shows_status_message(qapp, monkeypatch: pytest.Monkey
 
     ctx.status_bar.show_message.assert_called_once()
     args = ctx.status_bar.show_message.call_args
-    # 第一个位置参数应是翻译后的「已复制」(stub tr 返回源串)
+    # 第一个位置参数应是「已复制」(stub tr 返回源串)
     assert args[0][0] == "已复制"
 
 

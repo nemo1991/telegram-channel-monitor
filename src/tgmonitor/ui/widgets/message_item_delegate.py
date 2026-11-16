@@ -42,12 +42,11 @@ class MessageItemDelegate(QStyledItemDelegate):
     """2026-09-02 v1.5.3 PR #D1:lazy paint delegate。
 
     - hidden=True → 不画(节省 paint 开销)
-    - media 行 → fillRect 底色(走 palette AlternateBase,主题切换不破皮)
     - 普通行 → QTextDocument 渲 rich text(支持 word wrap)
 
     2026-09-11 v1.7.5:删 `MEDIA_BG = QColor(232, 240, 248)` 硬编码浅蓝
     → 改走 `option.palette.brush(QPalette.AlternateBase)`(Qt 主题感知,
-    暗色主题下自动给 darker shade)。同时支持 `style.qss` `#messageMediaRow`
+    由 palette 自动给 darker shade)。同时支持 `style.qss` `#messageMediaRow`
     selector 自定义(若 QSS 设置 QPalette,override 优先级 QtStyle 决定)。
 
     2026-09-15 v1.7.5 PR #9 perf:加 `_size_hint_cache` + `_doc_cache` —
@@ -92,7 +91,7 @@ class MessageItemDelegate(QStyledItemDelegate):
             return
         has_media = bool(index.data(MessageListModel.HasMediaRole))
         if has_media:
-            # 2026-09-11 v1.7.5:用 palette 替代硬编码 QColor — 暗色主题下自动
+            # 2026-09-11 v1.7.5:用 palette 替代硬编码 QColor — 由 palette 自动
             # 变暗,无需手动 if/else。palette 由 Qt theme + style.qss 提供。
             painter.fillRect(option.rect, option.palette.brush(QPalette.AlternateBase))
         text = index.data(MessageListModel.FormattedRole) or ""

@@ -52,10 +52,6 @@ jobs:
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /usr/local/bin/appimagetool
 
-      # .qm 必须早于 uv sync:hatchling force-include 读 .qm 源文件,缺则 sync 失败。
-      - name: Compile Qt translation files (.ts → .qm)
-        uses: ./.github/actions/compile-qt-translations
-
       - name: Install project + PyInstaller (via uv)
         run: uv sync --all-extras --group dev
 

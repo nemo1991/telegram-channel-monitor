@@ -6,7 +6,6 @@
 - `_on_live_react` 答 No → 不调 `_run_live_react`
 - `_on_live_react` 答 Yes → 调 `_run_live_react(items, emoji, is_big)`
 - `clear_selection` 仅在答 Yes 后调
-- i18n 文案覆盖(zh_CN / en_US 都非空)
 
 2026-10-04 plan 阶段 3.3:`_on_live_pin` / `_on_live_react` 抽到
 `LiveSelectionController`,测试改直接构造 controller 实例 + mock ctx(同
@@ -21,9 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtCore import QCoreApplication  # noqa: E402
 
-from tgmonitor.i18n import install_translator  # noqa: E402
 from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
 from tgmonitor.ui.controllers.live_selection_controller import LiveSelectionController  # noqa: E402
 
@@ -41,7 +38,7 @@ class _FakeState:
         self._clear_selection_count = 0
         self._user_answers_yes = True
 
-    # QObject.tr() 桩 — 直接返源串(lupdate/lrelease 抽的 key 已含 placeholder)
+    # QObject.tr() 桩 — 直接返源串
     def tr(self, source: str) -> str:  # noqa: ANN001, ANN201
         return source
 
@@ -244,49 +241,3 @@ def test_react_empty_items_no_dialog(qapp, monkeypatch: pytest.MonkeyPatch) -> N
     ctrl._on_live_react([])
     ctx.app.batch.add_reaction.assert_not_called()
     assert picker_called["n"] == 0, "空选区不应弹 emoji picker"
-
-
-# ---- i18n 覆盖 ----
-
-
-def test_pin_confirm_translations_both_locales(qapp) -> None:
-    """2026-09-13 v1.7.5 PR #3:`钉选确认` 文案 zh_CN / en_US 双语覆盖。"""
-    # zh_CN
-    install_translator(qapp, locale="zh_CN")
-    assert QCoreApplication.translate("MainWindow", "钉选确认") == "钉选确认"
-    assert (
-        QCoreApplication.translate(
-            "MainWindow",
-            "确定钉选选中的 %d 条消息?\n操作不可撤销。",
-        )
-        == "确定钉选选中的 %d 条消息?\n操作不可撤销。"
-    )
-    # en_US
-    install_translator(qapp, locale="en_US")
-    assert QCoreApplication.translate("MainWindow", "钉选确认") == "Pin confirmation"
-    assert (
-        QCoreApplication.translate(
-            "MainWindow",
-            "确定钉选选中的 %d 条消息?\n操作不可撤销。",
-        )
-        == "Pin the %d selected messages?\nThis action cannot be undone."
-    )
-
-
-def test_react_confirm_translations_both_locales(qapp) -> None:
-    """2026-09-13 v1.7.5 PR #3:`回应确认` 文案 zh_CN / en_US 双语覆盖。"""
-    install_translator(qapp, locale="zh_CN")
-    assert QCoreApplication.translate("MainWindow", "回应确认") == "回应确认"
-    zh_msg = QCoreApplication.translate(
-        "MainWindow",
-        "确定对选中的 %d 条消息打 %s 反应?\n操作不可撤销。",
-    )
-    assert "确定对选中的" in zh_msg and "反应" in zh_msg
-
-    install_translator(qapp, locale="en_US")
-    assert QCoreApplication.translate("MainWindow", "回应确认") == "React confirmation"
-    en_msg = QCoreApplication.translate(
-        "MainWindow",
-        "确定对选中的 %d 条消息打 %s 反应?\n操作不可撤销。",
-    )
-    assert "reaction" in en_msg and "selected messages" in en_msg

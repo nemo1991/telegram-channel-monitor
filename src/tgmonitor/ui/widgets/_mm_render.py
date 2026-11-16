@@ -14,23 +14,6 @@
   / `_thumb_cache` / `_vm`(全部由 facade `__init__` 单点赋值)
 - 持有的 widget:`list` / `lbl_status` / `btn_prune`
 
-## i18n:4 处 tr 字面量为什么不跟过来
-
-同 `_mm_actions.py`:本 mixin 原本含 4 处 `tr()` 调用(prune tooltip /
-status footer / 缩略图 tooltip / 错误 tooltip)。它们**不能**搬进本文件 ——
-lupdate 静态扫描按 **enclosing class name** 定 context,写在这里会变成
-`RenderMixin`,下次跑 `lupdate -extensions py` 时 `.ts` 的 38 条
-`MediaManagerWidget` 翻译会被标 `type="vanished"` → `lrelease` 产出空
-`.qm` → i18n 全炸(CHANGELOG:1474 事故)。
-
-字面量留在 facade 的 `_tr_prune_scan_fmt` / `_tr_status_row` /
-`_tr_click_preview` / `_tr_error_fmt` 四个 accessor,mixin 侧只调
-accessor 取**已翻译**字串。
-
-注意 `扫描 ObjectStore ({backend}) vs storage ...`(带 `{backend}` 占位)
-与 toolbar 的 `扫描 ObjectStore vs storage ...`(不带占位)是**两条不同
-的翻译** —— 前者是本 mixin 的 `_tr_prune_scan_fmt`,后者留在 facade 的
-`_build_action_buttons` 里不动,别合并。
 
 MRO:`class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin,
 QWidget)` —— `QWidget` 在末尾。本 mixin 是 plain class,**不写

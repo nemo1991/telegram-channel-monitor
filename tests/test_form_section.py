@@ -1,8 +1,8 @@
 """form_section 单元测试 — src/tgmonitor/ui/widgets/form_section.py。
 
 plan-batch2 目标 4 第 2 步:12 case 覆盖 10 种 kind + 关键 invariant
-(addRow 必触发 / set_visible 跨 group 隔离 / i18n context 守门 /
-echo_password / visible_when / retranslate 双态)。
+(addRow 必触发 / set_visible 跨 group 隔离 / echo_password /
+visible_when / action 按钮双态 / groupbox 标题刷新)。
 
 QT_QPA_PLATFORM=offscreen 无 GUI 跑(跟其他 UI 测试一致)。
 """
@@ -124,19 +124,19 @@ def test_choice_pairs_kind_with_tuples(holder: QWidget) -> None:
         title="T",
         fields=(
             FieldDef(
-                key="lang",
+                key="backend",
                 kind=FieldKind.CHOICE_PAIRS,
-                label="Lang:",
-                options=(("zh_CN", "简体中文"), ("en_US", "English")),
+                label="Backend:",
+                options=(("sqlite", "SQLite"), ("postgres", "PostgreSQL")),
             ),
         ),
     )
     gb = s.build(holder)
     cmb = gb.findChild(QComboBox)
     assert cmb is not None
-    assert cmb.itemData(0) == "zh_CN"
-    s.set_value("lang", "en_US")
-    assert s.get_value("lang") == "en_US"
+    assert cmb.itemData(0) == "sqlite"
+    s.set_value("backend", "postgres")
+    assert s.get_value("backend") == "postgres"
 
 
 def test_bool_kind_round_trip(holder: QWidget) -> None:
@@ -265,7 +265,7 @@ def test_find_form_row_finds_across_nested_groups(holder: QWidget) -> None:
 
 
 # ============================================================
-# retranslate 双态(action 按钮)
+# action 按钮双态 / groupbox 标题刷新
 # ============================================================
 
 
