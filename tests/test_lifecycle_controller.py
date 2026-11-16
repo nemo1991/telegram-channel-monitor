@@ -1,12 +1,11 @@
 """`LifecycleController` 单元测试 — 2026-10-10 v1.12.x plan-batch2 目标 1.4。
 
-覆盖 7 个 method:
+覆盖 6 个 method(2026-11-16 v2.0.2 移除 `focus_search` 及 Esc 搜索分支):
 - `show_and_raise` unminimize + 顶置 + 焦点
 - `quit_app` 标 `_truly_quit=True` + 调 `qt_app.quit()`
 - `switch_tab` 委托 nav.set_current
 - `on_nav_changed` 切到 MEDIA 页(3)→ start media_refresh_debounce
-- `focus_search` 切 LIVE + focus + selectAll
-- `on_global_escape` 搜索 focus → 清空 + 失焦;非 LIVE → 回 LIVE
+- `on_global_escape` 非 LIVE → 回 LIVE(搜索分支已移除)
 - `copy_current_message_text` LIVE 选中消息 text → clipboard + status 提示
 """
 
@@ -160,37 +159,12 @@ class TestOnNavChanged:
         refs["media_refresh_debounce"].start.assert_not_called()
 
 
-class TestFocusSearch:
-    """`focus_search` — 切 LIVE + focus + selectAll。"""
-
-    def test_switches_to_live_and_focuses_edit(self, qapp_session) -> None:
-        ctx, refs = _make_ctx(qapp_session)
-        ctrl = LifecycleController(ctx)
-
-        ctrl.focus_search()
-
-        # switch_tab(0) — LIVE
-        refs["nav"].set_current.assert_called_once_with(0)
-        refs["search_edit"].setFocus.assert_called_once()
-        refs["search_edit"].selectAll.assert_called_once()
+# 2026-11-16 v2.0.2:TestFocusSearch 与 TestOnGlobalEscape 的搜索 focus 分支
+# 随顶部搜索功能移除而删除。
 
 
 class TestOnGlobalEscape:
-    """`on_global_escape` — 搜索 focus / 非 LIVE 双分支。"""
-
-    def test_search_focused_clears_and_returns(self, qapp_session) -> None:
-        ctx, refs = _make_ctx(qapp_session)
-        refs["search_edit"].hasFocus = MagicMock(return_value=True)
-        refs["live_view"].set_messages = MagicMock()
-        ctrl = LifecycleController(ctx)
-
-        ctrl.on_global_escape()
-
-        # stop debounce + clear search bar + clearFocus + set_messages([])
-        refs["search_debounce"].stop.assert_called_once()
-        refs["search_bar"].clear.assert_called_once()
-        refs["search_edit"].clearFocus.assert_called_once()
-        refs["live_view"].set_messages.assert_called_once_with([])
+    """`on_global_escape` — 非 LIVE → 回 LIVE(搜索分支已移除)。"""
 
     def test_search_not_focused_and_already_live_is_noop(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)

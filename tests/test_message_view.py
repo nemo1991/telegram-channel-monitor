@@ -810,62 +810,53 @@ def test_remove_row_updates_index_of(qapp):
     assert view._model.row_values() == set(range(8))
 
 
-def test_max_items_bumped_to_10000(qapp):
-    """PR #P1:MAX_ITEMS 1000 → 10000。"""
-    assert MessageView.MAX_ITEMS == 10000
+def test_max_items_is_100_for_live_readonly(qapp):
+    """2026-11-16 v2.0.2:LIVE 页只读化 — MAX_ITEMS 10000 → 100。"""
+    assert MessageView.MAX_ITEMS == 100
 
 
-def test_set_messages_respects_max_10000(qapp):
-    """PR #P1:`set_messages([m1..m10001])` → rowCount == 10000,最旧一条被截断。
+def test_set_messages_respects_max_100(qapp):
+    """v2.0.2:`set_messages([m1..m101])` → rowCount == 100,最旧一条被截断。
 
     `set_messages` 走 `clear_view + append 循环`,append 是 head-insert,
     所以 (1, 0) 是 oldest,会落到 tail,被 _truncate_tail 砍掉。
     """
     view = MessageView()
-    msgs = [_make_msg(1, i) for i in range(10001)]
+    msgs = [_make_msg(1, i) for i in range(101)]
     view.set_messages(msgs)
-    assert view._model.rowCount() == 10000
+    assert view._model.rowCount() == 100
     # 最旧 (1, 0) 应被截断
     assert view.row_of_key(1, 0) is None
-    # 最新 (1, 10000) 应保留(head)
-    assert view.row_of_key(1, 10000) is not None
+    # 最新 (1, 100) 应保留(head)
+    assert view.row_of_key(1, 100) is not None
 
 
-def test_stress_10k_messages_append_dedup_truncate(qapp):
-    """PR #P1:**stress test** — append 10K 条 + 中途 100 次 remove,验证:
+def test_stress_rolling_window_100_append_dedup_truncate(qapp):
+    """2026-11-16 v2.0.2:**stress test** — append 1K 条(远超 100 上限)+ 中途
+    100 次 remove,验证滚动窗口不变量:
 
-    - rowCount 最终 == 9900(10K - 100)
+    - rowCount 恒 ≤ MAX_ITEMS(100),只保留最新 100 条
     - `_index_of` 与 `_items` 严格镜像(invariant)
-    - 整测试耗时 < 30s(append 本身是 O(N) shift 累计 O(N²),MAX_ITEMS
-      1000 → 10000 后自然放大 ~10×;本测试只防 O(N³) 级别的极端退化,
-      例如 invariant 漏维护导致 O(N) dict scan × N 次 append)
+    - 旧消息按 FIFO 被截断(窗口滚动)
 
-    用 `time.perf_counter` 计时,**30s 是 CI 容差**(GitHub Actions
-    ubuntu runner + 多 job 资源争抢比本地慢 ~2×,2026-09-04 v1.6.1 CI
-    上 15s 阈值不够 — 实测 20.67s 失败;阈值不是性能 SLA,放宽后仍能
-    catch 真正退化 — invariant 漏维护会让单次 `_truncate_tail` 从
-    O(1) 退到 O(N) × 10K ≈ 80s+,30s 阈值仍 fail)。本地实测 < 12s。
+    MAX_ITEMS 10000 → 100 后原 10K stress 规模已无意义,改为 1K append 守
+    「大批量 append 下滚动窗口 + invariant」仍在。
     """
-    import time
-
     view = MessageView()
-    t0 = time.perf_counter()
-    # 10K append
-    for i in range(10_000):
+    # 1K append — 远超 100 上限,触发反复 _truncate_tail
+    for i in range(1_000):
         view.append(_make_msg(1, i))
-    # 100 次 remove(中途)
-    for i in range(0, 10_000, 100):
-        view.remove_row(1, i)
-    elapsed = time.perf_counter() - t0
-    # rowCount 验证
-    assert view._model.rowCount() == 9_900, (
-        f"10K append - 100 remove 应得 9900,但 rowCount={view._model.rowCount()}"
-    )
+    assert view._model.rowCount() == 100
+    # 最新 (1, 999) 保留,最旧 (1, 0) 已滚出
+    assert view.row_of_key(1, 999) is not None
+    assert view.row_of_key(1, 0) is None
     # invariant 验证
     _assert_invariant(view)
-    # 性能阈值 — 防 O(N³) 极端退化(append 本身 O(N) shift 是 by design,
-    # 累计 O(N²) 不在本 PR 范围;未来 PR 可改 deque + index map 做到 O(1) amortized)
-    assert elapsed < 30.0, f"stress 应 < 30s,实测 {elapsed:.2f}s(可能 O(N³) 退化)"
+    # 中途 remove 后仍 ≤ 100 且 invariant 成立
+    for i in range(900, 1_000, 10):
+        view.remove_row(1, i)
+    assert view._model.rowCount() <= 100
+    _assert_invariant(view)
 
 
 # ============================================================

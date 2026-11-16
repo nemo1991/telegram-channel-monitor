@@ -18,10 +18,8 @@ from tgmonitor.ui.controllers.app_state_controller import AppStateController
 from tgmonitor.ui.controllers.export_controller import ExportController
 from tgmonitor.ui.controllers.header_action_controller import HeaderActionController
 from tgmonitor.ui.controllers.lifecycle_controller import LifecycleController
-from tgmonitor.ui.controllers.live_selection_controller import LiveSelectionController
 from tgmonitor.ui.controllers.media_actions_controller import MediaActionsController
 from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
-from tgmonitor.ui.controllers.search_controller import SearchController
 from tgmonitor.ui.controllers.settings_reaction_controller import SettingsReactionController
 from tgmonitor.ui.controllers.sync_controller import SyncController
 from tgmonitor.ui.controllers.sync_flow_controller import SyncFlowController
@@ -37,8 +35,6 @@ __all__ = [
     "SyncController",
     "SyncFlowController",
     "LifecycleController",
-    "SearchController",
-    "LiveSelectionController",
     "MediaActionsController",
     "MessageStreamController",
 ]

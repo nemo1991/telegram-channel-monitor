@@ -44,11 +44,8 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, MagicMock]]:
         window_title_setter=window_title_setter,
         quit_app=quit_app,
         live_view=MagicMock(name="live_view"),
-        # 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ctx
-        live_actions=MagicMock(name="live_actions"),
         message_detail=MagicMock(name="message_detail"),
         media_manager=MagicMock(name="media_manager"),
-        selection_toolbar=MagicMock(name="selection_toolbar"),
         dashboard=MagicMock(name="dashboard"),
         channel_panel=MagicMock(name="channel_panel"),
         header=MagicMock(name="header"),
@@ -56,7 +53,6 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, MagicMock]]:
         nav=MagicMock(name="nav"),
         stack=MagicMock(name="stack"),
         tray=None,
-        search_debounce=MagicMock(name="search_debounce"),
         media_refresh_debounce=MagicMock(name="media_refresh_debounce"),
     )
     refs = {
@@ -156,11 +152,8 @@ def test_tray_controller_does_not_call_main_window_set_window_title() -> None:
         window_title_setter=refs["window_title_setter"],
         quit_app=refs["quit_app"],
         live_view=ctx.live_view,
-        # 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ctx
-        live_actions=MagicMock(name="live_actions"),
         message_detail=ctx.message_detail,
         media_manager=ctx.media_manager,
-        selection_toolbar=ctx.selection_toolbar,
         dashboard=ctx.dashboard,
         channel_panel=ctx.channel_panel,
         header=ctx.header,
@@ -168,7 +161,6 @@ def test_tray_controller_does_not_call_main_window_set_window_title() -> None:
         nav=ctx.nav,
         stack=ctx.stack,
         tray=ctx.tray,
-        search_debounce=ctx.search_debounce,
         media_refresh_debounce=ctx.media_refresh_debounce,
     )
     ctrl = TrayController(ctx_real)

@@ -55,11 +55,8 @@ def _make_ctx(
         window_title_setter=MagicMock(name="window_title_setter"),
         quit_app=MagicMock(name="quit_app"),
         live_view=live_view,
-        # 2026-10-15 plan-batch7-C-α:LiveActionsController 注入 ctx
-        live_actions=MagicMock(name="live_actions"),
         message_detail=message_detail,
         media_manager=MagicMock(name="media_manager"),
-        selection_toolbar=MagicMock(name="selection_toolbar"),
         dashboard=MagicMock(name="dashboard"),
         channel_panel=MagicMock(name="channel_panel"),
         header=MagicMock(name="header"),
@@ -67,7 +64,6 @@ def _make_ctx(
         nav=MagicMock(name="nav"),
         stack=MagicMock(name="stack"),
         tray=None,
-        search_debounce=MagicMock(name="search_debounce"),
         media_refresh_debounce=MagicMock(name="media_refresh_debounce"),
     )
     refs = {

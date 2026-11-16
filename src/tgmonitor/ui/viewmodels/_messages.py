@@ -2,7 +2,10 @@
 """MessagesMixin — 消息域 handler + method 集合 — 2026-10-19 plan-batch9-δ。
 
 `MonitorViewModel` 拆 5 mixin + BusMixin 第四步(2026-10-19
-plan-batch9-δ):messages 域 = 3 handler + 2 method + 6 signal。
+plan-batch9-δ):messages 域 = 3 handler + 1 method + 5 signal。
+
+2026-11-16 v2.0.2:移除 `search_messages` method 与 `message_search_results`
+signal(顶部搜索功能区整体移除)。`load_recent_messages` limit 200→100。
 
 设计归位(2026-10-19 plan-batch9-δ):
 - 在 C-γ 阶段,`_message_count` / `last_message_received` / `stats_changed`
@@ -17,11 +20,10 @@ plan-batch9-δ):messages 域 = 3 handler + 2 method + 6 signal。
   `_on_message_interactions_changed`
   - `_on_message_received` 末尾:`self._message_count += 1` + emit
     `last_message_received` + emit `stats_changed`(全是本 mixin 内 signal)
-- 2 method:`load_recent_messages` / `search_messages`
-- 6 signal:
+- 1 method:`load_recent_messages`
+- 5 signal:
   - `message_received` / `message_edited` / `message_interactions_changed`
     (3 消息核心 signal)
-  - `message_search_results`(搜索结果透传给 LIVE view)
   - `last_message_received`(状态栏 _LastMessageLabel 订阅)
   - `stats_changed`(状态栏 _StatsLabel 订阅;跨 mixin 由
     `_channels.py:ChannelsMixin._on_channel_subscribed` emit)
@@ -49,7 +51,6 @@ BusMixin, QObject)` — MessagesMixin 顺序在 System 之后,BusMixin 末
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
@@ -74,11 +75,10 @@ log = logging.getLogger(__name__)
 class MessagesMixin(_Base):
     """消息域 — 2026-10-19 plan-batch9-δ。
 
-    公开 API 1:1 保留原 `MonitorViewModel` messages 域:
-    - 2 method:`load_recent_messages` / `search_messages`
-    - 6 signal:`message_received` / `message_edited` /
-      `message_interactions_changed` / `message_search_results` /
-      `last_message_received` / `stats_changed`
+    公开 API:
+    - 1 method:`load_recent_messages`
+    - 5 signal:`message_received` / `message_edited` /
+      `message_interactions_changed` / `last_message_received` / `stats_changed`
     - 1 状态字段:`_message_count: int = 0`(facade `__init__` 显式设,
       本 mixin 不写 init)
     - 3 EventBus handler:`MessageReceived` / `MessageEdited` /
@@ -99,10 +99,6 @@ class MessagesMixin(_Base):
     # 实时性受服务端策略限制。MainWindow 接到 → 调 LIVE 行
     # `refresh_reactions`(局部更新,不重建列表)。
     message_interactions_changed = Signal(object)
-    # 2026-09-02 v1.5.2 PR #B5:VM 搜索结果 — payload list[MessageDTO]。
-    # MainWindow 接到 → live_view.set_messages(messages) 批量替换。
-    # 空 list = 清空视图(query 没命中或被 clear)。
-    message_search_results = Signal(object)
     # 2026-10-01 v1.11.x 状态栏组件化:
     # - last_message_received:payload datetime | None(每次 message_received
     #   末尾 emit,状态栏 _LastMessageLabel 取最新时间)
@@ -163,68 +159,17 @@ class MessagesMixin(_Base):
     # ---- 2 public method ----
 
     def load_recent_messages(self) -> None:
-        """启动时拉最近 200 条已订阅频道消息 → emit message_received(填充 LIVE view)。"""
+        """启动时拉最近 100 条已订阅频道消息 → emit message_received(填充 LIVE view)。
+
+        2026-11-16 v2.0.2:LIVE 页收敛为只读监听状态看板 —— 展示"当前已监听频道
+        最近落地的 100 条消息"。`MessageReceived` 在 `storage.save_message()`
+        之后发布(`core/monitor/service.py`),故本方法拉到的都是已落地消息。
+        视图容量上限同步收敛为 `MessageListModel.MAX_ITEMS=100`。
+        """
 
         async def _go() -> None:
-            msgs = await self.app.messages.list_messages(limit=200)
+            msgs = await self.app.messages.list_messages(limit=100)
             for m in msgs:
                 self.message_received.emit(m)
 
         run_coro(self.loop, _go(), error_label="load_recent_messages")
-
-    def search_messages(
-        self,
-        text: str = "",
-        *,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
-        limit: int = 200,
-        channel_ids: list[int] | None = None,
-        scope: str = "subscribed",
-        favorite_only: bool = False,
-        tag_only: bool = False,
-        pinned_only: bool = False,
-    ) -> None:
-        """2026-09-02 v1.5.2 PR #B5 + 2026-09-03 v1.5.3 PR #D2 +
-        2026-09-14 v1.7.5 PR #8:VM 异步拉搜索结果 → emit `message_search_results`。
-
-        行为契约:
-        - `text=""` 且 `date_from/to` 全 None → 无意义查询,emit `[]`(清空视图)。
-          MainWindow 用此判定"清空搜索框 = 恢复 LIVE 流(空 search 视为清空)"。
-        - `channel_ids=None` + `scope="subscribed"`(默认)→ 走已订阅频道
-          (与 v1.5.2 行为一致)。
-        - `channel_ids=None` + `scope="all"`(PR #D2)→ 走
-          `include_unsubscribed=True`,跨频道聚合(含已退订但 storage 仍
-          有历史消息的频道)。
-        - `channel_ids=...` 显式传 → 忽略 scope(精细控制场景)。
-        - `limit` 默认 200(用户决定保留 v1.5.1 默认值,不 bump)。
-        - 2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
-          (SearchBar ★/🏷/📌 3 toggle),透传 `app.messages.list_messages` → 存储层
-          SQL 子句,AND 语义任一 True 必须命中。
-
-        走 `run_coro` 后台 fire;`message_search_results` emit 在 qasync 主
-        线程 loop,Qt signal 安全 → `live_view.set_messages(...)` 主线程 op。
-
-        UI 端双过滤(在 MainWindow._on_search_changed):text 一变即时
-        `live_view.set_filter(text)` 快过滤 LIVE 流;同时启 300ms debounce
-        调本方法 — search_messages 结果到时 `set_messages` 替换视图
-        (search 命中的命中子集)。两者不冲突:即时快过滤不重 IO,异步拉
-        替换视图是「权威」。
-        """
-
-        async def _go() -> None:
-            include_unsub = scope == "all" and channel_ids is None
-            msgs = await self.app.messages.list_messages(
-                channel_ids=channel_ids,
-                date_from=date_from,
-                date_to=date_to,
-                limit=limit,
-                search=text,
-                include_unsubscribed=include_unsub,
-                favorite_only=favorite_only,
-                tag_only=tag_only,
-                pinned_only=pinned_only,
-            )
-            self.message_search_results.emit(msgs)
-
-        run_coro(self.loop, _go(), error_label="search_messages")

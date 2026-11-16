@@ -35,11 +35,6 @@ from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.monitor.service import MonitorService
-
-# 2026-10-15 plan-batch7-C-α:LiveActionsController 在 ui/controllers/ 目录下,
-# 导入放最末(避免与 message_view 反向 import 链产生循环 — 实际上没有,
-# 但置末以示「Step C 新增」)
-from tgmonitor.ui.controllers.live_actions_controller import LiveActionsController
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
@@ -48,7 +43,6 @@ from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_view import MessageView
-from tgmonitor.ui.widgets.selection_toolbar import SelectionToolbar
 from tgmonitor.ui.widgets.status_bar import StatusBar
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
@@ -85,16 +79,11 @@ class MainWindowCtx:
     quit_app: Callable[[], None]
 
     # Widget refs(按需)
+    # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除 live_actions / selection_toolbar
+    # 字段(右键菜单 + 多选工具条整体删除)。
     live_view: MessageView
-    # 2026-10-15 plan-batch7-C-α:LiveActionsController(QObject)— 8 Signal
-    # (selection_count_changed / selection_messages_changed / export_requested
-    # / delete_requested / mark_read_requested / favorite_requested /
-    # tags_requested / notes_requested)+ 右键菜单 + 选区广播
-    # 从 MessageView 抽到独立 controller,公开 API 锁由 controller 持有。
-    live_actions: LiveActionsController
     message_detail: MessageDetail
     media_manager: MediaManagerWidget
-    selection_toolbar: SelectionToolbar
     dashboard: DashboardWidget
     channel_panel: ChannelWidget
     header: HeaderBar
@@ -104,5 +93,5 @@ class MainWindowCtx:
     tray: TrayIcon | None
 
     # QTimer(shared)
-    search_debounce: QTimer
+    # 2026-11-16 v2.0.2:search_debounce 随搜索功能移除。
     media_refresh_debounce: QTimer
