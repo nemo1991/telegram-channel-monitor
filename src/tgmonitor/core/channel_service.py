@@ -32,6 +32,7 @@ from tgmonitor.core.events import (
     ErrorOccurred,
     EventBus,
 )
+from tgmonitor.core.ops_gate import is_ready, require_ready
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient
 
@@ -60,7 +61,13 @@ class ChannelService:
     # ---------- 频道列表 ----------
 
     async def list_joined_channels(self) -> list[ChannelDTO]:
-        """已加入 Telegram 频道(best-effort UX,不走 storage)。"""
+        """已加入 Telegram 频道(best-effort UX,不走 storage)。
+
+        v2.0.3 D7:未 ready 时直接返 [],不发起 TG 请求(core 门控)。
+        """
+        if not is_ready(self._client):
+            log.info("list_joined_channels skipped: not ready (state=%s)", self._client.state)
+            return []
         return await self._client.list_joined_channels()
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
@@ -74,7 +81,10 @@ class ChannelService:
 
         先 upsert 完整信息(标题等),再设监听标志 —
         后者用 set_channel_subscribed 不会改其他字段。
+
+        v2.0.3 D7:core 门控 — 未 ready 直接拒绝,不产生任何写库副作用。
         """
+        require_ready(self._client, "开启监听")
         await self._storage.upsert_channel(channel)
         await self._storage.set_channel_subscribed(channel.id, True)
         await self._bus.publish(ChannelMonitored(channel=channel))
@@ -88,7 +98,10 @@ class ChannelService:
         storage 异常直接 raise(不静默吞)— 让 UI 的 `run_coro` 走统一
         异常路径显示 ErrorOccurred,而非「视觉取消成功、持久化仍 monitored」
         的假成功(SUBSCRIBED_DRIFT_ANALYSIS #A)。
+
+        v2.0.3 D7:core 门控 — 未 ready 直接拒绝,不产生任何写库副作用。
         """
+        require_ready(self._client, "取消监听")
         await self._storage.set_channel_subscribed(channel_id, False)
         await self._bus.publish(ChannelUnmonitored(channel_id=channel_id))
 
@@ -108,7 +121,7 @@ class ChannelService:
           - 拉取结果为空 → 整轮跳过(视为拉取无效/未登录),不做任何级联。
         只有 client ready **且**拉到非空列表才做全量校正。
         """
-        if self._client.state != "ready":
+        if not is_ready(self._client):
             log.info("refresh_joined_channels skipped: not ready (state=%s)", self._client.state)
             await self._bus.publish(
                 ErrorOccurred(

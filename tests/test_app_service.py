@@ -61,6 +61,8 @@ async def test_app_subscribe_unsubscribe(batch_app: AppService, collected: list)
     回归:v1.5.0 PR #A2 把 facade 拆 3 个子 service,本测试确保 subscribe /
     unsubscribe 没绕过 channels 直调。
     """
+    # v2.0.3 D7:域服务入口有 ready 门控,正常业务路径测试默认已登录。
+    batch_app.client.state = "ready"
     chan = ChannelDTO(id=42, title="test")
     await batch_app.channels.subscribe_channel(chan)
     # subscribe 路径:upsert_channel + set_channel_subscribed(True) 均被调
@@ -82,6 +84,7 @@ async def test_unsubscribe_storage_failure_raises_no_false_success(
 
     旧 facade 有 catch-all,UI 看到 success 但 storage 没改(SUBSCRIBED_DRIFT_ANALYSIS #A)。
     """
+    batch_app.client.state = "ready"  # v2.0.3 D7:过 ready 门控,测 storage 失败路径
     batch_app.channels._storage.set_channel_subscribed = AsyncMock(  # type: ignore[attr-defined]
         side_effect=RuntimeError("storage down")
     )
@@ -94,6 +97,7 @@ async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService,
 
     UI 弹错对话框依据事件订阅,若错误事件被发,UI 弹两次(异常一次 + 事件一次)。
     """
+    batch_app.client.state = "ready"  # v2.0.3 D7:过 ready 门控,测 storage 失败路径
     batch_app.channels._storage.set_channel_subscribed = AsyncMock(  # type: ignore[attr-defined]
         side_effect=RuntimeError("simulated")
     )

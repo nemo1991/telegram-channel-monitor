@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from tgmonitor.core.events import LoginStateChanged, NotificationRequested
+from tgmonitor.core.ops_gate import READY_STATE
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import LoginStateChanged, NotificationRequested
@@ -32,8 +33,18 @@ class AppStateController:
     def __init__(self, ctx) -> None:  # ctx: MainWindowCtx(避免循环 import)
         self._ctx = ctx
 
+    def _adapt_operations_gate(self, state: str) -> None:
+        """v2.0.3 D7:把 core 门控状态适配到 UI 操作入口(体验层)。
+
+        判定规则单点在 core(`ops_gate.READY_STATE` / `is_ready`);此处只做
+        "state → enabled" 的呈现映射,不重复实现门控逻辑。真正的安全边界是
+        core 域服务入口的 `require_ready` —— UI 禁用挡不住 CLI/编程式调用。
+        """
+        self._ctx.channel_panel.set_operations_enabled(state == READY_STATE)
+
     def on_login_state(self, state: str) -> None:
-        """VM `login_state` signal — 状态栏提示 + 活动指示器。"""
+        """VM `login_state` signal — 状态栏提示 + 活动指示器 + 操作门控适配。"""
+        self._adapt_operations_gate(state)
         # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
         self._ctx.status_bar.show_message(
             self._ctx.main_window.tr("登录状态: {state}").format(state=state), 4000
@@ -75,6 +86,7 @@ class AppStateController:
         """
         if not isinstance(e, LoginStateChanged):
             return
+        self._adapt_operations_gate(e.state)
         self._ctx.header.update_state(e.state, e.detail)
         self._ctx.main_window._refresh_state()
         # 活动指示器:与 `on_login_state` VM slot 同语义

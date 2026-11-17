@@ -293,3 +293,48 @@ class TestOnClearErrorLog:
         ctrl.on_clear_error_log()
 
         ctx.status_bar.clear_error_log.assert_called_once()
+
+
+class TestOperationGateAdaptation:
+    """v2.0.3 D7:两条登录态路径都把 core 门控状态适配到 UI 操作入口。
+
+    判定规则单点在 core(ops_gate.READY_STATE);controller 只做呈现映射。
+    真正的执行安全由 core 域服务入口门控保证 —— 这里只守 UI 适配不遗漏。
+    """
+
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            ("ready", True),
+            ("uninit", False),
+            ("phone_required", False),
+            ("code_required", False),
+            ("password_required", False),
+            ("error", False),
+            ("closed", False),
+        ],
+    )
+    def test_vm_login_state_adapts_gate(self, state: str, expected: bool) -> None:
+        ctx, _refs = _make_ctx()
+        ctrl = AppStateController(ctx)
+
+        ctrl.on_login_state(state)
+
+        ctx.channel_panel.set_operations_enabled.assert_called_once_with(expected)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            ("ready", True),
+            ("phone_required", False),
+            ("error", False),
+        ],
+    )
+    async def test_bus_login_state_adapts_gate(self, state: str, expected: bool) -> None:
+        ctx, _refs = _make_ctx()
+        ctrl = AppStateController(ctx)
+
+        await ctrl.on_bus_login(LoginStateChanged(state=state))
+
+        ctx.channel_panel.set_operations_enabled.assert_called_once_with(expected)

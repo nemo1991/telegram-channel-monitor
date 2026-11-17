@@ -47,6 +47,7 @@ from tgmonitor.core.events import (
     ChannelSyncDone,
     ChannelSyncProgress,
 )
+from tgmonitor.core.ops_gate import require_ready
 from tgmonitor.core.telegram.client import TelegramClient
 from tgmonitor.core.telegram.errors import TelegramRateLimitError
 
@@ -115,7 +116,11 @@ class ChannelSyncService:
           - 顶部发 `init`(载 total 频道数),让进度对话框先显示「准备同步 N 频道」
           - 每个频道 `_sync_one_channel` 顶部发 `channel_start`
           - 末尾每个频道发 `done`,detail 带「新增 N / 已存 M」
+
+        v2.0.3 D7:core 门控 — 未 ready 直接抛 `OperationNotReadyError`,
+        不发 init 进度事件、不发起任何 TG 请求。
         """
+        require_ready(self.client, "全量同步")
         self._cancel.clear()
         result = SyncResult(per_channel={})
         t0 = time.monotonic()
