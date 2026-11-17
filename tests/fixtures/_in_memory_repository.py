@@ -65,7 +65,9 @@ class InMemoryRepository(StorageRepository):
             kind=channel.kind,
             member_count=channel.member_count,
             created_at=channel.created_at,
-            is_subscribed=(existing.is_subscribed if existing else False),
+            # 两个标志保持旧值(首次插入用 caller 值)— 与 SQL 后端 upsert_channel_metadata 对齐
+            is_monitored=(existing.is_monitored if existing else channel.is_monitored),
+            is_tg_subscribed=(existing.is_tg_subscribed if existing else channel.is_tg_subscribed),
             last_synced_at=channel.last_synced_at,
             photo_local_key=(
                 channel.photo_local_key
@@ -111,7 +113,8 @@ class InMemoryRepository(StorageRepository):
             kind=existing.kind,
             member_count=(member_count if member_count is not None else existing.member_count),
             created_at=existing.created_at,
-            is_subscribed=existing.is_subscribed,
+            is_monitored=existing.is_monitored,
+            is_tg_subscribed=existing.is_tg_subscribed,
             last_synced_at=existing.last_synced_at,
             photo_local_key=(
                 photo_local_key if photo_local_key is not None else existing.photo_local_key
@@ -128,10 +131,11 @@ class InMemoryRepository(StorageRepository):
         )
 
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
+        """设**监听**标志(保留 TG 订阅标志)。"""
         existing = self.channels.get(channel_id)
         if existing is None:
             self.channels[channel_id] = ChannelDTO(
-                id=channel_id, title=f"#{channel_id}", is_subscribed=subscribed
+                id=channel_id, title=f"#{channel_id}", is_monitored=subscribed
             )
         else:
             self.channels[channel_id] = ChannelDTO(
@@ -141,21 +145,50 @@ class InMemoryRepository(StorageRepository):
                 kind=existing.kind,
                 member_count=existing.member_count,
                 created_at=existing.created_at,
-                is_subscribed=subscribed,
+                is_monitored=subscribed,
+                is_tg_subscribed=existing.is_tg_subscribed,
                 last_synced_at=existing.last_synced_at,
                 photo_local_key=existing.photo_local_key,
-                # 2026-09-04 v1.6.4:4 字段透传(原值不动,只切订阅)
+                # 2026-09-04 v1.6.4:4 字段透传(原值不动,只切监听)
                 is_verified=existing.is_verified,
                 is_scam=existing.is_scam,
                 is_fake=existing.is_fake,
                 has_protected_content=existing.has_protected_content,
             )
 
+    async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
+        """设 **TG 订阅**标志(保留监听标志)。v2.0.3 刷新落库校正用。"""
+        existing = self.channels.get(channel_id)
+        if existing is None:
+            self.channels[channel_id] = ChannelDTO(
+                id=channel_id, title=f"#{channel_id}", is_tg_subscribed=tg_subscribed
+            )
+        else:
+            self.channels[channel_id] = ChannelDTO(
+                id=existing.id,
+                title=existing.title,
+                username=existing.username,
+                kind=existing.kind,
+                member_count=existing.member_count,
+                created_at=existing.created_at,
+                is_monitored=existing.is_monitored,
+                is_tg_subscribed=tg_subscribed,
+                last_synced_at=existing.last_synced_at,
+                photo_local_key=existing.photo_local_key,
+                is_verified=existing.is_verified,
+                is_scam=existing.is_scam,
+                is_fake=existing.is_fake,
+                has_protected_content=existing.has_protected_content,
+            )
+
+    async def count_tg_subscribed(self) -> int:
+        return sum(1 for c in self.channels.values() if c.is_tg_subscribed)
+
     async def list_channels(self) -> list[ChannelDTO]:
         return list(self.channels.values())
 
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        return [c for c in self.channels.values() if c.is_subscribed]
+        return [c for c in self.channels.values() if c.is_monitored]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
         return self.channels.get(channel_id)

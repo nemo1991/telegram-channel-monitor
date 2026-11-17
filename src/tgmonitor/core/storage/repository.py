@@ -85,16 +85,17 @@ class ChannelStore(ABC):
 
     @abstractmethod
     async def upsert_channel(self, channel: ChannelDTO) -> None:
-        """全 upsert — 写所有字段(包括 subscribed)。
-        兼容旧调用方。**新代码用 upsert_channel_metadata + set_channel_subscribed**
-        以避免 sync 误改订阅标志。
+        """全 upsert — 写所有字段(含监听 + TG 订阅两个标志)。
+        兼容旧调用方。**新代码用 upsert_channel_metadata + 专门的 set_* 方法**
+        以避免 sync 误改订阅/监听标志。
         """
         ...
 
     @abstractmethod
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
         """只写元数据字段(title/username/kind/member_count/created_at/last_synced_at),
-        不碰 is_subscribed 标志。ChannelSyncService 用。
+        不碰 is_monitored / is_tg_subscribed 标志(首次插入用 caller 值)。
+        ChannelSyncService 用。
         """
         ...
 
@@ -131,7 +132,21 @@ class ChannelStore(ABC):
 
     @abstractmethod
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
-        """只设订阅标志,不动其它字段。"""
+        """只设**监听**标志(物理列 subscribed = 语义 monitored),不动其它字段。
+
+        命名历史遗留(subscribed),v2.0.3 语义已正名为 monitored;方法名保留以免
+        波及大量调用方。
+        """
+        ...
+
+    @abstractmethod
+    async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
+        """只设 **TG 订阅**标志,不动监听标志。v2.0.3 刷新落库校正用。"""
+        ...
+
+    @abstractmethod
+    async def count_tg_subscribed(self) -> int:
+        """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡)。"""
         ...
 
     @abstractmethod
@@ -141,7 +156,7 @@ class ChannelStore(ABC):
 
     @abstractmethod
     async def list_subscribed_channels(self) -> list[ChannelDTO]:
-        """只返回 is_subscribed=True 的频道。"""
+        """只返回监听标志为 True 的频道(方法名历史遗留,语义=monitored)。"""
         ...
 
     @abstractmethod

@@ -380,19 +380,19 @@ async def test_sync_continues_after_one_channel_fails(bus, client, storage, sett
 
 
 async def test_metadata_sync_does_not_change_subscribed(bus, client, storage, settings):
-    """ChannelDTO.from_settings sync 时传入 is_subscribed=False,
-    但 upsert_channel_metadata 必须保留旧 is_subscribed 不动。
+    """ChannelDTO.from_settings sync 时传入 is_monitored=False,
+    但 upsert_channel_metadata 必须保留旧 is_monitored 不动。
     """
     # 用户订阅了 100 频道
     await storage.set_channel_subscribed(100, True)
-    # 模拟 sync 拉到的 DTO(sync 路径不传 is_subscribed,默认 False)
+    # 模拟 sync 拉到的 DTO(sync 路径不传 is_monitored,默认 False)
     dto = ChannelDTO(id=100, title="Updated", kind="channel")
     # 直接调 storage 方法
     await storage.upsert_channel_metadata(dto)
     # 已订阅状态应保留 True
     ch = await storage.get_channel(100)
     assert ch is not None
-    assert ch.is_subscribed is True
+    assert ch.is_monitored is True
     assert ch.title == "Updated"
 
 

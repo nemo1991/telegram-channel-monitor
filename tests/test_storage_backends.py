@@ -492,7 +492,7 @@ async def test_list_messages_offset_zero_unchanged(seeded_repo):
 # ---------------------------------------------------------------------------
 # 2026-08-27 v1.4.0 PR #14:`update_channel_metadata` 部分更新 parity。
 # - 只动非 None 字段,其余保留
-# - is_subscribed 不动(本方法是「真元数据」更新)
+# - is_monitored 不动(本方法是「真元数据」更新)
 # - 不存在 channel idempotent 不抛
 # ---------------------------------------------------------------------------
 
@@ -754,7 +754,7 @@ async def test_in_mem_update_channel_metadata_partial(in_mem_repo):
 
 
 async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
-    """PR #14:InMemory 部分更新不动 is_subscribed —— 订阅标志由
+    """PR #14:InMemory 部分更新不动 is_monitored —— 订阅标志由
     set_channel_subscribed 单独维护。"""
     in_mem_repo.channels[100] = ChannelDTO(
         id=100,
@@ -763,7 +763,7 @@ async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
         member_count=10,
     )
     await in_mem_repo.set_channel_subscribed(100, True)
-    # 即使 title/username 都重写,is_subscribed 不该变
+    # 即使 title/username 都重写,is_monitored 不该变
     await in_mem_repo.update_channel_metadata(
         100,
         title="New",
@@ -772,7 +772,7 @@ async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
     )
     got = await in_mem_repo.get_channel(100)
     assert got is not None
-    assert got.is_subscribed is True
+    assert got.is_monitored is True
     assert got.title == "New"
     assert got.username == "new"
     assert got.member_count == 999

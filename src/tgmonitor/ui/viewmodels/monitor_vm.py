@@ -53,7 +53,7 @@ class MonitorViewModel(
     # 和 `AppService`。
     #
     # `known_channels` 是 UI 缓存(VM 唯一例外,ChannelsMixin 持有):订阅后
-    # 收到 `ChannelSubscribed` 就更新,VM 用它在下栏显示频道名 — 不重新查
+    # 收到 `ChannelMonitored` 就更新,VM 用它在下栏显示频道名 — 不重新查
     # storage。
     #
     # 直接 emit MessageDTO 本身(不是 asdict)。
@@ -91,7 +91,7 @@ class MonitorViewModel(
     #
     # 3 状态字段:
     # - `known_channels: dict[int, ChannelDTO]` — ChannelsMixin 类体声明,
-    #   ChannelSubscribed / ChannelUnsubscribed handler 维护
+    #   ChannelMonitored / ChannelUnmonitored handler 维护
     # - `_export_task: asyncio.Future[None] | None` — ExportMixin 类体声明,
     #   start_export 写入 / _on_export_done 清空
     # - `_message_count: int` — MessagesMixin 类体声明, _on_message_received

@@ -16,10 +16,13 @@ from typing import Any
 
 @dataclass
 class ChannelDTO:
-    """一个 Telegram 频道/群组的元数据 + 元数据同步时间 + 订阅标志。
+    """一个 Telegram 频道/群组的元数据 + 元数据同步时间 + 两个独立标志。
 
-    - `is_subscribed`: 用户是否把它加进了监听白名单(跟"已被全量 sync 发现"
-      是两件事 — sync 可能发现很多频道,用户只挑其中几个订阅)。
+    - `is_monitored`: 本应用是否**监听**该频道(监听白名单成员;与原 subscribed 列
+      语义一致,2026-11-17 v2.0.3 正名)。跟"已被全量 sync 发现"是两件事。
+    - `is_tg_subscribed`: 该频道在 **TG 侧是否仍订阅/加入**(2026-11-17 v2.0.3 新增,
+      刷新 `list_joined_channels` 时落库)。与监听是两个独立概念:本应用取消监听不
+      影响 TG 订阅;TG 退订则级联停止监听。
     - `last_synced_at`: 元数据最近一次被 sync 刷新的时间;消息同步时间走
       `MessageDTO.date`,不要混。
     """
@@ -30,7 +33,10 @@ class ChannelDTO:
     kind: str = "channel"  # channel | supergroup | basic_group
     member_count: int | None = None
     created_at: datetime | None = None
-    is_subscribed: bool = False
+    is_monitored: bool = False
+    # 2026-11-17 v2.0.3:TG 侧订阅状态(与 is_monitored 独立)。默认 False —
+    # 存量库迁移不回填,靠首次刷新 list_joined_channels 全量校正。
+    is_tg_subscribed: bool = False
     last_synced_at: datetime | None = None
     # 2026-09-03 v1.6.0 PR #Q2:频道头像推送带 Telegram 本地头像文件路径;
     # None = 头像被删 / 从未设。UI `ChannelListCard` 据此决定是否走 placeholder。

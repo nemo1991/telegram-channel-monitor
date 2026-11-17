@@ -152,8 +152,16 @@ class PostgresRepository(StorageRepository):
         )
 
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
-        """thin delegate → `_channels_pg`."""
+        """thin delegate → `_channels_pg`. 设的是**监听**标志。"""
         return await _channels.set_channel_subscribed(self, channel_id, subscribed)
+
+    async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
+        """thin delegate → `_channels_pg`. v2.0.3 设 TG 订阅标志。"""
+        return await _channels.set_channel_tg_subscribed(self, channel_id, tg_subscribed)
+
+    async def count_tg_subscribed(self) -> int:
+        """thin delegate → `_channels_pg`. v2.0.3 大盘已加入频道计数。"""
+        return await _channels.count_tg_subscribed(self)
 
     async def list_channels(self) -> list[ChannelDTO]:
         """thin delegate → `_channels_pg`."""

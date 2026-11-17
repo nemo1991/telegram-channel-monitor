@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS channels (
     member_count    INTEGER,
     created_at      TEXT,
     first_seen_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    subscribed      INTEGER NOT NULL DEFAULT 0,
+    subscribed      INTEGER NOT NULL DEFAULT 0,   -- 语义=是否监听(白名单);v2.0.3 正名为 monitored
+    tg_subscribed   INTEGER NOT NULL DEFAULT 0,   -- v2.0.3:TG 侧是否仍订阅/加入(与监听独立)
     last_synced_at  TEXT,
     photo_local_key TEXT,
     is_verified     INTEGER NOT NULL DEFAULT 0,
@@ -170,6 +171,7 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "created_at": "TEXT",
         "first_seen_at": "TEXT",
         "subscribed": "INTEGER",
+        "tg_subscribed": "INTEGER",
         "last_synced_at": "TEXT",
         "photo_local_key": "TEXT",
         "is_verified": "INTEGER",
@@ -299,7 +301,10 @@ def _row_to_channel(row: dict[str, Any]) -> ChannelDTO:
         kind=row["kind"],
         member_count=row["member_count"],
         created_at=_dt_from_db(row["created_at"]),
-        is_subscribed=bool(row.get("subscribed", True)),
+        # 物理列 subscribed 承载"监听"语义(历史命名,值等价迁入 monitored)。
+        is_monitored=bool(row.get("subscribed", True)),
+        # v2.0.3:TG 订阅状态;旧库无此列时默认 False(不回填,靠刷新校正)。
+        is_tg_subscribed=bool(row.get("tg_subscribed", False)),
         last_synced_at=_dt_from_db(row.get("last_synced_at")),
         photo_local_key=row.get("photo_local_key"),
         is_verified=bool(row.get("is_verified", False)),
@@ -542,9 +547,9 @@ class SqliteRepository(StorageRepository):
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at, photo_local_key,
+                     subscribed, tg_subscribed, last_synced_at, photo_local_key,
                      is_verified, is_scam, is_fake, has_protected_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     title = excluded.title,
                     username = excluded.username,
@@ -552,6 +557,7 @@ class SqliteRepository(StorageRepository):
                     member_count = excluded.member_count,
                     created_at = excluded.created_at,
                     subscribed = excluded.subscribed,
+                    tg_subscribed = excluded.tg_subscribed,
                     last_synced_at = excluded.last_synced_at,
                     photo_local_key = excluded.photo_local_key,
                     is_verified = excluded.is_verified,
@@ -566,7 +572,8 @@ class SqliteRepository(StorageRepository):
                     channel.kind,
                     channel.member_count,
                     _dt_to_db(channel.created_at),
-                    channel.is_subscribed,
+                    channel.is_monitored,
+                    channel.is_tg_subscribed,
                     _dt_to_db(channel.last_synced_at),
                     channel.photo_local_key,
                     channel.is_verified,
@@ -577,16 +584,20 @@ class SqliteRepository(StorageRepository):
             )
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
-        """只更元数据;subscribed 保持旧值(首次插入用 caller 值)。"""
+        """只更元数据;两个订阅/监听标志保持旧值(首次插入用 caller 值)。
+
+        v2.0.3:新增 tg_subscribed 列只在首次插入写 caller 值,已存在行不动 —
+        刷新落库校正 tg_subscribed 走专门的 `set_channel_tg_subscribed`。
+        """
         assert self._db is not None
         async with self._lock:
             await self._db.execute(
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, last_synced_at, photo_local_key,
+                     subscribed, tg_subscribed, last_synced_at, photo_local_key,
                      is_verified, is_scam, is_fake, has_protected_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     title = excluded.title,
                     username = excluded.username,
@@ -607,7 +618,8 @@ class SqliteRepository(StorageRepository):
                     channel.kind,
                     channel.member_count,
                     _dt_to_db(channel.created_at),
-                    channel.is_subscribed,
+                    channel.is_monitored,
+                    channel.is_tg_subscribed,
                     _dt_to_db(channel.last_synced_at),
                     channel.photo_local_key,
                     channel.is_verified,
@@ -660,7 +672,7 @@ class SqliteRepository(StorageRepository):
             )
 
     async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
-        """只设订阅标志;频道未建档时用 id 做 stub。"""
+        """只设**监听**标志(物理列 subscribed = 语义 monitored);频道未建档时用 id 做 stub。"""
         assert self._db is not None
         async with self._lock:
             await self._db.execute(
@@ -671,6 +683,30 @@ class SqliteRepository(StorageRepository):
                 """,
                 (channel_id, f"#{channel_id}", subscribed),
             )
+
+    async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
+        """只设 **TG 订阅**标志(tg_subscribed 列),不动监听标志。
+
+        v2.0.3:刷新落库校正 TG 订阅状态用;频道未建档时用 id 做 stub。
+        """
+        assert self._db is not None
+        async with self._lock:
+            await self._db.execute(
+                """
+                INSERT INTO channels (id, title, tg_subscribed)
+                VALUES (?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET tg_subscribed = excluded.tg_subscribed
+                """,
+                (channel_id, f"#{channel_id}", tg_subscribed),
+            )
+
+    async def count_tg_subscribed(self) -> int:
+        """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡,与"已监听"独立)。"""
+        assert self._db is not None
+        async with self._lock:
+            cur = await self._db.execute("SELECT COUNT(*) FROM channels WHERE tg_subscribed = 1")
+            row = await cur.fetchone()
+        return int(row[0]) if row else 0
 
     async def list_channels(self) -> list[ChannelDTO]:
         assert self._db is not None
