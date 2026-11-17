@@ -42,6 +42,7 @@ from tgmonitor.core.events import (
     ChannelUnmonitored,
     ErrorOccurred,
     ExportDone,
+    JoinedChannelsRefreshed,
     LoginStateChanged,
     MediaReconcileFinished,
     SettingsChanged,
@@ -324,6 +325,20 @@ class DashboardWidget(QWidget):
         bus.subscribe(BatchDone, self._on_bus_event)
         bus.subscribe(ChannelSyncDone, self._on_bus_event)
         bus.subscribe(MediaReconcileFinished, self._on_bus_event)
+        # 2026-11-17 v2.0.5:频道页"刷新已加入频道"成功写库后 → 重读计数卡片。
+        # 该数字取自 storage.count_tg_subscribed(),与 VM 的 channels_changed
+        # ("监听白名单"语义)不是一回事,刷新走的是 core 写库路径,不会触发
+        # MainWindow._refresh_state,所以需要本事件单独驱动大盘重读。
+        bus.subscribe(JoinedChannelsRefreshed, self._on_joined_refreshed)
+
+    async def _on_joined_refreshed(self, e: JoinedChannelsRefreshed) -> None:
+        """刷新已加入频道成功 → 重读库计数 + 频道统计表。
+
+        显示以**读库为准**(不用 e.count),因为库是 tg_subscribed 的真理,
+        且级联退订会在同一轮写库;读一次即可覆盖计数与每频道统计两处。
+        """
+        self._refresh_joined_count()
+        self._refresh_per_channel_stats()
 
     async def _on_bus_event(self, e) -> None:
         """事件 → 追加到活动时间线。

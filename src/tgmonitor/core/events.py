@@ -387,6 +387,23 @@ class ChannelSyncProgress(Event):
 
 
 @dataclass
+class JoinedChannelsRefreshed(Event):
+    """2026-11-17 v2.0.5:"从 Telegram 拉取已加入频道"成功写库后发出。
+
+    用途:通知只读看板(大盘"已加入频道"计数 / 频道统计表)重读库 —— 该数字
+    取自 storage 的 `tg_subscribed` 计数,而刷新动作在 core 层改库,UI 侧
+    `ChannelWidget._on_refresh` 只 emit 自己的 `joined_loaded` 刷上栏列表,
+    没有触发 `MainWindow._refresh_state`,导致大盘计数 stale。
+
+    **只在成功校正路径发**:未 ready / 空返回两条保护路径已提前 return,
+    不写库也不发本事件(与 `refresh_joined_channels` 的 RK-09 保护一致)。
+    `count` 带写库后的频道数,best-effort 给订阅方直接用(大盘仍以读库为准)。
+    """
+
+    count: int = 0
+
+
+@dataclass
 class ChannelSyncDone(Event):
     """全量同步整轮结束 — UI 进度对话框据此自动关闭。"""
 
