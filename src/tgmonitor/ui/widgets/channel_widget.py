@@ -438,6 +438,23 @@ class ChannelWidget(QWidget):
         self.joined_card.apply_filter(text, self._joined)
         self.subs_card.apply_filter(text, self._joined)
 
+    def set_operations_enabled(self, enabled: bool) -> None:
+        """v2.0.3 D7:按 core 门控状态适配依赖 TG 的操作入口(体验层)。
+
+        **只做呈现,不重复判定规则** —— 判定在 core `ops_gate.is_ready`,
+        本方法由 `AppStateController` 收到 `LoginStateChanged` 后调用。
+        真正的执行安全由 core 域服务入口门控保证(UI 禁用只是体验,不是安全边界):
+        双击订阅/退订仍可被编程式调用,core 门控会一致拒绝。
+        """
+        tip = "" if enabled else "需先登录 Telegram 才能刷新/同步频道"
+        self.btn_refresh.setEnabled(enabled)
+        self.btn_refresh.setToolTip(tip)
+        self.btn_sync.setEnabled(enabled)
+        self.btn_sync.setToolTip(tip)
+        # 列表交互:未登录时禁双击(订阅/退订),core 门控同时兜底
+        self.joined_card.lst.setEnabled(enabled)
+        self.subs_card.lst.setEnabled(enabled)
+
     # ---- 数据装载 ----
 
     def set_joined(self, channels: list[ChannelDTO]) -> None:

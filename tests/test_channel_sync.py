@@ -31,6 +31,8 @@ from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 async def _make_app(
     bus: EventBus, fake: FakeTelegramClient, storage: InMemoryRepository
 ) -> ChannelSyncService:
+    # v2.0.3 D7:sync 入口有 ready 门控,正常路径测试默认已登录。
+    fake._state = "ready"
     return ChannelSyncService(bus, fake, storage)
 
 

@@ -35,7 +35,10 @@ def fake_storage() -> AsyncMock:
 
 @pytest.fixture
 def fake_client() -> AsyncMock:
-    return AsyncMock(spec=TelegramClient)
+    client = AsyncMock(spec=TelegramClient)
+    # v2.0.3 D7:域服务入口有 ready 门控,正常路径测试默认已登录。
+    client.state = "ready"
+    return client
 
 
 @pytest.fixture
