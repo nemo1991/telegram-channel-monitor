@@ -1,21 +1,18 @@
 # mypy: disable-error-code="attr-defined"
-"""DashboardWidget — 大盘页:统计卡片 + 快速操作 + 活动时间线。
+"""DashboardWidget — 大盘页:只读统计卡 + 事件时间线 + 频道统计表。
 
-Phase 1 版本:
-- 统计卡片:已加入频道数 / 已监听数 / 登录状态 / 消息存储后端
-- 快速操作:刷新频道 / 导出 / 全量同步
-- 最近活动时间线(滚动日志,EventBus 驱动)
-
-后续 Phase 可扩展:
-- 消息量趋势图(按天/频道)
-- 存储水位(DB + ObjectStore 用量)
-- 速率限制 / 错误统计
-- 同步进度概览
+2026-11-17 v2.0.3 D4/D6:
+- 快速操作行(刷新 / 导出 / 全量同步)整体移除,大盘回归纯只读看板。
+  刷新与全量同步在频道页,消息导出 UI 入口按用户确认移除(core 保留)。
+- 「最近活动」不再逐条显示 `MessageReceived` 消息文本,其余 6 类事件保留。
+- 「已加入频道」取库中 `tg_subscribed=1` 计数,与「已监听」互不等价。
+- 「频道统计」显示真实 title / 中文 kind,缺数据留空,不再恒显 `#id / —`。
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -28,7 +25,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -42,7 +38,6 @@ from tgmonitor.core.events import (
     ErrorOccurred,
     ExportDone,
     LoginStateChanged,
-    MessageReceived,
     SettingsChanged,
 )
 from tgmonitor.ui.async_bridge import run_coro
@@ -51,12 +46,20 @@ from tgmonitor.ui.state_labels import state_badge, state_hint
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.dto import ChannelDTO
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.monitor.service import MonitorService
 
 import asyncio
 
 log = logging.getLogger(__name__)
+
+# 2026-11-17 v2.0.3 D6:频道 kind → 中文类型。未知 / 空值留空(不写恒定的「—」)。
+_KIND_LABELS: dict[str, str] = {
+    "channel": "频道",
+    "supergroup": "群组",
+    "basic_group": "群组",
+}
 
 
 class _StatCard(QFrame):
@@ -140,16 +143,20 @@ class DashboardWidget(QWidget):
         app: AppService,
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop | None = None,
+        channels_provider: Callable[[], Mapping[int, ChannelDTO]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """建 4 张统计卡 + 快速操作 + 时间线 + 频道表 + 接 EventBus + 起 30s 定时心跳。
+        """建 5 张统计卡 + 时间线 + 频道表 + 接 EventBus + 起 30s 定时心跳。
 
-        `loop=None` 用于无 loop 的测试环境,会跳过 per-channel 统计拉取。
+        `loop=None` 用于无 loop 的测试环境,会跳过异步取数。
+        `channels_provider` 由 MainWindow 注入 VM 的 known_channels,供频道
+        统计表显示真实 title / kind;未提供时退化为 `#id` + 空类型。
         """
         super().__init__(parent)
         self._app = app
         self._monitor = monitor
         self._loop = loop
+        self._channels_provider = channels_provider
         self._build()
         self._wire_bus()
 
@@ -159,14 +166,8 @@ class DashboardWidget(QWidget):
         self._refresh_timer.timeout.connect(self._tick_timeline)
         self._refresh_timer.start()
 
-        # 快速操作 callbacks — 由 MainWindow 注入(避免循环 import)
-        self.on_refresh: Callable[[], None] | None = None
-        self.on_export: Callable[[], None] | None = None
-        self.on_sync_all: Callable[[], None] | None = None
-
     _EVENT_ICONS = {
         LoginStateChanged: "nav_live",
-        MessageReceived: "nav_live",
         ChannelMonitored: "kind_channel",
         ChannelUnmonitored: "kind_group",
         ExportDone: "export",
@@ -207,27 +208,9 @@ class DashboardWidget(QWidget):
 
         root.addLayout(cards)
 
-        # --- 快速操作行 ---
-        actions = QHBoxLayout()
-        actions.setSpacing(12)
-
-        self.btn_refresh = QPushButton(action_icon("refresh"), " 刷新频道")
-        self.btn_refresh.setObjectName("actionBtn")
-        self.btn_refresh.clicked.connect(lambda: self.on_refresh is not None and self.on_refresh())
-        actions.addWidget(self.btn_refresh)
-
-        self.btn_export = QPushButton(action_icon("export"), " 导出…")
-        self.btn_export.setObjectName("actionBtn")
-        self.btn_export.clicked.connect(lambda: self.on_export is not None and self.on_export())
-        actions.addWidget(self.btn_export)
-
-        self.btn_sync = QPushButton(action_icon("nav_channels"), " 全量同步")
-        self.btn_sync.setObjectName("actionBtn")
-        self.btn_sync.clicked.connect(lambda: self.on_sync_all is not None and self.on_sync_all())
-        actions.addWidget(self.btn_sync)
-
-        actions.addStretch()
-        root.addLayout(actions)
+        # 2026-11-17 v2.0.3 D4:快速操作行(刷新 / 导出 / 全量同步)整体移除。
+        # 大盘回归只读监控看板;等价入口见频道页,消息导出 UI 入口按用户
+        # 确认移除(core ExportService / ExportController 保留)。
 
         # --- 活动时间线 ---
         tl_group = QGroupBox("最近活动")
@@ -270,7 +253,8 @@ class DashboardWidget(QWidget):
     def _wire_bus(self) -> None:
         bus: EventBus = self._app.bus
         bus.subscribe(LoginStateChanged, self._on_bus_event)
-        bus.subscribe(MessageReceived, self._on_bus_event)
+        # 2026-11-17 v2.0.3 D4:不再订阅 MessageReceived —— 最近活动是事件
+        # 时间线,不是最近消息列表。其余 6 类事件保留。
         bus.subscribe(ChannelMonitored, self._on_bus_event)
         bus.subscribe(ChannelUnmonitored, self._on_bus_event)
         bus.subscribe(ExportDone, self._on_bus_event)
@@ -306,19 +290,12 @@ class DashboardWidget(QWidget):
         )
         return "nav_live", msg
 
-    def _format_message_received(self, e: MessageReceived) -> tuple[str, str]:
-        if e.message is None:
-            return "refresh", ""
-        title = e.message.author or f"#{e.message.channel_id}"
-        snippet = (e.message.text or "")[:60]
-        return "nav_live", f"[{title}] {snippet}"
-
     def _format_channel_subscribed(self, e: ChannelMonitored) -> tuple[str, str]:
         title = e.channel.title if e.channel else f"#{id(e)}"
-        return "kind_channel", f"已订阅频道: {title}"
+        return "kind_channel", f"已监听频道: {title}"
 
     def _format_channel_unsubscribed(self, e: ChannelUnmonitored) -> tuple[str, str]:
-        return "kind_group", f"已退订频道: #{e.channel_id}"
+        return "kind_group", f"已取消监听: #{e.channel_id}"
 
     def _format_export_done(self, e: ExportDone) -> tuple[str, str]:
         if e.error:
@@ -341,7 +318,6 @@ class DashboardWidget(QWidget):
         """
         self._bus_event_formatters: dict[type, Callable[[Any], tuple[str, str]]] = {
             LoginStateChanged: self._format_login_state_changed,
-            MessageReceived: self._format_message_received,
             ChannelMonitored: self._format_channel_subscribed,
             ChannelUnmonitored: self._format_channel_unsubscribed,
             ExportDone: self._format_export_done,
@@ -371,9 +347,13 @@ class DashboardWidget(QWidget):
 
     # ---------- 外部刷新入口 ----------
 
-    def update_stats(self, joined_count: int, subscribed_count: int) -> None:
-        """由 MainWindow._refresh_state 调,刷新统计卡片。"""
-        self.card_channels.set_value(str(joined_count), "频道/群组")
+    def update_stats(self, subscribed_count: int) -> None:
+        """由 MainWindow._refresh_state 调,刷新统计卡片。
+
+        2026-11-17 v2.0.3 D5/FR-06:「已加入频道」不再拿 VM 的
+        `known_channels`(=已监听)凑数,改为异步读库里 `tg_subscribed=1`
+        计数;存量库迁移不回填,首次刷新前显示 0 属预期。
+        """
         self.card_subscribed.set_value(str(subscribed_count), "正在监听")
 
         # 登录状态 — 走 state_labels 单源映射
@@ -391,43 +371,73 @@ class DashboardWidget(QWidget):
         os_label = settings.objectstore_backend.value if settings.objectstore_backend else "?"
         self.card_storage.set_value(f"DB:{db_label}", f"对象:{os_label}")
 
-        # 异步拉取每频道消息数 + 填表
-        self._refresh_per_channel_stats(subscribed_count)
+        # 异步取数:TG 订阅频道数 + 每频道消息数统计表
+        self._refresh_joined_count()
+        self._refresh_per_channel_stats()
 
-    def _refresh_per_channel_stats(self, total_subscribed: int) -> None:
-        """后台 fetch 每频道消息数 → 填表格。
+    async def _fetch_joined_count(self) -> int:
+        """库内 TG 订阅频道数;best-effort,取数失败按 0 处理。"""
+        try:
+            return await self._app.storage.count_tg_subscribed()
+        except Exception:  # noqa: BLE001
+            log.warning("count_tg_subscribed failed", exc_info=True)
+            return 0
+
+    def _refresh_joined_count(self) -> None:
+        if self._loop is None:
+            return  # 测试环境无 loop
+        run_coro(
+            self._loop,
+            self._fetch_joined_count(),
+            on_success=lambda n: self.card_channels.set_value(str(n), "TG 订阅频道"),
+            error_label="dashboard_joined_count",
+        )
+
+    def _refresh_per_channel_stats(self) -> None:
+        """后台拉每频道消息数 → 填表格。
 
         2026-08-27 v1.4.0 PR #15:N+1 → 单 `aggregate_per_channel` 调用
         替代原来对每个订阅频道串行调 `count_messages`。
-
-        `subscribed_count` 是本参数,实际从 monitor.subscribed_ids 拿列表。
         """
-        subscribed_ids = list(self._monitor.subscribed_ids)
-        if not subscribed_ids:
+        if not self._monitor.subscribed_ids:
             self.stats_table.setRowCount(0)
-            self.card_total_messages.set_value("0", "无已订阅频道")
+            self.card_total_messages.set_value("0", "无已监听频道")
             return
-
         if self._loop is None:
             return  # 测试环境无 loop
 
-        async def _go() -> None:
-            storage = self._app.storage
-            try:
-                bucket = await storage.aggregate_per_channel(subscribed_ids)
-            except Exception:  # noqa: BLE001
-                bucket = {}
-            rows: list[tuple[str, str, int]] = []
-            total = 0
-            for cid in subscribed_ids:
-                stats = bucket.get(cid)
-                # 缺省 → ChannelStats() 全 0
-                count = stats.messages if stats else 0
-                total += count
-                rows.append((f"#{cid}", "—", count))
-            self._apply_stats_table(rows, total)
+        run_coro(
+            self._loop,
+            self._fetch_channel_rows(),
+            on_success=lambda result: self._apply_stats_table(*result),
+            error_label="dashboard_refresh_stats",
+        )
 
-        run_coro(self._loop, _go(), error_label="dashboard_refresh_stats")
+    async def _fetch_channel_rows(self) -> tuple[list[tuple[str, str, int]], int]:
+        """单次聚合 + 从 VM 元数据映射取真实 title / kind。"""
+        subscribed_ids = list(self._monitor.subscribed_ids)
+        if not subscribed_ids:
+            return [], 0
+        try:
+            bucket = await self._app.storage.aggregate_per_channel(subscribed_ids)
+        except Exception:  # noqa: BLE001
+            log.warning("aggregate_per_channel failed", exc_info=True)
+            bucket = {}
+
+        provider = self._channels_provider
+        channels: Mapping[int, ChannelDTO] = provider() if provider else {}
+        rows: list[tuple[str, str, int]] = []
+        total = 0
+        for cid in subscribed_ids:
+            stats = bucket.get(cid)
+            # 缺省 → ChannelStats() 全 0
+            count = stats.messages if stats else 0
+            total += count
+            ch = channels.get(cid)
+            title = ch.title if ch is not None and ch.title else f"#{cid}"
+            kind = _KIND_LABELS.get(ch.kind, "") if ch is not None else ""
+            rows.append((title, kind, count))
+        return rows, total
 
     def _apply_stats_table(
         self,

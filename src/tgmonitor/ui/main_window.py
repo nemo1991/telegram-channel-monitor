@@ -52,11 +52,9 @@ from tgmonitor.core.events import (
     LoginStateChanged,
     NotificationRequested,
 )
-from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.controllers import (
     AppStateController,
     ExportController,
-    HeaderActionController,
     LifecycleController,
     MainWindowCtx,
     MediaActionsController,
@@ -235,9 +233,11 @@ class MainWindow(QMainWindow):
             stack=self.stack,
             tray=self._tray,
             media_refresh_debounce=self._media_refresh_debounce,
+            settings_page=self.settings_page,
         )
         self._tray_ctrl = TrayController(self._ctx)
-        self._header_action_ctrl = HeaderActionController(self._ctx)
+        # 2026-11-17 v2.0.3 D3:登录/登出入口迁到 SettingsPage 自管,
+        # HeaderActionController 随纯标题栏一起移除。
         self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
         self._export_ctrl = ExportController(self._ctx)
         self._sync_ctrl = SyncController(self._ctx)
@@ -526,16 +526,9 @@ class MainWindow(QMainWindow):
         """大盘快速操作:全量同步所有已订阅频道 — 委托 `SyncController`(v1.12.x)。"""
         self._sync_ctrl.on_sync_all_channels()
 
-    def _on_logout_clicked(self) -> None:
-        run_coro(self.loop, self.app.auth.logout(), error_label="logout")
-
     def _on_detail_copy_text(self, text: str) -> None:
         """详情「复制文本」toast — clipboard 写入已在 MessageDetail 内完成。"""
         self.status_bar.show_message(self.tr("已复制"), 2000)
-
-    def _on_header_action(self) -> None:
-        """头栏「登录」按钮 — 弹 LoginDialog。委托 `HeaderActionController`(v1.12.x)。"""
-        self._header_action_ctrl.on_header_action()
 
     # ======================== EventBus 回调 ========================
 
@@ -637,8 +630,9 @@ class MainWindow(QMainWindow):
             self.live_view.set_empty_state("live_empty")
         self._vm.load_recent_messages()
 
-        # 更新 dashboard 统计
-        self.dashboard.update_stats(len(all_known), len(subscribed))
+        # 更新 dashboard 统计 — 「已加入频道」由 dashboard 异步读库
+        # 的 tg_subscribed 计数,不再拿 known_channels(=已监听)凑数。
+        self.dashboard.update_stats(len(subscribed))
 
 
 # ======================== 紧凑头栏 ========================

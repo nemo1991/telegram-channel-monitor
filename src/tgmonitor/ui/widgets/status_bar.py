@@ -1,33 +1,30 @@
-"""自定义 StatusBar + 9 个子组件 — 替代 Qt QStatusBar。
+"""自定义 StatusBar + 7 个子组件 — 替代 Qt QStatusBar。
 
 2026-10-01 v1.11.x 状态栏组件化重构:
+  之前 `MainWindow._build_ui` 把 7 个 widget 全堆在一处 inline 组装,
+  加上 6 个 slot 直接 mutate widget 实例,职责全压在 MainWindow 一个
+  2500+ 行的文件里。抽出自定义 `StatusBar`(QWidget + QHBoxLayout),
+  子组件独立可测,MainWindow 只留 thin slot。
 
-背景:之前 `MainWindow._build_ui` 把 7 个 widget 全堆在一处 inline 组装,
-加上 6 个 slot 直接 mutate widget 实例,职责全压在 MainWindow 一个
-2500+ 行的文件里。同时 dashboard 上的 4 类实时信息(存储后端 / 监听
-频道数 / 最近消息时间 / 当前选中频道)只在 dashboard 页面可见,切
-到其他页面就看不到,违反「主窗口顶部/底部永远可见」的 UI 原则。
+2026-11-17 v2.0.3 D1/D2 精简重排:
+  - 剔除低价值项:`_BackendLabel`(DB:OS 开发态信息)与 `_LastMessageLabel`
+    (最后消息时间与大盘消息总数重复)。
+  - 登录态从右上 HeaderBar 迁入底部,与网络态**合并为单一状态位**
+    `_UnifiedStateLabel`:未 ready 时显示 12 态登录态,ready 时显示
+    5 态连接态;不再有两个都叫「状态」、口径还不同的标签。
 
-新设计:
-- 自定义 `StatusBar`(QWidget + QHBoxLayout)整体替代 QStatusBar,不再用
-  `addWidget` / `addPermanentWidget` / 原生 `showMessage` 协议。
-- 9 个子组件,LEFT(5)+ RIGHT(4)固定布局,各自独立可测。
-- 自实现 transient 消息(QTimer + QLabel),保留 showMessage 短促提示语义。
-- 子组件状态完全自有;MainWindow 只剩 ~15 行组装 + 11 个 thin slot。
-
-LEFT 区(stretch 比例:SelectedChannel=0 / Stats=0 / Backend=0 /
-LastMessage=0 / Activity=1):
+LEFT 区(stretch:SelectedChannel=0 / Stats=0 / Activity=1):
     _SelectedChannelLabel  当前选中频道,空时显示灰色提示
     _StatsLabel            「监听:N 消息:M」
-    _BackendLabel          「DB:{db} OS:{os}」
-    _LastMessageLabel      「最后:HH:MM」
-    _ActivityLabel         现有 activity + throttle 逻辑(从 MainWindow 搬来)
+    _ActivityLabel         现有 activity + throttle 逻辑
 
 RIGHT 区(stretch=0):
     _ObjectsWarnLabel      ⚠ 对象存储不可用(可空)
-    _ConnectionLabel       TG 连接状态
+    _UnifiedStateLabel     唯一状态位(登录态 / 连接态)
     _PausedLabel           ⏸ 暂停监听
     _ErrorBellButton       🔔 N 错误铃铛(内部 EventBus 订阅 + ring buffer)
+
+自实现 transient 消息(QTimer + QLabel),保留 showMessage 短促提示语义。
 """
 
 from __future__ import annotations
@@ -41,6 +38,7 @@ from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from tgmonitor.core.events import AuthErrorOccurred
+from tgmonitor.ui.state_labels import state_dot, state_hint, state_label
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -126,57 +124,6 @@ class _StatsLabel(QLabel):
         self.setText(text)
 
 
-class _BackendLabel(QLabel):
-    """LEFT:「DB:{db} OS:{os}」。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("", parent)
-        self.setObjectName("statusBackendLabel")
-        self.setMinimumWidth(140)
-        # 启动时尚未设置,显示灰色占位
-        self._render(None)
-
-    def set_label(self, label: str | None) -> None:
-        self._render(label)
-
-    def _render(self, label: str | None) -> None:
-        if label:
-            self.setText(label)
-            self.setStyleSheet("color: palette(text);")
-        else:
-            self.setText(QCoreApplication.translate("status_bar", "DB:— OS:—"))
-            self.setStyleSheet("color: palette(placeholder);")
-
-
-class _LastMessageLabel(QLabel):
-    """LEFT:「最后:HH:MM」(展示最近一条收到消息的时间)。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("", parent)
-        self.setObjectName("statusLastMessageLabel")
-        self.setMinimumWidth(100)
-        self._render(None)
-
-    def set_time(self, when: datetime | None) -> None:
-        self._render(when)
-
-    def _render(self, when: datetime | None) -> None:
-        if when is None:
-            self.setText(QCoreApplication.translate("status_bar", "最后:—"))
-            self.setStyleSheet("color: palette(placeholder);")
-            return
-        # 只显示 HH:MM,日期默认今天;非今天(很少见)显示日期。
-        now = datetime.now(UTC)
-        if when.date() == now.date():
-            prefix = QCoreApplication.translate("status_bar", "最后")
-            self.setText(f"{prefix}:{when.strftime('%H:%M')}")
-            self.setStyleSheet("color: palette(text);")
-        else:
-            prefix = QCoreApplication.translate("status_bar", "最后")
-            self.setText(f"{prefix}:{when.strftime('%m-%d %H:%M')}")
-            self.setStyleSheet("color: palette(text);")
-
-
 class _ActivityLabel(QLabel):
     """LEFT(stretch=1):活动 + 节流。
 
@@ -220,16 +167,41 @@ class _ActivityLabel(QLabel):
 # ======================== RIGHT 区子组件 ========================
 
 
-class _ConnectionLabel(QLabel):
-    """RIGHT:TG 连接状态(持久指示)。"""
+class _UnifiedStateLabel(QLabel):
+    """RIGHT:唯一状态位 — 登录态优先,ready 时显示 TG 连接态。
+
+    2026-11-17 v2.0.3 D2:右上 HeaderBar 的 12 态登录徽章迁到底部,与原有
+    5 态连接标签合并。优先级规则(不新造口径,复用两张现成翻译表):
+      - `login_state != "ready"` → `state_dot/state_label`(12 态),
+        包括 error / code_required 等需要用户行动的状态;
+      - `login_state == "ready"` → `_conn_state_label`(5 态)。
+    两条更新路径(VM `login_state` / EventBus `LoginStateChanged`)都写
+    `set_login_state`,连接态仍写 `set_connection_state`;两者互不覆盖。
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(_conn_state_label("unknown"), parent)
-        self.setObjectName("statusConnectionLabel")
-        self.setMinimumWidth(80)
+        self.setObjectName("statusStateLabel")
+        self.setMinimumWidth(120)
+        self._login_state = "uninit"
+        self._conn_state = "unknown"
+        self._render()
 
-    def set_state(self, state: str) -> None:
-        self.setText(_conn_state_label(state))
+    def set_login_state(self, state: str) -> None:
+        self._login_state = state
+        self._render()
+
+    def set_connection_state(self, state: str) -> None:
+        self._conn_state = state
+        self._render()
+
+    def _render(self) -> None:
+        if self._login_state != "ready":
+            self.setText(f"{state_dot(self._login_state)} {state_label(self._login_state)}")
+            self.setToolTip(state_hint(self._login_state))
+        else:
+            self.setText(_conn_state_label(self._conn_state))
+            self.setToolTip(state_hint("ready"))
 
 
 class _PausedLabel(QLabel):
@@ -357,15 +329,14 @@ class _ObjectsWarnLabel(QLabel):
 
 
 class StatusBar(QWidget):
-    """替代 QStatusBar:全自管 LEFT(5)+ RIGHT(4)共 9 个子组件。
+    """替代 QStatusBar:全自管 LEFT(3)+ RIGHT(4)共 7 个子组件。
 
     API:
-        set_connection_state(state)         — TG 连接状态
+        set_login_state(state)              — 12 态登录状态(合并状态位)
+        set_connection_state(state)         — 5 态 TG 连接状态(合并状态位)
         set_paused(paused)                  — ⏸ 暂停监听
         set_selected_channel(name)          — 当前选中频道
         set_stats(*, subscribed, messages)   — 监听频道数 / 消息累计
-        set_backend_label(label)            — DB/OS 后端名
-        set_last_message_time(when)         — 最后收到消息时间
         show_activity(text, *, timeout_ms)  — 左侧活动指示
         throttle_activity(key, ...)          — 节流版 show_activity
         show_message(text, timeout_ms)       — 中间 transient 提示
@@ -394,27 +365,23 @@ class StatusBar(QWidget):
         layout.setContentsMargins(12, 2, 12, 2)
         layout.setSpacing(8)
 
-        # LEFT — 5 个子组件,Activity stretch=1 占剩余空间
+        # LEFT — 3 个子组件,Activity stretch=1 占剩余空间
         self._selected_channel = _SelectedChannelLabel()
         self._stats = _StatsLabel()
-        self._backend = _BackendLabel()
-        self._last_message = _LastMessageLabel()
         self._activity = _ActivityLabel()
         layout.addWidget(self._selected_channel)
         layout.addWidget(self._stats)
-        layout.addWidget(self._backend)
-        layout.addWidget(self._last_message)
         layout.addWidget(self._activity, 1)
 
-        # RIGHT — 4 个子组件
+        # RIGHT — 4 个子组件(ObjectsWarn 按需)
         self._objects_warn: _ObjectsWarnLabel | None = None
         if objects_error:
             self._objects_warn = _ObjectsWarnLabel(objects_error)
             layout.addWidget(self._objects_warn)
-        self._connection = _ConnectionLabel()
+        self._state = _UnifiedStateLabel()
         self._paused = _PausedLabel()
         self._bell = _ErrorBellButton(app)
-        layout.addWidget(self._connection)
+        layout.addWidget(self._state)
         layout.addWidget(self._paused)
         layout.addWidget(self._bell)
 
@@ -430,8 +397,13 @@ class StatusBar(QWidget):
 
     # ---- 子组件 setter(公开方法)----
 
+    def set_login_state(self, state: str) -> None:
+        """登录态(12 态)写入唯一状态位 — 未 ready 时优先显示。"""
+        self._state.set_login_state(state)
+
     def set_connection_state(self, state: str) -> None:
-        self._connection.set_state(state)
+        """连接态(5 态)写入唯一状态位 — 仅 ready 时呈现。"""
+        self._state.set_connection_state(state)
 
     def set_paused(self, paused: bool) -> None:
         self._paused.set_visible(paused)
@@ -441,12 +413,6 @@ class StatusBar(QWidget):
 
     def set_stats(self, *, subscribed: int, messages: int) -> None:
         self._stats.set_stats(subscribed, messages)
-
-    def set_backend_label(self, label: str) -> None:
-        self._backend.set_label(label)
-
-    def set_last_message_time(self, when: datetime | None) -> None:
-        self._last_message.set_time(when)
 
     # ---- activity(原 _show_activity / _throttle_activity 委托)----
 

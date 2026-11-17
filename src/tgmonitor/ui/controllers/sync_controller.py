@@ -5,7 +5,8 @@
 
 2026-10-01 v1.12.x 从 `MainWindow` 抽出。4 个 handler:
 - `_on_refresh_channels`:刷新已订阅频道列表
-- `_on_sync_all_channels`:Dashboard 顶部「全量同步」按钮
+- `_on_sync_all_channels`:全量同步入口(2026-11-17 v2.0.3 D4 大盘按钮已移除,
+  频道页走 `SyncFlowController.on_sync_requested`;此处保留供编程式/日后恢复)
 - `_on_sync_progress`:VM `ChannelSyncProgress` event → 状态栏活动指示器
 - `_on_sync_done`:VM `ChannelSyncDone` event → 状态栏汇总提示
 

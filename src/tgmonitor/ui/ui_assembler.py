@@ -143,8 +143,15 @@ class UiAssembler:
         live_layout.addWidget(body, 1)
         stack.addWidget(live_page)
 
-        # 1: 大盘
-        dashboard = DashboardWidget(self._mw.app, self._mw.monitor, loop=self._mw.loop)
+        # 1: 大盘(2026-11-17 v2.0.3 D4/D6 只读化)
+        # channels_provider 让频道统计表能读 VM 的真实 title/kind;
+        #  dashboard 不再接受刷新/导出/同步回调。
+        dashboard = DashboardWidget(
+            self._mw.app,
+            self._mw.monitor,
+            loop=self._mw.loop,
+            channels_provider=lambda: self._mw._vm.known_channels,
+        )
         stack.addWidget(dashboard)
 
         # 2: 频道
@@ -280,11 +287,12 @@ class UiAssembler:
     def wire_signals(self) -> None:
         """集中所有信号连接(原 `MainWindow._wire_signals`,2026-10-04 plan 阶段 3.1)。
 
-        4 大类(2026-11-16 v2.0.2:LIVE 只读化后不再有搜索 / 多选类):
-        - nav / header → MainWindow 内部槽
-        - Dashboard / ChannelWidget → 业务回调
+        4 大类(2026-11-17 v2.0.3:D3 头栏纯标题 + D4 大盘只读化):
+        - nav → MainWindow 内部槽
+        - ChannelWidget → 业务回调(刷新频道 / 全量同步)
         - MediaManagerWidget → vm 或本地回调
         - MessageView / MessageDetail → 点击显示详情
+        登录/登出入口已迁到 SettingsPage 自管;大盘不再注入操作回调。
 
         依赖 controller 的连接**留在** `_setup_controllers` 完成。
         """
@@ -293,16 +301,9 @@ class UiAssembler:
         mw.nav.current_changed.connect(mw.stack.setCurrentIndex)
         # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
         mw.nav.current_changed.connect(mw._on_nav_changed)
-        mw.header.btn_logout.clicked.connect(mw._on_logout_clicked)
-        mw.header.btn_action.clicked.connect(mw._on_header_action)
-        # 2026-10-04 plan 阶段 3.3:搜索信号连接在 `_setup_controllers` 里
-        # 完成(controller 实例化之后立即连),避免 wire_signals 提前引用
-        # `_search_ctrl` 触发 AttributeError。
-
-        # Dashboard 快速操作
-        mw.dashboard.on_refresh = mw._on_refresh_channels
-        mw.dashboard.on_export = mw._on_export
-        mw.dashboard.on_sync_all = mw._on_sync_all_channels
+        # 2026-11-17 v2.0.3 D3/D4:header 按钮与 dashboard 三按钮接线删除。
+        # 登录/登出入口由 SettingsPage 自管;刷新/全量同步仍在 ChannelWidget,
+        # 消息导出 UI 入口按用户确认移除(core 能力保留)。
 
         # ChannelWidget 信号
         mw.channel_panel.btn_refresh.clicked.connect(mw._on_refresh_channels)

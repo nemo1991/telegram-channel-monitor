@@ -56,6 +56,7 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
         stack=MagicMock(name="stack"),
         tray=tray,
         media_refresh_debounce=MagicMock(name="media_refresh_debounce"),
+        settings_page=MagicMock(name="settings_page"),
     )
     refs = {
         "status_bar": status_bar,
@@ -165,18 +166,21 @@ class TestOnBusLogin:
         # 传一个不是 LoginStateChanged 的对象 → 早 return
         await ctrl.on_bus_login("not an event")
 
-        ctx.header.update_state.assert_not_called()
+        ctx.status_bar.set_login_state.assert_not_called()
+        ctx.settings_page.set_login_state.assert_not_called()
         ctx.main_window._refresh_state.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_ready_state_updates_header(self) -> None:
+    async def test_ready_state_updates_status_and_settings(self) -> None:
+        """D3:头栏已退化为纯标题,登录态下沉到底部状态位 + 设置页入口。"""
         ctx, _refs = _make_ctx()
         ctrl = AppStateController(ctx)
 
         event = LoginStateChanged(state="ready", detail="ok")
         await ctrl.on_bus_login(event)
 
-        ctx.header.update_state.assert_called_once_with("ready", "ok")
+        ctx.status_bar.set_login_state.assert_called_once_with("ready")
+        ctx.settings_page.set_login_state.assert_called_once_with("ready")
         ctx.main_window._refresh_state.assert_called_once()
         ctx.status_bar.show_activity.assert_called_once_with("登录完成", timeout_ms=2000)
 
