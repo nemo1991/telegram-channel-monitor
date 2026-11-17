@@ -9,7 +9,7 @@
 **tgmonitor** — Telegram 频道监听桌面应用:监听白名单频道的新消息,自动落库并下载媒体,提供桌面 UI 查看、检索与导出。
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
-- 当前版本 **2.0.1**(以 `pyproject.toml` 为准)。
+- 当前版本 **2.0.3**(以 `pyproject.toml` 为准)。
 - 包管理/构建:uv + hatchling,src 布局,console script 入口 `tgmonitor = tgmonitor.__main__:main`。
 - 桌面打包:PyInstaller(`tgmonitor.spec`)→ Linux AppImage + macOS .app + Windows onedir zip;发布走 GitHub Release + SHA256SUMS。**纯 Python 后端,三平台均无需编译原生引擎**。
 - 许可证 MIT,作者 forcetone;项目注释与文档均用中文,新代码注释随项目习惯用中文。
@@ -25,7 +25,7 @@
 
 | 依赖 | 版本 | 用途 |
 |---|---|---|
-| PySide6 | >=6.6,<6.12 | Qt GUI |
+| PySide6 | >=6.6,<6.13 | Qt GUI(6.12 已解禁,见下方结论) |
 | qasync | >=0.27 | Qt 事件循环接 asyncio |
 | telethon | >=1.45.0 | 纯 Python MTProto Telegram 后端 |
 | cryptg | >=0.6.1 | Telethon 加密加速(C 扩展,可选但默认装) |
@@ -35,7 +35,8 @@
 | platformdirs | >=4.11.0 | 平台数据目录 |
 | aiosqlite | >=0.22.1 | 默认 SQLite 后端(WAL) |
 
-> **PySide6 上限 `<6.12`**(2026-11-13 锁定):6.12.0 的 `QPixmap.loadFromData` format
+> **PySide6 6.12 已解禁**(2026-11-14 PR #44,上限现为 `<6.13`):以下 6.12.0
+> 破坏性变更记录保留作历史依据 —— `QPixmap.loadFromData` format
 > 参数**运行时**由 `bytes` 改为 `str`(不只是 mypy stub 变严),显式传 `b"GIF"` 直接
 > `TypeError`;解释器 shutdown 时 Qt 对象销毁顺序收紧;meta 包还新增 WebEngine/PDF
 > 硬依赖。GIF 首帧解码已改为省略 format 让 Qt 自动探测,跨版本成立。
@@ -87,6 +88,9 @@
 >   路径真 `MainWindow` 探针 60 次零崩)。属独立质量债,建议后续单独治理。
 > - ⑥ 去掉 `<6.12>` 属重大依赖升级,需用户拍板;解禁 PR 的 CI 三平台即为跨平台
 >   验证(6.12 反证目前只在 macOS / Python 3.13.14 做过)。
+>   **2026-11-14 用户已拍板解禁,PR #44 合并**:上限改 `<6.13`,dependabot
+>   ignore 删除,`uv.lock` 升 6.12.0;CI 三平台 8/8 全绿 + 本地 PyInstaller
+>   bundle 体积与 6.11 基线一致。
 > - 临时保险:`.github/dependabot.yml` 已加 `pyside6 >=6.12` 的 `ignore`,评估期
 >   间挡住 dependabot 强行提 6.12+;真正解禁时连同本 ignore 一起删除。
 
