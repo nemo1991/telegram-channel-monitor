@@ -477,3 +477,33 @@ class ChannelStats:
     media: int = 0
     done_media: int = 0
     last_date: datetime | None = None
+
+
+# ---------- 活动（v2.0.4） ----------
+
+
+@dataclass(frozen=True)
+class ActivityDTO:
+    """一条可持久化的运维活动记录（v2.0.4 FR-04/FR-05）。
+
+    替代原 Dashboard 纯内存的 EventBus 事件时间线：由 core 侧 formatter
+    把领域事件归一化为本 DTO 后落库，UI 启动时从库读取渲染。
+
+    - `occurred_at`：事件发生时刻（UTC 存储，UI 按本地时区显示），不是渲染时刻。
+    - `event_type`：稳定标识（如 `channel_monitored`），供筛选/去重。
+    - `icon`：`action_icon` 名。
+    - `title` / `detail`：展示文案；`detail` 由 formatter 截断，禁止塞异常对象。
+    - `severity`：`info` / `warn` / `error`。
+    - `channel_id` / `telegram_msg_id`：可选关联对象。
+    - `id`：库自增主键；内存/未落库时为 None。
+    """
+
+    event_type: str
+    occurred_at: datetime
+    icon: str
+    title: str
+    detail: str = ""
+    severity: str = "info"
+    channel_id: int | None = None
+    telegram_msg_id: int | None = None
+    id: int | None = None

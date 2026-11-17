@@ -16,6 +16,7 @@ from typing import Any
 import asyncpg
 
 from tgmonitor.core.dto import (
+    ActivityDTO,
     ChannelDTO,
     ChannelStats,
     MediaDownloadStatus,
@@ -26,6 +27,7 @@ from tgmonitor.core.dto import (
     SortKey,
     ThumbnailDTO,
 )
+from tgmonitor.core.storage import _activity_pg as _activity
 from tgmonitor.core.storage import _channels_pg as _channels
 from tgmonitor.core.storage import _lifecycle_pg as _lifecycle
 from tgmonitor.core.storage import _media_pg as _media
@@ -360,3 +362,13 @@ class PostgresRepository(StorageRepository):
     async def count_thumbnails_by_object_key(self, object_key: str) -> int:
         """thin delegate → `_thumbnails_pg`."""
         return await _thumbnails.count_thumbnails_by_object_key(self, object_key)
+
+    # ---- 活动记录（v2.0.4 FR-05）----
+
+    async def append_activity(self, activity: ActivityDTO) -> None:
+        """thin delegate → `_activity_pg`. 全留存，不裁剪。"""
+        return await _activity.append_activity(self, activity)
+
+    async def list_activities(self, limit: int = 200) -> list[ActivityDTO]:
+        """thin delegate → `_activity_pg`. 最近 N 条，新的在前。"""
+        return await _activity.list_activities(self, limit)

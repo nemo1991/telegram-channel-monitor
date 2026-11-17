@@ -31,6 +31,7 @@ from typing import Any
 import aiosqlite
 
 from tgmonitor.core.dto import (
+    ActivityDTO,
     ChannelDTO,
     ChannelStats,
     MediaDownloadStatus,
@@ -156,6 +157,22 @@ CREATE TABLE IF NOT EXISTS thumbnails (
 
 CREATE INDEX IF NOT EXISTS idx_thumbnails_object_key
     ON thumbnails (object_key) WHERE object_key IS NOT NULL;
+
+-- v2.0.4 FR-05:运维活动记录(事件时间线持久化)。全留存,不裁剪。
+CREATE TABLE IF NOT EXISTS activities (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type          TEXT    NOT NULL,
+    occurred_at         TEXT    NOT NULL,
+    icon                TEXT    NOT NULL DEFAULT '',
+    title               TEXT    NOT NULL DEFAULT '',
+    detail              TEXT    NOT NULL DEFAULT '',
+    severity            TEXT    NOT NULL DEFAULT 'info',
+    channel_id          INTEGER,
+    telegram_msg_id     INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_activities_occurred
+    ON activities (occurred_at DESC, id DESC);
 """
 
 
@@ -236,6 +253,17 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "download_status": "TEXT",
         "download_error": "TEXT",
         "telegram_thumb_file_id": "TEXT",
+    },
+    "activities": {
+        "id": "INTEGER",
+        "event_type": "TEXT",
+        "occurred_at": "TEXT",
+        "icon": "TEXT",
+        "title": "TEXT",
+        "detail": "TEXT",
+        "severity": "TEXT",
+        "channel_id": "INTEGER",
+        "telegram_msg_id": "INTEGER",
     },
 }
 
@@ -1328,3 +1356,48 @@ class SqliteRepository(StorageRepository):
                 (tag,),
             )
         return [_row_to_message(dict(r), []) for r in rows]
+
+    # ---- 活动记录（v2.0.4 FR-05）----
+
+    async def append_activity(self, activity: ActivityDTO) -> None:
+        """追加一条活动 — 全留存，不裁剪（用户 2026-11-17 决策）。"""
+        assert self._db is not None
+        async with self._lock:
+            await self._db.execute(
+                "INSERT INTO activities "
+                "(event_type, occurred_at, icon, title, detail, severity, channel_id, "
+                "telegram_msg_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    activity.event_type,
+                    _dt_to_db(activity.occurred_at),
+                    activity.icon,
+                    activity.title,
+                    activity.detail,
+                    activity.severity,
+                    activity.channel_id,
+                    activity.telegram_msg_id,
+                ),
+            )
+
+    async def list_activities(self, limit: int = 200) -> list[ActivityDTO]:
+        """列最近 N 条 — occurred_at DESC, id DESC（新的在前）。"""
+        assert self._db is not None
+        async with self._lock:
+            rows = await self._db.execute_fetchall(
+                "SELECT * FROM activities ORDER BY occurred_at DESC, id DESC LIMIT ?",
+                (limit,),
+            )
+        return [
+            ActivityDTO(
+                id=r["id"],
+                event_type=r["event_type"],
+                occurred_at=_dt_from_db(r["occurred_at"]) or datetime.now(UTC),
+                icon=r["icon"],
+                title=r["title"],
+                detail=r["detail"],
+                severity=r["severity"],
+                channel_id=r["channel_id"],
+                telegram_msg_id=r["telegram_msg_id"],
+            )
+            for r in rows
+        ]

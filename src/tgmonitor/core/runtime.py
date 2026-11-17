@@ -101,6 +101,13 @@ async def bootstrap(
             log.exception("[bootstrap] schema repair failed; refusing to start")
             raise
 
+    # 2026-11-17 v2.0.4 FR-05:活动持久化订阅者 —— bus + storage 均已就绪,
+    # 通配订阅把覆盖的运维事件归一化后落库。订阅者内部吞异常,落库失败不
+    # 阻断主流程;formatter 不含 Qt 依赖(core 架构守门)。
+    from tgmonitor.core.activity import make_persistence_subscriber  # noqa: PLC0415
+
+    bus.subscribe_all(make_persistence_subscriber(storage))
+
     t = time.monotonic()
     objects = build_object_store(settings)
     objects_error: str | None = None

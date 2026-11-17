@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from tgmonitor.core.dto import (
+    ActivityDTO,
     ChannelDTO,
     ChannelStats,
     MediaDownloadStatus,
@@ -495,6 +496,23 @@ class UserMetaStore(ABC):
         ...
 
 
+class ActivityStore(ABC):
+    """运维活动记录(v2.0.4 FR-05)— 可持久化的事件时间线。"""
+
+    @abstractmethod
+    async def append_activity(self, activity: ActivityDTO) -> None:
+        """追加一条活动。调方负责用 formatter 归一化,仓储只存取。
+
+        全留存策略(用户 2026-11-17 决策):不做上限裁剪,调用方也不传上限。
+        """
+        ...
+
+    @abstractmethod
+    async def list_activities(self, limit: int = 200) -> list[ActivityDTO]:
+        """列最近 N 条活动 — 按 occurred_at DESC,id DESC 排序(新的在前)。"""
+        ...
+
+
 class StorageRepository(
     SchemaLifecycle,
     ChannelStore,
@@ -503,9 +521,10 @@ class StorageRepository(
     MediaStore,
     ThumbnailStore,
     UserMetaStore,
+    ActivityStore,
     ABC,
 ):
-    """组合门面 — 7 个小接口的全集,现有装配/调用方继续用此类型。
+    """组合门面 — 8 个小接口的全集,现有装配/调用方继续用此类型。
 
     新代码(领域服务)应按需依赖单个小接口,而不是本组合。
     """
@@ -520,7 +539,9 @@ __all__ = [
     "MediaStore",
     "ThumbnailStore",
     "UserMetaStore",
+    "ActivityStore",
     "StorageRepository",
+    "ActivityDTO",
     "ChannelDTO",
     "MessageDTO",
     "MediaDTO",

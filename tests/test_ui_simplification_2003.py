@@ -326,7 +326,9 @@ async def test_activity_timestamp_uses_event_time(qapp: QApplication) -> None:
     past = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
     await dash._on_bus_event(SettingsChanged(what="x", occurred_at=past))
     widget = dash.activity_list.itemWidget(dash.activity_list.item(0))
-    assert widget.findChild(QLabel).text() == "03:04:05"
+    # UI 按本地时区展示(库内存 UTC),与事件时刻等价——不是渲染时刻。
+    expected = past.astimezone().strftime("%H:%M:%S")
+    assert widget.findChild(QLabel).text() == expected  # 2020 年的时刻,不可能是渲染时刻
     dash.deleteLater()
 
 

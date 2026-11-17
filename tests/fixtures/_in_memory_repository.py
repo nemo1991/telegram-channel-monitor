@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tgmonitor.core.dto import (
+    ActivityDTO,
     ChannelDTO,
     ChannelStats,
     MediaDownloadStatus,
@@ -40,6 +41,9 @@ class InMemoryRepository(StorageRepository):
         self._media_by_fid: dict[str, MediaDTO] = {}
         # 2026-09-29:缩略图独立存储 — (channel_id, msg_id, media_idx) 三元组 → ThumbnailDTO
         self._thumbs: dict[tuple[int, int, int], ThumbnailDTO] = {}
+        # 2026-11-17 v2.0.4 FR-05:活动记录(全留存)
+        self._activities: list[ActivityDTO] = []
+        self._activity_pk = 0
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
@@ -633,3 +637,29 @@ class InMemoryRepository(StorageRepository):
     async def count_thumbnails_by_object_key(self, object_key: str) -> int:
         """orphan reconcile 用:被 storage 引用的 thumb key 计数。"""
         return sum(1 for t in self._thumbs.values() if t.object_key == object_key)
+
+    # ---- 活动记录（v2.0.4 FR-05）----
+
+    async def append_activity(self, activity: ActivityDTO) -> None:
+        self._activity_pk += 1
+        self._activities.append(
+            ActivityDTO(
+                id=self._activity_pk,
+                event_type=activity.event_type,
+                occurred_at=activity.occurred_at,
+                icon=activity.icon,
+                title=activity.title,
+                detail=activity.detail,
+                severity=activity.severity,
+                channel_id=activity.channel_id,
+                telegram_msg_id=activity.telegram_msg_id,
+            )
+        )
+
+    async def list_activities(self, limit: int = 200) -> list[ActivityDTO]:
+        ordered = sorted(
+            self._activities,
+            key=lambda a: (a.occurred_at, a.id or 0),
+            reverse=True,
+        )
+        return ordered[:limit]
