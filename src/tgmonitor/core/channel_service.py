@@ -31,6 +31,7 @@ from tgmonitor.core.events import (
     ChannelUnmonitored,
     ErrorOccurred,
     EventBus,
+    JoinedChannelsRefreshed,
 )
 from tgmonitor.core.ops_gate import is_ready, require_ready
 from tgmonitor.core.storage.repository import StorageRepository
@@ -161,6 +162,13 @@ class ChannelService:
                 if self._monitor is not None:
                     self._monitor.remove_from_whitelist(existing.id)
                 await self._bus.publish(ChannelUnmonitored(channel_id=existing.id))
+
+        # 2026-11-17 v2.0.5:成功校正写库后通知只读看板重读计数/统计表。
+        # 大盘"已加入频道"数取自 storage.count_tg_subscribed(),不走 VM 的
+        # channels_changed(那是"监听白名单"语义);此前刷新只 emit 频道页自己的
+        # joined_loaded,大盘数字因此 stale。两条 early-return 保护路径不写库,
+        # 也不发本事件(避免把未登录/空返回误当成功刷新)。
+        await self._bus.publish(JoinedChannelsRefreshed(count=len(joined)))
 
         return joined
 
