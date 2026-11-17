@@ -3,7 +3,7 @@
 2026-10-12 plan-batch3 目标 1:`main_window.py` 982 → ~864 LOC。
 
 把 5 段装配逻辑(共 ~264 LOC)从 `MainWindow` 抽到本类:
-- `_build_central_widget`(115 LOC)— widget hierarchy + 5 page + status bar + 2 debounce
+- `_build_central_widget`(115 LOC)— widget hierarchy + 4 page + status bar + 2 debounce
 - `_build_menu`(31 LOC)— File menu
 - `_build_tray`(15 LOC)— TrayIcon
 - `_wire_signals`(42 LOC)— 内部 signal 连接
@@ -40,13 +40,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -87,7 +86,7 @@ class UiAssembler:
         self._mw = main_window
 
     def build_central(self) -> dict[str, object]:
-        """装配 central widget + 5 个 stacked page + status bar + 1 个 debounce timer。
+        """装配 central widget + 4 个 stacked page + status bar + 1 个 debounce timer。
 
         原 `MainWindow._build_central_widget`(115 LOC) body 整体搬过来。
 
@@ -120,41 +119,25 @@ class UiAssembler:
         stack = QStackedWidget()
         stack.setFrameShape(QFrame.NoFrame)
 
-        # 0: 实时流(MessageView + MessageDetail 横向并排)
-        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除顶部 SelectionToolbar(多选/批量
-        # 操作),回到单层 body(QSplitter[live_view, message_detail])。
-        # 2026-09-14 v1.7.5 PR #4 (P0-H):QHBoxLayout → QSplitter,用户可拖
-        # 详情面板宽度自由(原 280-420 锁死)。splitter 比例 2:1(live 占大头)。
-        live_page = QWidget()
-        live_layout = QVBoxLayout(live_page)
-        live_layout.setContentsMargins(0, 0, 0, 0)
-        live_layout.setSpacing(0)
-        body = QSplitter(Qt.Horizontal)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setHandleWidth(1)
-        body.setChildrenCollapsible(False)  # 防止用户拖到极窄被隐
+        # 2026-11-17 v2.0.4 FR-03:实时流单实例迁入大盘,撤销独立 LIVE 页。
+        # MessageView / MessageDetail 仍由 MainWindow 持引用(控制器与测试依赖),
+        # 但 reparent 进 DashboardWidget 内部的 QSplitter。导航 5→4,大盘为首页。
         live_view = MessageView()
         message_detail = MessageDetail()
-        body.addWidget(live_view)
-        body.addWidget(message_detail)
-        body.setStretchFactor(0, 2)  # live 优先占 2/3
-        body.setStretchFactor(1, 1)  # detail 占 1/3
-        body.setSizes([800, 400])  # 启动默认(800px wide → 详情 400)
-        live_layout.addWidget(body, 1)
-        stack.addWidget(live_page)
 
-        # 1: 大盘(2026-11-17 v2.0.3 D4/D6 只读化)
-        # channels_provider 让频道统计表能读 VM 的真实 title/kind;
-        #  dashboard 不再接受刷新/导出/同步回调。
+        # 0: 大盘(首页;含实时流 + 最近活动 | 频道统计)
+        # channels_provider 让频道统计表能读 VM 的真实 title/kind。
         dashboard = DashboardWidget(
             self._mw.app,
             self._mw.monitor,
             loop=self._mw.loop,
             channels_provider=lambda: self._mw._vm.known_channels,
+            live_view=live_view,
+            message_detail=message_detail,
         )
         stack.addWidget(dashboard)
 
-        # 2: 频道
+        # 1: 频道
         channels_page = QWidget()
         ch_layout = QVBoxLayout(channels_page)
         ch_layout.setContentsMargins(16, 16, 16, 16)
@@ -166,7 +149,7 @@ class UiAssembler:
         ch_layout.addWidget(channel_panel, 1)
         stack.addWidget(channels_page)
 
-        # 3: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+        # 2: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
         media_page = QWidget()
         media_layout = QVBoxLayout(media_page)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -175,7 +158,7 @@ class UiAssembler:
         media_layout.addWidget(media_manager)
         stack.addWidget(media_page)
 
-        # 4: 设置
+        # 3: 设置
         settings_page = SettingsPage(self._mw.app, self._mw.loop, self._mw.env_path)
         stack.addWidget(settings_page)
 

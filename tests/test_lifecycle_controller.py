@@ -49,7 +49,7 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
     nav = MagicMock(name="nav")
     live_view = MagicMock(name="live_view")
     stack = MagicMock(name="stack")
-    stack.currentIndex = MagicMock(return_value=0)  # 默认在 LIVE 页
+    stack.currentIndex = MagicMock(return_value=0)  # 默认在 DASHBOARD(含实时流)
     status_bar = MagicMock(name="status_bar")
     media_refresh_debounce = MagicMock(spec=QTimer, name="media_refresh_debounce")
     search_debounce = MagicMock(spec=QTimer, name="search_debounce")
@@ -131,19 +131,23 @@ class TestSwitchTab:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
-        ctrl.switch_tab(3)
+        # v2.0.4 FR-03:4 项导航,媒体页 idx=2
+        ctrl.switch_tab(2)
 
-        refs["nav"].set_current.assert_called_once_with(3)
+        refs["nav"].set_current.assert_called_once_with(2)
 
 
 class TestOnNavChanged:
-    """`on_nav_changed` — 切到 MEDIA 页(3)→ start media_refresh_debounce。"""
+    """`on_nav_changed` — 切到 MEDIA 页(2)→ start media_refresh_debounce。
+
+    2026-11-17 v2.0.4 FR-03:导航 5→4,媒体 idx 3→2,设置 idx 4→3。
+    """
 
     def test_media_tab_starts_debounce(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
-        ctrl.on_nav_changed(3)
+        ctrl.on_nav_changed(2)
 
         refs["media_refresh_debounce"].start.assert_called_once()
 
@@ -151,10 +155,9 @@ class TestOnNavChanged:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
-        ctrl.on_nav_changed(0)  # LIVE
-        ctrl.on_nav_changed(1)  # DASHBOARD
-        ctrl.on_nav_changed(2)  # CHANNELS
-        ctrl.on_nav_changed(4)  # SETTINGS
+        ctrl.on_nav_changed(0)  # DASHBOARD (含实时流)
+        ctrl.on_nav_changed(1)  # CHANNELS
+        ctrl.on_nav_changed(3)  # SETTINGS
 
         refs["media_refresh_debounce"].start.assert_not_called()
 
@@ -169,7 +172,7 @@ class TestOnGlobalEscape:
     def test_search_not_focused_and_already_live_is_noop(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         refs["search_edit"].hasFocus = MagicMock(return_value=False)
-        refs["stack"].currentIndex = MagicMock(return_value=0)  # LIVE
+        refs["stack"].currentIndex = MagicMock(return_value=0)  # DASHBOARD(含实时流)
         ctrl = LifecycleController(ctx)
 
         ctrl.on_global_escape()
@@ -182,7 +185,7 @@ class TestOnGlobalEscape:
     def test_search_not_focused_and_not_live_switches_to_live(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         refs["search_edit"].hasFocus = MagicMock(return_value=False)
-        refs["stack"].currentIndex = MagicMock(return_value=2)  # CHANNELS
+        refs["stack"].currentIndex = MagicMock(return_value=2)  # MEDIA(v2.0.4 索引;仅验非0页)
         ctrl = LifecycleController(ctx)
 
         ctrl.on_global_escape()
@@ -196,7 +199,7 @@ class TestCopyCurrentMessageText:
 
     def test_not_live_page_is_noop(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
-        refs["stack"].currentIndex = MagicMock(return_value=1)  # DASHBOARD
+        refs["stack"].currentIndex = MagicMock(return_value=1)  # CHANNELS(v2.0.4;仅验非0页)
         refs["live_view"].current_message = MagicMock()
         ctrl = LifecycleController(ctx)
 
