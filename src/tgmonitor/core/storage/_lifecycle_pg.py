@@ -205,6 +205,22 @@ CREATE TABLE IF NOT EXISTS thumbnails (
 -- 部分索引缩小体积(只索引已下载成功的行)。
 CREATE INDEX IF NOT EXISTS idx_thumbnails_object_key
     ON thumbnails (object_key) WHERE object_key IS NOT NULL;
+
+-- v2.0.4 FR-05:运维活动记录(事件时间线持久化)。全留存,不裁剪。
+CREATE TABLE IF NOT EXISTS activities (
+    id                  BIGSERIAL PRIMARY KEY,
+    event_type          TEXT        NOT NULL,
+    occurred_at         TIMESTAMPTZ NOT NULL,
+    icon                TEXT        NOT NULL DEFAULT '',
+    title               TEXT        NOT NULL DEFAULT '',
+    detail              TEXT        NOT NULL DEFAULT '',
+    severity            TEXT        NOT NULL DEFAULT 'info',
+    channel_id          BIGINT,
+    telegram_msg_id     BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_activities_occurred
+    ON activities (occurred_at DESC, id DESC);
 """
 
 
@@ -295,6 +311,17 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "download_status": "TEXT",
         "download_error": "TEXT",
         "telegram_thumb_file_id": "TEXT",
+    },
+    "activities": {
+        "id": "BIGSERIAL",
+        "event_type": "TEXT",
+        "occurred_at": "TIMESTAMPTZ",
+        "icon": "TEXT",
+        "title": "TEXT",
+        "detail": "TEXT",
+        "severity": "TEXT",
+        "channel_id": "BIGINT",
+        "telegram_msg_id": "BIGINT",
     },
 }
 

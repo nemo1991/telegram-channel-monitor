@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
@@ -33,12 +33,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tgmonitor.core.activity import format_activity
 from tgmonitor.core.events import (
+    BatchDone,
     ChannelMonitored,
+    ChannelSyncDone,
     ChannelUnmonitored,
     ErrorOccurred,
     ExportDone,
     LoginStateChanged,
+    MediaReconcileFinished,
     SettingsChanged,
 )
 from tgmonitor.ui.async_bridge import run_coro
@@ -137,7 +141,11 @@ class _ActivityEntry(QWidget):
         hbox.setSpacing(8)
 
         # FR-01:时间取事件发生时刻(由 Event.occurred_at 注入),不再用渲染时刻。
-        time_lbl = QLabel((occurred_at or datetime.now()).strftime("%H:%M:%S"))
+        # FR-05:库里存 UTC aware datetime,展示按本地时区。
+        when = occurred_at or datetime.now()
+        if when.tzinfo is not None:
+            when = when.astimezone()
+        time_lbl = QLabel(when.strftime("%H:%M:%S"))
         time_lbl.setFixedWidth(60)
         time_lbl.setProperty("role", "hint")
         hbox.addWidget(time_lbl)
@@ -189,21 +197,14 @@ class DashboardWidget(QWidget):
         self._channels_provider = channels_provider
         self._build()
         self._wire_bus()
+        # v2.0.4 FR-05:启动时从库加载最近活动(重启后不再空白)。
+        self._load_activities()
 
         # 定时刷新:每 30s 更新一次时间线(不需要拉新数据,只是 UI 活跃感)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(30_000)
         self._refresh_timer.timeout.connect(self._tick_timeline)
         self._refresh_timer.start()
-
-    _EVENT_ICONS = {
-        LoginStateChanged: "nav_live",
-        ChannelMonitored: "kind_channel",
-        ChannelUnmonitored: "kind_group",
-        ExportDone: "export",
-        SettingsChanged: "settings",
-        ErrorOccurred: "refresh",
-    }
 
     # ---------- 装配 ----------
 
@@ -290,71 +291,35 @@ class DashboardWidget(QWidget):
         bus.subscribe(ExportDone, self._on_bus_event)
         bus.subscribe(SettingsChanged, self._on_bus_event)
         bus.subscribe(ErrorOccurred, self._on_bus_event)
+        # v2.0.4:新增覆盖类型的实时追加,只需在此加一行 subscribe +
+        # core/activity.py 的 _FORMATTERS 加一行(落库与 UI 共用口径)。
+        bus.subscribe(BatchDone, self._on_bus_event)
+        bus.subscribe(ChannelSyncDone, self._on_bus_event)
+        bus.subscribe(MediaReconcileFinished, self._on_bus_event)
 
-        # 表驱动 dispatch 加新事件类型时,只需在 _init_event_dispatch 里加一行
-        self._init_event_dispatch()
+    async def _on_bus_event(self, e) -> None:
+        """事件 → 追加到活动时间线。
 
-    async def _on_bus_event(self, e) -> None:  # noqa: C901 — 事件类型 switch
-        """从 EventBus 收到事件 → 追加到活动时间线。
-
-        走 `self._bus_event_formatters` 表 dispatch — 加新事件类型只需注册一行
-        (在 `__init__` 末尾的 `_init_event_dispatch` 里加一行)。
+        2026-11-17 v2.0.4 FR-04:文案统一走 core `format_activity`(与落库
+        同一口径),UI 不再维护第二套 `_format_*` 表。登录态事件另需同步
+        连接状态卡片,由 `_sync_state_card` 处理。
         """
-        handler = self._bus_event_formatters.get(type(e))
-        if handler is None:
-            return
-        icon_name, msg = handler(e)
-        if msg:
-            self._add_activity(icon_name, msg, getattr(e, "occurred_at", None))
+        if isinstance(e, LoginStateChanged):
+            self._sync_state_card(e)
+        activity = format_activity(e)
+        if activity is not None:
+            self._add_activity(
+                activity.icon,
+                f"{activity.title}: {activity.detail}" if activity.detail else activity.title,
+                activity.occurred_at,
+            )
 
-    # ---- 表驱动: event type → (self, e) -> (icon_name, msg) ----
-
-    def _format_login_state_changed(self, e: LoginStateChanged) -> tuple[str, str]:
-        """同步更新连接状态卡片 + 追加活动条目。"""
-        st = e.state
-        detail = f" ({e.detail[:40]})" if e.detail else ""
-        msg = f"登录状态切换: {st}{detail}"
+    def _sync_state_card(self, e: LoginStateChanged) -> None:
+        """登录态事件 → 同步连接状态卡片(纯 UI 副作用,不属于活动文案)。"""
         self.card_state.set_value(
-            state_badge(st),
+            state_badge(e.state),
             e.detail[:60] if e.detail else "",
         )
-        return "nav_live", msg
-
-    def _format_channel_subscribed(self, e: ChannelMonitored) -> tuple[str, str]:
-        # FR-04:原兜底 f"#{id(e)}" 取的是事件对象内存地址,对用户无意义。
-        title = e.channel.title if e.channel and e.channel.title else "(未知频道)"
-        return "kind_channel", f"已监听频道: {title}"
-
-    def _format_channel_unsubscribed(self, e: ChannelUnmonitored) -> tuple[str, str]:
-        return "kind_group", f"已取消监听: #{e.channel_id}"
-
-    def _format_export_done(self, e: ExportDone) -> tuple[str, str]:
-        if e.error:
-            return "export", f"导出失败: {e.error[:60]}"
-        out_path = e.result.out_path if e.result else "?"
-        return "export", f"导出完成: {out_path}"
-
-    def _format_settings_changed(self, e: SettingsChanged) -> tuple[str, str]:
-        return "settings", f"设置已变更: {e.what}"
-
-    def _format_error_occurred(self, e: ErrorOccurred) -> tuple[str, str]:
-        return "refresh", f"⚠ [{e.source}] {e.message[:80]}"
-
-    def _init_event_dispatch(self) -> None:
-        """在 __init__ 末尾调一次,建 instance-level dispatch table。
-
-        用 instance attribute 而非 class-level 是因为:
-          - handler 是 bound method,自动绑 self,避免 `handler(self, e)` 显式 self
-          - 多个 instance 各自独立,不互相污染
-        """
-        self._bus_event_formatters: dict[type, Callable[[Any], tuple[str, str]]] = {
-            LoginStateChanged: self._format_login_state_changed,
-            ChannelMonitored: self._format_channel_subscribed,
-            ChannelUnmonitored: self._format_channel_unsubscribed,
-            ExportDone: self._format_export_done,
-            SettingsChanged: self._format_settings_changed,
-            ErrorOccurred: self._format_error_occurred,
-        }
 
     def _add_activity(self, icon_name: str, text: str, occurred_at: datetime | None = None) -> None:
         """追加一条活动记录到列表头部(最新的在上面)。
@@ -425,6 +390,36 @@ class DashboardWidget(QWidget):
         # 异步取数:TG 订阅频道数 + 每频道消息数统计表
         self._refresh_joined_count()
         self._refresh_per_channel_stats()
+
+    # v2.0.4 FR-05:启动从库加载的活动条数(与旧内存上限一致)
+    _ACTIVITY_LOAD_LIMIT = 200
+
+    def _load_activities(self) -> None:
+        """启动异步加载最近活动(库为空则列表保持空,无副作用)。"""
+        if self._loop is None:
+            return  # 测试环境无 loop
+        run_coro(
+            self._loop,
+            self._fetch_activities(),
+            on_success=self._apply_activities,
+            error_label="dashboard_load_activities",
+        )
+
+    async def _fetch_activities(self) -> list:
+        """从 storage 拉最近 N 条;best-effort,失败按空列表处理。"""
+        try:
+            return await self._app.storage.list_activities(self._ACTIVITY_LOAD_LIMIT)
+        except Exception:  # noqa: BLE001
+            log.warning("list_activities failed", exc_info=True)
+            return []
+
+    def _apply_activities(self, activities: list) -> None:
+        """库历史填充时间线(新的在前),覆盖启动期可能的空列表。"""
+        self.activity_list.clear()
+        # 库中已是 occurred_at DESC(新的在前);倒序插入使最新显示在列表头。
+        for activity in reversed(activities):
+            detail = f"{activity.title}: {activity.detail}" if activity.detail else activity.title
+            self._add_activity(activity.icon, detail, activity.occurred_at)
 
     async def _fetch_joined_count(self) -> int:
         """库内 TG 订阅频道数;best-effort,取数失败按 0 处理。"""
