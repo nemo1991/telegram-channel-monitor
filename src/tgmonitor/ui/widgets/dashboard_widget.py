@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
     from tgmonitor.core.dto import ChannelDTO
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.monitor.service import MonitorService
+    from tgmonitor.ui.widgets.message_detail import MessageDetail
+    from tgmonitor.ui.widgets.message_view import MessageView
 
 import asyncio
 
@@ -182,19 +185,25 @@ class DashboardWidget(QWidget):
         monitor: MonitorService,
         loop: asyncio.AbstractEventLoop | None = None,
         channels_provider: Callable[[], Mapping[int, ChannelDTO]] | None = None,
+        live_view: MessageView | None = None,
+        message_detail: MessageDetail | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """建 5 张统计卡 + 时间线 + 频道表 + 接 EventBus + 起 30s 定时心跳。
+        """建 5 张统计卡 + 实时流 + 时间线 + 频道表 + 接 EventBus + 心跳。
 
         `loop=None` 用于无 loop 的测试环境,会跳过异步取数。
         `channels_provider` 由 MainWindow 注入 VM 的 known_channels,供频道
         统计表显示真实 title / kind;未提供时退化为 `#id` + 空类型。
+        2026-11-17 v2.0.4 FR-03:`live_view` / `message_detail` 由 MainWindow
+        注入(单实例从独立 LIVE 页迁入);未提供时实时流区留空(测试环境)。
         """
         super().__init__(parent)
         self._app = app
         self._monitor = monitor
         self._loop = loop
         self._channels_provider = channels_provider
+        self._live_view = live_view
+        self._message_detail = message_detail
         self._build()
         self._wire_bus()
         # v2.0.4 FR-05:启动时从库加载最近活动(重启后不再空白)。
@@ -243,7 +252,26 @@ class DashboardWidget(QWidget):
         # 大盘回归只读监控看板;等价入口见频道页,消息导出 UI 入口按用户
         # 确认移除(core ExportService / ExportController 保留)。
 
-        # --- 活动时间线 ---
+        # --- 实时流区(v2.0.4 FR-03:从独立 LIVE 页迁入,单实例) ---
+        # MessageView + MessageDetail 由 MainWindow 注入并持有引用,这里只
+        # 做 reparent + 布局。splitter 比例 2:1(消息流占大头)。
+        if self._live_view is not None and self._message_detail is not None:
+            live_splitter = QSplitter(Qt.Horizontal)
+            live_splitter.setObjectName("dashboardLiveSplitter")
+            live_splitter.setHandleWidth(1)
+            live_splitter.setChildrenCollapsible(False)
+            live_splitter.addWidget(self._live_view)
+            live_splitter.addWidget(self._message_detail)
+            live_splitter.setStretchFactor(0, 2)
+            live_splitter.setStretchFactor(1, 1)
+            live_splitter.setSizes([800, 400])
+            root.addWidget(live_splitter, 3)
+
+        # --- 下方左右两块:最近活动 | 频道统计 ---
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(20)
+
+        # 活动时间线(左)
         tl_group = QGroupBox("最近活动")
         tl_vbox = QVBoxLayout(tl_group)
         tl_vbox.setContentsMargins(0, 0, 0, 0)
@@ -253,10 +281,9 @@ class DashboardWidget(QWidget):
         self.activity_list.setFrameShape(QFrame.NoFrame)
         self.activity_list.setAlternatingRowColors(True)
         tl_vbox.addWidget(self.activity_list)
+        bottom_row.addWidget(tl_group, 1)
 
-        root.addWidget(tl_group, 2)
-
-        # --- 已订阅频道统计表 ---
+        # 已订阅频道统计表(右)
         stats_group = QGroupBox("频道统计")
         sg_vbox = QVBoxLayout(stats_group)
         sg_vbox.setContentsMargins(0, 0, 0, 0)
@@ -276,8 +303,9 @@ class DashboardWidget(QWidget):
         hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.stats_table.setMaximumHeight(180)
         sg_vbox.addWidget(self.stats_table)
+        bottom_row.addWidget(stats_group, 1)
 
-        root.addWidget(stats_group, 1)
+        root.addLayout(bottom_row, 2)
 
     # ---------- EventBus ----------
 

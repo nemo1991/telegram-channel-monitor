@@ -31,11 +31,12 @@ from PySide6.QtWidgets import (
 from tgmonitor.ui.icon import tinted_action_icon
 
 # 标签走 `QCoreApplication.translate`,与其余 UI 文案写法一致。
-_NAV_LABELS_SRC = ("实时流", "大盘", "频道", "媒体", "设置")
+# 2026-11-17 v2.0.4 FR-03:实时流迁入大盘,撤销独立页 → 4 项,大盘为首页。
+_NAV_LABELS_SRC = ("大盘", "频道", "媒体", "设置")
 
 
 def _nav_label(idx: int) -> str:
-    """Return the translated label for nav item idx (0..4).
+    """Return the translated label for nav item idx (0..3).
 
     用 module-level function 而不是直接调 translate,保持 `_NAV_ITEMS`
     结构(icon_name + label)的兼容性。
@@ -45,12 +46,12 @@ def _nav_label(idx: int) -> str:
     return QCoreApplication.translate("nav_bar", _NAV_LABELS_SRC[idx])
 
 
-_NAV_ICONS = ("nav_live", "nav_dashboard", "nav_channels", "nav_media", "nav_settings")
+_NAV_ICONS = ("nav_dashboard", "nav_channels", "nav_media", "nav_settings")
 
 
 def _nav_items() -> list[tuple[str, str]]:
     """导航项 (icon_name, label) 列表。"""
-    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(5)), strict=True))
+    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(4)), strict=True))
 
 
 # ---- 配色 token(直接 hex,固定样式,本文件自包含) ----
