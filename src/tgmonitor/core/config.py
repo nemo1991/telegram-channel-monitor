@@ -133,14 +133,6 @@ class Settings(BaseSettings):
     # 正在编辑的其它字段)。
     paused: bool = Field(default=False)
 
-    # 启动期 schema introspect/auto-repair 开关。
-    # 默认 False(dry-run — drift 出现仅 log,不修);开启后缺列会被
-    # `ALTER TABLE ADD COLUMN` 自动补上。
-    # missing_tables / wrong_types / extra_columns 永远仅 log(避免 DROP+CREATE
-    # 丢数据 / 类型 ALTER 重写表对大表 lock-heavy)。
-    # .env 字段:TG_SCHEMA_AUTO_REPAIR=true|false。
-    schema_auto_repair: bool = Field(default=False)
-
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。
 

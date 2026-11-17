@@ -1,7 +1,7 @@
 """SchemaReport — 启动期 introspect 出的 schema drift 报告。
 
 2026-09-23 v1.8.x:`introspect_schema()` 返回这个 dataclass,
-`app.py:_bootstrap` 据此决定是否触发 `repair_schema()`(默认仅 log)。
+`runtime.bootstrap()` 据此触发 `repair_schema()` 兜底(幂等、无用户开关)。
 """
 
 from __future__ import annotations
