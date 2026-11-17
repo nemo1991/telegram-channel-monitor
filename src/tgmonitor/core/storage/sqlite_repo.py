@@ -459,9 +459,30 @@ class SqliteRepository(StorageRepository):
             self._db = None
 
     async def init_schema(self) -> None:
+        """建表 + 幂等补齐缺失列。
+
+        2026-11-17 v2.0.3 修复:原实现只跑 `CREATE TABLE IF NOT EXISTS`,对存量表的
+        **新增列无效**;PG 后端靠 `SCHEMA_SQL` 内的 `ALTER TABLE ... ADD COLUMN IF
+        NOT EXISTS` 兜底,SQLite 却只能等 `repair_schema`,而后者受默认 False 的
+        `schema_auto_repair` 控制 —— 结果存量库的 `tg_subscribed` 永远补不上,
+        大盘 `count_tg_subscribed()` 抛 "no such column"。这里对齐 PG:每次
+        init_schema 主动按 EXPECTED_SCHEMA 补缺失列,新增列不回填(保持列默认值)。
+        """
         assert self._db is not None
         async with self._lock:
             await self._db.executescript(SCHEMA_SQL)
+            # 幂等补列 — 类型来自 EXPECTED_SCHEMA(与 SCHEMA_SQL 同步维护)。
+            for table, columns in EXPECTED_SCHEMA.items():
+                existing = {
+                    r["name"]
+                    for r in await self._db.execute_fetchall(f"PRAGMA table_info('{table}')")
+                }
+                for column, decl in columns.items():
+                    if column not in existing:
+                        log.warning("init_schema: backfilling missing column %s.%s", table, column)
+                        await self._db.execute(
+                            f'ALTER TABLE "{table}" ADD COLUMN "{column}" {decl}'
+                        )
 
     async def introspect_schema(self) -> SchemaReport:
         """查 sqlite_master + PRAGMA table_info 比对 EXPECTED_SCHEMA。"""

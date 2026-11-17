@@ -213,6 +213,63 @@ async def test_introspect_ok_after_init(repo: SqliteRepository) -> None:
     assert report.summary() == "ok"
 
 
+async def test_init_schema_backfills_new_columns_on_legacy_db(tmp_path) -> None:
+    """存量库(缺 tg_subscribed 等新列)仅靠 init_schema 就能补齐。
+
+    回归 2026-11-17 线上报错:旧库 channels 表无 tg_subscribed 列,
+    SCHEMA_SQL 的 CREATE TABLE IF NOT EXISTS 对存量表无效,而 repair 链路
+    受默认 False 的 schema_auto_repair 控制 → 列永远补不上,大盘
+    count_tg_subscribed() 抛 "no such column: tg_subscribed"。
+    修复后 init_schema() 幂等补列,与 PG 的 ALTER ... IF NOT EXISTS 对齐。
+    """
+    path = tmp_path / "legacy.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        """
+        CREATE TABLE channels (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            subscribed INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO channels (id, title, subscribed) VALUES (42, '旧频道', 0);
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    repo = SqliteRepository(path=path)
+    await repo.connect()
+    try:
+        await repo.init_schema()
+
+        cols = await repo._db.execute_fetchall("PRAGMA table_info('channels')")  # type: ignore[union-attr]
+        names = {c["name"] for c in cols}
+        assert "tg_subscribed" in names
+        assert EXPECTED_SCHEMA["channels"]["tg_subscribed"] == "INTEGER"
+
+        # 关键查询不再抛错;存量行未回填 → TG 订阅数为 0
+        assert await repo.count_tg_subscribed() == 0
+        report = await repo.introspect_schema()
+        assert report.ok is True
+    finally:
+        await repo.close()
+
+
+async def test_init_schema_backfill_is_idempotent(tmp_path) -> None:
+    """对已是最新 schema 的库重复 init_schema 不报错、不加重复列。"""
+    path = tmp_path / "fresh.db"
+    repo = SqliteRepository(path=path)
+    await repo.connect()
+    try:
+        await repo.init_schema()
+        await repo.init_schema()  # 二次执行
+        cols = await repo._db.execute_fetchall("PRAGMA table_info('channels')")  # type: ignore[union-attr]
+        names = [c["name"] for c in cols]
+        assert names.count("tg_subscribed") == 1
+    finally:
+        await repo.close()
+
+
 async def test_repair_adds_missing_column(repo: SqliteRepository) -> None:
     assert repo._db is not None
     await repo._db.execute("ALTER TABLE meta DROP COLUMN value")
