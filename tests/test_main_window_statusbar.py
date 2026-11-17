@@ -7,9 +7,10 @@
 来源:2026-08-13 需求 — 底部状态栏显示与 TG 的通信状态
 (数据源 `updateConnectionState`,经 ConnectionStateChanged 事件桥接过来)。
 
-2026-10-01 v1.11.x 状态栏组件化重构:`_conn_label` 已迁移到
-`StatusBar._ConnectionLabel`,MainWindow `_on_conn_state` 只委托 setter;
-本测试断言 setter 透传到 status_bar 子组件。
+2026-10-01 v1.11.x 状态栏组件化重构:`_conn_label` 已迁移到 StatusBar,
+MainWindow `_on_conn_state` 只委托 setter;本测试断言 setter 透传。
+2026-11-17 v2.0.3 D2:连接态与登录态合并为 `_UnifiedStateLabel`;本桩只用
+`_conn_state_label` 翻译表验证文案映射,不受组件改名影响。
 """
 
 from __future__ import annotations

@@ -20,14 +20,22 @@ from tgmonitor.ui.widgets.message_list_model import MessageListModel
 
 
 def test_header_has_no_search_bar(qapp, qloop, tmp_path):
-    """R-01:头栏不再有 SearchBar 控件,但保留状态与登录/登出按钮。"""
+    """R-01 + v2.0.3 D3:头栏无 SearchBar,且已退化为纯标题。
+
+    原「状态徽章 + 登录/登出按钮保留」是 2.0.2 时的 A1 决策;2026-11-17
+    v2.0.3 用户改拍板:登录态并入底部单一状态位,登录/登出入口迁到设置页。
+    本文件保留,只更新断言使同一不变量(头栏不承载这些控件)在新行为下成立。
+    """
+    from tgmonitor.ui.widgets.status_bar import _UnifiedStateLabel
+
     win = build_real_main_window(qloop, tmp_path)
     assert not hasattr(win.header, "search_bar"), "HeaderBar 不应再持有 search_bar"
-    # A1:状态徽章 + 操作按钮保留
-    assert win.header.state_dot is not None
-    assert win.header.state_label is not None
-    assert win.header.btn_action is not None
-    assert win.header.btn_logout is not None
+    for name in ("state_dot", "state_label", "btn_action", "btn_logout"):
+        assert not hasattr(win.header, name), f"HeaderBar 不应再持有 {name}"
+    # 新落点真实装配存在(防「代码删了但接线漏改」)
+    assert win.status_bar.findChild(_UnifiedStateLabel) is not None
+    assert hasattr(win.settings_page, "btn_login")
+    assert hasattr(win.settings_page, "btn_logout")
 
 
 def test_live_view_is_single_selection_and_no_selection_toolbar(qapp, qloop, tmp_path):

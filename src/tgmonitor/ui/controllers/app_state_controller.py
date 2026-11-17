@@ -5,7 +5,8 @@
 - VM `login_state` signal → status_bar 提示 + 活动指示器
 - VM `conn_state` signal → status_bar 连接状态 + 活动指示器
 - VM `error` signal → status_bar 警告 + log
-- EventBus `LoginStateChanged` → header.update_state + refresh_state + activity
+- EventBus `LoginStateChanged` → 底部状态位 + 设置页入口 + refresh_state + activity
+  (2026-11-17 v2.0.3 D3:头栏已退化为纯标题,不再 update_state)
 - EventBus `NotificationRequested` → status_bar 兜底(无 tray 时)
 
 注:`_on_bell_clicked` / `_clear_error_log`(status_bar 错误铃铛 dialog)
@@ -33,6 +34,17 @@ class AppStateController:
     def __init__(self, ctx) -> None:  # ctx: MainWindowCtx(避免循环 import)
         self._ctx = ctx
 
+    def _adapt_login_state(self, state: str) -> None:
+        """v2.0.3 D2/D3:登录态的 UI 呈现 — 底部单一状态位 + 设置页入口。
+
+        VM signal 与 EventBus 两条路径都走这里,避免「状态栏显示未登录、
+        设置页却还显示登出」这类双轨漂移。不碰 header(D3 后只有标题)。
+        """
+        self._ctx.status_bar.set_login_state(state)
+        settings_page = self._ctx.settings_page
+        if settings_page is not None:
+            settings_page.set_login_state(state)
+
     def _adapt_operations_gate(self, state: str) -> None:
         """v2.0.3 D7:把 core 门控状态适配到 UI 操作入口(体验层)。
 
@@ -43,7 +55,8 @@ class AppStateController:
         self._ctx.channel_panel.set_operations_enabled(state == READY_STATE)
 
     def on_login_state(self, state: str) -> None:
-        """VM `login_state` signal — 状态栏提示 + 活动指示器 + 操作门控适配。"""
+        """VM `login_state` signal — 底部状态位 + 提示 + 操作门控适配。"""
+        self._adapt_login_state(state)
         self._adapt_operations_gate(state)
         # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
         self._ctx.status_bar.show_message(
@@ -80,14 +93,15 @@ class AppStateController:
         self._ctx.status_bar.show_activity(f"⚠ {msg}", timeout_ms=5000)
 
     async def on_bus_login(self, e) -> None:
-        """EventBus `LoginStateChanged` — header 更新 + refresh_state + activity。
+        """EventBus `LoginStateChanged` — 底部状态位 + refresh_state + activity。
 
         Telegram 事件走原始 dict 经 EventBus → UI,与 VM 走 Qt signal 双轨。
+        2026-11-17 v2.0.3 D3:不再调 `header.update_state`。
         """
         if not isinstance(e, LoginStateChanged):
             return
+        self._adapt_login_state(e.state)
         self._adapt_operations_gate(e.state)
-        self._ctx.header.update_state(e.state, e.detail)
         self._ctx.main_window._refresh_state()
         # 活动指示器:与 `on_login_state` VM slot 同语义
         if e.state in ("ready", "logged_in"):

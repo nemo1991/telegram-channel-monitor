@@ -4,8 +4,11 @@
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
 以 QScrollArea 内分组排列,底部固定「保存到 .env」+「保存并应用」按钮。
 
+2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「📱 账户凭证」
+分组,底层仍是 LoginDialog / app.auth.logout();头栏退化为纯标题。
+
 6 个分组(全部走 FormSection):
-  1. 账户凭证   — API ID / Hash / Phone
+  1. 账户凭证   — API ID / Hash / Phone / Session 目录 + 登录/登出入口
   2. 网络代理   — SOCKS5 URL + 测试连接
   3. 消息存储   — DB 后端 + DSN / 目录
   4. 对象存储   — 后端 + 本地目录 / S3 凭据
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
+from tgmonitor.core.ops_gate import READY_STATE
 from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.widgets.form_section import (
@@ -79,6 +83,10 @@ class SettingsPage(QWidget):
 
         self._build()
         self._load_from_settings()
+        # 初始按 core 真实状态设置入口可见性;桩环境 client.state 非字符串
+        # 时退化为未登录(不把 MagicMock 当状态字符串显示)。
+        initial_state = getattr(self._app.client, "state", None)
+        self.set_login_state(initial_state if isinstance(initial_state, str) else "uninit")
 
     # ============================================================
     # _build 装配 — 6 FormSection + 顶部/底部
@@ -188,6 +196,45 @@ class SettingsPage(QWidget):
         self.in_api_hash = s._widgets["api_hash"]
         self.in_phone = s._widgets["phone"]
         self.in_session_dir = s._widgets["session_dir"]
+
+        # 2026-11-17 v2.0.3 D3:登录/登出入口。两个按钮常驻(由 set_login_state
+        # 控制显隐),不经 FormSection —— 它们不参与 _collect()/保存到 .env。
+        auth_row = QHBoxLayout()
+        auth_row.setContentsMargins(0, 0, 0, 0)
+        auth_row.setSpacing(8)
+        self.btn_login = QPushButton(self.tr("登录…"))
+        self.btn_login.setObjectName("settingsLoginBtn")
+        self.btn_login.clicked.connect(self._on_login_clicked)
+        auth_row.addWidget(self.btn_login)
+        self.btn_logout = QPushButton(self.tr("登出"))
+        self.btn_logout.setObjectName("settingsLogoutBtn")
+        self.btn_logout.clicked.connect(self._on_logout_clicked)
+        auth_row.addWidget(self.btn_logout)
+        auth_row.addStretch(1)
+        root.addLayout(auth_row)
+
+    def set_login_state(self, state: str) -> None:
+        """按 core 门控状态切换登录/登出入口(UI 适配,不重复 ready 判定)。
+
+        与 `AppStateController` 的两条登录态路径(VM signal / EventBus)
+        对接;真正的执行安全仍由 core 域服务入口保证。
+        """
+        logged_in = state == READY_STATE
+        self.btn_login.setVisible(not logged_in)
+        self.btn_login.setEnabled(not logged_in)
+        self.btn_logout.setVisible(logged_in)
+        self.btn_logout.setEnabled(logged_in)
+
+    def _on_login_clicked(self) -> None:
+        """设置页「登录…」— 弹 LoginDialog(内部订阅 LoginStateChanged 自动切页)。"""
+        from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
+
+        dlg = LoginDialog(self._app, self._loop, self.window())
+        dlg.exec()
+
+    def _on_logout_clicked(self) -> None:
+        """设置页「登出」— 复用 app.auth.logout()。"""
+        run_coro(self._loop, self._app.auth.logout(), error_label="logout")
 
     def _build_proxy(self, root: QVBoxLayout) -> None:
         """🌐 网络代理 — SOCKS5 URL + 测试连接按钮(走 ActionDef 双态重译)。

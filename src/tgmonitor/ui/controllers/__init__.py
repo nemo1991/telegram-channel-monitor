@@ -2,6 +2,8 @@
 
 2026-10-01 v1.12.x:低风险 controller(tray / header_action /
 settings_reaction / export / sync)。
+2026-11-17 v2.0.3 D3:header_action 随纯标题栏移除,登录/登出入口
+由 SettingsPage 自管。
 2026-10-04 plan 阶段 3.3:抽 `SearchController`(模板)+ `LiveSelectionController`
 + `MediaActionsController`(MediaManagerWidget 入口 + VM media event)+
 `MessageStreamController`(VM LIVE 流消息 + EventBus MessageDeleted)。
@@ -16,7 +18,6 @@ settings_reaction / export / sync)。
 from tgmonitor.ui.controllers._base import MainWindowCtx
 from tgmonitor.ui.controllers.app_state_controller import AppStateController
 from tgmonitor.ui.controllers.export_controller import ExportController
-from tgmonitor.ui.controllers.header_action_controller import HeaderActionController
 from tgmonitor.ui.controllers.lifecycle_controller import LifecycleController
 from tgmonitor.ui.controllers.media_actions_controller import MediaActionsController
 from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
@@ -29,7 +30,6 @@ __all__ = [
     "MainWindowCtx",
     "AppStateController",
     "TrayController",
-    "HeaderActionController",
     "SettingsReactionController",
     "ExportController",
     "SyncController",

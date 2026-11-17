@@ -1,7 +1,8 @@
-"""自定义 StatusBar widget + 9 个子组件 — 单元测。
+"""自定义 StatusBar widget + 7 个子组件 — 单元测。
 
-2026-10-01 v1.11.x 状态栏组件化重构后,所有子组件(LEFT 5 + RIGHT 4)独立可测,
-不再依赖 MainWindow 桩。覆盖:
+2026-11-17 v2.0.3 D1/D2:剔除 Backend / LastMessage 两个低价值组件,
+登录态与连接态合并为唯一 `_UnifiedStateLabel`(LEFT 3 + RIGHT 4)。
+2026-10-01 v1.11.x 状态栏组件化重构后子组件独立可测,不再依赖 MainWindow 桩。覆盖:
 
 - 子组件 setter / 显示文案 / 文案映射
 - throttle / timeout / ring buffer cap
@@ -23,7 +24,6 @@ import os
 # 2026-11-15:去掉强制 `offscreen`,并把 `windows_qt_paint_skip` 从 `sys.platform`
 # 三平台无差别跳过改为按 QPA 精确跳过,恢复本地真机覆盖(PR #45 同法)。
 import sys
-from datetime import UTC, datetime  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -32,15 +32,13 @@ from tgmonitor.core.events import AuthErrorOccurred, ErrorOccurred  # noqa: E402
 from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     StatusBar,
     _ActivityLabel,
-    _BackendLabel,
     _conn_state_label,
-    _ConnectionLabel,
     _ErrorBellButton,
-    _LastMessageLabel,
     _ObjectsWarnLabel,
     _PausedLabel,
     _SelectedChannelLabel,
     _StatsLabel,
+    _UnifiedStateLabel,
 )
 
 
@@ -94,43 +92,10 @@ def test_stats_label_format(qapp: QApplication) -> None:
     label.deleteLater()
 
 
-def test_backend_label_default(qapp: QApplication) -> None:
-    """未设置时显示「DB:— OS:—」占位。
-
-    测的是 set_backend_label 透传,跟具体后端名无关。
-    """
-    label = _BackendLabel()
-    assert "DB" in label.text()
-    label.set_label("DB=sqlite, ObjectStore=folder")
-    assert "sqlite" in label.text()
-    assert "folder" in label.text()
-    label.deleteLater()
-
-
-def test_last_message_label_today_format(qapp: QApplication) -> None:
-    """今天的时间 → 「最后:HH:MM」。"""
-    label = _LastMessageLabel()
-    when = datetime.now(UTC).replace(hour=14, minute=32, second=0, microsecond=0)
-    label.set_time(when)
-    assert "14:32" in label.text()
-    label.deleteLater()
-
-
-def test_last_message_label_other_day(qapp: QApplication) -> None:
-    """非今天 → 「最后:MM-DD HH:MM」(旧消息历史回放)。"""
-    label = _LastMessageLabel()
-    when = datetime(2025, 1, 1, 14, 32, 0, tzinfo=UTC)
-    label.set_time(when)
-    assert "01-01" in label.text()
-    label.deleteLater()
-
-
-def test_last_message_label_none(qapp: QApplication) -> None:
-    """None → 占位「最后:—」。"""
-    label = _LastMessageLabel()
-    label.set_time(None)
-    assert "最后" in label.text()
-    label.deleteLater()
+# 2026-11-17 v2.0.3 D1:原 `test_backend_label_default` /
+# `test_last_message_label_{today_format,other_day,none}` 四条断言随
+# `_BackendLabel` / `_LastMessageLabel` 组件移除而删除(PR 描述已逐条列理由)。
+# 新的单一状态位契约见 `test_ui_simplification_2003.py`。
 
 
 # ---- _ActivityLabel ----
@@ -209,13 +174,17 @@ def test_activity_label_throttle_different_keys_independent(qapp: QApplication) 
 # ======================== RIGHT 区子组件 ========================
 
 
-def test_connection_label_default(qapp: QApplication) -> None:
-    label = _ConnectionLabel()
-    # 默认 "unknown" → "TG 状态未知"
-    assert label.text() != ""
-    label.set_state("ready")
+def test_unified_state_label_priority(qapp: QApplication) -> None:
+    """D2:登录态优先;仅 ready 时呈现 5 态连接态。"""
+    label = _UnifiedStateLabel()
+    # 初始 login_state=uninit → 显示登录态,不是连接态
+    assert "启动中" in label.text()
+    label.set_connection_state("ready")
+    assert "启动中" in label.text()
+    assert "已连接" not in label.text()
+    label.set_login_state("ready")
     assert "已连接" in label.text()
-    label.set_state("connecting")
+    label.set_connection_state("connecting")
     assert "连接中" in label.text()
     label.deleteLater()
 
@@ -389,19 +358,15 @@ def test_status_bar_construction_with_objects_error(qapp: QApplication) -> None:
 
 
 def test_status_bar_layout_left_right_order(qapp: QApplication) -> None:
-    """LEFT 5 + RIGHT 4 共 9 个子组件,顺序与设计一致。"""
+    """D1:LEFT 3 + RIGHT 4 共 7 个子组件,顺序与设计一致。"""
     sb = _make_status_bar(qapp)
     children = sb.findChildren(_SelectedChannelLabel)
     assert len(children) == 1
     children = sb.findChildren(_StatsLabel)
     assert len(children) == 1
-    children = sb.findChildren(_BackendLabel)
-    assert len(children) == 1
-    children = sb.findChildren(_LastMessageLabel)
-    assert len(children) == 1
     children = sb.findChildren(_ActivityLabel)
     assert len(children) == 1
-    children = sb.findChildren(_ConnectionLabel)
+    children = sb.findChildren(_UnifiedStateLabel)
     assert len(children) == 1
     children = sb.findChildren(_PausedLabel)
     assert len(children) == 1
@@ -413,8 +378,9 @@ def test_status_bar_layout_left_right_order(qapp: QApplication) -> None:
 def test_status_bar_setters_delegate(qapp: QApplication) -> None:
     """所有公开 setter 都正确触发子组件更新。"""
     sb = _make_status_bar(qapp)
+    sb.set_login_state("ready")
     sb.set_connection_state("ready")
-    conn = sb.findChild(_ConnectionLabel)
+    conn = sb.findChild(_UnifiedStateLabel)
     assert "已连接" in conn.text()  # type: ignore[union-attr]
 
     sb.set_paused(True)
@@ -433,14 +399,6 @@ def test_status_bar_setters_delegate(qapp: QApplication) -> None:
     stats = sb.findChild(_StatsLabel)
     assert "5" in stats.text()  # type: ignore[union-attr]
     assert "10" in stats.text()  # type: ignore[union-attr]
-
-    sb.set_backend_label("DB=sqlite, ObjectStore=folder")
-    backend = sb.findChild(_BackendLabel)
-    assert "sqlite" in backend.text()  # type: ignore[union-attr]
-
-    sb.set_last_message_time(datetime.now(UTC))
-    last = sb.findChild(_LastMessageLabel)
-    assert "最后" in last.text()  # type: ignore[union-attr]
 
     sb.deleteLater()
 
