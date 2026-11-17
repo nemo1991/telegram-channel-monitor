@@ -132,7 +132,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
 
     测试:
       1) client.add_channel 注入 3 个频道(TD 视角)
-      2) storage.upsert_channel 注入 2 个 is_subscribed=True(真理视角)
+      2) storage.upsert_channel 注入 2 个 is_monitored=True(真理视角)
       3) VM.bootstrap_ui 触发后,known_channels 应等于 2(只真理),
          不是 3——反映新语义。
 
@@ -160,9 +160,9 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
         objects = LocalObjectStore(root=Path(td) / "o")
 
         async def _seed(s):
-            # 真理侧:只 100、200 is_subscribed=True;300 只在 TD 那边存在
-            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
-            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
+            # 真理侧:只 100、200 is_monitored=True;300 只在 TD 那边存在
+            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_monitored=True))
+            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_monitored=True))
 
         async def _apply_whitelist(s, obj_monitor):
             # 把 storage 加载的白名单推到 monitor
@@ -243,8 +243,8 @@ def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
 
         async def _seed(s):
             # 真理侧 2 个 subscribed
-            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_subscribed=True))
-            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_subscribed=True))
+            await s.upsert_channel(ChannelDTO(id=100, title="新闻", is_monitored=True))
+            await s.upsert_channel(ChannelDTO(id=200, title="技术", is_monitored=True))
 
         temp_loop = asyncio.new_event_loop()
         try:

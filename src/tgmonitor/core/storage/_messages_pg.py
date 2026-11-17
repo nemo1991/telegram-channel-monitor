@@ -112,8 +112,8 @@ async def save_message(self: PostgresRepository, message: MessageDTO) -> int:
         # 隐式频道占位 — 与 InMemoryRepository 对齐。
         # 用最小字段占位(`title=#<id>`),已有频道(完整 metadata)不动。
         # 显式 subscribed=FALSE 而非依赖列默认值:旧库 `ALTER TABLE ... DEFAULT
-        # TRUE` 迁移可能让 placeholder 错标已订阅,与 InMemory 语义
-        # (ChannelDTO.is_subscribed=False) 不一致。
+        # TRUE` 迁移可能让 placeholder 错标已监听,与 InMemory 语义
+        # (ChannelDTO.is_monitored=False) 不一致。tg_subscribed 走列默认值 FALSE。
         await conn.execute(
             """
             INSERT INTO channels (id, title, subscribed)

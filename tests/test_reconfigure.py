@@ -523,7 +523,7 @@ async def test_reconfigure_session_dir_change_publishes_needs_restart(tmp_path: 
 
 # ============================================================
 # 2026-09-14 v1.7.5 PR #7:DRIFT #C 回归测试 — 切 storage 后
-# `is_subscribed=False` 频道不被 union 进新 storage 的「已订」列表。
+# `is_monitored=False` 频道不被 union 进新 storage 的「已订」列表。
 # 旧实现:`_rebuild_storage` 末尾曾用 in-memory `_subscribed` cache 与
 # 新 storage `list_channels()` 做 union,会把 unsubscribed 旧频道错标为
 # "已订"。2026-07-31 已删 `_subscribed` cache(真理 = storage);
@@ -535,7 +535,7 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DRIFT #C 回归:reconfigure 后,旧 storage 里 `is_subscribed=False`
+    """DRIFT #C 回归:reconfigure 后,旧 storage 里 `is_monitored=False`
     的频道不应出现在新 storage 的「已订」视图里。
 
     验证路径:

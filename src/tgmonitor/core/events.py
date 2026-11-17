@@ -55,15 +55,15 @@ class ChannelDiscovered(Event):
 
 
 @dataclass
-class ChannelSubscribed(Event):
-    """用户将一个频道加入监听白名单。"""
+class ChannelMonitored(Event):
+    """用户将一个频道加入监听白名单(2026-11-17 v2.0.3 由 ChannelSubscribed 正名)。"""
 
     channel: ChannelDTO | None = None
 
 
 @dataclass
-class ChannelUnsubscribed(Event):
-    """用户将一个频道从监听白名单移除。"""
+class ChannelUnmonitored(Event):
+    """用户将一个频道从监听白名单移除(2026-11-17 v2.0.3 由 ChannelUnsubscribed 正名)。"""
 
     channel_id: int = 0
 

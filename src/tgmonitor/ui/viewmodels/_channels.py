@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Signal
 
 from tgmonitor.core.dto import ChannelDTO
-from tgmonitor.core.events import ChannelSubscribed, ChannelUnsubscribed
+from tgmonitor.core.events import ChannelMonitored, ChannelUnmonitored
 from tgmonitor.ui.async_bridge import run_coro
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class ChannelsMixin(_Base):
     - 1 signal:`channels_changed`
     - 1 状态字段:`known_channels: dict[int, ChannelDTO]`(由
       monitor_vm `__init__` 设,本 mixin 不写 init)
-    - 2 EventBus handler:ChannelSubscribed / ChannelUnsubscribed
+    - 2 EventBus handler:ChannelMonitored / ChannelUnmonitored
     """
 
     channels_changed = Signal()
@@ -80,14 +80,14 @@ class ChannelsMixin(_Base):
     # 给 EventBus.subscribe。handler 名错 → AttributeError 在
     # `wire_bus()` 调时即失败。
     _BUS_HANDLERS = {
-        ChannelSubscribed: "_on_channel_subscribed",
-        ChannelUnsubscribed: "_on_channel_unsubscribed",
+        ChannelMonitored: "_on_channel_subscribed",
+        ChannelUnmonitored: "_on_channel_unsubscribed",
     }
 
     # ---- 2 EventBus handler ----
 
     async def _on_channel_subscribed(self, e: object) -> None:
-        if not isinstance(e, ChannelSubscribed) or e.channel is None:
+        if not isinstance(e, ChannelMonitored) or e.channel is None:
             return
         self.known_channels[e.channel.id] = e.channel
         # 走 ChannelService → MonitorService 内部 WhitelistManager(sync),
@@ -99,7 +99,7 @@ class ChannelsMixin(_Base):
         self.stats_changed.emit((len(self.known_channels), self._message_count))
 
     async def _on_channel_unsubscribed(self, e: object) -> None:
-        if not isinstance(e, ChannelUnsubscribed):
+        if not isinstance(e, ChannelUnmonitored):
             return
         # 2026-10-15 plan-batch6-2 副产物:同上,走 facade。
         self.app.channels.remove_from_whitelist(e.channel_id)
@@ -120,7 +120,7 @@ class ChannelsMixin(_Base):
         2026-08-30 沿用 — 为什么需要:
         - `bootstrap()` 同步了 `_subscribed` 到内存,但 VM 不知道。
         - VM 的 `known_channels` 只在 `refresh_subscribed_channels`
-          或 `ChannelSubscribed` 事件后才填充,启动时为空 →
+          或 `ChannelMonitored` 事件后才填充,启动时为空 →
           `_refresh_state` 算 `subscribed` 时筛不出任何行 → 下栏
           一直空。
         - 这里的 `refresh_subscribed_channels` 同时也补了已知
@@ -145,7 +145,7 @@ class ChannelsMixin(_Base):
         Media Manager「全部频道」下拉会出现 1000 项噪音;用户
         实际只关心自己订阅的。新设计:跟 monitor 白名单完全
         一致 —— 已订阅 → 显示;退订 → 不显示(即时,
-        ChannelUnsubscribed 事件里同步 del);启动 → 从 storage
+        ChannelUnmonitored 事件里同步 del);启动 → 从 storage
         立刻拉回(不等 Telegram state)。
         """
 

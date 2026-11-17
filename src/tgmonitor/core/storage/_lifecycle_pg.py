@@ -50,13 +50,16 @@ CREATE TABLE IF NOT EXISTS channels (
     member_count    INTEGER,
     created_at      TIMESTAMPTZ,
     first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    subscribed      BOOLEAN     NOT NULL DEFAULT FALSE,
+    subscribed      BOOLEAN     NOT NULL DEFAULT FALSE,   -- 语义=是否监听;v2.0.3 正名为 monitored
+    tg_subscribed   BOOLEAN     NOT NULL DEFAULT FALSE,   -- v2.0.3:TG 侧是否仍订阅(与监听独立)
     last_synced_at  TIMESTAMPTZ
 );
 
--- 兼容旧库:已存在的 channels 表补 subscribed / last_synced_at 列(IF NOT EXISTS 幂等)。
--- subscribed 默认 TRUE 保留"存即订"语义 — 旧用户不会被升级变成未订阅。
+-- 兼容旧库:已存在的 channels 表补列(IF NOT EXISTS 幂等)。
+-- subscribed 默认 TRUE 保留"存即订"语义 — 旧用户不会被升级变成未监听。
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribed BOOLEAN NOT NULL DEFAULT TRUE;
+-- v2.0.3:TG 订阅状态新列,默认 FALSE(不回填,靠首次刷新全量校正)。
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS tg_subscribed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
 -- 2026-09-03 v1.6.0 PR #Q2:`updateChatPhoto` 推本地路径缓存 — UI 实时刷新头像
 -- 用。IF NOT EXISTS 幂等,旧库自动迁移加列。
@@ -220,6 +223,7 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "created_at": "TIMESTAMPTZ",
         "first_seen_at": "TIMESTAMPTZ",
         "subscribed": "BOOLEAN",
+        "tg_subscribed": "BOOLEAN",
         "last_synced_at": "TIMESTAMPTZ",
         "photo_local_key": "TEXT",
         "is_verified": "BOOLEAN",

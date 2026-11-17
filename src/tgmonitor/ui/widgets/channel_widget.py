@@ -5,7 +5,7 @@
 - **上半栏「全部(已加入)」**:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
 - **下半栏「已监听」**:`AppService._subscribed` 当前白名单,**多选 + 全量同步…**
 
-事件:`ChannelSubscribed / ChannelUnsubscribed` 会刷新下半栏。
+事件:`ChannelMonitored / ChannelUnmonitored` 会刷新下半栏。
 设计原则:订阅是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
 """
 
@@ -33,10 +33,10 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import (
+    ChannelMonitored,
     ChannelPhotoChanged,
-    ChannelSubscribed,
     ChannelTitleChanged,
-    ChannelUnsubscribed,
+    ChannelUnmonitored,
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import tinted_action_icon
@@ -466,9 +466,9 @@ class ChannelWidget(QWidget):
         bus: EventBus = self.app.bus
 
         async def _on(e: Event) -> None:
-            if isinstance(e, ChannelSubscribed) and e.channel is not None:
+            if isinstance(e, ChannelMonitored) and e.channel is not None:
                 self._add_to_subscribed_list(e.channel)
-            elif isinstance(e, ChannelUnsubscribed):
+            elif isinstance(e, ChannelUnmonitored):
                 self._remove_from_subscribed_list(e.channel_id)
             elif isinstance(e, ChannelTitleChanged):
                 # 2026-09-03 v1.6.0 PR #Q2:实时刷新卡片标题。
@@ -479,8 +479,8 @@ class ChannelWidget(QWidget):
                 # 由 ChannelListCard 兜底 placeholder)。
                 self._apply_photo_changed(e.channel_id, e.local_path)
 
-        bus.subscribe(ChannelSubscribed, _on)
-        bus.subscribe(ChannelUnsubscribed, _on)
+        bus.subscribe(ChannelMonitored, _on)
+        bus.subscribe(ChannelUnmonitored, _on)
         bus.subscribe(ChannelTitleChanged, _on)
         bus.subscribe(ChannelPhotoChanged, _on)
 
@@ -538,7 +538,9 @@ class ChannelWidget(QWidget):
 
     def _on_refresh(self) -> None:
         async def _go() -> None:
-            chs = await self.app.channels.list_joined_channels()
+            # v2.0.3:刷新同时落库校正 TG 订阅状态(写 tg_subscribed + 退订级联停监听)。
+            # 未登录/空返回时 service 整轮跳过并返回 [],UI 展示空列表但不动库。
+            chs = await self.app.channels.refresh_joined_channels()
             # 用 Signal 而非 QMetaObject.invokeMethod —— 后者把 Python list 经
             # Qt 元对象系统转 C++ 会 "Cannot copy-convert (list) to C++"。
             # Signal.emit 在 qasync 里跨 loop iteration 自然 queued,语义等价。

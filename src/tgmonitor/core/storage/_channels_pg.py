@@ -35,7 +35,10 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
         kind=row["kind"],
         member_count=row["member_count"],
         created_at=row["created_at"],
-        is_subscribed=bool(row.get("subscribed", True)),
+        # 物理列 subscribed 承载"监听"语义(历史命名,值等价迁入 monitored)。
+        is_monitored=bool(row.get("subscribed", True)),
+        # v2.0.3:TG 订阅状态;旧库无此列时默认 False(不回填,靠刷新校正)。
+        is_tg_subscribed=bool(row.get("tg_subscribed", False)),
         last_synced_at=row.get("last_synced_at"),
         # 2026-09-03 v1.6.0 PR #Q2:旧库可能没这列,get 兜底 None
         photo_local_key=row.get("photo_local_key"),
@@ -62,9 +65,9 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
             """
             INSERT INTO channels
                 (id, title, username, kind, member_count, created_at,
-                 subscribed, last_synced_at, photo_local_key,
+                 subscribed, tg_subscribed, last_synced_at, photo_local_key,
                  is_verified, is_scam, is_fake, has_protected_content)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 username = EXCLUDED.username,
@@ -72,6 +75,7 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
                 member_count = EXCLUDED.member_count,
                 created_at = EXCLUDED.created_at,
                 subscribed = EXCLUDED.subscribed,
+                tg_subscribed = EXCLUDED.tg_subscribed,
                 last_synced_at = EXCLUDED.last_synced_at,
                 photo_local_key = EXCLUDED.photo_local_key,
                 is_verified = EXCLUDED.is_verified,
@@ -85,7 +89,8 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
             channel.kind,
             channel.member_count,
             channel.created_at,
-            channel.is_subscribed,
+            channel.is_monitored,
+            channel.is_tg_subscribed,
             channel.last_synced_at,
             channel.photo_local_key,
             channel.is_verified,
@@ -96,8 +101,10 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
 
 
 async def upsert_channel_metadata(self: PostgresRepository, channel: ChannelDTO) -> None:
-    """只更元数据字段;subscribed 保持旧值(sync 用)。
+    """只更元数据字段;两个订阅/监听标志保持旧值(sync 用)。
 
+    v2.0.3:tg_subscribed 只在首次插入写 caller 值,已存在行不动 — 刷新落库校正
+    走专门的 `set_channel_tg_subscribed`。
     2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key`。
     2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
     """
@@ -107,9 +114,9 @@ async def upsert_channel_metadata(self: PostgresRepository, channel: ChannelDTO)
             """
             INSERT INTO channels
                 (id, title, username, kind, member_count, created_at,
-                 subscribed, last_synced_at, photo_local_key,
+                 subscribed, tg_subscribed, last_synced_at, photo_local_key,
                  is_verified, is_scam, is_fake, has_protected_content)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 username = EXCLUDED.username,
@@ -129,8 +136,9 @@ async def upsert_channel_metadata(self: PostgresRepository, channel: ChannelDTO)
             channel.kind,
             channel.member_count,
             channel.created_at,
-            # 首次插入时给个合理默认(False),后续 DO UPDATE 不动 subscribed
-            channel.is_subscribed,
+            # 首次插入给默认值(False),后续 DO UPDATE 两个标志都不动
+            channel.is_monitored,
+            channel.is_tg_subscribed,
             channel.last_synced_at,
             channel.photo_local_key,
             channel.is_verified,
@@ -189,7 +197,7 @@ async def update_channel_metadata(
 async def set_channel_subscribed(
     self: PostgresRepository, channel_id: int, subscribed: bool
 ) -> None:
-    """只设订阅标志;频道未建档时用 id 做个 stub(后续会被 metadata 覆盖)。"""
+    """只设**监听**标志(物理列 subscribed = 语义 monitored);未建档时建 stub。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
         # 不存在就先建一条 stub
@@ -205,13 +213,40 @@ async def set_channel_subscribed(
         )
 
 
+async def set_channel_tg_subscribed(
+    self: PostgresRepository, channel_id: int, tg_subscribed: bool
+) -> None:
+    """只设 **TG 订阅**标志,不动监听标志(v2.0.3 刷新落库校正用)。"""
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO channels (id, title, tg_subscribed)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE SET tg_subscribed = EXCLUDED.tg_subscribed
+            """,
+            channel_id,
+            f"#{channel_id}",
+            tg_subscribed,
+        )
+
+
+async def count_tg_subscribed(self: PostgresRepository) -> int:
+    """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡)。"""
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT COUNT(*) FROM channels WHERE tg_subscribed = TRUE"
+        )
+
+
 async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:
     """所有频道(按 id 升序);含未订阅的。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, last_synced_at, photo_local_key, "
+            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels ORDER BY id"
         )
@@ -224,7 +259,7 @@ async def list_subscribed_channels(self: PostgresRepository) -> list[ChannelDTO]
     async with self._pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, last_synced_at, photo_local_key, "
+            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels WHERE subscribed = TRUE ORDER BY id"
         )
@@ -237,7 +272,7 @@ async def get_channel(self: PostgresRepository, channel_id: int) -> ChannelDTO |
     async with self._pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, last_synced_at, photo_local_key, "
+            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels WHERE id = $1",
             channel_id,

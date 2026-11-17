@@ -37,8 +37,8 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.events import (
-    ChannelSubscribed,
-    ChannelUnsubscribed,
+    ChannelMonitored,
+    ChannelUnmonitored,
     ErrorOccurred,
     ExportDone,
     LoginStateChanged,
@@ -167,8 +167,8 @@ class DashboardWidget(QWidget):
     _EVENT_ICONS = {
         LoginStateChanged: "nav_live",
         MessageReceived: "nav_live",
-        ChannelSubscribed: "kind_channel",
-        ChannelUnsubscribed: "kind_group",
+        ChannelMonitored: "kind_channel",
+        ChannelUnmonitored: "kind_group",
         ExportDone: "export",
         SettingsChanged: "settings",
         ErrorOccurred: "refresh",
@@ -271,8 +271,8 @@ class DashboardWidget(QWidget):
         bus: EventBus = self._app.bus
         bus.subscribe(LoginStateChanged, self._on_bus_event)
         bus.subscribe(MessageReceived, self._on_bus_event)
-        bus.subscribe(ChannelSubscribed, self._on_bus_event)
-        bus.subscribe(ChannelUnsubscribed, self._on_bus_event)
+        bus.subscribe(ChannelMonitored, self._on_bus_event)
+        bus.subscribe(ChannelUnmonitored, self._on_bus_event)
         bus.subscribe(ExportDone, self._on_bus_event)
         bus.subscribe(SettingsChanged, self._on_bus_event)
         bus.subscribe(ErrorOccurred, self._on_bus_event)
@@ -313,11 +313,11 @@ class DashboardWidget(QWidget):
         snippet = (e.message.text or "")[:60]
         return "nav_live", f"[{title}] {snippet}"
 
-    def _format_channel_subscribed(self, e: ChannelSubscribed) -> tuple[str, str]:
+    def _format_channel_subscribed(self, e: ChannelMonitored) -> tuple[str, str]:
         title = e.channel.title if e.channel else f"#{id(e)}"
         return "kind_channel", f"已订阅频道: {title}"
 
-    def _format_channel_unsubscribed(self, e: ChannelUnsubscribed) -> tuple[str, str]:
+    def _format_channel_unsubscribed(self, e: ChannelUnmonitored) -> tuple[str, str]:
         return "kind_group", f"已退订频道: #{e.channel_id}"
 
     def _format_export_done(self, e: ExportDone) -> tuple[str, str]:
@@ -342,8 +342,8 @@ class DashboardWidget(QWidget):
         self._bus_event_formatters: dict[type, Callable[[Any], tuple[str, str]]] = {
             LoginStateChanged: self._format_login_state_changed,
             MessageReceived: self._format_message_received,
-            ChannelSubscribed: self._format_channel_subscribed,
-            ChannelUnsubscribed: self._format_channel_unsubscribed,
+            ChannelMonitored: self._format_channel_subscribed,
+            ChannelUnmonitored: self._format_channel_unsubscribed,
             ExportDone: self._format_export_done,
             SettingsChanged: self._format_settings_changed,
             ErrorOccurred: self._format_error_occurred,

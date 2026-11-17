@@ -105,7 +105,7 @@ async def test_persistence_close_reopen_roundtrip(tmp_path) -> None:
     r1 = SqliteRepository(path=path)
     await r1.connect()
     await r1.init_schema()
-    await r1.upsert_channel(ChannelDTO(id=100, title="Persist", is_subscribed=True))
+    await r1.upsert_channel(ChannelDTO(id=100, title="Persist", is_monitored=True))
     await r1.save_message(
         make_message(channel_id=100, msg_id=1, text="存盘", media=[_photo(fid="f-1")])
     )
@@ -119,7 +119,7 @@ async def test_persistence_close_reopen_roundtrip(tmp_path) -> None:
         ch = await r2.get_channel(100)
         assert ch is not None
         assert ch.title == "Persist"
-        assert ch.is_subscribed is True
+        assert ch.is_monitored is True
         msg = await r2.get_message(100, 1)
         assert msg is not None
         assert msg.text == "存盘"

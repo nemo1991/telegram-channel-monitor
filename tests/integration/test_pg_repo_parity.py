@@ -86,13 +86,13 @@ async def test_upsert_channel_and_get(pg_repo: PostgresRepository) -> None:
 async def test_upsert_channel_metadata_preserves_subscribed(
     pg_repo: PostgresRepository,
 ) -> None:
-    ch = ChannelDTO(id=100, title="Old", is_subscribed=True)
+    ch = ChannelDTO(id=100, title="Old", is_monitored=True)
     await pg_repo.upsert_channel(ch)
-    await pg_repo.upsert_channel_metadata(ChannelDTO(id=100, title="New", is_subscribed=False))
+    await pg_repo.upsert_channel_metadata(ChannelDTO(id=100, title="New", is_monitored=False))
     got = await pg_repo.get_channel(100)
     assert got is not None
     assert got.title == "New"
-    assert got.is_subscribed is True  # 保留
+    assert got.is_monitored is True  # 保留
 
 
 async def test_update_channel_metadata_partial(pg_repo: PostgresRepository) -> None:
