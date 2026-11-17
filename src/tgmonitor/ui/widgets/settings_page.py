@@ -191,6 +191,10 @@ class SettingsPage(QWidget):
         gb = s.build(self)
         root.addWidget(gb)
         self._sections.append(s)
+        # 2026-11-17 v2.0.4 FR-02:登录/登出入口挂在「账户凭证」分组内部,
+        # 不再是 form_root 上与 groupbox 平级的兄弟节点(原先浮在块外左下)。
+        # 用 gb.layout() (FormSection.build 内部是 QVBoxLayout) 追加按钮行。
+        self._account_gb = gb
         # 保留直接属性引用(测试 + 上层 _on_* 用)
         self.in_api_id = s._widgets["api_id"]
         self.in_api_hash = s._widgets["api_hash"]
@@ -211,7 +215,10 @@ class SettingsPage(QWidget):
         self.btn_logout.clicked.connect(self._on_logout_clicked)
         auth_row.addWidget(self.btn_logout)
         auth_row.addStretch(1)
-        root.addLayout(auth_row)
+        # FR-02:塞进凭证分组内部(QVBoxLayout),不再 addLayout 到 form_root。
+        gb_layout = gb.layout()
+        assert gb_layout is not None  # FormSection.build 必建 QVBoxLayout
+        gb_layout.addLayout(auth_row)
 
     def set_login_state(self, state: str) -> None:
         """按 core 门控状态切换登录/登出入口(UI 适配,不重复 ready 判定)。

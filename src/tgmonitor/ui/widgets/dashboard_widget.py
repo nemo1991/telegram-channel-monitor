@@ -16,7 +16,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
@@ -108,15 +109,35 @@ class _StatCard(QFrame):
 
 
 class _ActivityEntry(QWidget):
-    """时间线一条记录:时间 + 图标 + 文本。"""
+    """时间线一条记录:时间 + 图标 + 文本。
 
-    def __init__(self, icon_name: str, text: str, parent: QWidget | None = None) -> None:
+    2026-11-17 v2.0.4 FR-01:行高必须按**实际可用宽度**算。原来的 bug 是
+    在宽度未定时取 `sizeHint()`,而 `msg_lbl` 开了 wordWrap —— Qt 在未定宽时
+    按单行算高度,列表又把该高度锁死;真实渲染时文本换成多行,垂直居中后
+    上下被裁。这里改为:entry 记录自己的文本,由 `height_for_width()` 用
+    QFontMetrics 按给定宽度算换行高度,再由列表用同一宽度 setSizeHint。
+    """
+
+    # 水平固定占用:时间标签 60 + 图标 14 + 两个 spacing(8×2) = 90px。
+    _H_FIXED = 90
+    # 垂直余量:hbox 上下 margin(2×2) + QSS item padding(4×2) + 1px 容差。
+    _V_PAD = 13
+
+    def __init__(
+        self,
+        icon_name: str,
+        text: str,
+        occurred_at: datetime | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._text = text
         hbox = QHBoxLayout(self)
         hbox.setContentsMargins(0, 2, 0, 2)
         hbox.setSpacing(8)
 
-        time_lbl = QLabel(datetime.now().strftime("%H:%M:%S"))
+        # FR-01:时间取事件发生时刻(由 Event.occurred_at 注入),不再用渲染时刻。
+        time_lbl = QLabel((occurred_at or datetime.now()).strftime("%H:%M:%S"))
         time_lbl.setFixedWidth(60)
         time_lbl.setProperty("role", "hint")
         hbox.addWidget(time_lbl)
@@ -129,6 +150,15 @@ class _ActivityEntry(QWidget):
         self.msg_lbl = QLabel(text)
         self.msg_lbl.setWordWrap(True)
         hbox.addWidget(self.msg_lbl, 1)
+
+    def height_for_width(self, total_width: int) -> int:
+        """按列表可用宽度算该条需要的真实高度(用于 item.setSizeHint)。"""
+        text_width = max(40, total_width - self._H_FIXED - 20)  # 20 = QSS 左右 padding
+        fm = QFontMetrics(self.msg_lbl.font())
+        rect = fm.boundingRect(
+            0, 0, text_width, 100_000, Qt.TextWordWrap | Qt.AlignLeft, self._text
+        )
+        return rect.height() + self._V_PAD
 
 
 class DashboardWidget(QWidget):
@@ -275,7 +305,7 @@ class DashboardWidget(QWidget):
             return
         icon_name, msg = handler(e)
         if msg:
-            self._add_activity(icon_name, msg)
+            self._add_activity(icon_name, msg, getattr(e, "occurred_at", None))
 
     # ---- 表驱动: event type → (self, e) -> (icon_name, msg) ----
 
@@ -291,7 +321,8 @@ class DashboardWidget(QWidget):
         return "nav_live", msg
 
     def _format_channel_subscribed(self, e: ChannelMonitored) -> tuple[str, str]:
-        title = e.channel.title if e.channel else f"#{id(e)}"
+        # FR-04:原兜底 f"#{id(e)}" 取的是事件对象内存地址,对用户无意义。
+        title = e.channel.title if e.channel and e.channel.title else "(未知频道)"
         return "kind_channel", f"已监听频道: {title}"
 
     def _format_channel_unsubscribed(self, e: ChannelUnmonitored) -> tuple[str, str]:
@@ -325,11 +356,17 @@ class DashboardWidget(QWidget):
             ErrorOccurred: self._format_error_occurred,
         }
 
-    def _add_activity(self, icon_name: str, text: str) -> None:
-        """追加一条活动记录到列表头部(最新的在上面)。"""
-        entry = _ActivityEntry(icon_name, text)
+    def _add_activity(self, icon_name: str, text: str, occurred_at: datetime | None = None) -> None:
+        """追加一条活动记录到列表头部(最新的在上面)。
+
+        2026-11-17 v2.0.4 FR-01:sizeHint 用**列表实际可用宽度**算出的
+        换行高度,而不是 entry 未定宽时的单行 sizeHint —— 后者会锁死行高
+        导致多行文字上下被裁(半宽布局下更明显)。
+        """
+        available = max(120, self.activity_list.viewport().width())
+        entry = _ActivityEntry(icon_name, text, occurred_at)
         item = QListWidgetItem()
-        item.setSizeHint(entry.sizeHint())
+        item.setSizeHint(QSize(available, entry.height_for_width(available)))
         self.activity_list.insertItem(0, item)
         self.activity_list.setItemWidget(item, entry)
         # 限制条目数
@@ -340,6 +377,20 @@ class DashboardWidget(QWidget):
                 if w is not None:
                     w.deleteLater()
                 del item
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """FR-01:列表宽度变化(尤其半宽布局首次布局)时重算所有行高。
+
+        条目可能在列表尚未获得最终宽度时插入;布局稳定后按新宽度重算,
+        保证 wordWrap 的真实高度始终被 sizeHint 覆盖,不出现裁切。
+        """
+        super().resizeEvent(event)
+        available = max(120, self.activity_list.viewport().width())
+        for i in range(self.activity_list.count()):
+            item = self.activity_list.item(i)
+            widget = self.activity_list.itemWidget(item) if item is not None else None
+            if isinstance(widget, _ActivityEntry):
+                item.setSizeHint(QSize(available, widget.height_for_width(available)))
 
     def _tick_timeline(self) -> None:
         """定时心跳 — 感受 UI 在动就行。"""
