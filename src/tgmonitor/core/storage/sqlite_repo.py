@@ -462,11 +462,10 @@ class SqliteRepository(StorageRepository):
         """建表 + 幂等补齐缺失列。
 
         2026-11-17 v2.0.3 修复:原实现只跑 `CREATE TABLE IF NOT EXISTS`,对存量表的
-        **新增列无效**;PG 后端靠 `SCHEMA_SQL` 内的 `ALTER TABLE ... ADD COLUMN IF
-        NOT EXISTS` 兜底,SQLite 却只能等 `repair_schema`,而后者受默认 False 的
-        `schema_auto_repair` 控制 —— 结果存量库的 `tg_subscribed` 永远补不上,
-        大盘 `count_tg_subscribed()` 抛 "no such column"。这里对齐 PG:每次
-        init_schema 主动按 EXPECTED_SCHEMA 补缺失列,新增列不回填(保持列默认值)。
+        **新增列无效**,存量库补不上 `tg_subscribed` 致大盘查询抛 "no such column"。
+        这里对齐 PG 的 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`:每次 init_schema
+        主动按 EXPECTED_SCHEMA 幂等补缺失列,新增列不回填(保持列默认值)。
+        schema 迁移对用户无感 —— 无开关、无需配置,启动即自愈。
         """
         assert self._db is not None
         async with self._lock:

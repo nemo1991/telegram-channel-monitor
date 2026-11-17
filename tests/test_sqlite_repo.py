@@ -217,10 +217,10 @@ async def test_init_schema_backfills_new_columns_on_legacy_db(tmp_path) -> None:
     """存量库(缺 tg_subscribed 等新列)仅靠 init_schema 就能补齐。
 
     回归 2026-11-17 线上报错:旧库 channels 表无 tg_subscribed 列,
-    SCHEMA_SQL 的 CREATE TABLE IF NOT EXISTS 对存量表无效,而 repair 链路
-    受默认 False 的 schema_auto_repair 控制 → 列永远补不上,大盘
-    count_tg_subscribed() 抛 "no such column: tg_subscribed"。
-    修复后 init_schema() 幂等补列,与 PG 的 ALTER ... IF NOT EXISTS 对齐。
+    SCHEMA_SQL 的 CREATE TABLE IF NOT EXISTS 对存量表无效 → 列永远补不上,
+    大盘 count_tg_subscribed() 抛 "no such column: tg_subscribed"。
+    修复后 init_schema() 无条件幂等补列,与 PG 的 ALTER ... IF NOT EXISTS 对齐;
+    schema 自愈对用户无感,无开关、无需配置。
     """
     path = tmp_path / "legacy.db"
     raw = sqlite3.connect(path)

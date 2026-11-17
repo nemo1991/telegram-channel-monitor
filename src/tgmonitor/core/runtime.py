@@ -36,6 +36,9 @@ async def bootstrap(
         Settings → EventBus → Storage(connect + init_schema + introspect + repair)
                 → ObjectStore(connect) → TelegramClient → MonitorService → AppService
 
+    schema 迁移对用户无感:init_schema 幂等建表 + 补缺失列,repair 兜底
+    introspect 仍报出的 drift(幂等;缺表拒绝、类型漂移仅 log)。无用户开关。
+
     返回 4 元组 `(app, monitor, settings, objects_error_or_None)`:
     - `app`:AppService facade(UI 唯一入口,CLI 也用同一份)
     - `monitor`:MonitorService 实时监听服务
@@ -71,10 +74,10 @@ async def bootstrap(
     await storage.init_schema()
     log.info("[bootstrap] storage.init_schema() took %.2fs", time.monotonic() - t)
 
-    # 2026-09-23 v1.8.x:schema introspect + 选改 — 在 init_schema 之后跑,
-    # 让 fresh DB 先经 init_schema 建表(introspect 直接 ok);legacy DB 先经
-    # init_schema 跑 ALTER 补齐,introspect 也是 ok;只有 init_schema 失败的
-    # 边缘场景(introspect 才会看到 drift)。
+    # 2026-11-17 v2.0.3:schema 迁移对用户无感 —— init_schema 已幂等建表 + 补列,
+    # 这里 introspect 保留诊断日志,并对仍报出的 drift 无条件 repair 兜底。
+    # repair 幂等:缺表拒绝(避免 DROP+CREATE 丢数据)、类型漂移仅 log、缺列补上。
+    # 正常路径 report 恒 ok → repair 是 no-op,不产生任何用户可见提示或配置负担。
     t = time.monotonic()
     report = await storage.introspect_schema()
     log.info(
@@ -83,34 +86,20 @@ async def bootstrap(
         report.summary(),
     )
     if not report.ok:
-        if settings.schema_auto_repair:
-            log.warning(
-                "[bootstrap] schema drift (%s); auto-repair ENABLED — applying",
-                report.summary(),
-            )
-            try:
-                await storage.repair_schema(report)
-                report2 = await storage.introspect_schema()
-                if report2.ok:
-                    log.info(
-                        "[bootstrap] schema repair applied successfully (%s)",
-                        report.summary(),
-                    )
-                else:
-                    log.error(
-                        "[bootstrap] schema repair incomplete: %s; refusing to start",
-                        report2.summary(),
-                    )
-                    raise RuntimeError(f"schema repair incomplete: {report2.summary()}")
-            except Exception:
-                log.exception("[bootstrap] schema repair failed; refusing to start")
-                raise
-        else:
-            log.warning(
-                "[bootstrap] schema drift (%s); auto-repair DISABLED. "
-                "Set TG_SCHEMA_AUTO_REPAIR=true in .env to auto-apply.",
-                report.summary(),
-            )
+        log.warning("[bootstrap] schema drift (%s); applying idempotent repair", report.summary())
+        try:
+            await storage.repair_schema(report)
+            report2 = await storage.introspect_schema()
+            if not report2.ok:
+                log.error(
+                    "[bootstrap] schema repair incomplete: %s; refusing to start",
+                    report2.summary(),
+                )
+                raise RuntimeError(f"schema repair incomplete: {report2.summary()}")
+            log.info("[bootstrap] schema repair applied successfully (%s)", report.summary())
+        except Exception:
+            log.exception("[bootstrap] schema repair failed; refusing to start")
+            raise
 
     t = time.monotonic()
     objects = build_object_store(settings)
