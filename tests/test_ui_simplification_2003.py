@@ -25,6 +25,7 @@ from tgmonitor.core.events import (  # noqa: E402
     EventBus,
     LoginStateChanged,
     MessageReceived,
+    SettingsChanged,
 )
 from tgmonitor.core.monitor.service import MonitorService  # noqa: E402
 from tgmonitor.ui.controllers.app_state_controller import AppStateController  # noqa: E402
@@ -142,6 +143,31 @@ def test_settings_page_has_login_logout_entries(qapp, tmp_path) -> None:
     page, _ = _settings_page(tmp_path)
     assert page.btn_login is not None
     assert page.btn_logout is not None
+    page.deleteLater()
+
+
+def test_auth_buttons_live_inside_credentials_group(qapp, tmp_path) -> None:
+    """v2.0.4 FR-02:登录/登出入口归属「账户凭证」分组内部,不在块外。"""
+    from PySide6.QtWidgets import QGroupBox
+
+    page, _ = _settings_page(tmp_path)
+    assert page.btn_login.parent() is not None
+    assert page.btn_logout.parent() is not None
+
+    def ancestors(widget):
+        cur = widget
+        while cur is not None:
+            yield cur
+            cur = cur.parent()
+
+    credentials = [
+        w
+        for w in ancestors(page.btn_logout)
+        if isinstance(w, QGroupBox) and "账户凭证" in w.title()
+    ]
+    assert credentials, "登出按钮不在『账户凭证』分组内"
+    # 登录按钮共享同一归属
+    assert any(w in credentials for w in ancestors(page.btn_login))
     page.deleteLater()
 
 
@@ -270,6 +296,37 @@ async def test_recent_activity_ignores_message_received(qapp: QApplication) -> N
 
     await dash._on_bus_event(ErrorOccurred(source="test", message="boom"))
     assert dash.activity_list.count() == 1
+    dash.deleteLater()
+
+
+@pytest.mark.asyncio
+async def test_activity_row_height_covers_wrapped_text(qapp: QApplication) -> None:
+    """v2.0.4 FR-01:行高按实际宽度算,长文本换行后上下不被裁。"""
+    dash, _ = _dashboard(qapp, [], {})
+    available = max(120, dash.activity_list.viewport().width())
+    dash.activity_list.resize(available, 300)
+
+    long_text = "已监听频道: " + "超长频道名称" * 20
+    await dash._on_bus_event(SettingsChanged(what=long_text))
+
+    item = dash.activity_list.item(0)
+    widget = dash.activity_list.itemWidget(item)
+    assert item.sizeHint().height() >= widget.height_for_width(available)
+    # 关键回归:sizeHint 必须大于单行高度,否则多行被裁
+    assert item.sizeHint().height() > 40
+    dash.deleteLater()
+
+
+@pytest.mark.asyncio
+async def test_activity_timestamp_uses_event_time(qapp: QApplication) -> None:
+    """v2.0.4 FR-01:活动条目时间取事件发生时刻,不是渲染时刻。"""
+    from datetime import UTC, datetime
+
+    dash, _ = _dashboard(qapp, [], {})
+    past = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+    await dash._on_bus_event(SettingsChanged(what="x", occurred_at=past))
+    widget = dash.activity_list.itemWidget(dash.activity_list.item(0))
+    assert widget.findChild(QLabel).text() == "03:04:05"
     dash.deleteLater()
 
 
