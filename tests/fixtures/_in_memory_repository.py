@@ -67,9 +67,7 @@ class InMemoryRepository(StorageRepository):
             created_at=channel.created_at,
             # 两个标志保持旧值(首次插入用 caller 值)— 与 SQL 后端 upsert_channel_metadata 对齐
             is_monitored=(existing.is_monitored if existing else channel.is_monitored),
-            is_tg_subscribed=(
-                existing.is_tg_subscribed if existing else channel.is_tg_subscribed
-            ),
+            is_tg_subscribed=(existing.is_tg_subscribed if existing else channel.is_tg_subscribed),
             last_synced_at=channel.last_synced_at,
             photo_local_key=(
                 channel.photo_local_key

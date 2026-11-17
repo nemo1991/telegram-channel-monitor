@@ -121,7 +121,9 @@ class ChannelService:
         joined = await self._client.list_joined_channels()
         if not joined:
             # 兜底空列表:未登录 / closing / 拉取失败都可能返 [],绝不据此级联清零。
-            log.info("refresh_joined_channels skipped: empty joined list (state=%s)", self._client.state)
+            log.info(
+                "refresh_joined_channels skipped: empty joined list (state=%s)", self._client.state
+            )
             await self._bus.publish(
                 ErrorOccurred(
                     source="refresh_joined_channels",

@@ -235,9 +235,7 @@ async def count_tg_subscribed(self: PostgresRepository) -> int:
     """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡)。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT COUNT(*) FROM channels WHERE tg_subscribed = TRUE"
-        )
+        return await conn.fetchval("SELECT COUNT(*) FROM channels WHERE tg_subscribed = TRUE")
 
 
 async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:

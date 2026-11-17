@@ -186,9 +186,7 @@ async def test_empty_joined_list_never_clears_subscriptions(
     monitor.remove_from_whitelist.assert_not_called()
 
 
-async def test_not_ready_skips_refresh_entirely(
-    bus: EventBus, storage: InMemoryRepository
-) -> None:
+async def test_not_ready_skips_refresh_entirely(bus: EventBus, storage: InMemoryRepository) -> None:
     """RK-09:未登录(state≠ready)→ 整轮跳过,不发请求、不改库、发错误提示。"""
     await storage.upsert_channel(
         ChannelDTO(id=1, title="已监听", is_monitored=True, is_tg_subscribed=True)
