@@ -430,12 +430,14 @@ QGroupBox::title {
 QGroupBox#dashPanel {
     background: #ffffff;
     border: 1px solid #e2e4e9;
-    border-radius: 8px;
+    /* 2026-11-18 v2.0.5:圆角 8→10px,四角更清晰。 */
+    border-radius: 10px;
     margin-top: 0;
-    /* 2026-11-18 v2.0.5:padding-top 10→28,给 ::title 单独留出一行。
-     * 原值下标题(subcontrol-origin:padding,约 y=2..18)与列表首行(y=11)
-     * 纵向重叠,列表背景盖住标题下半;列表现从 y≈29 起,标题完整可见。 */
-    padding: 28px 12px 10px 12px;
+    /* 2026-11-18 v2.0.5 第二轮:padding-top 28→40px。原值下标题
+     * (subcontrol-origin:padding,约 y=3)紧贴面板顶边、视觉上压住左上角
+     * 圆角;配合下方 ::title 的 top:10px/left:6px,标题落在 y≈13 且离左侧
+     * 距离足够,圆角显形。列表从 y≈40 起,不遮挡标题。 */
+    padding: 40px 14px 12px 14px;
     font-weight: 600;
     font-size: 13px;
     color: #1a1a2e;
@@ -443,6 +445,9 @@ QGroupBox#dashPanel {
 QGroupBox#dashPanel::title {
     subcontrol-origin: padding;
     subcontrol-position: top left;
+    /* 2026-11-18:把标题从左上角内推,离开顶边与圆角弧线。 */
+    top: 10px;
+    left: 6px;
     padding: 0 6px;
     color: {accent};
     font-size: 13px;
@@ -470,13 +475,14 @@ QListWidget::item:selected {
     color: #1a1a2e;
     border-left: 3px solid {accent};
 }
-/* v2.0.5 FR-03 步骤一:消息流(QListView)容器观感与最近活动(QListWidget)对齐。
+/* v2.0.5 FR-03:消息流容器观感。2026-11-18 第二轮起,消息流与详情统一装进
+ * #liveWrap 圆角容器(见下方 liveWrap 规则),接壤由 splitter handle 画一条
+ * 竖直直角缝;因此这里不再单独画边框/圆角,只保留透明底 + 选中/hover 观感。
  * 交替行色由 view.setAlternatingRowColors(True) + delegate 用
- * QPalette.AlternateBase 绘制,此处只管容器白底圆角边框 + 选中/hover 观感。 */
+ * QPalette.AlternateBase 绘制,与最近活动一致。 */
 QListView#streamList {
-    background: #ffffff;
-    border: 1px solid #e2e4e9;
-    border-radius: 6px;
+    background: transparent;
+    border: none;
     outline: 0;
     padding: 2px;
 }
@@ -561,10 +567,28 @@ QLabel[role="error"] {
     font-size: 12px;
 }
 
-/* ===== 消息详情面板 ===== */
-#messageDetail {
+/* ===== 实时流 + 详情 统一容器 (v2.0.5 2026-11-18) =====
+ * 两者装进同一个 QFrame#liveWrap:外围四角圆角由容器绘制,接壤处由
+ * splitter handle 画一条 1px 竖直直角缝 —— 满足「接壤直角、外围圆角」。
+ * 子 widget(live_view / message_detail)自身无边框无圆角、viewport 透明,
+ * 让容器白底与圆角显形(QScrollArea 视口会盖住 frame 的圆角,故必须外包)。 */
+QFrame#liveWrap {
     background: #ffffff;
-    border-left: 1px solid #e2e4e9;
+    border: 1px solid #e2e4e9;
+    border-radius: 10px;
+}
+QSplitter#dashboardLiveSplitter::handle:horizontal {
+    background: #e2e4e9;
+    width: 1px;
+}
+
+/* ===== 消息详情面板 ===== */
+/* 2026-11-18 v2.0.5:边框/圆角交给外层 #liveWrap 容器统一绘制,接壤处由
+ * splitter handle 画直角缝。两个 viewport 的背景透明由 DashboardWidget
+ * 装配时内联 stylesheet 设置,让容器白底与圆角显形。 */
+#messageDetail {
+    background: transparent;
+    border: none;
 }
 #metaCard {
     background: #fafbfc;
@@ -657,19 +681,8 @@ QLabel#emptyHintIcon {
     background: #ffe69c;
 }
 
-/* ===== 2026-09-14 v1.7.5 PR #5 (P0-I):新消息浮条 — top-right 浮动 ===== */
-QPushButton#floatingNewMsgBtn {
-    background: {accent};
-    color: #ffffff;
-    border: none;
-    border-radius: 14px;
-    padding: 6px 14px;
-    font-size: 12px;
-    font-weight: 600;
-}
-QPushButton#floatingNewMsgBtn:hover {
-    background: {accentHover};
-}
+/* 2026-11-18 v2.0.5:新消息浮条已移除 — 用户确认无实际作用,
+ * LIVE 收敛为只读看板。空状态三态 overlay 保留。 */
 
 /* ===== 2026-09-14 v1.7.5 PR #6 (P0-K):错误日志铃铛按钮(浅色) ===== */
 QPushButton#errorBellBtn {

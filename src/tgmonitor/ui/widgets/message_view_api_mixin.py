@@ -81,8 +81,6 @@ class MessageViewAPIMixin:
         module-level `_reapply_filter_if_active(model)`,mixin 不触碰 model
         私有字段,保留原状。
         """
-        # 2026-09-14 v1.7.5 PR #5 (P0-I):set_messages 是批量替换,清空浮条计数
-        self.clear_new_msg_counter()
         # 2026-09-15 v1.7.5 PR #9:单次 reset(new=[] 也能正确清空;model.reset
         # 已分支处理空列表)。`model.reset` 接受按 list 顺序存储,而 view 是
         # newest-first(top=row 0 是最新),所以 caller 给 messages 是 date ASC

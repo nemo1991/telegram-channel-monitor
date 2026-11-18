@@ -54,8 +54,14 @@ def test_live_splitter_above_bottom_row(qapp, qloop, tmp_path):
     assert splitter.indexOf(win.live_view) >= 0
     assert splitter.indexOf(win.message_detail) >= 0
 
-    # 布局中 splitter 的位置 < 底部左右块的 QHBoxLayout 位置
-    splitter_pos = layout.indexOf(splitter)
+    # 2026-11-18 v2.0.5:splitter 装进 QFrame#liveWrap(外围圆角容器),
+    # 根布局里直接子项是 liveWrap 而非 splitter。取 liveWrap 的位置比较。
+    from PySide6.QtWidgets import QFrame
+
+    wrap = win.dashboard.findChild(QFrame, "liveWrap")
+    assert wrap is not None
+    assert wrap.layout().indexOf(splitter) >= 0
+    splitter_pos = layout.indexOf(wrap)
     bottom_pos = next(
         i
         for i in range(layout.count())
