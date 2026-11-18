@@ -5,6 +5,39 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.0.5] - 2026-11-18
+
+主题:**大盘空间与视觉统一**。去掉占用纵向空间的标题与高卡片，让消息流可视区更大；
+消息流容器与排版语言向「最近活动」对齐；面板标题归位框内。另含频道刷新后大盘计数
+不同步的 bug 修复。无 schema 变更，无需重新登录。
+
+### 变更
+
+- **大盘去「操作台」标题，统计卡压缩**：删除大盘页 `pageTitle` 标题节点（其它页面的
+  全局样式保留）；5 张统计卡保持 5 张与取数口径不变，高度 100→68px、字号与间距收紧；
+  消息流 splitter 与底部块 stretch 保持 3:2，释放的纵向空间由布局自然分配给消息流
+  （固定 1280×800 窗口实测 splitter 318→356px，PR #70 / #71）。
+- **消息流容器与排版语言与最近活动对齐**：消息流 `QListView` 加 `streamList` 专属样式，
+  白底圆角边框与 hover/选中观感与 `QListWidget` 一致（PR #72）；排版上去掉 `<pre>`
+  等宽语义改无衬线，`⏱` 时间改灰字 span 对齐最近活动的灰字时间列，保留
+  `pre-wrap/break-word` 折行护栏（PR #73）。
+- **面板标题归位框内**：「最近活动 / 频道统计」两个 `QGroupBox` 加 `dashPanel` 专属样式，
+  标题从边框外 margin 区回到框内、顶部留白收紧；全局 QGroupBox 规则不动，设置页不受影响
+  （PR #70）。
+- **MessageItemDelegate 布局结构性重构**：`paint()` 与 `sizeHint()` 原各自 new
+  QTextDocument、靠共享纯函数维持"画的高度 = 报的行高"隐式契约，现抽单一 `_layout()`
+  入口让两处读同一份 doc，从结构上消除该契约；统一 cache key 含 width/font，消除字体
+  缓存命中短路、宽度 fallback 不一致、`+8` 单边 padding、无 DTO 第三路径四个漏改点。
+  公开契约与既有测试零改动。性能基线同机对比：`sizeHint` 缓存命中 100k 次 76.4→91.8ms
+  （+20%，来自更长 key 的 hash 开销，仍为微秒级），`append` 10K 235.7→147.9ms，其余持平（PR #73）。
+
+### 修复
+
+- **频道页刷新后大盘「已加入频道」数不更新**：刷新写库（`tg_subscribed`）后无事件通知
+  大盘，大盘卡片只由 `MainWindow._refresh_state()` 驱动、刷新路径不经过它。新增
+  `JoinedChannelsRefreshed` 领域事件，仅在成功校正写库后发布；大盘订阅后重读库计数与
+  每频道统计，显示以读库为准（PR #69）。
+
 ## [2.0.4] - 2026-11-17
 
 主题:**操作台整合 + 最近活动持久化**。大盘升级为唯一工作台:实时流迁入
