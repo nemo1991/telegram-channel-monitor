@@ -134,7 +134,8 @@ def test_settings_page_groups_are_not_dash_panel(qapp, qloop, tmp_path):
     assert "margin-top: 14px" in global_block
     assert "padding: 20px 14px 14px 14px" in global_block
     # 设置页内不应出现 dashPanel(专属规则只命中大盘两块)
-    settings = win.stack.widget(3)
+    # v2.0.6:频道页撤销,设置页索引 3→2
+    settings = win.stack.widget(2)
     assert settings is not None
     assert [g for g in settings.findChildren(QGroupBox) if g.objectName() == "dashPanel"] == []
     win.close()

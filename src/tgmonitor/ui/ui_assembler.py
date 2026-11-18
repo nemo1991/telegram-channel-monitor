@@ -3,7 +3,7 @@
 2026-10-12 plan-batch3 目标 1:`main_window.py` 982 → ~864 LOC。
 
 把 5 段装配逻辑(共 ~264 LOC)从 `MainWindow` 抽到本类:
-- `_build_central_widget`(115 LOC)— widget hierarchy + 4 page + status bar + 2 debounce
+- `_build_central_widget`(115 LOC)— widget hierarchy + 3 page + status bar + 2 debounce
 - `_build_menu`(31 LOC)— File menu
 - `_build_tray`(15 LOC)— TrayIcon
 - `_wire_signals`(42 LOC)— 内部 signal 连接
@@ -45,7 +45,6 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -86,9 +85,12 @@ class UiAssembler:
         self._mw = main_window
 
     def build_central(self) -> dict[str, object]:
-        """装配 central widget + 4 个 stacked page + status bar + 1 个 debounce timer。
+        """装配 central widget + 3 个 stacked page + status bar + 1 个 debounce timer。
 
         原 `MainWindow._build_central_widget`(115 LOC) body 整体搬过来。
+
+        2026-11-18 v2.0.6:撤销独立频道页,ChannelWidget 单实例迁入设置页。
+        页序:0 大盘(含实时流) / 1 媒体 / 2 设置(含监听频道管理)。
 
         Returns: dict[str, object] — key → widget 引用,key 名跟原 MainWindow
         属性名一致(nav / header / stack / live_view / message_detail /
@@ -137,19 +139,13 @@ class UiAssembler:
         )
         stack.addWidget(dashboard)
 
-        # 1: 频道
-        channels_page = QWidget()
-        ch_layout = QVBoxLayout(channels_page)
-        ch_layout.setContentsMargins(16, 16, 16, 16)
-        ch_layout.setSpacing(12)
-        ch_title = QLabel(self._mw.tr("频道管理"))
-        ch_title.setObjectName("pageTitle")
-        ch_layout.addWidget(ch_title)
+        # 2026-11-18 v2.0.6:撤销独立频道页 —— ChannelWidget 单实例迁入
+        # SettingsPage(监听频道管理分组)。MainWindow/controllers 仍持
+        # channel_panel 引用不变,只是 parent 链改到设置页内。
+        # 先建实例,构造 SettingsPage 时注入;assembler 仍把它放进返回 dict。
         channel_panel = ChannelWidget(self._mw.app, self._mw.loop)
-        ch_layout.addWidget(channel_panel, 1)
-        stack.addWidget(channels_page)
 
-        # 2: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+        # 1: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
         media_page = QWidget()
         media_layout = QVBoxLayout(media_page)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -158,8 +154,13 @@ class UiAssembler:
         media_layout.addWidget(media_manager)
         stack.addWidget(media_page)
 
-        # 3: 设置
-        settings_page = SettingsPage(self._mw.app, self._mw.loop, self._mw.env_path)
+        # 2: 设置
+        settings_page = SettingsPage(
+            self._mw.app,
+            self._mw.loop,
+            self._mw.env_path,
+            channel_panel=channel_panel,
+        )
         stack.addWidget(settings_page)
 
         stack.setCurrentIndex(0)

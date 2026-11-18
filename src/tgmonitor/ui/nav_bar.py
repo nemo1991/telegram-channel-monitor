@@ -1,12 +1,12 @@
 # mypy: disable-error-code="attr-defined"
 """VerticalNavBar — 左侧竖向导航(深色底,跨主题)。
 
-5 个 Tab:
-  0: 实时流(LIVE)     — 实时消息流
-  1: 大盘(DASHBOARD)  — 统计 + 活动时间线
-  2: 频道(CHANNELS)   — 频道管理(订阅/退订/同步)
-  3: 媒体管理(MEDIA)  — 浏览 / 重试 / 删 / 打开 + orphan reconcile
-  4: 设置(SETTINGS)   — 所有配置(凭据/存储/代理/媒体/同步)
+3 个 Tab:
+  0: 大盘(DASHBOARD)  — 统计 + 活动时间线 + 实时流
+  1: 媒体管理(MEDIA)  — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+  2: 设置(SETTINGS)   — 所有配置(凭据/监听频道/存储/代理/媒体/同步)
+
+2026-11-18 v2.0.6:撤销独立频道页 —— 监听频道管理迁入设置页,导航 4→3。
 
 设计:
 - 固定深色底 — 形成稳定的"导航锚点",不随系统设置变化
@@ -32,11 +32,12 @@ from tgmonitor.ui.icon import tinted_action_icon
 
 # 标签走 `QCoreApplication.translate`,与其余 UI 文案写法一致。
 # 2026-11-17 v2.0.4 FR-03:实时流迁入大盘,撤销独立页 → 4 项,大盘为首页。
-_NAV_LABELS_SRC = ("大盘", "频道", "媒体", "设置")
+# 2026-11-18 v2.0.6:频道页迁入设置页 → 3 项。
+_NAV_LABELS_SRC = ("大盘", "媒体", "设置")
 
 
 def _nav_label(idx: int) -> str:
-    """Return the translated label for nav item idx (0..3).
+    """Return the translated label for nav item idx (0..2).
 
     用 module-level function 而不是直接调 translate,保持 `_NAV_ITEMS`
     结构(icon_name + label)的兼容性。
@@ -46,12 +47,12 @@ def _nav_label(idx: int) -> str:
     return QCoreApplication.translate("nav_bar", _NAV_LABELS_SRC[idx])
 
 
-_NAV_ICONS = ("nav_dashboard", "nav_channels", "nav_media", "nav_settings")
+_NAV_ICONS = ("nav_dashboard", "nav_media", "nav_settings")
 
 
 def _nav_items() -> list[tuple[str, str]]:
     """导航项 (icon_name, label) 列表。"""
-    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(4)), strict=True))
+    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(3)), strict=True))
 
 
 # ---- 配色 token(直接 hex,固定样式,本文件自包含) ----

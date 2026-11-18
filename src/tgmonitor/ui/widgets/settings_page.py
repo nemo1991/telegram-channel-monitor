@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tgmonitor.core.app_service import AppService
+    from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 
 log = logging.getLogger(__name__)
 
@@ -69,15 +71,19 @@ class SettingsPage(QWidget):
         loop: asyncio.AbstractEventLoop,
         env_path: Path,
         parent: QWidget | None = None,
+        channel_panel: ChannelWidget | None = None,
     ) -> None:
         """建 6 个分组 + 底部按钮 + 加载当前设置。
 
         `env_path` 是「保存到 .env」按钮的写入路径(platform-native 由 app.py 注入)。
+        `channel_panel` 是 2.0.6 从频道页迁入的监听频道控件(单实例 reparent,
+        MainWindow 仍持引用);不经 FormSection,不参与 collect() 写 .env。
         """
         super().__init__(parent)
         self._app = app
         self._loop = loop
         self._env_path = env_path
+        self._channel_panel = channel_panel
         # 6 个 FormSection + 持有 self 引用,collect / load 通用循环
         self._sections: list[FormSection] = []
 
@@ -116,6 +122,10 @@ class SettingsPage(QWidget):
 
         # 6 个 FormSection(标题已 tr)
         self._build_account(form_root)
+        # 2.0.6:监听频道管理从独立频道页迁入设置页(单实例,不进 FormSection)。
+        # channel_panel 缺省时跳过分组 —— 保持独立 SettingsPage 单测可用。
+        if self._channel_panel is not None:
+            self._build_channel_monitor(form_root)
         self._build_proxy(form_root)
         self._build_storage(form_root)
         self._build_objectstore(form_root)
@@ -219,6 +229,29 @@ class SettingsPage(QWidget):
         gb_layout = gb.layout()
         assert gb_layout is not None  # FormSection.build 必建 QVBoxLayout
         gb_layout.addLayout(auth_row)
+
+    def _build_channel_monitor(self, root: QVBoxLayout) -> None:
+        """监听频道管理 — 从频道页迁入的 ChannelWidget 单实例(2.0.6)。
+
+        不走 FormSection:白名单写 core 存储,不进 EditableSettings/.env;
+        `collect()` 通用循环不覆盖它。用 QGroupBox 与原各组视觉对齐。
+        """
+        panel = self._channel_panel
+        assert panel is not None  # 调用方已判空
+        box = QGroupBox(self.tr("监听频道管理"))
+        box.setObjectName("settingsChannelMonitorGroup")
+        box_layout = QVBoxLayout(box)
+        box_layout.setContentsMargins(12, 12, 12, 12)
+        box_layout.setSpacing(8)
+        box_layout.addWidget(panel, 1)
+        # QScrollArea(widgetResizable) 内 stretch 不生效,给最小高度保证双栏可见。
+        box.setMinimumHeight(460)
+        root.addWidget(box)
+
+    @property
+    def channel_panel(self) -> ChannelWidget | None:
+        """迁入的监听频道控件(单实例,MainWindow/ctx 亦持同一引用)。"""
+        return self._channel_panel
 
     def set_login_state(self, state: str) -> None:
         """按 core 门控状态切换登录/登出入口(UI 适配,不重复 ready 判定)。
