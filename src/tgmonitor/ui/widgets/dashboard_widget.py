@@ -80,20 +80,23 @@ class _StatCard(QFrame):
     def __init__(self, title: str, icon_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statCard")
-        self.setFixedHeight(100)
+        # v2.0.5 FR-02:卡片高度 100→68,把纵向空间让给消息流。
+        self.setFixedHeight(68)
         self.setMinimumWidth(160)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(16, 12, 16, 12)
-        vbox.setSpacing(4)
+        # v2.0.5 FR-02: tighter margins/spacing + 16px 图标,让三行内容在
+        # 68px 固定高度内不被裁切(布局 minimumSize 实测 ≤ 68)。
+        vbox.setContentsMargins(16, 6, 16, 6)
+        vbox.setSpacing(1)
 
         # 图标 + 标题
         top = QHBoxLayout()
         top.setSpacing(8)
         ico = QLabel()
-        ico.setPixmap(action_icon(icon_name).pixmap(20, 20))
-        ico.setFixedSize(20, 20)
+        ico.setPixmap(action_icon(icon_name).pixmap(16, 16))
+        ico.setFixedSize(16, 16)
         top.addWidget(ico)
         title_lbl = QLabel(title)
         title_lbl.setProperty("role", "card-title")
@@ -220,15 +223,16 @@ class DashboardWidget(QWidget):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(20)
+        # v2.0.5 FR-02:收紧页边距与行距(24/20 → 16/12),释放纵向空间。
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
 
         # v2.0.5 FR-01:原 "操作台" pageTitle 标题移除,把纵向空间让给消息流。
         # 全局 #pageTitle QSS 规则保留(设置页/详情页等仍依赖)。
 
         # --- 统计卡片行 ---
         cards = QHBoxLayout()
-        cards.setSpacing(16)
+        cards.setSpacing(10)
 
         self.card_channels = _StatCard("已加入频道", "nav_channels")
         cards.addWidget(self.card_channels)

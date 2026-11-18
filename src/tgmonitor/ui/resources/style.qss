@@ -301,7 +301,8 @@ QLabel#favoriteStarLabel {
     background: #fafbfc;
 }
 #statValue {
-    font-size: 24px;
+    /* v2.0.5 FR-02:卡片压缩到 68px,数值字号 24→20px 避免拥挤 */
+    font-size: 20px;
     font-weight: 700;
     color: #1a1a2e;
 }
