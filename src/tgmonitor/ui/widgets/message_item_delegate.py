@@ -13,6 +13,16 @@
   - `_plain_to_html` staticmethod
   - `paint` / `sizeHint` Qt override
 
+2026-11-18 v2.0.5 FR-06 结构性重构:
+  - 抽出单一 `_layout(text, font, width)` 入口,paint / sizeHint 都调它并
+    读**同一个 QTextDocument**,从结构上消除"画的高度 = 报的行高"隐式契约。
+  - 统一 cache key 为 (cid, mid, width, font_key),消除四个漏改点:
+    字体缓存命中短路 / 宽度 fallback 不一致 / +8 单边 padding / 无 DTO 第三路径。
+  - padding 由 `doc.setDocumentMargin(4)` 表达,不再在 sizeHint 里 +8
+    (QTextDocument 默认 margin 已是 4,旧代码的 +8 属于重复加)。
+  - 旧属性 `_doc_cache` / `_size_hint_cache` 保留为缓存视图,维持既有测试
+    与外部引用兼容,但它们现在由 `_layout` 统一读写、key 完全一致。
+
 通过 `from tgmonitor.ui.widgets.message_view import MessageItemDelegate`
 re-export 保持旧 import 路径兼容。
 """
@@ -28,7 +38,7 @@ from PySide6.QtCore import (
     QPersistentModelIndex,
     QSize,
 )
-from PySide6.QtGui import QPalette, QTextDocument
+from PySide6.QtGui import QFont, QPalette, QTextDocument
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from tgmonitor.core.dto import MessageDTO
@@ -37,6 +47,9 @@ from tgmonitor.core.dto import MessageDTO
 # 避免循环 import(message_view.py → message_item_delegate.py → message_view.py)。
 from tgmonitor.ui.widgets.message_view import MessageListModel
 
+# v2.0.5 FR-06:cache key 类型 = (cid, mid, width, font_key)
+_LayoutKey = tuple[int | None, int | None, int, tuple[str, int, bool, bool]]
+
 
 class MessageItemDelegate(QStyledItemDelegate):
     """2026-09-02 v1.5.3 PR #D1:lazy paint delegate。
@@ -44,18 +57,8 @@ class MessageItemDelegate(QStyledItemDelegate):
     - hidden=True → 不画(节省 paint 开销)
     - 普通行 → QTextDocument 渲 rich text(支持 word wrap)
 
-    2026-09-11 v1.7.5:删 `MEDIA_BG = QColor(232, 240, 248)` 硬编码浅蓝
-    → 改走 `option.palette.brush(QPalette.AlternateBase)`(Qt 主题感知,
-    由 palette 自动给 darker shade)。同时支持 `style.qss` `#messageMediaRow`
-    selector 自定义(若 QSS 设置 QPalette,override 优先级 QtStyle 决定)。
-
-    2026-09-15 v1.7.5 PR #9 perf:加 `_size_hint_cache` + `_doc_cache` —
-    - `_size_hint_cache: dict[(cid, mid, width), QSize]` — sizeHint O(1) 命中,
-      避免每帧 QTextDocument 重建(setHtml + setTextWidth + size + idealWidth)
-      单 row paint ~5-10ms → 缓存命中 ~0.1ms。
-    - `_doc_cache: dict[(cid, mid), QTextDocument]` — paint 命中复用 doc 实例,
-      避免 setHtml 重做。LRU 200(队列里 FIFO 淘汰,贴近真实窗口可见行 30-50,
-      留 4x 缓冲)。dataChanged 时由调用方主动 clear(详见 `clear_caches`)。
+    2026-11-18 v2.0.5 FR-06:单一 `_layout()` 入口 — paint/sizeHint 共享
+    同一份 QTextDocument,布局一致性由结构保证而非靠人同步两处代码。
     """
 
     # PR #9:doc 缓存上限。10K 行 × ~30KB doc ≈ 300MB,LRU 200 ≈ 6MB 可接受。
@@ -63,23 +66,82 @@ class MessageItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        # PR #9 perf:sizeHint 缓存 — keyed by (cid, mid, width)。width
-        # 变化(窗口 resize)时本 row 自然 miss → 重算 + 缓存。
-        self._size_hint_cache: dict[tuple[int, int, int], QSize] = {}
-        # PR #9 perf:paint doc 缓存 — keyed by (cid, mid),LRU 200 淘汰。
-        # doc 实例在 `paint` 内 reuse,只调 `setTextWidth(rect.width())`
-        # 适配当前行宽 — 比重建省一次 setHtml。
-        self._doc_cache: dict[tuple[int, int], QTextDocument] = {}
-        self._doc_cache_lru: list[tuple[int, int]] = []  # FIFO 队列
+        # v2.0.5 FR-06:统一布局缓存。key 含 width + font,避免窗口 resize /
+        # 字体切换时命中旧布局。旧属性名保留为视图(见下方 property)。
+        self._layout_cache: dict[_LayoutKey, QTextDocument] = {}
+        # v2.0.5 FR-06:尺寸单独缓存,sizeHint 命中后直接返回 QSize,不再每次
+        # 调 doc.size()(原生调用较贵,100k 次实测多 ~30ms)。key 与布局一致。
+        self._size_cache: dict[_LayoutKey, QSize] = {}
+        self._layout_lru: list[_LayoutKey] = []
+
+    # ---- 旧属性兼容视图(既有测试与外部引用读 `_doc_cache` / `_size_hint_cache`) ----
+    @property
+    def _doc_cache(self) -> dict[_LayoutKey, QTextDocument]:
+        """布局缓存视图 — 与 `_layout_cache` 是同一 dict,不是副本。"""
+        return self._layout_cache
+
+    @property
+    def _size_hint_cache(self) -> dict[_LayoutKey, QSize]:
+        """尺寸缓存 — key 与 `_layout_cache` 完全一致(旧属性名兼容既有测试)。"""
+        return self._size_cache
 
     def clear_caches(self) -> None:
-        """2026-09-15 v1.7.5 PR #9:数据全表失效(set_messages / reset /
-        set_channel_titles / 大批 append)时清两个 cache。普通编辑路径由
-        model.dataChanged([FormattedRole]) 自动覆盖 → 不必每条都 clear。
+        """数据全表失效(set_messages / reset / 大批 append)时清布局缓存。
+
+        普通编辑路径由 model.dataChanged([FormattedRole]) 自动覆盖 →
+        不必每条都 clear(与 PR #9 语义一致)。
         """
-        self._size_hint_cache.clear()
-        self._doc_cache.clear()
-        self._doc_cache_lru.clear()
+        self._layout_cache.clear()
+        self._size_cache.clear()
+        self._layout_lru.clear()
+
+    @staticmethod
+    def _font_key(font: QFont) -> tuple[str, int, bool, bool]:
+        """字体指纹,纳入 cache key 以消除"画用旧字体、量用新字体"。"""
+        return (font.family(), font.pointSize(), font.bold(), font.italic())
+
+    @staticmethod
+    def _effective_width(option: QStyleOptionViewItem) -> int:
+        """统一宽度口径(旧代码 paint 用 rect.width、sizeHint 有 280 fallback)。"""
+        return int(option.rect.width()) if option.rect.width() > 0 else 280
+
+    def _layout(
+        self,
+        text: str,
+        font: QFont,
+        width: int,
+        cache_key: _LayoutKey,
+    ) -> QTextDocument:
+        """单一布局入口 — paint 与 sizeHint 都调它,读同一份 QTextDocument。
+
+        cache 命中直接返回 doc 实例(不重建);未命中时 new + setHtml +
+        setTextWidth + documentMargin,并写入 LRU。所有布局参数(字体/宽度/
+        padding/HTML)在此一处决定,消除双路径不一致的结构根源。
+        """
+        doc = self._layout_cache.get(cache_key)
+        if doc is None:
+            doc = QTextDocument()
+            doc.setDefaultFont(font)
+            doc.setHtml(self._plain_to_html(text))
+            # v2.0.5 FR-06:padding 由 documentMargin 表达,替代旧 sizeHint
+            # 的 +8 魔数(QTextDocument 默认 margin=4,旧 +8 属重复加)。
+            doc.setDocumentMargin(4)
+            doc.setTextWidth(width)
+            self._layout_cache[cache_key] = doc
+            self._layout_lru.append(cache_key)
+            if len(self._layout_lru) > self._DOC_CACHE_MAX:
+                evict = self._layout_lru.pop(0)
+                self._layout_cache.pop(evict, None)
+                self._size_cache.pop(evict, None)
+        return doc
+
+    def _size_for(self, cache_key: _LayoutKey, doc: QTextDocument, width: int) -> QSize:
+        """尺寸计算 — 命中缓存直接返回,避免重复 doc.size() 原生调用。"""
+        size = self._size_cache.get(cache_key)
+        if size is None:
+            size = QSize(width, int(doc.size().height()))
+            self._size_cache[cache_key] = size
+        return size
 
     def paint(
         self,
@@ -97,26 +159,13 @@ class MessageItemDelegate(QStyledItemDelegate):
         text = index.data(MessageListModel.FormattedRole) or ""
         if not text:
             return
-        # 2026-09-15 v1.7.5 PR #9 perf:复用缓存 QTextDocument — 命中时省
-        # setHtml 一遍(对长消息 ~1-3ms);未命中时新建 + 缓存 + 写 LRU。
         dto = index.data(MessageListModel.DtoRole)
-        key = (dto.channel_id, dto.telegram_msg_id) if isinstance(dto, MessageDTO) else None
-        doc: QTextDocument | None = None
-        if key is not None and key in self._doc_cache:
-            doc = self._doc_cache[key]
-        else:
-            doc = QTextDocument()
-            doc.setDefaultFont(option.font)
-            doc.setHtml(self._plain_to_html(text))
-            if key is not None:
-                self._doc_cache[key] = doc
-                self._doc_cache_lru.append(key)
-                if len(self._doc_cache_lru) > self._DOC_CACHE_MAX:
-                    evict = self._doc_cache_lru.pop(0)
-                    self._doc_cache.pop(evict, None)
+        width = self._effective_width(option)
+        cache_key = self._cache_key(dto, text, width, option.font)
+        # v2.0.5 FR-06:唯一布局入口 — 与 sizeHint 读同一 doc,不再各自 setHtml。
+        doc = self._layout(text, option.font, width, cache_key)
         painter.save()
         painter.translate(option.rect.topLeft())
-        doc.setTextWidth(option.rect.width())
         doc.drawContents(painter)
         painter.restore()
 
@@ -128,48 +177,54 @@ class MessageItemDelegate(QStyledItemDelegate):
         text = index.data(MessageListModel.FormattedRole) or ""
         if not text:
             return super().sizeHint(option, index)
-        # 2026-09-15 v1.7.5 PR #9 perf:sizeHint 缓存。key = (cid, mid, width)。
-        # width 变化 → miss → 重算并覆盖缓存(width 是 cache key 的一部分)。
         dto = index.data(MessageListModel.DtoRole)
+        width = self._effective_width(option)
+        cache_key = self._cache_key(dto, text, width, option.font)
+        # v2.0.5 FR-06:唯一布局入口 — 与 paint 读同一 doc;尺寸走缓存视图,
+        # padding 已由 documentMargin 吸收,不再 +8;收编无 DTO 第三路径。
+        doc = self._layout(text, option.font, width, cache_key)
+        return self._size_for(cache_key, doc, width)
+
+    @staticmethod
+    def _cache_key(
+        dto: object,
+        text: str,
+        width: int,
+        font: QFont,
+    ) -> _LayoutKey:
+        """统一 cache key 生成 — 有 DTO 用 (cid, mid),无 DTO 用 text 哈希兜底。"""
         if isinstance(dto, MessageDTO):
-            width = option.rect.width() if option.rect.width() > 0 else 280
-            cache_key = (dto.channel_id, dto.telegram_msg_id, int(width))
-            cached = self._size_hint_cache.get(cache_key)
-            if cached is not None:
-                return cached
-            doc = QTextDocument()
-            doc.setDefaultFont(option.font)
-            doc.setHtml(self._plain_to_html(text))
-            doc.setTextWidth(width)
-            # 2026-11-16:宽度必须用容器宽,不能用 `doc.idealWidth()`。
-            # idealWidth 是「不换行的理想宽度」— 长消息会返回几千 px,
-            # QListView 据此撑出横向滚动条。setTextWidth 后 doc 已按容器
-            # 宽折行,size().height() 就是折行后的真实高度。
-            size = QSize(int(width), int(doc.size().height()) + 8)
-            self._size_hint_cache[cache_key] = size
-            return size
-        # 没 DTO(model 直接给 FormattedRole)→ 走老路径
-        doc = QTextDocument()
-        doc.setDefaultFont(option.font)
-        doc.setHtml(self._plain_to_html(text))
-        width = option.rect.width() if option.rect.width() > 0 else 280
-        doc.setTextWidth(width)
-        # 高度 = 折行后内容 + 上下各 4px padding
-        return QSize(int(width), int(doc.size().height()) + 8)
+            cid: int | None = dto.channel_id
+            mid: int | None = dto.telegram_msg_id
+        else:
+            # 无 DTO(model 直接给 FormattedRole)→ 以 text 派生稳定 id,
+            # 避免所有无 DTO 行共用一个 key(旧第三路径每次 new doc)。
+            cid, mid = None, hash(text)
+        return (cid, mid, width, MessageItemDelegate._font_key(font))
 
     @staticmethod
     def _plain_to_html(text: str) -> str:
-        """QListWidget.setText 走 plain text;delegate 走 QTextDocument
-        需 HTML。换行符 `\n` → `<br>`,`&` `<` `>` 转义避免被当 HTML 解析。
+        """delegate 走 QTextDocument 需 HTML。转义 `<` `>` `&` 避免消息正文
+        被当 HTML 解析;换行符 `\\n` → `<br>`。
 
-        旧实现 `QListWidgetItem.text` 自动处理换行 + escape;这里需要手动。
+        v2.0.5 FR-03 步骤二(排版语言与最近活动对齐):
+        - 去掉 `<pre>` 的等宽语义,改 `<div>` + 系统无衬线字体(与最近活动
+          的 QLabel 文本一致);
+        - `⏱ HH:MM:SS` 时间段包灰色 span,对齐最近活动的灰字时间列;
+        - 保留 `white-space:pre-wrap` + `word-wrap:break-word`(长行/URL
+          折行护栏,防横向滚动条)与手工 `<br>` 换行。
         """
         esc = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        # 2026-11-16:`<pre>` 默认 `white-space: pre` 不折行 → 长行撑宽视图
-        # 产生横向滚动条。改 `pre-wrap` 保留等宽字体 / 空格语义的同时允许
-        # 自动折行,`break-word` 让无空格长串(URL / 哈希)也能断行。
-        # 手工 `\n` 已转 `<br>`,与自动折行不冲突。
+        body = esc.replace(chr(10), "<br>")
+        # 时间灰字:formatted head 固定以 "⏱ HH:MM:SS" 开头(f"⏱ {dt}  ...")。
+        # 只对首行这段做包装,正文 slaves 不受影响;时间串只含数字/冒号,
+        # 经过上面转义后无 HTML 特殊字符,包 span 安全。
+        if body.startswith("⏱ "):
+            time_end = body.find("  ")
+            if 2 < time_end <= 11:  # "⏱ " + 8 字符 "HH:MM:SS"
+                time_part = body[2:time_end]
+                body = "<span style='color:#7a7d88;'>⏱ " + time_part + "</span>" + body[time_end:]
         return (
-            "<pre style='margin:0; padding:0; white-space:pre-wrap; "
-            f"word-wrap:break-word;'>{esc.replace(chr(10), '<br>')}</pre>"
+            "<div style='font-family:sans-serif; margin:0; padding:0; "
+            f"white-space:pre-wrap; word-wrap:break-word;'>{body}</div>"
         )
