@@ -5,6 +5,41 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.0.6] - 2026-11-18
+
+主题:**功能归位 + 命名与历史债清偿**。撤销独立频道页,监听频道管理迁入设置页;
+频道域「subscribe」歧义命名、物理列名与全局装饰 emoji 一次性清理。
+`channels.subscribed` 物理列改名为 `monitored`,存量库启动时自动 `RENAME COLUMN`、
+监听状态逐条保留,无需手工迁移;TG 订阅字段 `tg_subscribed` 不变。
+
+### 变更
+
+- **撤销独立频道页,导航 4→3**:导航收敛为「大盘 / 媒体 / 设置」,
+  `ChannelWidget` 单实例迁入设置页「监听频道管理」分组;MainWindow 与控制器
+  仍持同一面板引用,避免双实例重复订阅。媒体页与设置页栈索引顺延。
+- **设置页风格收敛**:6 个分组标题与测试连接弹窗去掉全部 emoji,改为纯文字;
+  排版与层次按「凭证 → 监听频道 → 代理 → 存储 → 对象存储 → 策略 → 同步」重排。
+- **频道域命名全档正名**:`subscribe_channel` → `monitor_channel`、
+  `set_channel_subscribed` → `set_channel_monitored` 等频道域标识符统一改用
+  `monitor` 词根;EventBus 事件订阅域与 TG 侧订阅(`tg_subscribed`)零误伤,
+  静态守卫防止旧名回潮。
+- **存储物理列正名**:`channels.subscribed` → `channels.monitored`,
+  SQLite / PG 默认值统一为 0 / FALSE;初始化时检测旧列并一次性改名,
+  新旧列不会静默分裂。DTO 映射默认值同步为 `False`。
+- **全局装饰 emoji 分层清理**:注释/docstring、UI 文案、导出模板与服务消息中的
+  装饰 emoji 全部改为纯文字或非 emoji 符号;Telegram reaction/贴纸等用户真实
+  表情数据(`ReactionDTO.emoji` 等)与 `★` / `✓` 边界字形零改动。新增静态守卫
+  `test_no_decorative_emoji.py`,最终态仅放行一处自定义 reaction 占位符。
+- **历史债扫尾**:删除 ChannelWidget 旧兼容属性别名,改为语义明确的公开句柄;
+  「5 页 / 8 个 FormSection / 方法数 42」等过时注释与主窗口结构图同步更新。
+
+### 修复
+
+- **PG 查询残留旧列导致集成测试失败**:3 条频道 SELECT 仍写 `subscribed`,
+  建表改为 `monitored` 后抛 `UndefinedColumnError`;已修正并新增不依赖 Docker 的
+  静态守卫,防止只在 CI integration 暴露的漏改。
+- **空态引导指向已撤销的「频道」页**:改为引导用户到「设置 → 监听频道管理」加入监听。
+
 ## [2.0.5] - 2026-11-18
 
 主题:**大盘空间与视觉统一**。去掉占用纵向空间的标题与高卡片，让消息流可视区更大；
