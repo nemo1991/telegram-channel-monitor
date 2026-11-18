@@ -46,7 +46,7 @@ h2 { margin-top: 2em; }
 .media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0.5em; }
 .media img { max-width: 200px; max-height: 200px; border-radius: 4px; }
 .media .ph { font-size: 0.85em; color: #888; }
-/* 2026-09-10 v1.7.3:用户元数据行(★ / 🏷 / 📝)— 浅灰底+小图标 */
+/* 2026-09-10 v1.7.3:用户元数据行(★ / 标签 / 备注)— 浅灰底+小图标 */
 .user-meta { background: #fff8e1; border-left: 3px solid #f5c518; padding: 4px 8px; margin: 4px 0; font-size: 0.85em; }
 .user-meta .tag { background: #f0e6ff; padding: 1px 6px; border-radius: 3px; margin-right: 4px; }
 .user-meta .fav { color: #d4a017; }
@@ -55,7 +55,7 @@ h2 { margin-top: 2em; }
 </head>
 <body>
 <header>
-  <h1>📡 Telegram 频道导出</h1>
+  <h1>Telegram 频道导出</h1>
   <div class="meta">
     导出时间 {{ generated_at }} · {{ channel_count }} 频道 · {{ message_count }} 消息
   </div>
@@ -69,15 +69,15 @@ h2 { margin-top: 2em; }
       {{ m.date.strftime('%Y-%m-%d %H:%M:%S') if m.date else '' }}
       · msg #{{ m.telegram_msg_id }}
       {% if m.author %} · {{ m.author }}{% endif %}
-      {% if m.views is not none %} · 👁 {{ m.views }}{% endif %}
+      {% if m.views is not none %} · 浏览 {{ m.views }}{% endif %}
       {% if m.edited %} · <em>edited</em>{% endif %}
     </div>
     {% if m.text %}<div class="text">{{ m.text }}</div>{% endif %}
     {% if include_metadata and (m.is_favorite or m.tags or m.notes) %}
     <div class="user-meta">
       {% if m.is_favorite %}<span class="fav">★ 收藏</span>{% endif %}
-      {% for tag in m.tags %}<span class="tag">🏷 {{ tag }}</span>{% endfor %}
-      {% if m.notes %}<div>📝 {{ m.notes }}</div>{% endif %}
+      {% for tag in m.tags %}<span class="tag">标签: {{ tag }}</span>{% endfor %}
+      {% if m.notes %}<div>备注: {{ m.notes }}</div>{% endif %}
     </div>
     {% endif %}
     {% if m.media %}
@@ -86,7 +86,7 @@ h2 { margin-top: 2em; }
       {% if med.thumb_data_uri %}
         <img src="{{ med.thumb_data_uri }}" alt="{{ med.type.value }}" title="{{ med.file_name or '' }}">
       {% else %}
-        <span class="ph">📎 {{ med.type.value }} {{ med.file_name or '' }}</span>
+        <span class="ph">附件: {{ med.type.value }} {{ med.file_name or '' }}</span>
       {% endif %}
     {% endfor %}
     </div>

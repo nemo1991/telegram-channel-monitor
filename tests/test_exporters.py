@@ -515,7 +515,7 @@ async def test_html_exporter_skips_oversized_thumb(tmp_path):
     # data URI 不应该出现在输出里(模板走占位 span)
     assert "data:image/jpeg;base64," not in content
     # 占位文出现在(消息详情 span)
-    assert "📎" in content
+    assert "附件:" in content
 
 
 # ---------------------------------------------------------------------------
@@ -885,7 +885,7 @@ async def test_zip_stream_read_keyerror_skips_media(tmp_path, caplog):
 
 
 # ============================================================
-# 2026-09-10 v1.7.3:导出含用户元数据(★ / 🏷 / 📝)— per-format + exclude 验证
+# 2026-09-10 v1.7.3:导出含用户元数据(★ / 标签: / 备注:)— per-format + exclude 验证
 # ============================================================
 
 
@@ -907,7 +907,7 @@ def _make_favorite_message(channel_id: int = 100, msg_id: int = 1) -> MessageDTO
 
 
 async def _seed_favorite(storage) -> None:
-    """塞一条带 ★ / 🏷 / 📝 的 message 到 storage。"""
+    """塞一条带 ★ / 标签: / 备注: 的 message 到 storage。"""
     await storage.save_message(_make_favorite_message(100, 1))
 
 
@@ -973,7 +973,7 @@ async def test_csv_exporter_excludes_metadata_when_disabled(tmp_path):
 
 
 async def test_markdown_exporter_includes_metadata_block(tmp_path):
-    """v1.7.3:Markdown 默认包含 ★ / 🏷 / 📝 blockquote block,`include_metadata=False` 跳过。"""
+    """v1.7.3:Markdown 默认包含 ★ / 标签: / 备注: blockquote block,`include_metadata=False` 跳过。"""
     from tgmonitor.core.dto import ExportFormat
 
     storage, objects, bus, _ = await _setup(tmp_path)
@@ -986,10 +986,10 @@ async def test_markdown_exporter_includes_metadata_block(tmp_path):
         pass
 
     content = out.read_text(encoding="utf-8")
-    # ★ / 🏷 / 📝 都在输出里
+    # ★ / 标签: / 备注: 都在输出里
     assert "> ★ 收藏" in content
-    assert "> 🏷 tech, ai" in content
-    assert "> 📝 需要 review" in content
+    assert "> 标签: tech, ai" in content
+    assert "> 备注: 需要 review" in content
 
     # 反过来:include_metadata=False → 跳过 blockquote
     storage2, objects2, bus2, _ = await _setup(tmp_path)
@@ -1006,8 +1006,8 @@ async def test_markdown_exporter_includes_metadata_block(tmp_path):
         pass
     content2 = out2.read_text(encoding="utf-8")
     assert "> ★" not in content2
-    assert "> 🏷" not in content2
-    assert "> 📝" not in content2
+    assert "> 标签:" not in content2
+    assert "> 备注:" not in content2
 
 
 async def test_html_exporter_includes_metadata_block(tmp_path):
@@ -1027,10 +1027,10 @@ async def test_html_exporter_includes_metadata_block(tmp_path):
     # HTML 模板的 user-meta 元素出现(`<div class="user-meta">`)
     assert '<div class="user-meta">' in content
     assert "★ 收藏" in content
-    # 🏷 tag 渲染为 <span class="tag">🏷 tech</span> / 🏷 ai
-    assert 'class="tag">🏷 tech</span>' in content
-    assert 'class="tag">🏷 ai</span>' in content
-    assert "📝 需要 review" in content
+    # 标签: tag 渲染为 <span class="tag">标签: tech</span> / 标签: ai
+    assert 'class="tag">标签: tech</span>' in content
+    assert 'class="tag">标签: ai</span>' in content
+    assert "备注: 需要 review" in content
 
     # 反过来:include_metadata=False → 跳过 user-meta div
     storage2, objects2, bus2, _ = await _setup(tmp_path)
@@ -1052,7 +1052,7 @@ async def test_html_exporter_includes_metadata_block(tmp_path):
 
 
 async def test_json_exporter_always_includes_metadata(tmp_path):
-    """v1.7.3:JSON 走 asdict 总是含 ★ / 🏷 / 📝(`include_metadata` 是 no-op)。"""
+    """v1.7.3:JSON 走 asdict 总是含 ★ / 标签: / 备注:(`include_metadata` 是 no-op)。"""
     import json as json_mod
 
     from tgmonitor.core.dto import ExportFormat
@@ -1080,7 +1080,7 @@ async def test_json_exporter_always_includes_metadata(tmp_path):
 
 
 async def test_zip_exporter_always_includes_metadata_in_manifest(tmp_path):
-    """v1.7.3:ZIP 的 _manifest.json 走 asdict 总是含 ★ / 🏷 / 📝。"""
+    """v1.7.3:ZIP 的 _manifest.json 走 asdict 总是含 ★ / 标签: / 备注:。"""
     import json as json_mod
     import zipfile
 

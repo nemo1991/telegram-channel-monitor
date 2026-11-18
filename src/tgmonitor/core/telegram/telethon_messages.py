@@ -200,78 +200,78 @@ def _map_document(media: types.MessageMediaDocument, chat_id: int, msg_id: int) 
 def _contact_text(media: types.MessageMediaContact) -> str:
     name = f"{media.first_name or ''} {media.last_name or ''}".strip()
     phone = media.phone_number or ""
-    return f"📎 {name} (+{phone})" if name else f"📎 (+{phone})"
+    return f"{name} (+{phone})" if name else f"(+{phone})"
 
 
 def _geo_text(media: types.MessageMediaGeo | types.MessageMediaGeoLive) -> str:
     geo = media.geo
     if not isinstance(geo, types.GeoPoint):
-        return "📍"
-    suffix = " 🛰️" if isinstance(media, types.MessageMediaGeoLive) else ""
-    return f"📍 {geo.lat:.4f}, {geo.long:.4f}{suffix}"
+        return "位置"
+    suffix = " (实时)" if isinstance(media, types.MessageMediaGeoLive) else ""
+    return f"位置: {geo.lat:.4f}, {geo.long:.4f}{suffix}"
 
 
 def _venue_text(media: types.MessageMediaVenue) -> str:
     title = media.title or ""
     addr = media.address or ""
-    return f"📍 {title} — {addr}" if addr else f"📍 {title}"
+    return f"地点: {title} — {addr}" if addr else f"地点: {title}"
 
 
 def _poll_text(media: types.MessageMediaPoll) -> str:
     question = getattr(media.poll, "question", None)
     text = getattr(question, "text", None)
-    return f"📊 {text}" if text else "📊 <poll>"
+    return f"投票: {text}" if text else "投票"
 
 
 def _dice_text(media: types.MessageMediaDice) -> str:
-    return f"🎲 {media.emoticon} {media.value}"
+    return f"{media.emoticon} {media.value}"
 
 
 def _game_text(media: types.MessageMediaGame) -> str:
-    return f"🎮 {getattr(media.game, 'title', '') or ''}"
+    return f"游戏: {getattr(media.game, 'title', '') or ''}"
 
 
 def _invoice_text(media: types.MessageMediaInvoice) -> str:
-    return f"🧾 {media.title or ''}"
+    return f"账单: {media.title or ''}"
 
 
 # MessageAction* → 人类可读文本(对齐 TDLib _SERVICE_HANDLERS 的覆盖量级)
 _ACTION_TEXT: dict[str, Any] = {
-    "MessageActionChatCreate": lambda a: "🎉 群组已创建",
-    "MessageActionChatEditTitle": lambda a: f"✏️ 群名改为「{a.title}」",
-    "MessageActionChatEditPhoto": lambda a: "🖼 群头像已更新",
-    "MessageActionChatDeletePhoto": lambda a: "🖼 群头像已删除",
-    "MessageActionChatAddUser": lambda a: f"👥 添加了 {len(a.users or [])} 位成员",
-    "MessageActionChatDeleteUser": lambda a: "👤 一位成员离开/被移除",
-    "MessageActionChatJoinedByLink": lambda a: "🔗 通过邀请链接加入",
-    "MessageActionChannelCreate": lambda a: "🎉 频道已创建",
-    "MessageActionChatMigrateTo": lambda a: "➡️ 群组已升级为超级群",
-    "MessageActionChannelMigrateFrom": lambda a: "⬅️ 由普通群升级而来",
-    "MessageActionPinMessage": lambda a: "📌 置顶了一条消息",
-    "MessageActionGameScore": lambda a: f"🎮 游戏得分 {a.score}",
-    "MessageActionPaymentSentMe": lambda a: "💰 收到一笔付款",
-    "MessageActionPaymentSent": lambda a: "💰 完成一笔付款",
-    "MessageActionPhoneCall": lambda a: f"📞 通话 {a.duration or 0}s",
-    "MessageActionScreenshotTaken": lambda a: "📸 截屏",
+    "MessageActionChatCreate": lambda a: "群组已创建",
+    "MessageActionChatEditTitle": lambda a: f"群名改为「{a.title}」",
+    "MessageActionChatEditPhoto": lambda a: "群头像已更新",
+    "MessageActionChatDeletePhoto": lambda a: "群头像已删除",
+    "MessageActionChatAddUser": lambda a: f"添加了 {len(a.users or [])} 位成员",
+    "MessageActionChatDeleteUser": lambda a: "一位成员离开/被移除",
+    "MessageActionChatJoinedByLink": lambda a: "通过邀请链接加入",
+    "MessageActionChannelCreate": lambda a: "频道已创建",
+    "MessageActionChatMigrateTo": lambda a: "群组已升级为超级群",
+    "MessageActionChannelMigrateFrom": lambda a: "由普通群升级而来",
+    "MessageActionPinMessage": lambda a: "置顶了一条消息",
+    "MessageActionGameScore": lambda a: f"游戏得分 {a.score}",
+    "MessageActionPaymentSentMe": lambda a: "收到一笔付款",
+    "MessageActionPaymentSent": lambda a: "完成一笔付款",
+    "MessageActionPhoneCall": lambda a: f"通话 {a.duration or 0}s",
+    "MessageActionScreenshotTaken": lambda a: "截屏",
     "MessageActionCustomAction": lambda a: a.message or "",
-    "MessageActionBotAllowed": lambda a: "🤖 已允许 bot 发消息",
-    "MessageActionContactSignUp": lambda a: "📱 联系人注册了 Telegram",
-    "MessageActionGeoProximityReached": lambda a: "📍 到达接近提醒范围",
-    "MessageActionGroupCall": lambda a: f"📹 视频通话 {a.duration or 0}s",
-    "MessageActionInviteToGroupCall": lambda a: f"📹 邀请 {len(a.users or [])} 人加入视频通话",
-    "MessageActionSetMessagesTTL": lambda a: "⏱ 设置了消息自动删除",
-    "MessageActionGiftPremium": lambda a: "🎁 赠送了 Telegram Premium",
-    "MessageActionTopicCreate": lambda a: f"🏷 创建话题「{a.title}」",
-    "MessageActionTopicEdit": lambda a: "🏷 编辑了话题",
-    "MessageActionSetChatWallPaper": lambda a: "🖼 设置了聊天壁纸",
-    "MessageActionGiveawayLaunch": lambda a: "🎁 抽奖开始",
-    "MessageActionGiveawayResults": lambda a: f"🎁 抽奖结束 · {a.winners_count or 0} 名获奖者",
-    "MessageActionBoostApply": lambda a: f"🚀 群组被 boost {a.boosts or 0} 次",
-    "MessageActionSetChatTheme": lambda a: "🎨 设置了聊天主题",
-    "MessageActionRequestedPeer": lambda a: "👤 分享了联系人",
-    "MessageActionWebViewDataSentMe": lambda a: "🌐 收到 WebView 数据",
-    "MessageActionSecureValuesSentMe": lambda a: "🔐 收到 Passport 数据",
-    "MessageActionSuggestProfilePhoto": lambda a: "🖼 建议了头像",
+    "MessageActionBotAllowed": lambda a: "已允许 bot 发消息",
+    "MessageActionContactSignUp": lambda a: "联系人注册了 Telegram",
+    "MessageActionGeoProximityReached": lambda a: "到达接近提醒范围",
+    "MessageActionGroupCall": lambda a: f"视频通话 {a.duration or 0}s",
+    "MessageActionInviteToGroupCall": lambda a: f"邀请 {len(a.users or [])} 人加入视频通话",
+    "MessageActionSetMessagesTTL": lambda a: "设置了消息自动删除",
+    "MessageActionGiftPremium": lambda a: "赠送了 Telegram Premium",
+    "MessageActionTopicCreate": lambda a: f"创建话题「{a.title}」",
+    "MessageActionTopicEdit": lambda a: "编辑了话题",
+    "MessageActionSetChatWallPaper": lambda a: "设置了聊天壁纸",
+    "MessageActionGiveawayLaunch": lambda a: "抽奖开始",
+    "MessageActionGiveawayResults": lambda a: f"抽奖结束 · {a.winners_count or 0} 名获奖者",
+    "MessageActionBoostApply": lambda a: f"群组被 boost {a.boosts or 0} 次",
+    "MessageActionSetChatTheme": lambda a: "设置了聊天主题",
+    "MessageActionRequestedPeer": lambda a: "分享了联系人",
+    "MessageActionWebViewDataSentMe": lambda a: "收到 WebView 数据",
+    "MessageActionSecureValuesSentMe": lambda a: "收到 Passport 数据",
+    "MessageActionSuggestProfilePhoto": lambda a: "建议了头像",
 }
 
 
@@ -319,7 +319,7 @@ def _extract_media_and_text(msg: Any, chat_id: int, msg_id: int) -> tuple[list[M
     if isinstance(media, types.MessageMediaInvoice):
         return [], _invoice_text(media)
     if isinstance(media, types.MessageMediaUnsupported):
-        return [], "❓ 不支持的消息"
+        return [], "不支持的消息"
     if isinstance(media, types.MessageMediaEmpty):
         return [], caption
     # 其它(MessageMediaGiveaway / Story / PaidMedia 等)— 类名兜底
