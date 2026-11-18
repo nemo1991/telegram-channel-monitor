@@ -66,8 +66,11 @@ def test_dash_panel_qss_puts_title_inside_frame():
     assert "subcontrol-origin: margin" not in rule
     assert "margin-top: 0" in rule
     assert "subcontrol-origin: padding" in rule
-    # 2026-11-18:padding-top 10→28,给标题单独留出一行,列表不再盖住标题。
-    assert "padding: 28px 12px 10px 12px" in rule
+    # 2026-11-18 第二轮:padding-top 28→40 + ::title top:10/left:6,
+    # 标题内推离顶边与左上角圆角;列表仍不遮挡标题。
+    assert "padding: 40px 14px 12px 14px" in rule
+    assert "top: 10px" in rule
+    assert "left: 6px" in rule
 
 
 def test_panel_content_starts_below_title(qapp, qloop, tmp_path):

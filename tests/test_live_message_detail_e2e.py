@@ -88,43 +88,36 @@ def test_click_live_message_shows_detail_and_switching_updates_it(qapp, qloop, t
     assert not any("关闭详情" in t for t in labels)
 
 
-def test_floating_new_message_button_stays_clickable(qapp, qloop, tmp_path):
-    """修复不能顺手废掉「N 条新消息 ↓」浮条。
+def test_floating_new_message_button_removed(qapp, qloop, tmp_path):
+    """2026-11-18 v2.0.5:新消息浮条已移除 — 用户确认无实际作用。
 
-    `WA_TransparentForMouseEvents` 会让整个 overlay 子树(含浮条)对鼠标
-    透明,是一个看似省事但会破坏本用例的错解。
+    锁死三条:view 不再暴露 clear_new_msg_counter;overlay 无 _floating_btn
+    子控件;任意滚动位置收到新消息都不会再冒出「N 条新消息」按钮。空状态
+    三态 overlay 本身不受影响(另外的用例守)。
     """
     win = build_real_main_window(qloop, tmp_path)
     lv = _seed_live_messages(win.live_view, qapp)
     overlay = lv._empty_overlay_widget
 
-    clicks: list[int] = []
-    overlay.floating_clicked.connect(lambda: clicks.append(1))
-    overlay.show_floating_btn()
+    # 1) 公开 API 移除
+    assert not hasattr(lv, "clear_new_msg_counter")
+    assert not hasattr(overlay, "show_floating_btn")
+    assert not hasattr(overlay, "floating_clicked")
+
+    # 2) 无浮条 widget / QSS 类名
+    from PySide6.QtWidgets import QPushButton
+
+    float_btns = [
+        b for b in overlay.findChildren(QPushButton) if b.objectName() == "floatingNewMsgBtn"
+    ]
+    assert float_btns == []
+    assert not any("条新消息" in b.text() for b in win.dashboard.findChildren(QPushButton))
+
+    # 3) 滚到非顶部 + 追加新消息 → 不应产生任何浮条
+    lv.verticalScrollBar().setValue(lv.verticalScrollBar().maximum())
+    lv.append(make_message(msg_id=999, text="滚动中到达的新消息"))
     qapp.processEvents()
-
-    btn = overlay._floating_btn
-    assert btn.isVisible()
-    QTest.mouseClick(
-        btn, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, btn.rect().center()
-    )
-    qapp.processEvents()
-    assert clicks == [1], "浮条点击必须仍能触发 floating_clicked(view.scrollToTop)"
-
-
-def test_floating_new_message_button_interpolates_count(qapp, qloop, tmp_path):
-    """浮条计数文案必须插值出真实数字,不能显示字面量 `%d`。
-
-    2026-11-16 修复:`set_messages_count` 原用 `"%d 条新消息 ↓".format(n)` —
-    printf 占位符配 str.format 不插值,用户往下翻页时新消息到达会看到
-    "%d 条新消息 ↓"。本用例锁死文案含真实计数、不含 `%d` 字面量。
-    """
-    win = build_real_main_window(qloop, tmp_path)
-    overlay = win.live_view._empty_overlay_widget
-
-    overlay.set_messages_count(7)
-    text = overlay._floating_btn.text()
-
-    assert "7" in text, f"文案应含真实计数 7,实际 {text!r}"
-    assert "%d" not in text, f"文案不应残留 %d 占位符,实际 {text!r}"
-    assert overlay.messages_count() == 7
+    assert [
+        b for b in overlay.findChildren(QPushButton) if b.objectName() == "floatingNewMsgBtn"
+    ] == []
+    win.close()

@@ -269,17 +269,34 @@ class DashboardWidget(QWidget):
         # --- 实时流区(v2.0.4 FR-03:从独立 LIVE 页迁入,单实例) ---
         # MessageView + MessageDetail 由 MainWindow 注入并持有引用,这里只
         # 做 reparent + 布局。splitter 比例 2:1(消息流占大头)。
+        #
+        # 2026-11-18 v2.0.5:外围四角圆角 + 接壤直角。用 QFrame#liveWrap 作
+        # 统一容器画白底/边框/圆角;splitter handle(1px)画接壤的竖直直角缝。
+        # 关键:QScrollArea 的 viewport 会盖住 frame 的圆角,所以两个子 widget
+        # 自身无边框、viewport 背景透明(内联 stylesheet 一定命中),让容器
+        # 的白底与圆角显形。splitter 仍是 live_view/message_detail 的直接
+        # parent,控制器/测试对 widget 树的依赖不变。
         if self._live_view is not None and self._message_detail is not None:
+            live_wrap = QFrame(self)
+            live_wrap.setObjectName("liveWrap")
+            wrap_layout = QVBoxLayout(live_wrap)
+            wrap_layout.setContentsMargins(0, 0, 0, 0)
+            wrap_layout.setSpacing(0)
+
             live_splitter = QSplitter(Qt.Horizontal)
             live_splitter.setObjectName("dashboardLiveSplitter")
             live_splitter.setHandleWidth(1)
             live_splitter.setChildrenCollapsible(False)
+            # viewport 透明:让 liveWrap 的白底/圆角显形(见上方说明)。
+            self._live_view.viewport().setStyleSheet("QWidget { background: transparent; }")
+            self._message_detail.viewport().setStyleSheet("QWidget { background: transparent; }")
             live_splitter.addWidget(self._live_view)
             live_splitter.addWidget(self._message_detail)
             live_splitter.setStretchFactor(0, 2)
             live_splitter.setStretchFactor(1, 1)
             live_splitter.setSizes([800, 400])
-            root.addWidget(live_splitter, 3)
+            wrap_layout.addWidget(live_splitter)
+            root.addWidget(live_wrap, 3)
 
         # --- 下方左右两块:最近活动 | 频道统计 ---
         bottom_row = QHBoxLayout()

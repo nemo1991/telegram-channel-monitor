@@ -132,18 +132,17 @@ class MessageView(MessageViewAPIMixin, QListView):
 
         # 2026-11-16 v2.0.2:多选广播 / 右键菜单移除,view 不监听 selectionChanged。
 
-        # 2026-10-15 plan-batch7-B:空 overlay + 浮条已抽到 MessageEmptyOverlay
-        # widget,主类通过 setter API(set_state / set_messages_count /
-        # update_for_row_count / reposition)通信,不再直接持 widget 内部
-        # 状态(单一 owner 在 widget)。
-        # 2026-09-14 v1.7.5 PR #5 (P0-L + P0-I):三态 overlay + 新消息浮条 —
-        # 未订阅 / 搜索无结果 / LIVE 空 + 「N 条新消息 ↓」浮动按钮。
+        # 2026-10-15 plan-batch7-B:空 overlay 已抽到 MessageEmptyOverlay
+        # widget,主类通过 setter API(set_state / update_for_row_count /
+        # reposition)通信,不再直接持 widget 内部状态(单一 owner 在 widget)。
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):三态 overlay — 未订阅 / 搜索无结果 /
+        # LIVE 空。2026-11-18 v2.0.5:新消息浮条已移除(用户确认无实际作用)。
         # 2026-11-16 v2.0.1:painter 层级必须挂在 viewport 上,不能挂在
         # QListView 自身。overlay 覆盖整个列表且可见;若 parent=view,真实
         # 鼠标点击会被它截获,Qt 只沿父链把事件传给 view,**不会**传给兄弟
         # viewport → clicked 永不 emit → 点消息没反应(用户报的 bug 2)。
         # parent=viewport 后,overlay 未处理的鼠标事件自然传播到 viewport,
-        # QListView 照常 emit clicked;浮条按钮 accept 事件,不会误选消息行。
+        # QListView 照常 emit clicked。
         self._empty_overlay_widget = MessageEmptyOverlay(parent=self.viewport())
         # 2026-10-15 plan-batch7-B:widget 自身 setGeometry 覆盖整个列表 —
         # MessageEmptyOverlay 内 empty_hint 默认 sizeHint 在 size=0 parent
@@ -157,7 +156,6 @@ class MessageView(MessageViewAPIMixin, QListView):
         # `view._empty_overlay.isHidden()`,代理到 widget 内部 overlay
         # 引用,避免 test_empty_overlay_* 系列 test 改路径。
         self._empty_overlay = self._empty_overlay_widget._empty_overlay
-        self._empty_overlay_widget.floating_clicked.connect(self.scrollToTop)
         # 2026-10-15 plan-batch7-B:widget 自身 raise_ 到 viewport 顶部
         # Z-order — widget 内部 empty_hint raise_ 只到 widget,widget 自身
         # 需主动 raise_ 到 viewport(parent)才能让 empty_hint 渲染在列表之上。
@@ -165,12 +163,10 @@ class MessageView(MessageViewAPIMixin, QListView):
         self._empty_overlay_widget.raise_()
         # 默认 state — MainWindow 登录后通过 `live_view.set_empty_state(...)`
         # 切到对应 overlay(原 `_empty_state` 字段由 widget 自己持)。
-        # model 行数变化时刷新 overlay + 浮条
+        # model 行数变化时刷新 overlay。2026-11-18:浮条连接已移除。
         self._model.rowsInserted.connect(self._on_row_count_changed)
         self._model.rowsRemoved.connect(self._on_row_count_changed)
         self._model.modelReset.connect(self._on_row_count_changed)
-        # rowsInserted → 检查 scroll position 决定是否 +1 + 显示(浮条逻辑)
-        self._model.rowsInserted.connect(self._on_row_inserted_floating)
 
     # ---- 公开 API(14 thin delegate 已抽到 MessageViewAPIMixin,mixin 在多继承首位) ----
     # 见 widgets/message_view_api_mixin.py:append / set_messages / set_channel_titles
@@ -200,12 +196,12 @@ class MessageView(MessageViewAPIMixin, QListView):
     # LIVE 页只读化,右键菜单与批量操作不再存在。
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        """窗口尺寸变 → widget 覆盖 viewport 整个区域 + overlay/浮条重定位。"""
+        """窗口尺寸变 → widget 覆盖 viewport 整个区域 + overlay 重定位。"""
         super().resizeEvent(event)
         # 2026-10-15 plan-batch7-B:widget 自身 size 跟 viewport 同步(否则
         # size=0 widget 内 empty_hint 不渲染),reposition 内计算居中位置。
         # 坐标用 viewport 的 rect — overlay 是 viewport 的子 widget,用 view
-        # 的 rect 会多算 frame 宽度(1~2px),浮条贴边位置会偏。
+        # 的 rect 会多算 frame 宽度(1~2px)。
         viewport = self.viewport()
         self._empty_overlay_widget.setGeometry(viewport.rect())
         self._empty_overlay_widget.reposition(viewport.width(), viewport.height())
@@ -216,23 +212,6 @@ class MessageView(MessageViewAPIMixin, QListView):
         """rowsInserted/Removed/Reset 触发:count 变 → widget overlay 显隐。"""
         self._empty_overlay_widget.update_for_row_count(self.count())
 
-    def _on_row_inserted_floating(self, parent, first: int, last: int) -> None:
-        """rowsInserted handler:若 scroll 不在最顶 → 累加未读数 + 显示浮条。
-
-        `first == last == 0` 是 LIVE 单条到达场景。set_messages 是
-        modelReset(emit modelReset,不 emit rowsInserted),所以本 handler
-        不会被它触发 — 不需要在这里清零 counter(由 `clear_new_msg_counter`
-        显式调)。
-        """
-        # 在最顶 → 不算「错过的新消息」(用户在看最新)
-        if self.verticalScrollBar().value() <= 0:
-            return
-        added = last - first + 1
-        # 2026-10-15 plan-batch7-B:counter 状态搬到 widget,主类调 setter
-        cur = self._empty_overlay_widget.messages_count()
-        self._empty_overlay_widget.set_messages_count(cur + added)
-        self._empty_overlay_widget.show_floating_btn()
-
     def set_empty_state(self, state: str) -> None:
         """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案 — thin delegate。
 
@@ -240,10 +219,6 @@ class MessageView(MessageViewAPIMixin, QListView):
             state: "no_subscribed" / "searching" / "live_empty"。
         """
         self._empty_overlay_widget.set_state(state)
-
-    def clear_new_msg_counter(self) -> None:
-        """VM 搜索 / set_messages reset 时清浮条计数 — thin delegate。"""
-        self._empty_overlay_widget.reset_counter()
 
 
 # 2026-10-15 plan-batch7-A:re-export MessageItemDelegate — 旧
