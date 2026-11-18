@@ -325,7 +325,7 @@ class RenderMixin(_Base):
         设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;非图 / 未下
         载保持默认箭头 + 不响应。
         """
-        thumb = QLabel(_MEDIA_ICONS.get(med.type, "📎"))
+        thumb = QLabel(_MEDIA_ICONS.get(med.type, "附件"))
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
         thumb.setStyleSheet("font-size: 22px;")

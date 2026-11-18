@@ -1,6 +1,6 @@
 """v2.0.5 消息详情精修契约 — 去正文小标题 / 去关闭详情 / 复制按钮上提 header。
 
-- 无「📝 正文」QLabel,正文 QPlainTextEdit(#detailTextEdit)仍在且内容不变;
+- 无正文小标题QLabel,正文 QPlainTextEdit(#detailTextEdit)仍在且内容不变;
 - 无「关闭详情」按钮;
 - 复制文本按钮与 #msg_id 标头同处一行(header),点击仍写剪贴板 + emit。
 - 其它小节标题(媒体 / 原始 JSON)不受影响。
@@ -20,7 +20,7 @@ def _labels(detail: MessageDetail) -> list[QLabel]:
 
 
 def test_no_body_section_label_but_text_edit_present(qapp) -> None:
-    """F1:去掉「📝 正文」小标题,但正文文本框仍在、内容不变。"""
+    """F1:去掉正文小标题小标题,但正文文本框仍在、内容不变。"""
     detail = MessageDetail()
     detail.show_message(make_message(msg_id=7, text="正文内容 ABC"))
 

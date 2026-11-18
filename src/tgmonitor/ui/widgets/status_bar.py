@@ -102,7 +102,7 @@ class _SelectedChannelLabel(QLabel):
 
     def _render(self, name: str | None) -> None:
         if name:
-            self.setText(f"📡 {name}")
+            self.setText(name)
             self.setStyleSheet("color: palette(text);")
         else:
             self.setText(QCoreApplication.translate("status_bar", "(无选中频道)"))
@@ -274,7 +274,7 @@ class _ErrorBellButton(QPushButton):
             self._error_log = self._error_log[-100:]
         n = len(self._error_log)
         self.setVisible(True)
-        self.setText(QCoreApplication.translate("status_bar", "🔔 {n}").format(n=n))
+        self.setText(QCoreApplication.translate("status_bar", "错误 {n}").format(n=n))
 
         kind = _auth_source_kind(e.source)
         # 取当前 widget 所在的顶层窗口作 parent(dialog 模态中心正确);widget 单独
@@ -286,11 +286,11 @@ class _ErrorBellButton(QPushButton):
         if qt_app is not None:
             QMessageBox.warning(
                 parent,
-                QCoreApplication.translate("status_bar", "⚠ {kind}").format(kind=kind),
+                QCoreApplication.translate("status_bar", "警告 {kind}").format(kind=kind),
                 (
                     f"{e.message}\n\n"
                     + QCoreApplication.translate(
-                        "status_bar", "详细错误日志可点击状态栏「🔔 {n}」按钮查看。"
+                        "status_bar", "详细错误日志可点击状态栏「错误 {n}」按钮查看。"
                     ).format(n=n)
                 ),
                 QMessageBox.StandardButton.Ok,
@@ -313,7 +313,7 @@ class _ObjectsWarnLabel(QLabel):
         super().__init__(parent)
         self.setObjectName("statusObjectsWarnLabel")
         self.setText(
-            QCoreApplication.translate("status_bar", "⚠ 对象存储不可用: {err}").format(err=error)
+            QCoreApplication.translate("status_bar", "对象存储不可用: {err}").format(err=error)
         )
         self.setStyleSheet("color: #d03030; font-weight: 600;")
         self.setToolTip(

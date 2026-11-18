@@ -139,13 +139,13 @@ def _channel_display_text(ch: ChannelDTO) -> str:
     """`@username`(有) 或 `#id title`(无 username)的展示串。
 
     2026-09-04 v1.6.4:spammer 徽标附加 — `is_verified` → ` ✓`,
-    `is_scam`/`is_fake` → ` 警告`(任一为真时显示一个 警告,避免双标)。
+    `is_scam`/`is_fake` → ` [风险]`(任一为真时显示一个风险标记,避免双标)。
     """
     base = ch.display  # 直接走 DTO.display,统一 `@username` / `#id title` 格式
     if ch.is_verified:
         base += " ✓"
     if ch.is_scam or ch.is_fake:
-        base += " ⚠️"
+        base += " [风险]"
     return base
 
 
@@ -387,7 +387,7 @@ class ChannelWidget(QWidget):
 
         # 顶部搜索框
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("🔍 搜索频道名 / username…")
+        self.search_edit.setPlaceholderText("搜索频道名 / username…")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._apply_filter)
         root.addWidget(self.search_edit)
@@ -399,11 +399,11 @@ class ChannelWidget(QWidget):
             action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组",
             extended_selection=False,
             empty_hint_spec=(
-                "📋",
+                "≡",
                 "暂无已加入频道",
                 "请先在「设置 → 账户」登录 Telegram 账号,\n登录成功后点「刷新」自动拉取。",
             ),
-            bottom_hint="💡 双击一行 → 加入监听白名单",
+            bottom_hint="双击一行 → 加入监听白名单",
         )
         self.joined_card.action_clicked.connect(self._on_refresh)
         self.joined_card.item_double_clicked.connect(self._on_joined_double_click)
@@ -416,7 +416,7 @@ class ChannelWidget(QWidget):
             action_tooltip="多选 + 全量拉取元数据 + 历史消息(可调频率防封号)",
             extended_selection=True,
             empty_hint_spec=None,  # 已监听「空」语义不明,不放 empty_hint
-            bottom_hint="💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…",
+            bottom_hint="双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…",
         )
         self.subs_card.action_clicked.connect(self._on_sync_clicked)
         self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)

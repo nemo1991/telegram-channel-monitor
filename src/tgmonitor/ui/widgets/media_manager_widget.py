@@ -319,7 +319,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
     def _build_refresh_button(self) -> QPushButton:
         """刷新按钮(文案走 tr() 包装)。"""
-        btn = QPushButton(self.tr("🔄 刷新"))
+        btn = QPushButton(self.tr("刷新"))
         btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip(self.tr("重新载入媒体列表(F5)"))
         btn.clicked.connect(self.refresh_requested.emit)
@@ -359,7 +359,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
         # 2026-08-25 PR #4:按频道批量删除 — 清空 filter 选中频道的全部 message
         # (含 media + bytes);MainWindow 接到信号二次确认后再调 VM。
-        self.btn_clear_channel = QPushButton(self.tr("🗑 清空频道"))
+        self.btn_clear_channel = QPushButton(self.tr("清空频道"))
         self.btn_clear_channel.setCursor(Qt.PointingHandCursor)
         self.btn_clear_channel.setToolTip(
             self.tr("删除该频道全部消息(不可撤销)"),
@@ -370,7 +370,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         # 2026-08-25 v1.3.0 PR #7:Media Manager 当前视图 → CSV 一键导出
         # (filter / sort / 全部页,不只是当前页)。MainWindow 接信号 → 构造
         # MediaExportRequest → 调 vm.export_media_list。
-        self.btn_export_csv = QPushButton(self.tr("📤 导出 CSV"))
+        self.btn_export_csv = QPushButton(self.tr("导出 CSV"))
         self.btn_export_csv.setCursor(Qt.PointingHandCursor)
         self.btn_export_csv.setToolTip(
             self.tr("导出当前筛选/排序视图到 CSV(全部页)"),
@@ -382,7 +382,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         # `export_zip_requested(out_path, include_thumbnails)`。缩略图勾
         # 选用 widget 内的 `chk_zip_thumbs` 开关;MainWindow 接到后构造
         # `ExportRequest(format=ZIP, include_thumbnails=...)`。
-        self.btn_export_zip = QPushButton(self.tr("📦 导出 ZIP"))
+        self.btn_export_zip = QPushButton(self.tr("导出 ZIP"))
         self.btn_export_zip.setCursor(Qt.PointingHandCursor)
         self.btn_export_zip.setToolTip(
             self.tr("把当前筛选视图的媒体 bytes + manifest.json 打包成 .zip"),
@@ -400,7 +400,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
         actions.addStretch(1)
 
-        self.btn_prune = QPushButton(self.tr("🧹 清理孤儿"))
+        self.btn_prune = QPushButton(self.tr("清理孤儿"))
         self.btn_prune.setCursor(Qt.PointingHandCursor)
         self.btn_prune.setToolTip(self.tr("扫描 ObjectStore vs storage 并删除孤儿 bytes(不可撤销)"))
         self.btn_prune.clicked.connect(self.prune_requested.emit)

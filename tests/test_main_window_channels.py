@@ -682,7 +682,7 @@ def test_channel_list_card_empty_hint_visibility_toggles(qapp):
     card = ChannelListCard(
         title="x",
         action_label="y",
-        empty_hint_spec=("💡", "空", "请加数据"),
+        empty_hint_spec=("提示", "空", "请加数据"),
     )
     assert not card._empty_hint.isHidden()  # 初始:空 → 显示
 

@@ -226,7 +226,7 @@ def test_on_media_downloaded_shows_activity_on_success(qapp) -> None:
 
 
 def test_on_media_downloaded_shows_warning_on_failure(qapp) -> None:
-    """下载失败 → activity 显示「⚠ 下载失败: <name>」。"""
+    """下载失败 → activity 显示「下载失败: <name>」。"""
     win = _FakeWindow()
     ctrl = _build_ctrl(win)
     ev = MediaDownloaded(media=_make_media("photo.jpg", is_done=False))

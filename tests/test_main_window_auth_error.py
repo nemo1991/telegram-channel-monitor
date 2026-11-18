@@ -120,7 +120,7 @@ def test_auth_error_pushes_bell_btn_visible(qapp: QApplication) -> None:
 
 
 def test_auth_error_increates_count_on_repeat(qapp: QApplication) -> None:
-    """P0-K:连续两次 → 铃铛文本「🔔 2」。"""
+    """P0-K:连续两次 → 铃铛文本「错误 2」。"""
     bell = _make_bell(qapp)
     _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="bad 1")))
     _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="bad 2")))

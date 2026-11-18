@@ -70,11 +70,10 @@ def test_selected_channel_label_none_default(qapp: QApplication) -> None:
 
 
 def test_selected_channel_label_set_name(qapp: QApplication) -> None:
-    """set_channel(name) → 显示「📡 <name>」。"""
+    """set_channel(name) → 显示频道名。"""
     label = _SelectedChannelLabel()
     label.set_channel("频道 A")
     assert "频道 A" in label.text()
-    assert "📡" in label.text()
     # set None 回到占位
     label.set_channel(None)
     assert "(无选中频道)" in label.text()

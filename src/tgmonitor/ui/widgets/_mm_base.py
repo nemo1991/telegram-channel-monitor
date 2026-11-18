@@ -23,14 +23,14 @@ from tgmonitor.core.dto import MediaDownloadStatus, MediaType
 # ---------- 类型 / emoji 映射 ----------
 
 _MEDIA_ICONS: dict[MediaType, str] = {
-    MediaType.PHOTO: "🖼",
-    MediaType.VIDEO: "🎬",
-    MediaType.AUDIO: "🎵",
-    MediaType.VOICE: "🎤",
-    MediaType.DOCUMENT: "📄",
-    MediaType.STICKER: "🌟",
-    MediaType.ANIMATION: "🎞",
-    MediaType.VIDEO_NOTE: "📹",
+    MediaType.PHOTO: "图片",
+    MediaType.VIDEO: "视频",
+    MediaType.AUDIO: "音频",
+    MediaType.VOICE: "语音",
+    MediaType.DOCUMENT: "文档",
+    MediaType.STICKER: "贴纸",
+    MediaType.ANIMATION: "动图",
+    MediaType.VIDEO_NOTE: "视频留言",
 }
 
 # 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 仅图片类(DONE 状态下)
@@ -56,7 +56,7 @@ _STATUS_TEXT: dict[MediaDownloadStatus, str] = {
     MediaDownloadStatus.PENDING: "⏳",
     MediaDownloadStatus.DOWNLOADING: "⏳",
     MediaDownloadStatus.DONE: "✓",
-    MediaDownloadStatus.FAILED: "❌",
+    MediaDownloadStatus.FAILED: "×",
 }
 
 

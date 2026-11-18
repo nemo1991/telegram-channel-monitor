@@ -130,7 +130,7 @@ class ExportDialog(QDialog):
         # 2026-09-10 v1.7.3:用户元数据开关 — 默认勾选(对收藏 / 标签 / 备注
         # 敏感的用户保留 ★ / 标签 / 备注);JSON / ZIP 不受影响(asdict 永远含)。
         # 只在 CSV / Markdown / HTML / MEDIA_CSV 时实际生效。
-        self.chk_metadata = QCheckBox(self.tr("包含收藏 / 标签 / 备注(★ / 🏷 / 📝)"))
+        self.chk_metadata = QCheckBox(self.tr("包含收藏 / 标签 / 备注"))
         self.chk_metadata.setChecked(True)
         form.addRow("", self.chk_metadata)
 

@@ -42,17 +42,17 @@ class MessageEmptyOverlay(QWidget):
     # 不再关心具体文案。
     _EMPTY_STATES: dict[str, tuple[str, str, str]] = {
         "no_monitored": (
-            "💬",
+            "消息",
             "未订阅频道",
-            "先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
+            "先去「设置 → 监听频道管理」加入监听,\n新消息会实时显示在这里。",
         ),
         "searching": (
-            "🔍",
+            "搜索",
             "无匹配结果",
             "试试更换关键词或日期范围。",
         ),
         "live_empty": (
-            "💬",
+            "消息",
             "暂无消息",
             "新消息会实时显示。",
         ),
@@ -63,9 +63,9 @@ class MessageEmptyOverlay(QWidget):
         # empty_hint 三态 overlay — 默认显示,首条消息到达时由
         # update_for_row_count 切 hide。
         self._empty_overlay = empty_hint(
-            icon="💬",
+            icon="消息",
             title="暂无消息",
-            hint="先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
+            hint="先去「设置 → 监听频道管理」加入监听,\n新消息会实时显示在这里。",
             parent=self,
         )
         self._empty_overlay.raise_()
