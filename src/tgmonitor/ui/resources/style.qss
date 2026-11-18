@@ -467,6 +467,23 @@ QListWidget::item:selected {
     color: #1a1a2e;
     border-left: 3px solid {accent};
 }
+/* v2.0.5 FR-03 步骤一:消息流(QListView)容器观感与最近活动(QListWidget)对齐。
+ * 交替行色由 view.setAlternatingRowColors(True) + delegate 用
+ * QPalette.AlternateBase 绘制,此处只管容器白底圆角边框 + 选中/hover 观感。 */
+QListView#streamList {
+    background: #ffffff;
+    border: 1px solid #e2e4e9;
+    border-radius: 6px;
+    outline: 0;
+    padding: 2px;
+}
+QListView#streamList::item:hover {
+    background: #eaf3fc;
+}
+QListView#streamList::item:selected {
+    background: #b6d0f0;
+    color: #1a1a2e;
+}
 
 /* ===== 表格 ===== */
 QTableWidget {

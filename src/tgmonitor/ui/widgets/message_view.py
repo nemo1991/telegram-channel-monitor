@@ -102,6 +102,9 @@ class MessageView(MessageViewAPIMixin, QListView):
     def __init__(self) -> None:
         """初始化 model + delegate + channel_titles + filter + empty overlay。"""
         super().__init__()
+        # v2.0.5 FR-03 步骤一:专属 objectName,让 QSS 给消息流容器
+        # 白底圆角/边框观感与最近活动(QListWidget)一致。
+        self.setObjectName("streamList")
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(False)  # delegate 动态 size
         self.setWordWrap(True)
