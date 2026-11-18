@@ -103,7 +103,7 @@ def test_setup_then_show_does_not_directly_await_bootstrap(
 
 def test_background_startup_runs_steps_in_order(app_source: str) -> None:
     """`_background_startup` 必须按顺序执行:
-    list_subscribed_channels → monitor.set_whitelist → monitor.start → app.bootstrap。
+    list_monitored_channels → monitor.set_whitelist → monitor.start → app.bootstrap。
     顺序乱了会导致白名单未建好 monitor 就开始收消息。
     """
     body = _extract_function_body(app_source, "_background_startup")
@@ -111,7 +111,7 @@ def test_background_startup_runs_steps_in_order(app_source: str) -> None:
 
     # 提取关键调用位置
     steps = {
-        "list_subscribed": re.search(r"list_subscribed_channels\(\)", body),
+        "list_subscribed": re.search(r"list_monitored_channels\(\)", body),
         "set_whitelist": re.search(r"monitor\.set_whitelist\(", body),
         "monitor_start": re.search(r"await\s+monitor\.start\(\)", body),
         "app_bootstrap": re.search(r"app_svc\.bootstrap\(\)", body),

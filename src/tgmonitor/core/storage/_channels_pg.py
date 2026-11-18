@@ -1,8 +1,8 @@
 """PG 频道子模块 — 2026-10-16 plan-batch8-1.3。
 
 持 11 个频道 + meta method(`upsert_channel` / `upsert_channel_metadata` /
-`update_channel_metadata` / `set_channel_subscribed` / `list_channels` /
-`list_subscribed_channels` / `get_channel` / `delete_channel` /
+`update_channel_metadata` / `set_channel_monitored` / `list_channels` /
+`list_monitored_channels` / `get_channel` / `delete_channel` /
 `get_max_telegram_msg_id` / `get_meta` / `set_meta`)+ 顶部
 `_row_to_channel` 反序列化 helper。
 
@@ -11,7 +11,7 @@
 持 `self._pool`,本 module 走 `self._pool.acquire() as conn` 拿连接。
 
 `_row_to_channel` 是频道反序列化的唯一定义点,被本 module 4 处使用
-(list_channels / list_subscribed_channels / get_channel + facade 自身
+(list_channels / list_monitored_channels / get_channel + facade 自身
 后续如有别处引用),放本 module 顶部,与频道 method 同生命周期。
 """
 
@@ -194,7 +194,7 @@ async def update_channel_metadata(
         )
 
 
-async def set_channel_subscribed(
+async def set_channel_monitored(
     self: PostgresRepository, channel_id: int, subscribed: bool
 ) -> None:
     """只设**监听**标志(物理列 subscribed = 语义 monitored);未建档时建 stub。"""
@@ -251,7 +251,7 @@ async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:
     return [_row_to_channel(r) for r in rows]
 
 
-async def list_subscribed_channels(self: PostgresRepository) -> list[ChannelDTO]:
+async def list_monitored_channels(self: PostgresRepository) -> list[ChannelDTO]:
     """只返 subscribed=TRUE 的频道(按 id 升序);供 MonitorService 喂白名单。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:

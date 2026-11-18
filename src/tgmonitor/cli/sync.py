@@ -29,7 +29,7 @@ async def run_sync(
 
     与 GUI 路径差异:
     - 进度反馈走 stdout `print`(无 UI dialog)
-    - 白名单以 `args.channel_ids` 为准(不走 storage `list_subscribed_channels()`,
+    - 白名单以 `args.channel_ids` 为准(不走 storage `list_monitored_channels()`,
       CLI 显式选择胜过默认行为)
     - bootstrap 未 ready 时退出码 1 + 提示去 GUI 完成登录(CLI 没有 code 输入面板)
 

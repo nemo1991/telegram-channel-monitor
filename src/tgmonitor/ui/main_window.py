@@ -615,17 +615,17 @@ class MainWindow(QMainWindow):
         """channels_changed / 登录状态变化 / 定时 触发刷新。"""
         all_known = self._vm.known_channels
         self.channel_panel.set_joined(list(all_known.values()))
-        subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.subscribed_ids]
-        self.channel_panel.set_subscribed(subscribed)
+        subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.monitored_ids]
+        self.channel_panel.set_monitored(subscribed)
 
         # 2026-11-16:列表 + 详情共用同一份频道名映射(名称优先、id 兜底)。
         titles = {cid: ch.title for cid, ch in all_known.items()}
         self.live_view.set_channel_titles(titles)
         self.message_detail.set_channel_titles(titles)
-        # 2026-09-14 v1.7.5 PR #5 (P0-L):订阅数为 0 → no_subscribed overlay;
+        # 2026-09-14 v1.7.5 PR #5 (P0-L):订阅数为 0 → no_monitored overlay;
         # > 0 → live_empty(LIVE 流空状态)。搜索无结果 by search handler 切。
         if not subscribed:
-            self.live_view.set_empty_state("no_subscribed")
+            self.live_view.set_empty_state("no_monitored")
         else:
             self.live_view.set_empty_state("live_empty")
         self._vm.load_recent_messages()

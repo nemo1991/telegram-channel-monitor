@@ -89,12 +89,12 @@ def storage() -> InMemoryRepository:
 async def test_subscribe_rejected_without_side_effects(
     storage: InMemoryRepository, state: str
 ) -> None:
-    """绕过 UI 直调 subscribe_channel:非 ready 拒绝,不写库、不发事件。"""
+    """绕过 UI 直调 monitor_channel:非 ready 拒绝,不写库、不发事件。"""
     client = _gate_client(state)
     svc = ChannelService(EventBus(), client, storage)  # type: ignore[arg-type]
 
     with pytest.raises(OperationNotReadyError):
-        await svc.subscribe_channel(ChannelDTO(id=1, title="x"))
+        await svc.monitor_channel(ChannelDTO(id=1, title="x"))
 
     assert await storage.get_channel(1) is None, "未登录不得写库"
     client.list_joined_channels.assert_not_awaited()
@@ -104,13 +104,13 @@ async def test_subscribe_rejected_without_side_effects(
 async def test_unsubscribe_rejected_without_side_effects(
     storage: InMemoryRepository, state: str
 ) -> None:
-    """绕过 UI 直调 unsubscribe_channel:非 ready 拒绝,监听标志不变。"""
+    """绕过 UI 直调 unmonitor_channel:非 ready 拒绝,监听标志不变。"""
     await storage.upsert_channel(ChannelDTO(id=1, title="x", is_monitored=True))
     client = _gate_client(state)
     svc = ChannelService(EventBus(), client, storage)  # type: ignore[arg-type]
 
     with pytest.raises(OperationNotReadyError):
-        await svc.unsubscribe_channel(1)
+        await svc.unmonitor_channel(1)
 
     got = await storage.get_channel(1)
     assert got is not None and got.is_monitored is True, "未登录不得改监听标志"
@@ -147,7 +147,7 @@ async def test_ready_allows_operations(storage: InMemoryRepository) -> None:
     client = _gate_client("ready")
     svc = ChannelService(EventBus(), client, storage)  # type: ignore[arg-type]
 
-    await svc.subscribe_channel(ChannelDTO(id=7, title="ok"))
+    await svc.monitor_channel(ChannelDTO(id=7, title="ok"))
 
     got = await storage.get_channel(7)
     assert got is not None and got.is_monitored is True

@@ -262,7 +262,7 @@ def _app_stub(joined_count: int = 7) -> MagicMock:
 
 def _monitor_stub(ids: list[int]) -> MagicMock:
     monitor = MagicMock(spec=MonitorService)
-    monitor.subscribed_ids = ids
+    monitor.monitored_ids = ids
     return monitor
 
 

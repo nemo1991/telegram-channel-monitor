@@ -416,7 +416,7 @@ async def test_reconfigure_syncs_backends_to_monitor(
     s2.ensure_dirs()
     new_storage = InMemoryRepository()
     await new_storage.connect()
-    await new_storage.set_channel_subscribed(100, True)
+    await new_storage.set_channel_monitored(100, True)
     monkeypatch.setattr(
         "tgmonitor.core.app_service._reconfigure.build_storage",
         lambda settings: new_storage,
@@ -433,7 +433,7 @@ async def test_reconfigure_syncs_backends_to_monitor(
     assert monitor.downloader.objects is app.objects
     assert monitor.downloader.max_bytes == s2.media_max_bytes
     # 白名单从新 storage 重载(订阅真理随存储切换)
-    assert monitor.subscribed_ids == frozenset({100})
+    assert monitor.monitored_ids == frozenset({100})
     # channel_sync 也换新 storage
     assert app.channel_sync.storage is new_storage
 
@@ -541,7 +541,7 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     验证路径:
       1. 旧 storage 有 3 频道:A subscribed、B unsubscribed、C subscribed
       2. reconfigure 切到新 storage(空 db,2026-10-12 step 3.3 后 db_root 字段已删)
-      3. 新 storage 调 `list_subscribed_channels()` → 仅 [A, C],无 B
+      3. 新 storage 调 `list_monitored_channels()` → 仅 [A, C],无 B
     """
     from tgmonitor.core.dto import ChannelDTO
 
@@ -554,9 +554,9 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     await storage.upsert_channel(ChannelDTO(id=111, title="A", username="a", kind="channel"))
     await storage.upsert_channel(ChannelDTO(id=222, title="B", username="b", kind="channel"))
     await storage.upsert_channel(ChannelDTO(id=333, title="C", username="c", kind="channel"))
-    await storage.set_channel_subscribed(111, True)
-    await storage.set_channel_subscribed(222, False)  # 已退订
-    await storage.set_channel_subscribed(333, True)
+    await storage.set_channel_monitored(111, True)
+    await storage.set_channel_monitored(222, False)  # 已退订
+    await storage.set_channel_monitored(333, True)
     objects = FolderObjectStore(root=s1.objectstore_root)
     await objects.connect()
     app = AppService(bus, FakeTelegramClient(), storage, objects, s1)
@@ -574,10 +574,10 @@ async def test_reconfigure_storage_does_not_promote_unsubscribed(
     await app.reconfigure(s2)
 
     # 新 storage 是空库(切换目录,不复制数据)→ list_subscribed 空
-    new_subscribed = await app.storage.list_subscribed_channels()
-    subscribed_ids = sorted(c.id for c in new_subscribed)
-    assert 222 not in subscribed_ids, (
-        f"DRIFT #C:unsubscribed 频道 id=222 不应出现在新 storage 已订列表;actual={subscribed_ids}"
+    new_subscribed = await app.storage.list_monitored_channels()
+    monitored_ids = sorted(c.id for c in new_subscribed)
+    assert 222 not in monitored_ids, (
+        f"DRIFT #C:unsubscribed 频道 id=222 不应出现在新 storage 已订列表;actual={monitored_ids}"
     )
 
 
@@ -607,13 +607,13 @@ async def test_reconfigure_storage_empty_db_returns_empty_subscribed(
     s2.ensure_dirs()
     await app.reconfigure(s2)
 
-    subscribed = await app.storage.list_subscribed_channels()
+    subscribed = await app.storage.list_monitored_channels()
     assert subscribed == []
 
 
 async def test_message_service_list_messages_uses_storage_truth() -> None:
     """DRIFT #C 配套:`MessageService.list_messages` 在新 storage 就绪后,
-    默认走 `list_subscribed_channels()`(真理 = storage)。
+    默认走 `list_monitored_channels()`(真理 = storage)。
 
     不应残留 in-memory cache 行为:storage 真理「空」→ 返回空消息列表,
     而不是 in-memory 残留的「已订频道」 → 跨 session 拉到陈旧数据。
@@ -625,14 +625,14 @@ async def test_message_service_list_messages_uses_storage_truth() -> None:
     storage = InMemoryRepository()
     await storage.connect()
     await storage.init_schema()
-    # 空 storage:无任何 channel → list_subscribed_channels() = []
+    # 空 storage:无任何 channel → list_monitored_channels() = []
     svc = MessageService(bus, storage)
 
     msgs = await svc.list_messages(channel_ids=None)
     assert msgs == []
     # 显式 truth:再插一个 subscribed channel,后能查到
     await storage.upsert_channel(ChannelDTO(id=999, title="truth", username="t", kind="channel"))
-    await storage.set_channel_subscribed(999, True)
+    await storage.set_channel_monitored(999, True)
     msgs2 = await svc.list_messages(channel_ids=None)
     # 新 storage 真理立刻生效(没有 cache 残留)
     assert isinstance(msgs2, list)

@@ -7,9 +7,9 @@
 
 职责:
   - `list_joined_channels`(best-effort UX,不走 storage)
-  - `list_subscribed_channels`(已监听真理,走 storage)
+  - `list_monitored_channels`(已监听真理,走 storage)
   - `refresh_joined_channels`(v2.0.3:刷新落库 + 级联)
-  - `subscribe_channel` / `unsubscribe_channel`(upsert + set_subscribed + 发事件)
+  - `monitor_channel` / `unmonitor_channel`(upsert + set_monitored + 发事件)
   - `add_to_whitelist` / `remove_from_whitelist`(sync,转 MonitorService)
 
 设计:持 `bus + client + storage + monitor`;monitor 可选(纯测试 /
@@ -71,26 +71,26 @@ class ChannelService:
             return []
         return await self._client.list_joined_channels()
 
-    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+    async def list_monitored_channels(self) -> list[ChannelDTO]:
         """已订阅频道 — **单一真理**走 storage(删 `_subscribed` cache 后)。"""
-        return await self._storage.list_subscribed_channels()
+        return await self._storage.list_monitored_channels()
 
     # ---------- 订阅 / 退订 ----------
 
-    async def subscribe_channel(self, channel: ChannelDTO) -> None:
+    async def monitor_channel(self, channel: ChannelDTO) -> None:
         """对本应用**开启监听**一个频道 — upsert 元数据 + 设 monitored=True + 发事件。
 
         先 upsert 完整信息(标题等),再设监听标志 —
-        后者用 set_channel_subscribed 不会改其他字段。
+        后者用 set_channel_monitored 不会改其他字段。
 
         v2.0.3 D7:core 门控 — 未 ready 直接拒绝,不产生任何写库副作用。
         """
         require_ready(self._client, "开启监听")
         await self._storage.upsert_channel(channel)
-        await self._storage.set_channel_subscribed(channel.id, True)
+        await self._storage.set_channel_monitored(channel.id, True)
         await self._bus.publish(ChannelMonitored(channel=channel))
 
-    async def unsubscribe_channel(self, channel_id: int) -> None:
+    async def unmonitor_channel(self, channel_id: int) -> None:
         """本应用**取消监听** — 关监听标志但保留历史 + 元数据 + TG 订阅状态。
 
         取消监听 = 关闭监听标志,不动元数据 / 消息 / tg_subscribed。历史消息继续
@@ -103,7 +103,7 @@ class ChannelService:
         v2.0.3 D7:core 门控 — 未 ready 直接拒绝,不产生任何写库副作用。
         """
         require_ready(self._client, "取消监听")
-        await self._storage.set_channel_subscribed(channel_id, False)
+        await self._storage.set_channel_monitored(channel_id, False)
         await self._bus.publish(ChannelUnmonitored(channel_id=channel_id))
 
     async def refresh_joined_channels(self) -> list[ChannelDTO]:
@@ -158,7 +158,7 @@ class ChannelService:
                 continue
             await self._storage.set_channel_tg_subscribed(existing.id, False)
             if existing.is_monitored:
-                await self._storage.set_channel_subscribed(existing.id, False)
+                await self._storage.set_channel_monitored(existing.id, False)
                 if self._monitor is not None:
                     self._monitor.remove_from_whitelist(existing.id)
                 await self._bus.publish(ChannelUnmonitored(channel_id=existing.id))

@@ -82,7 +82,7 @@ async def test_facade_storage_setter_syncs_to_sub_services(app: AppService) -> N
     new_storage = MagicMock()
     app.storage = new_storage  # type: ignore[assignment]
     for attr, expected_cls in (
-        ("list_subscribed_channels", "ChannelService"),
+        ("list_monitored_channels", "ChannelService"),
         ("list_messages", "MessageService"),
         ("list_media", "MediaService"),
     ):

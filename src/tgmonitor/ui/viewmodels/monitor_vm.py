@@ -81,8 +81,8 @@ class MonitorViewModel(
     # - ExportMixin(6):export 域全部 signal
     #
     # 17 public method 分布:
-    # - ChannelsMixin(4):`bootstrap_ui` / `refresh_subscribed_channels` /
-    #   `subscribe_channel` / `unsubscribe_channel`
+    # - ChannelsMixin(4):`bootstrap_ui` / `refresh_monitored_channels` /
+    #   `monitor_channel` / `unmonitor_channel`
     # - SystemMixin(1):`set_selected_channel`
     # - MessagesMixin(2):`load_recent_messages` / `search_messages`
     # - MediaMixin(10):media 域 10 method

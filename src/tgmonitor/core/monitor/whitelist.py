@@ -6,7 +6,7 @@
 mypy 经 `MonitorService` 类型看到全部契约,无需 `type: ignore[attr-defined]`。
 
 `MonitorService` 保留同名 delegate(`set_whitelist` / `add_to_whitelist` /
-`remove_from_whitelist` / `subscribed_ids` / `update_backends`)转发到本组件,
+`remove_from_whitelist` / `monitored_ids` / `update_backends`)转发到本组件,
 公开调用面与测试 seam 不变。
 """
 
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 class WhitelistManager:
     """白名单管理 — 5 个 method:`set_whitelist` / `add_to_whitelist` /
-    `remove_from_whitelist` / `subscribed_ids` / `update_backends`。
+    `remove_from_whitelist` / `monitored_ids` / `update_backends`。
 
     经 `self._svc` 访问宿主状态:`bus / client / storage / objects /
     settings / downloader / _whitelist`。
@@ -50,7 +50,7 @@ class WhitelistManager:
         self._svc._whitelist.discard(channel_id)
 
     @property
-    def subscribed_ids(self) -> frozenset[int]:
+    def monitored_ids(self) -> frozenset[int]:
         """订阅频道 id 的快照集合 — UI 只读访问用。
 
         内部 `_whitelist` 仍由 `set_whitelist` / `add_to_whitelist` /
@@ -87,7 +87,7 @@ class WhitelistManager:
         # 订阅真理随存储切换:白名单从新 storage 重载;失败只降级记日志,
         # 不阻断 reconfigure 的其余提交(保留原白名单,下一次订阅/退订事件会修正)。
         try:
-            subscribed = await storage.list_subscribed_channels()
+            subscribed = await storage.list_monitored_channels()
         except Exception:  # noqa: BLE001
             log.exception("update_backends: 从新 storage 重载白名单失败,保持原白名单")
             return

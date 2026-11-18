@@ -22,7 +22,7 @@ def test_no_sub_hint_row_on_cards(qapp, qloop, tmp_path):
     assert isinstance(dash, DashboardWidget)
     for card in (
         dash.card_channels,
-        dash.card_subscribed,
+        dash.card_monitored,
         dash.card_state,
         dash.card_storage,
         dash.card_total_messages,
@@ -82,7 +82,7 @@ def test_real_window_storage_card_filled_from_settings(qapp, qloop, tmp_path):
     win = build_real_main_window(qloop, tmp_path)
     dash = win.dashboard
     assert isinstance(dash, DashboardWidget)
-    dash.update_stats(subscribed_count=3)
+    dash.update_stats(monitored_count=3)
 
     db_text = dash.card_storage.value_lbl.text()
     obj_text = dash.card_storage.value2_lbl.text()

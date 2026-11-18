@@ -2,11 +2,12 @@
 """ChannelWidget — 主窗口侧栏下半部。
 
 把"监听谁"这事最简化:
-- **上半栏「全部(已加入)」**:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
-- **下半栏「已监听」**:`AppService._subscribed` 当前白名单,**多选 + 全量同步…**
+- **上半栏「已加入频道」**:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
+- **下半栏「已监听」**:当前监听白名单(真理走 `storage.list_monitored_channels()`),
+  **双击 = 移出监听;多选 + 全量同步…**
 
 事件:`ChannelMonitored / ChannelUnmonitored` 会刷新下半栏。
-设计原则:订阅是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
+设计原则:开关监听是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
 """
 
 from __future__ import annotations
@@ -162,7 +163,7 @@ class ChannelListCard(QWidget):
       - `set_items(channels, *, count_template)` — 装载频道列表 + 更新标题
       - `clear_items()` — 清空 + 重新显示 empty_hint(如果配置了)
       - `add_item(channel)` / `remove_by_cid(cid)` / `find_cid(cid)` —
-        增量更新(订阅/退订事件驱动)
+        增量更新(监听开关事件驱动)
       - `apply_filter(text, joined_mapping)` — 按 text 过滤可见
       - `selected_cids()` — 多选模式:取当前选中行的 id 列表
       - 属性:`lst`(QListWidget)、`btn_action`、`count_label`
@@ -263,8 +264,8 @@ class ChannelListCard(QWidget):
         self._refresh_empty_state()
 
     def add_item(self, ch: ChannelDTO) -> None:
-        """订阅事件时增量追加一条。注意:不复检是否重复(ChannelWidget 已用
-        `_subscribed_ids` set 防重)。
+        """监听事件时增量追加一条。注意:不复检是否重复(ChannelWidget 已用
+        `_monitored_ids` set 防重)。
 
         2026-09-04 v1.6.4:头像 + 徽标走 _kind_icon / _channel_display_text。
         """
@@ -275,7 +276,7 @@ class ChannelListCard(QWidget):
         self._refresh_empty_state()
 
     def remove_by_cid(self, channel_id: int) -> bool:
-        """按 channel_id 移除一行(退订事件)。找不到返 False。"""
+        """按 channel_id 移除一行(取消监听事件)。找不到返 False。"""
         for i in range(self.lst.count()):
             it = self.lst.item(i)
             if it is not None and it.data(Qt.UserRole) == channel_id:
@@ -347,8 +348,8 @@ class ChannelListCard(QWidget):
 class ChannelWidget(QWidget):
     """频道管理面板 — 已加入 + 已监听 双栏 + 搜索过滤。
 
-    已加入:从 Telegram 现拉的全部频道/群组,**双击 = 订阅**
-    已监听:`AppService._subscribed` 当前白名单,**双击 = 退订;多选 + 全量同步**
+    已加入:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
+    已监听:当前监听白名单(真理走 storage),**双击 = 移出监听;多选 + 全量同步**
 
     内部用两张 `ChannelListCard` 实例(`joined_card` / `subs_card`)
     实际承载 UI,ChannelWidget 自身只负责装配 + 搜索 + EventBus 接线和
@@ -371,7 +372,7 @@ class ChannelWidget(QWidget):
         self.app = app
         self.loop = loop
         self._joined: dict[int, ChannelDTO] = {}
-        self._subscribed_ids: set[int] = set()
+        self._monitored_ids: set[int] = set()
         self._build()
         self._wire_bus()
         # 异步拉频道 → 主线程刷新
@@ -418,15 +419,15 @@ class ChannelWidget(QWidget):
             bottom_hint="💡 双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…",
         )
         self.subs_card.action_clicked.connect(self._on_sync_clicked)
-        self.subs_card.item_double_clicked.connect(self._on_subscribed_double_click)
+        self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)
         root.addWidget(self.subs_card, 2)
 
         # ---- 兼容老 attribute 名(测试 + MainWindow 仍走旧 API)----
-        # 旧代码依赖 `self.lst_joined` / `lst_subscribed` / `lbl_*_count` /
+        # 旧代码依赖 `self.lst_joined` / `lst_monitored` / `lbl_*_count` /
         # `btn_refresh` / `btn_sync`,把桥接留在 ChannelWidget 层 —
         # 测试 / 上层代码不再穿透到 card 层,ChannelListCard 是私有实现细节。
         self.lst_joined = self.joined_card.lst
-        self.lst_subscribed = self.subs_card.lst
+        self.lst_monitored = self.subs_card.lst
         self.lbl_joined_count = self.joined_card.count_label
         self.lbl_subs_count = self.subs_card.count_label
         self.btn_refresh = self.joined_card.btn_action
@@ -444,14 +445,14 @@ class ChannelWidget(QWidget):
         **只做呈现,不重复判定规则** —— 判定在 core `ops_gate.is_ready`,
         本方法由 `AppStateController` 收到 `LoginStateChanged` 后调用。
         真正的执行安全由 core 域服务入口门控保证(UI 禁用只是体验,不是安全边界):
-        双击订阅/退订仍可被编程式调用,core 门控会一致拒绝。
+        双击加入/移出监听仍可被编程式调用,core 门控会一致拒绝。
         """
         tip = "" if enabled else "需先登录 Telegram 才能刷新/同步频道"
         self.btn_refresh.setEnabled(enabled)
         self.btn_refresh.setToolTip(tip)
         self.btn_sync.setEnabled(enabled)
         self.btn_sync.setToolTip(tip)
-        # 列表交互:未登录时禁双击(订阅/退订),core 门控同时兜底
+        # 列表交互:未登录时禁双击(加入/移出监听),core 门控同时兜底
         self.joined_card.lst.setEnabled(enabled)
         self.subs_card.lst.setEnabled(enabled)
 
@@ -464,9 +465,9 @@ class ChannelWidget(QWidget):
         # 触发过滤(数据变了)
         self._apply_filter(self.search_edit.text())
 
-    def set_subscribed(self, channels: list[ChannelDTO]) -> None:
+    def set_monitored(self, channels: list[ChannelDTO]) -> None:
         """外部装入已监听频道(白名单)— 由 `MainWindow._refresh_state` 调。"""
-        self._subscribed_ids = {c.id for c in channels}
+        self._monitored_ids = {c.id for c in channels}
         self.subs_card.set_items(channels, count_template="已监听 · {n}")
         # 触发过滤
         self._apply_filter(self.search_edit.text())
@@ -484,9 +485,9 @@ class ChannelWidget(QWidget):
 
         async def _on(e: Event) -> None:
             if isinstance(e, ChannelMonitored) and e.channel is not None:
-                self._add_to_subscribed_list(e.channel)
+                self._add_to_monitored_list(e.channel)
             elif isinstance(e, ChannelUnmonitored):
-                self._remove_from_subscribed_list(e.channel_id)
+                self._remove_from_monitored_list(e.channel_id)
             elif isinstance(e, ChannelTitleChanged):
                 # 2026-09-03 v1.6.0 PR #Q2:实时刷新卡片标题。
                 # 不重启应用 = 数据 stale 的问题修掉。
@@ -537,19 +538,19 @@ class ChannelWidget(QWidget):
                 if it and it.data(Qt.UserRole) == channel_id:
                     it.setIcon(icon)
 
-    def _add_to_subscribed_list(self, ch: ChannelDTO) -> None:
-        if ch.id in self._subscribed_ids:
+    def _add_to_monitored_list(self, ch: ChannelDTO) -> None:
+        if ch.id in self._monitored_ids:
             return
         # 也写入 joined(以防 joined 还没刷新)
         self._joined[ch.id] = ch
-        self._subscribed_ids.add(ch.id)
+        self._monitored_ids.add(ch.id)
         self.subs_card.add_item(ch)
-        self.subs_card.count_label.setText(f"已监听:{len(self._subscribed_ids)}")
+        self.subs_card.count_label.setText(f"已监听:{len(self._monitored_ids)}")
 
-    def _remove_from_subscribed_list(self, channel_id: int) -> None:
-        self._subscribed_ids.discard(channel_id)
+    def _remove_from_monitored_list(self, channel_id: int) -> None:
+        self._monitored_ids.discard(channel_id)
         self.subs_card.remove_by_cid(channel_id)
-        self.subs_card.count_label.setText(f"已监听:{len(self._subscribed_ids)}")
+        self.subs_card.count_label.setText(f"已监听:{len(self._monitored_ids)}")
 
     # ---- 槽 ----
 
@@ -573,21 +574,21 @@ class ChannelWidget(QWidget):
         ch = self._joined.get(cid)
         if ch is None:
             return
-        if cid in self._subscribed_ids:
-            return  # 已订阅,双击无效(改在已监听栏里退订)
+        if cid in self._monitored_ids:
+            return  # 已监听,双击无效(改在已监听栏里移出)
         run_coro(
             self.loop,
-            self.app.channels.subscribe_channel(ch),
-            error_label="subscribe_channel",
+            self.app.channels.monitor_channel(ch),
+            error_label="monitor_channel",
         )
 
-    def _on_subscribed_double_click(self, cid: int) -> None:
+    def _on_monitored_double_click(self, cid: int) -> None:
         if cid is None:
             return
         run_coro(
             self.loop,
-            self.app.channels.unsubscribe_channel(int(cid)),
-            error_label="unsubscribe_channel",
+            self.app.channels.unmonitor_channel(int(cid)),
+            error_label="unmonitor_channel",
         )
 
     def _on_sync_clicked(self) -> None:
@@ -600,6 +601,6 @@ class ChannelWidget(QWidget):
             # 没选:全部订阅
             ids = self.subs_card.all_cids()
         if not ids:
-            QMessageBox.information(self, "全量同步", "已监听列表为空,先订阅频道")
+            QMessageBox.information(self, "全量同步", "已监听列表为空,先从上方已加入频道里加入监听")
             return
         self.sync_requested.emit(ids)

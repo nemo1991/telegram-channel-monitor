@@ -21,7 +21,7 @@ from tgmonitor.core.storage.repository import StorageRepository
 @pytest.fixture
 def fake_storage() -> AsyncMock:
     s = AsyncMock(spec=StorageRepository)
-    s.list_subscribed_channels.return_value = []
+    s.list_monitored_channels.return_value = []
     s.list_channels.return_value = []
     s.list_messages.return_value = []
     return s
@@ -44,8 +44,8 @@ def _make_service(bus: EventBus, storage: StorageRepository) -> MessageService:
 async def test_list_messages_default_uses_subscribed_truth(
     bus: EventBus, fake_storage: AsyncMock
 ) -> None:
-    """channel_ids=None + include_unsubscribed=False → 走已订真理。"""
-    fake_storage.list_subscribed_channels.return_value = [
+    """channel_ids=None + include_unmonitored=False → 走已订真理。"""
+    fake_storage.list_monitored_channels.return_value = [
         ChannelDTO(id=1, title="a"),
         ChannelDTO(id=2, title="b"),
     ]
@@ -53,14 +53,14 @@ async def test_list_messages_default_uses_subscribed_truth(
     svc = _make_service(bus, fake_storage)
     await svc.list_messages()
 
-    fake_storage.list_subscribed_channels.assert_awaited_once_with()
+    fake_storage.list_monitored_channels.assert_awaited_once_with()
     fake_storage.list_channels.assert_not_awaited()
     fake_storage.list_messages.assert_awaited_once()
     args = fake_storage.list_messages.await_args.args
     assert args[0] == [1, 2]  # channel_ids
 
 
-async def test_list_messages_include_unsubscribed_uses_all_channels(
+async def test_list_messages_include_unmonitored_uses_all_channels(
     bus: EventBus, fake_storage: AsyncMock
 ) -> None:
     """v1.5.3 PR #D2 新参数 — 走 storage.list_channels()。"""
@@ -71,10 +71,10 @@ async def test_list_messages_include_unsubscribed_uses_all_channels(
     ]
 
     svc = _make_service(bus, fake_storage)
-    await svc.list_messages(include_unsubscribed=True)
+    await svc.list_messages(include_unmonitored=True)
 
     fake_storage.list_channels.assert_awaited_once_with()
-    fake_storage.list_subscribed_channels.assert_not_awaited()
+    fake_storage.list_monitored_channels.assert_not_awaited()
     args = fake_storage.list_messages.await_args.args
     assert args[0] == [1, 2, 3]
 
@@ -84,9 +84,9 @@ async def test_list_messages_explicit_channel_ids_overrides_scope(
 ) -> None:
     """channel_ids 显式传 → 不调 list_subscribed / list_channels。"""
     svc = _make_service(bus, fake_storage)
-    await svc.list_messages(channel_ids=[5, 6], include_unsubscribed=True)
+    await svc.list_messages(channel_ids=[5, 6], include_unmonitored=True)
 
-    fake_storage.list_subscribed_channels.assert_not_awaited()
+    fake_storage.list_monitored_channels.assert_not_awaited()
     fake_storage.list_channels.assert_not_awaited()
     args = fake_storage.list_messages.await_args.args
     assert args[0] == [5, 6]
@@ -96,7 +96,7 @@ async def test_list_messages_empty_channel_ids_returns_empty(
     bus: EventBus, fake_storage: AsyncMock
 ) -> None:
     """已订 0 频道 → 短路返 [],不调 storage.list_messages。"""
-    fake_storage.list_subscribed_channels.return_value = []
+    fake_storage.list_monitored_channels.return_value = []
     svc = _make_service(bus, fake_storage)
     result = await svc.list_messages()
     assert result == []
@@ -107,7 +107,7 @@ async def test_list_messages_passes_through_date_and_search(
     bus: EventBus, fake_storage: AsyncMock
 ) -> None:
     """date_from/to / search / limit 透传到 storage.list_messages。"""
-    fake_storage.list_subscribed_channels.return_value = [ChannelDTO(id=1, title="a")]
+    fake_storage.list_monitored_channels.return_value = [ChannelDTO(id=1, title="a")]
     date_from = datetime(2026, 9, 1, tzinfo=UTC)
     date_to = datetime(2026, 9, 3, tzinfo=UTC)
 
@@ -130,7 +130,7 @@ async def test_list_messages_passes_through_date_and_search(
 async def test_list_messages_returns_storage_result(bus: EventBus, fake_storage: AsyncMock) -> None:
     """list_messages 直接返 storage.list_messages 的结果,不做二次过滤。"""
     expected = [MessageDTO(id=1, channel_id=1, telegram_msg_id=1, text="x")]
-    fake_storage.list_subscribed_channels.return_value = [ChannelDTO(id=1, title="a")]
+    fake_storage.list_monitored_channels.return_value = [ChannelDTO(id=1, title="a")]
     fake_storage.list_messages.return_value = expected
 
     svc = _make_service(bus, fake_storage)
@@ -145,8 +145,8 @@ async def test_list_messages_returns_storage_result(bus: EventBus, fake_storage:
 
 
 def _seed_subscribed(fake_storage: AsyncMock) -> None:
-    """让 `list_subscribed_channels` 返 1 个 channel — 不然 service 直接返 []。"""
-    fake_storage.list_subscribed_channels.return_value = [ChannelDTO(id=1, title="a")]
+    """让 `list_monitored_channels` 返 1 个 channel — 不然 service 直接返 []。"""
+    fake_storage.list_monitored_channels.return_value = [ChannelDTO(id=1, title="a")]
 
 
 async def test_pr8_list_messages_passes_favorite_only_kwarg(

@@ -48,7 +48,7 @@ facade)+ emit `quit_requested`(本 mixin);`_on_settings_changed` emit
 mixin attribute 由文件头 `# mypy: disable-error-code` 屏蔽。
 
 `stats_changed` / `last_message_received` 跨 mixin emit 仍合法:由
-MessagesMixin 持有 signal,`ChannelsMixin._on_channel_subscribed`
+MessagesMixin 持有 signal,`ChannelsMixin._on_channel_monitored`
 跨 mixin emit `self.stats_changed.emit(...)` 由 Shiboken metaclass
 聚合 Signal 描述符透传。
 

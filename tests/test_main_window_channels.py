@@ -123,7 +123,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
     """2026-09-29:VM.bootstrap_ui 改走 storage 真理,不再走 TDLib getChats。
 
     设计意图:
-      - 已订阅真理来自 `storage.list_subscribed_channels()`,不来自
+      - 已订阅真理来自 `storage.list_monitored_channels()`,不来自
         `client.list_joined_channels()`。
       - 用户 join 了 1000 个频道但只白名单 5 个时,Media Manager 「全部频道」
         下拉只显示 5 个,不会出现 1000 项噪音。
@@ -166,7 +166,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
 
         async def _apply_whitelist(s, obj_monitor):
             # 把 storage 加载的白名单推到 monitor
-            subscribed = await s.list_subscribed_channels()
+            subscribed = await s.list_monitored_channels()
             obj_monitor.set_whitelist(c.id for c in subscribed)
 
         # 用一次性临时 loop 跑 setup(本 test 自己管理生命周期)— 避免

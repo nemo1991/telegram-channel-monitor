@@ -165,7 +165,7 @@ def _dashboard_stub(qapp: QApplication, joined_count: int = 7):  # noqa: ANN202
     app.storage.count_tg_subscribed = AsyncMock(return_value=joined_count)
     app.storage.aggregate_per_channel = AsyncMock(return_value={})
     monitor = MagicMock()
-    monitor.subscribed_ids = []
+    monitor.monitored_ids = []
     dash = DashboardWidget(app, monitor, channels_provider=lambda: {})
     return dash, app
 

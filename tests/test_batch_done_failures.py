@@ -37,7 +37,7 @@ def _make_app(bus: EventBus) -> AppService:
     storage = MagicMock(spec=StorageRepository)
     storage.connect = AsyncMock()
     storage.init_schema = AsyncMock()
-    storage.list_subscribed_channels = AsyncMock(return_value=[])
+    storage.list_monitored_channels = AsyncMock(return_value=[])
     storage.list_messages = AsyncMock(return_value=[])
     storage.delete_messages = AsyncMock(return_value=2)
     objects = MagicMock()

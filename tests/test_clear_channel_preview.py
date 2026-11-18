@@ -61,8 +61,8 @@ async def svc(tmp_path):
     storage = InMemoryRepository()
     await storage.upsert_channel(ChannelDTO(id=100, title="A"))
     await storage.upsert_channel(ChannelDTO(id=200, title="B"))
-    await storage.set_channel_subscribed(100, True)
-    await storage.set_channel_subscribed(200, True)
+    await storage.set_channel_monitored(100, True)
+    await storage.set_channel_monitored(200, True)
 
     objects = LocalObjectStore(root=tmp_path / "media")
     await objects.connect()

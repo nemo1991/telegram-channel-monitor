@@ -54,9 +54,9 @@ async def test_app_login_without_credentials_raises(bus) -> None:
 
 
 async def test_app_subscribe_unsubscribe(batch_app: AppService, collected: list) -> None:
-    """subscribe_channel → channels → storage.upsert_channel + set_channel_subscribed(True);
-    unsubscribe_channel → storage.set_channel_subscribed(False) — 2026-07-31
-    修复后走 set_channel_subscribed 简化路径。
+    """monitor_channel → channels → storage.upsert_channel + set_channel_monitored(True);
+    unmonitor_channel → storage.set_channel_monitored(False) — 2026-07-31
+    修复后走 set_channel_monitored 简化路径。
 
     回归:v1.5.0 PR #A2 把 facade 拆 3 个子 service,本测试确保 subscribe /
     unsubscribe 没绕过 channels 直调。
@@ -64,13 +64,13 @@ async def test_app_subscribe_unsubscribe(batch_app: AppService, collected: list)
     # v2.0.3 D7:域服务入口有 ready 门控,正常业务路径测试默认已登录。
     batch_app.client.state = "ready"
     chan = ChannelDTO(id=42, title="test")
-    await batch_app.channels.subscribe_channel(chan)
-    # subscribe 路径:upsert_channel + set_channel_subscribed(True) 均被调
+    await batch_app.channels.monitor_channel(chan)
+    # subscribe 路径:upsert_channel + set_channel_monitored(True) 均被调
     batch_app.channels._storage.upsert_channel.assert_awaited_once_with(chan)  # type: ignore[attr-defined]
-    batch_app.channels._storage.set_channel_subscribed.assert_awaited_with(42, True)  # type: ignore[attr-defined]
-    await batch_app.channels.unsubscribe_channel(42)
-    # unsubscribe 路径:set_channel_subscribed(42, False)
-    batch_app.channels._storage.set_channel_subscribed.assert_awaited_with(42, False)  # type: ignore[attr-defined]
+    batch_app.channels._storage.set_channel_monitored.assert_awaited_with(42, True)  # type: ignore[attr-defined]
+    await batch_app.channels.unmonitor_channel(42)
+    # unsubscribe 路径:set_channel_monitored(42, False)
+    batch_app.channels._storage.set_channel_monitored.assert_awaited_with(42, False)  # type: ignore[attr-defined]
     # 正常路径不发 ErrorOccurred
     errs = [e for e in collected if isinstance(e, ErrorOccurred)]
     assert errs == []
@@ -79,17 +79,17 @@ async def test_app_subscribe_unsubscribe(batch_app: AppService, collected: list)
 async def test_unsubscribe_storage_failure_raises_no_false_success(
     batch_app: AppService,
 ) -> None:
-    """unsubscribe 时 storage.set_channel_subscribed 抛错 → exception 冒泡,
+    """unsubscribe 时 storage.set_channel_monitored 抛错 → exception 冒泡,
     不留 partial 状态。
 
     旧 facade 有 catch-all,UI 看到 success 但 storage 没改(SUBSCRIBED_DRIFT_ANALYSIS #A)。
     """
     batch_app.client.state = "ready"  # v2.0.3 D7:过 ready 门控,测 storage 失败路径
-    batch_app.channels._storage.set_channel_subscribed = AsyncMock(  # type: ignore[attr-defined]
+    batch_app.channels._storage.set_channel_monitored = AsyncMock(  # type: ignore[attr-defined]
         side_effect=RuntimeError("storage down")
     )
     with pytest.raises(RuntimeError, match="storage down"):
-        await batch_app.channels.unsubscribe_channel(42)
+        await batch_app.channels.unmonitor_channel(42)
 
 
 async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService, bus) -> None:
@@ -98,7 +98,7 @@ async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService,
     UI 弹错对话框依据事件订阅,若错误事件被发,UI 弹两次(异常一次 + 事件一次)。
     """
     batch_app.client.state = "ready"  # v2.0.3 D7:过 ready 门控,测 storage 失败路径
-    batch_app.channels._storage.set_channel_subscribed = AsyncMock(  # type: ignore[attr-defined]
+    batch_app.channels._storage.set_channel_monitored = AsyncMock(  # type: ignore[attr-defined]
         side_effect=RuntimeError("simulated")
     )
     seen: list = []
@@ -109,7 +109,7 @@ async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService,
     bus.subscribe(ErrorOccurred, _on)
     try:
         with pytest.raises(RuntimeError):
-            await batch_app.channels.unsubscribe_channel(42)
+            await batch_app.channels.unmonitor_channel(42)
         await asyncio.sleep(0)
         # 不应再有 ErrorOccurred 事件
         assert all(not isinstance(e, ErrorOccurred) for e in seen)
@@ -117,7 +117,7 @@ async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService,
         bus.unsubscribe(ErrorOccurred, _on)
 
 
-async def test_no_subscribed_attribute_remains(batch_app: AppService) -> None:
+async def test_no_monitored_attribute_remains(batch_app: AppService) -> None:
     """start_monitor / stop_monitor 不留下 _subscribed 旧私有 attr。
 
     回归:v1.5.0 拆 facade 时留了 _subscribed 占位,后续 PR 删了它但忘了在测试

@@ -719,7 +719,7 @@ class SqliteRepository(StorageRepository):
                 ),
             )
 
-    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
+    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
         """只设**监听**标志(物理列 subscribed = 语义 monitored);频道未建档时用 id 做 stub。"""
         assert self._db is not None
         async with self._lock:
@@ -762,7 +762,7 @@ class SqliteRepository(StorageRepository):
             rows = await self._db.execute_fetchall("SELECT * FROM channels ORDER BY id")
         return [_row_to_channel(dict(r)) for r in rows]
 
-    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+    async def list_monitored_channels(self) -> list[ChannelDTO]:
         assert self._db is not None
         async with self._lock:
             rows = await self._db.execute_fetchall(

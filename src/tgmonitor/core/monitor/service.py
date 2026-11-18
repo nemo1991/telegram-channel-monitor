@@ -150,9 +150,9 @@ class MonitorService:
         self._whitelist_mgr.remove_from_whitelist(channel_id)
 
     @property
-    def subscribed_ids(self) -> frozenset[int]:
+    def monitored_ids(self) -> frozenset[int]:
         """订阅频道 id 快照 — 转发 WhitelistManager。"""
-        return self._whitelist_mgr.subscribed_ids
+        return self._whitelist_mgr.monitored_ids
 
     async def update_backends(
         self,

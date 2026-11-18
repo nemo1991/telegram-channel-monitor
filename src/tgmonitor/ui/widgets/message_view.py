@@ -216,7 +216,7 @@ class MessageView(MessageViewAPIMixin, QListView):
         """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案 — thin delegate。
 
         Args:
-            state: "no_subscribed" / "searching" / "live_empty"。
+            state: "no_monitored" / "searching" / "live_empty"。
         """
         self._empty_overlay_widget.set_state(state)
 

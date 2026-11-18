@@ -51,7 +51,7 @@ class MessageService:
         date_to: datetime | None = None,
         limit: int | None = 200,
         search: str = "",
-        include_unsubscribed: bool = False,
+        include_unmonitored: bool = False,
         favorite_only: bool = False,
         tag_only: bool = False,
         pinned_only: bool = False,
@@ -59,20 +59,20 @@ class MessageService:
         """查消息 — `channel_ids=None` 时走 storage「已订」真理(修 #B 双真理问题)。
 
         `channel_ids=None` 时从 storage 取**当前真理**:
-          - `include_unsubscribed=False`(默认):走 `list_subscribed_channels`
-          - `include_unsubscribed=True`:走 `list_channels()` 拉所有 storage
+          - `include_unmonitored=False`(默认):走 `list_monitored_channels`
+          - `include_unmonitored=True`:走 `list_channels()` 拉所有 storage
             有记录的频道(含已退订)— 跨频道聚合搜索(SearchBar scope toggle)
-        不用 in-memory cache — 跟 `list_subscribed_channels()` 是同一个真理。
+        不用 in-memory cache — 跟 `list_monitored_channels()` 是同一个真理。
 
         `search` 子串过滤 text + media.file_name,空 = 不过滤;
         `favorite_only` / `tag_only` / `pinned_only` 透传 storage(AND 语义)。
         """
         if channel_ids is None:
-            if include_unsubscribed:
+            if include_unmonitored:
                 all_channels = await self._storage.list_channels()
                 channel_ids = [c.id for c in all_channels]
             else:
-                channel_ids = [c.id for c in await self._storage.list_subscribed_channels()]
+                channel_ids = [c.id for c in await self._storage.list_monitored_channels()]
         if not channel_ids:
             return []
         return await self._storage.list_messages(

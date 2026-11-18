@@ -221,7 +221,7 @@ async def test_dashboard_loads_activities_from_storage(qapp: QApplication) -> No
     app.client = SimpleNamespace(state="ready", me=None)
     app.storage.list_activities = AsyncMock(return_value=stored)
     monitor = MagicMock(spec=MonitorService)
-    monitor.subscribed_ids = []
+    monitor.monitored_ids = []
     # loop=None → _load_activities 跳过；直接调 _apply_activities 验证渲染
     dash = DashboardWidget(app, monitor, loop=None)
     dash._apply_activities(stored)
