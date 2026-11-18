@@ -12,9 +12,9 @@ from pathlib import Path
 # 装饰性 emoji 码点区间(与 PRD FR-04 口径一致)
 _EMOJI = re.compile(
     "["
-    "\U0001F300-\U0001FAFF"  # 杂项图形/表情
-    "\u2600-\u27BF"  # 杂项符号 + 装饰符号
-    "\uFE0F"  # 变体选择符
+    "\U0001f300-\U0001faff"  # 杂项图形/表情
+    "\u2600-\u27bf"  # 杂项符号 + 装饰符号
+    "\ufe0f"  # 变体选择符
     "]"
 )
 
@@ -24,7 +24,9 @@ _SETTINGS_PAGE = Path(__file__).resolve().parents[1] / "src/tgmonitor/ui/widgets
 def test_settings_page_has_no_emoji():
     """FR-04：settings_page.py 全文零 emoji(UI 文案 + docstring)。"""
     text = _SETTINGS_PAGE.read_text(encoding="utf-8")
-    hits = [(i + 1, line.strip()) for i, line in enumerate(text.splitlines()) if _EMOJI.search(line)]
+    hits = [
+        (i + 1, line.strip()) for i, line in enumerate(text.splitlines()) if _EMOJI.search(line)
+    ]
     assert hits == [], f"settings_page.py 仍有 emoji: {hits}"
 
 
