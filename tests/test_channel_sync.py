@@ -386,7 +386,7 @@ async def test_metadata_sync_does_not_change_subscribed(bus, client, storage, se
     但 upsert_channel_metadata 必须保留旧 is_monitored 不动。
     """
     # 用户订阅了 100 频道
-    await storage.set_channel_subscribed(100, True)
+    await storage.set_channel_monitored(100, True)
     # 模拟 sync 拉到的 DTO(sync 路径不传 is_monitored,默认 False)
     dto = ChannelDTO(id=100, title="Updated", kind="channel")
     # 直接调 storage 方法

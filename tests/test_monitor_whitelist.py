@@ -87,7 +87,7 @@ def test_update_backends_swaps_storage_objects_settings() -> None:
     """`update_backends` 把 storage / objects / settings 引用全换。"""
     mon = _make_monitor()
     new_storage = MagicMock(spec=StorageRepository)
-    new_storage.list_subscribed_channels = AsyncMock(return_value=[])
+    new_storage.list_monitored_channels = AsyncMock(return_value=[])
     new_objects = MagicMock()
     new_settings = MagicMock()
 
@@ -110,11 +110,11 @@ def test_update_backends_reloads_whitelist_from_new_storage() -> None:
     # 老 whitelist 应该是空的
     assert mon._whitelist == set()
 
-    # mock 新 storage 的 list_subscribed_channels → 返 [ChannelDTO(...), ...]
+    # mock 新 storage 的 list_monitored_channels → 返 [ChannelDTO(...), ...]
     from tgmonitor.core.dto import ChannelDTO
 
     new_storage = MagicMock(spec=StorageRepository)
-    new_storage.list_subscribed_channels = AsyncMock(
+    new_storage.list_monitored_channels = AsyncMock(
         return_value=[
             ChannelDTO(id=100, title="#100"),
             ChannelDTO(id=200, title="#200"),
@@ -126,7 +126,7 @@ def test_update_backends_reloads_whitelist_from_new_storage() -> None:
     asyncio.run(mon.update_backends(new_storage, new_objects, new_settings))
 
     assert mon._whitelist == {100, 200}
-    new_storage.list_subscribed_channels.assert_awaited_once()
+    new_storage.list_monitored_channels.assert_awaited_once()
 
 
 def test_update_backends_rebuilds_downloader_when_present() -> None:
@@ -137,7 +137,7 @@ def test_update_backends_rebuilds_downloader_when_present() -> None:
     mon.downloader = old_downloader
 
     new_storage = MagicMock(spec=StorageRepository)
-    new_storage.list_subscribed_channels = AsyncMock(return_value=[])
+    new_storage.list_monitored_channels = AsyncMock(return_value=[])
     new_objects = MagicMock()
     new_settings = MagicMock()
 

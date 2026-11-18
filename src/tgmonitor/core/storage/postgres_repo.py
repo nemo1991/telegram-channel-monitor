@@ -153,9 +153,9 @@ class PostgresRepository(StorageRepository):
             has_protected_content=has_protected_content,
         )
 
-    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
+    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
         """thin delegate → `_channels_pg`. 设的是**监听**标志。"""
-        return await _channels.set_channel_subscribed(self, channel_id, subscribed)
+        return await _channels.set_channel_monitored(self, channel_id, subscribed)
 
     async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
         """thin delegate → `_channels_pg`. v2.0.3 设 TG 订阅标志。"""
@@ -169,9 +169,9 @@ class PostgresRepository(StorageRepository):
         """thin delegate → `_channels_pg`."""
         return await _channels.list_channels(self)
 
-    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+    async def list_monitored_channels(self) -> list[ChannelDTO]:
         """thin delegate → `_channels_pg`."""
-        return await _channels.list_subscribed_channels(self)
+        return await _channels.list_monitored_channels(self)
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
         """thin delegate → `_channels_pg`."""

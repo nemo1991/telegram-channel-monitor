@@ -31,7 +31,7 @@ class SyncController:
         mw = self._ctx.main_window
         self._ctx.status_bar.show_message(mw.tr("拉取频道列表…"), 2000)
         self._ctx.status_bar.show_activity("拉取频道列表…")
-        self._ctx.vm.refresh_subscribed_channels()
+        self._ctx.vm.refresh_monitored_channels()
 
     def on_sync_all_channels(self) -> None:
         """大盘快速操作:全量同步所有已订阅频道。
@@ -42,7 +42,7 @@ class SyncController:
         from PySide6.QtWidgets import QMessageBox
 
         mw = self._ctx.main_window
-        ids = list(self._ctx.monitor.subscribed_ids)
+        ids = list(self._ctx.monitor.monitored_ids)
         if not ids:
             QMessageBox.information(
                 mw,

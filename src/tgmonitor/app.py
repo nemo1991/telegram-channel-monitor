@@ -271,7 +271,7 @@ def run() -> None:
 
             # UI 构造 — 现在 services 已构造,事件总线已就位。
             # 注意:此时 monitor 还没 start() / bootstrap 还没跑,但 UI 读
-            # app.is_paused / monitor.subscribed_ids 都有兜底,header 状态由
+            # app.is_paused / monitor.monitored_ids 都有兜底,header 状态由
             # LoginStateChanged 驱动(后台 bootstrap 完成后会自动 fire)。
             win = MainWindow(app_svc, monitor, loop, env_path=env_path, objects_error=objects_error)
             # 把 shutdown 协程绑给 window,closeEvent 里同步等待它完成,
@@ -337,7 +337,7 @@ def run() -> None:
             # Step 1: 加载白名单
             win.status_bar.show_activity("加载已订阅频道...")
             t = time.monotonic()
-            subscribed = await app_svc.channels.list_subscribed_channels()
+            subscribed = await app_svc.channels.list_monitored_channels()
             monitor.set_whitelist(c.id for c in subscribed)
             log.info(
                 "[startup-bg] loaded %d subscribed channels from storage in %.2fs",

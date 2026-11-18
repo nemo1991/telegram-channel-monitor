@@ -135,7 +135,7 @@ async def _seed_meta_messages(repo: StorageRepository) -> None:
     if repo_needs_subscribe:
         for cid in (1, 2):
             await repo.upsert_channel(ChannelDTO(id=cid, title=f"#{cid}"))
-            await repo.set_channel_subscribed(cid, True)
+            await repo.set_channel_monitored(cid, True)
 
     await repo.save_message(
         _meta_msg(channel_id=1, msg_id=100)  # 全空
@@ -321,7 +321,7 @@ async def test_count_refcount_empty_key(seeded_repo):
 async def test_count_refcount_counts_unsubscribed_channel_media(seeded_repo):
     """refcount 必须数全部 channel,与订阅状态无关(SQL 后端同语义)。
 
-    旧实现 `list_subscribed_channels()` 过滤会让退订频道的 media 被
+    旧实现 `list_monitored_channels()` 过滤会让退订频道的 media 被
     漏数 → 删除同 key 的另一处 media 时误判 refcount=0 → 误删 bytes
     → 退订频道 message.media 仍引用该 key 的 dangling ref,重新订阅看到
     空媒体。fix 后 InMemory 走 `self._channels.values()` 全扫,与
@@ -331,34 +331,34 @@ async def test_count_refcount_counts_unsubscribed_channel_media(seeded_repo):
     assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2
     # 退订其中任一频道,旧实现会把 refcount 降到 1(漏数退订频道的引用)。
     # 此断言守 InMemory / SQLite / PG 行为对齐(PG 真集在 tests/integration/)。
-    if hasattr(seeded_repo, "set_channel_subscribed"):
-        await seeded_repo.set_channel_subscribed(100, False)
+    if hasattr(seeded_repo, "set_channel_monitored"):
+        await seeded_repo.set_channel_monitored(100, False)
         try:
             assert await seeded_repo.count_media_by_object_key("media/photo_a.jpg") == 2, (
                 "refcount 必须数退订频道的 media(InMemory / SQLite 同语义,PG 在集成测试守门)"
             )
         finally:
-            await seeded_repo.set_channel_subscribed(100, True)
+            await seeded_repo.set_channel_monitored(100, True)
 
 
 async def test_list_media_includes_unsubscribed_channel_media(seeded_repo):
     """v1.8.0 patch:`list_media(channel_ids=None)` 必须返回退订频道的 media。
 
-    旧实现 `list_subscribed_channels()` 兜底让退订频道的 media 在
+    旧实现 `list_monitored_channels()` 兜底让退订频道的 media 在
     Media Manager 里"消失",与 SQL 后端行为不一致。fix 后
     `_filter_media_rows` 走 `self._channels.values()` 全扫。
     """
     baseline = await seeded_repo.list_media()
     assert len(baseline) == 5  # 4 backend 共用 fixture(参 test_list_media_no_filter_returns_all)
-    if hasattr(seeded_repo, "set_channel_subscribed"):
+    if hasattr(seeded_repo, "set_channel_monitored"):
         # 退订 channel 100(msg1 + msg5 都有 media)
-        await seeded_repo.set_channel_subscribed(100, False)
+        await seeded_repo.set_channel_monitored(100, False)
         try:
             rows = await seeded_repo.list_media()
             # 5 条都还在 — 退订不该让 media 从 Media Manager 消失
             assert len(rows) == 5
         finally:
-            await seeded_repo.set_channel_subscribed(100, True)
+            await seeded_repo.set_channel_monitored(100, True)
 
 
 # ---- 2026-08-25 v1.3.0 PR #6:排序 + 分页 + count_media parity ----------
@@ -739,7 +739,7 @@ async def test_in_mem_update_channel_metadata_partial(in_mem_repo):
         username="oldname",
         member_count=50,
     )
-    await in_mem_repo.set_channel_subscribed(100, True)
+    await in_mem_repo.set_channel_monitored(100, True)
     # 用 update_channel_metadata 只改 title + member_count
     await in_mem_repo.update_channel_metadata(
         100,
@@ -755,14 +755,14 @@ async def test_in_mem_update_channel_metadata_partial(in_mem_repo):
 
 async def test_in_mem_update_channel_metadata_preserves_subscribed(in_mem_repo):
     """PR #14:InMemory 部分更新不动 is_monitored —— 订阅标志由
-    set_channel_subscribed 单独维护。"""
+    set_channel_monitored 单独维护。"""
     in_mem_repo.channels[100] = ChannelDTO(
         id=100,
         title="t",
         username="u",
         member_count=10,
     )
-    await in_mem_repo.set_channel_subscribed(100, True)
+    await in_mem_repo.set_channel_monitored(100, True)
     # 即使 title/username 都重写,is_monitored 不该变
     await in_mem_repo.update_channel_metadata(
         100,
@@ -789,7 +789,7 @@ async def test_in_mem_update_channel_metadata_only_title(in_mem_repo):
         username="u",
         member_count=42,
     )
-    await in_mem_repo.set_channel_subscribed(100, True)
+    await in_mem_repo.set_channel_monitored(100, True)
     await in_mem_repo.update_channel_metadata(100, title="only-title")
     got = await in_mem_repo.get_channel(100)
     assert got.title == "only-title"

@@ -200,7 +200,7 @@ async def test_in_mem_search_returns_messages_from_unsubscribed_channel(
     channel_ids 仍能搜到(storage 层不关心订阅状态,订阅状态归
     MessageService 过滤)。"""
     # 退订频道 200(原 fixture 已订 100/200/300,这里 set False)
-    await in_mem_repo_search.set_channel_subscribed(200, False)
+    await in_mem_repo_search.set_channel_monitored(200, False)
     # 显式查 channel_ids=[200](避开 MessageService 的「已订」过滤)
     # → 该频道历史消息应可搜到
     # fixture 里 200 频道没有 Hello 文本(只有 100 频道有);改搜 200 的现有文本

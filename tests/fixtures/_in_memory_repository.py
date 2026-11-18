@@ -134,7 +134,7 @@ class InMemoryRepository(StorageRepository):
             ),
         )
 
-    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
+    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
         """设**监听**标志(保留 TG 订阅标志)。"""
         existing = self.channels.get(channel_id)
         if existing is None:
@@ -191,7 +191,7 @@ class InMemoryRepository(StorageRepository):
     async def list_channels(self) -> list[ChannelDTO]:
         return list(self.channels.values())
 
-    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+    async def list_monitored_channels(self) -> list[ChannelDTO]:
         return [c for c in self.channels.values() if c.is_monitored]
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:

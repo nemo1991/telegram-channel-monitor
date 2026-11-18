@@ -248,8 +248,8 @@ class DashboardWidget(QWidget):
         self.card_channels = _StatCard("已加入频道", "nav_channels")
         cards.addWidget(self.card_channels)
 
-        self.card_subscribed = _StatCard("已监听", "kind_channel")
-        cards.addWidget(self.card_subscribed)
+        self.card_monitored = _StatCard("已监听", "kind_channel")
+        cards.addWidget(self.card_monitored)
 
         self.card_state = _StatCard("连接状态", "nav_live")
         cards.addWidget(self.card_state)
@@ -439,14 +439,14 @@ class DashboardWidget(QWidget):
 
     # ---------- 外部刷新入口 ----------
 
-    def update_stats(self, subscribed_count: int) -> None:
+    def update_stats(self, monitored_count: int) -> None:
         """由 MainWindow._refresh_state 调,刷新统计卡片。
 
         2026-11-17 v2.0.3 D5/FR-06:「已加入频道」不再拿 VM 的
         `known_channels`(=已监听)凑数,改为异步读库里 `tg_subscribed=1`
         计数;存量库迁移不回填,首次刷新前显示 0 属预期。
         """
-        self.card_subscribed.set_value(str(subscribed_count))
+        self.card_monitored.set_value(str(monitored_count))
 
         # 登录状态 — 走 state_labels 单源映射
         state = self._app.client.state
@@ -516,7 +516,7 @@ class DashboardWidget(QWidget):
         2026-08-27 v1.4.0 PR #15:N+1 → 单 `aggregate_per_channel` 调用
         替代原来对每个订阅频道串行调 `count_messages`。
         """
-        if not self._monitor.subscribed_ids:
+        if not self._monitor.monitored_ids:
             self.stats_table.setRowCount(0)
             self.card_total_messages.set_value("0")
             return
@@ -532,11 +532,11 @@ class DashboardWidget(QWidget):
 
     async def _fetch_channel_rows(self) -> tuple[list[tuple[str, str, int]], int]:
         """单次聚合 + 从 VM 元数据映射取真实 title / kind。"""
-        subscribed_ids = list(self._monitor.subscribed_ids)
-        if not subscribed_ids:
+        monitored_ids = list(self._monitor.monitored_ids)
+        if not monitored_ids:
             return [], 0
         try:
-            bucket = await self._app.storage.aggregate_per_channel(subscribed_ids)
+            bucket = await self._app.storage.aggregate_per_channel(monitored_ids)
         except Exception:  # noqa: BLE001
             log.warning("aggregate_per_channel failed", exc_info=True)
             bucket = {}
@@ -545,7 +545,7 @@ class DashboardWidget(QWidget):
         channels: Mapping[int, ChannelDTO] = provider() if provider else {}
         rows: list[tuple[str, str, int]] = []
         total = 0
-        for cid in subscribed_ids:
+        for cid in monitored_ids:
             stats = bucket.get(cid)
             # 缺省 → ChannelStats() 全 0
             count = stats.messages if stats else 0

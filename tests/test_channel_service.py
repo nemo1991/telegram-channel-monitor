@@ -1,7 +1,7 @@
 """ChannelService 直接单测 — 2026-11-11 v2.0.0 Phase 3-C1。
 
 从 `test_subscription_service.py` 拆出频道部分(消息查询归
-`test_message_service.py`)。重点兜底 `unsubscribe_channel` 回归 hot-spot
+`test_message_service.py`)。重点兜底 `unmonitor_channel` 回归 hot-spot
 (2026-07-31 修 SUBSCRIBED_DRIFT_ANALYSIS #A:之前 storage 失败被
 `log.exception` 吞后仍 emit `ChannelUnmonitored`,UI 移走视觉元素,
 但 storage 持久化记录仍 `is_monitored=True`,下次启动 reload → 该频道
@@ -28,7 +28,7 @@ from tgmonitor.core.telegram.client import TelegramClient
 @pytest.fixture
 def fake_storage() -> AsyncMock:
     s = AsyncMock(spec=StorageRepository)
-    s.list_subscribed_channels.return_value = []
+    s.list_monitored_channels.return_value = []
     s.list_channels.return_value = []
     return s
 
@@ -60,15 +60,15 @@ def _make_service(
 # ============================================================
 
 
-async def test_list_subscribed_channels_proxies_storage(
+async def test_list_monitored_channels_proxies_storage(
     bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
 ) -> None:
-    """`list_subscribed_channels()` 走 storage,不走 client。"""
-    fake_storage.list_subscribed_channels.return_value = [ChannelDTO(id=1, title="a")]
+    """`list_monitored_channels()` 走 storage,不走 client。"""
+    fake_storage.list_monitored_channels.return_value = [ChannelDTO(id=1, title="a")]
     svc = _make_service(bus, fake_client, fake_storage)
-    result = await svc.list_subscribed_channels()
+    result = await svc.list_monitored_channels()
     assert result == [ChannelDTO(id=1, title="a")]
-    fake_storage.list_subscribed_channels.assert_awaited_once_with()
+    fake_storage.list_monitored_channels.assert_awaited_once_with()
     fake_client.list_joined_channels.assert_not_awaited()
 
 
@@ -81,7 +81,7 @@ async def test_list_joined_channels_proxies_client(
     result = await svc.list_joined_channels()
     assert result == [ChannelDTO(id=10, title="tg")]
     fake_client.list_joined_channels.assert_awaited_once_with()
-    fake_storage.list_subscribed_channels.assert_not_awaited()
+    fake_storage.list_monitored_channels.assert_not_awaited()
 
 
 # ============================================================
@@ -89,7 +89,7 @@ async def test_list_joined_channels_proxies_client(
 # ============================================================
 
 
-async def test_subscribe_channel_upserts_then_subscribes_then_emits(
+async def test_monitor_channel_upserts_then_subscribes_then_emits(
     bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
 ) -> None:
     """顺序约束:upsert 元数据 → set subscribed → emit。
@@ -104,35 +104,35 @@ async def test_subscribe_channel_upserts_then_subscribes_then_emits(
     bus.subscribe(ChannelMonitored, _on)
 
     svc = _make_service(bus, fake_client, fake_storage)
-    await svc.subscribe_channel(ch)
+    await svc.monitor_channel(ch)
 
     # upsert 收到完整 DTO
     assert fake_storage.upsert_channel.await_count == 1
     assert fake_storage.upsert_channel.await_args.args[0] == ch
-    # set_subscribed 收到 (id, True)
-    assert fake_storage.set_channel_subscribed.await_count == 1
-    assert fake_storage.set_channel_subscribed.await_args.args == (1, True)
+    # set_monitored 收到 (id, True)
+    assert fake_storage.set_channel_monitored.await_count == 1
+    assert fake_storage.set_channel_monitored.await_args.args == (1, True)
     # emit 事件(忽略 occurred_at 时间戳 — `Event` 基类 default_factory 每次都新生成)
     assert len(events) == 1
     assert events[0].channel == ch
-    # 顺序:upsert 必先于 set_subscribed(用 mock call_args_list 抓顺序)
+    # 顺序:upsert 必先于 set_monitored(用 mock call_args_list 抓顺序)
     call_order: list[str] = []
     for c in fake_storage.mock_calls:
         name = c[0]
-        if name in ("upsert_channel", "set_channel_subscribed"):
+        if name in ("upsert_channel", "set_channel_monitored"):
             call_order.append(name)
-    assert call_order == ["upsert_channel", "set_channel_subscribed"], (
+    assert call_order == ["upsert_channel", "set_channel_monitored"], (
         f"顺序错:call_order={call_order}"
     )
 
 
-async def test_unsubscribe_channel_propagates_storage_errors(
+async def test_unmonitor_channel_propagates_storage_errors(
     bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
 ) -> None:
     """2026-07-31 SUBSCRIBED_DRIFT_ANALYSIS #A 回归 hot-spot:
     storage 失败必须 propagate,绝不能 log.exception 吞。
     """
-    fake_storage.set_channel_subscribed.side_effect = RuntimeError("db down")
+    fake_storage.set_channel_monitored.side_effect = RuntimeError("db down")
 
     events: list[ChannelUnmonitored] = []
 
@@ -143,19 +143,19 @@ async def test_unsubscribe_channel_propagates_storage_errors(
 
     svc = _make_service(bus, fake_client, fake_storage)
     with pytest.raises(RuntimeError, match="db down"):
-        await svc.unsubscribe_channel(channel_id=1)
+        await svc.unmonitor_channel(channel_id=1)
 
     # 关键断言:storage 抛错时,事件**不能**被发出(否则 UI 假成功,
     # storage 没变,下次启动 reload → 「恢复订阅」)
     assert events == []
-    # 验证 set_channel_subscribed 被调(确认走到了 storage 路径)
-    fake_storage.set_channel_subscribed.assert_awaited_once_with(1, False)
+    # 验证 set_channel_monitored 被调(确认走到了 storage 路径)
+    fake_storage.set_channel_monitored.assert_awaited_once_with(1, False)
 
 
-async def test_unsubscribe_channel_success_emits_event(
+async def test_unmonitor_channel_success_emits_event(
     bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
 ) -> None:
-    """正常路径:set_subscribed(id, False) → emit ChannelUnmonitored。"""
+    """正常路径:set_monitored(id, False) → emit ChannelUnmonitored。"""
     events: list[ChannelUnmonitored] = []
 
     async def _on(e: ChannelUnmonitored) -> None:
@@ -164,9 +164,9 @@ async def test_unsubscribe_channel_success_emits_event(
     bus.subscribe(ChannelUnmonitored, _on)
 
     svc = _make_service(bus, fake_client, fake_storage)
-    await svc.unsubscribe_channel(channel_id=42)
+    await svc.unmonitor_channel(channel_id=42)
 
-    fake_storage.set_channel_subscribed.assert_awaited_once_with(42, False)
+    fake_storage.set_channel_monitored.assert_awaited_once_with(42, False)
     assert len(events) == 1
     assert events[0].channel_id == 42
 

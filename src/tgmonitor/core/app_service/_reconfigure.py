@@ -223,7 +223,7 @@ async def _rebuild_storage(app: AppService, new_settings: Settings) -> None:
         # 这里 `list_channels()`(全频道)跟 in-memory `_subscribed`
         # cache 做 union,会把 unsubscribed 旧频道错误标记为"已订"。
         # `AppService._subscribed` cache 已整体删除,真理 = storage。
-        # VM 通过 `list_subscribed_channels()` 在 init_schema 之后
+        # VM 通过 `list_monitored_channels()` 在 init_schema 之后
         # 重新拉一遍,自动同步到 monitor / channel_widget。
         # 触发路径:`reconfigure` 末尾 `await self.bus.publish(
         # SettingsChanged(..., needs_relogin=False))` → VM 的

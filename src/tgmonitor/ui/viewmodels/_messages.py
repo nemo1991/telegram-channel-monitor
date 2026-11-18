@@ -26,13 +26,13 @@ signal(顶部搜索功能区整体移除)。`load_recent_messages` limit 200→1
     (3 消息核心 signal)
   - `last_message_received`(状态栏 _LastMessageLabel 订阅)
   - `stats_changed`(状态栏 _StatsLabel 订阅;跨 mixin 由
-    `_channels.py:ChannelsMixin._on_channel_subscribed` emit)
+    `_channels.py:ChannelsMixin._on_channel_monitored` emit)
 
 跨 mixin access:
 - `_on_message_received` 内部:`self._message_count += 1` 是本 mixin 字段;
   emit `self.last_message_received` / `self.stats_changed` 是本 mixin signal;
   emit `self.message_received` 也本 mixin — 跨 mixin 通信 0。
-- `_on_message_received` 外部 emit 触发方:`ChannelsMixin._on_channel_subscribed`
+- `_on_message_received` 外部 emit 触发方:`ChannelsMixin._on_channel_monitored`
   也 emit `self.stats_changed.emit((len(self.known_channels),
   self._message_count))` — 跨 mixin emit(ChannelsMixin → MessagesMixin
   signal),由 Shiboken metaclass 透传,mypy 已被文件头 disable-error-code

@@ -78,7 +78,7 @@ def test_five_cards_and_values_intact(qapp, qloop, tmp_path):
     row = _cards_row(dash)
     assert [row.itemAt(i).widget() for i in range(5)] == [
         dash.card_channels,
-        dash.card_subscribed,
+        dash.card_monitored,
         dash.card_state,
         dash.card_storage,
         dash.card_total_messages,

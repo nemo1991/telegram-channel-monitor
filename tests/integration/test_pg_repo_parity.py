@@ -159,11 +159,11 @@ async def test_upsert_channel_4_fields_pg(pg_repo: PostgresRepository) -> None:
     assert got.has_protected_content is True
 
 
-async def test_list_subscribed_channels(pg_repo: PostgresRepository) -> None:
-    await pg_repo.set_channel_subscribed(100, True)
-    await pg_repo.set_channel_subscribed(200, False)
-    await pg_repo.set_channel_subscribed(300, True)
-    subs = await pg_repo.list_subscribed_channels()
+async def test_list_monitored_channels(pg_repo: PostgresRepository) -> None:
+    await pg_repo.set_channel_monitored(100, True)
+    await pg_repo.set_channel_monitored(200, False)
+    await pg_repo.set_channel_monitored(300, True)
+    subs = await pg_repo.list_monitored_channels()
     assert {c.id for c in subs} == {100, 300}
 
 

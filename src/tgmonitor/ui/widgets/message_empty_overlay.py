@@ -7,7 +7,7 @@
 
 公开契约:
   - `MessageEmptyOverlay(QWidget)` — 接受 parent:QWidget | None
-  - `set_state(state: str)` — "no_subscribed" / "searching" / "live_empty"
+  - `set_state(state: str)` — "no_monitored" / "searching" / "live_empty"
   - `update_for_row_count(n: int)` — count==0 → show overlay
   - `reposition(width: int, height: int)` — 居中 overlay
 
@@ -41,7 +41,7 @@ class MessageEmptyOverlay(QWidget):
     # 一连串 if/elif,搬到 widget 后改成 dict 查表,主类 thin delegate
     # 不再关心具体文案。
     _EMPTY_STATES: dict[str, tuple[str, str, str]] = {
-        "no_subscribed": (
+        "no_monitored": (
             "💬",
             "未订阅频道",
             "先去「频道」页双击订阅一个频道,\n新消息会实时显示在这里。",
@@ -69,7 +69,7 @@ class MessageEmptyOverlay(QWidget):
             parent=self,
         )
         self._empty_overlay.raise_()
-        self._empty_state: str = "no_subscribed"
+        self._empty_state: str = "no_monitored"
 
     # ---- empty overlay API ----
 
@@ -77,7 +77,7 @@ class MessageEmptyOverlay(QWidget):
         """2026-09-14 v1.7.5 PR #5 (P0-L):切换空状态文案。
 
         Args:
-            state: "no_subscribed" / "searching" / "live_empty"。
+            state: "no_monitored" / "searching" / "live_empty"。
         """
         self._empty_state = state
         text = self._EMPTY_STATES.get(state)

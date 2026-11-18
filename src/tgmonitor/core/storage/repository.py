@@ -132,7 +132,7 @@ class ChannelStore(ABC):
         ...
 
     @abstractmethod
-    async def set_channel_subscribed(self, channel_id: int, subscribed: bool) -> None:
+    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
         """只设**监听**标志(物理列 subscribed = 语义 monitored),不动其它字段。
 
         命名历史遗留(subscribed),v2.0.3 语义已正名为 monitored;方法名保留以免
@@ -156,7 +156,7 @@ class ChannelStore(ABC):
         ...
 
     @abstractmethod
-    async def list_subscribed_channels(self) -> list[ChannelDTO]:
+    async def list_monitored_channels(self) -> list[ChannelDTO]:
         """只返回监听标志为 True 的频道(方法名历史遗留,语义=monitored)。"""
         ...
 
@@ -169,7 +169,7 @@ class ChannelStore(ABC):
     async def delete_channel(self, channel_id: int) -> None:
         """删除频道及其所有消息与媒体引用(不删对象存储里的二进制)。
 
-        注:用户退订不应调这个 — 退订走 `set_channel_subscribed(id, False)`,
+        注:用户退订不应调这个 — 退订走 `set_channel_monitored(id, False)`,
         保留元数据 + 历史消息,只是不再喂给 monitor。
         """
         ...

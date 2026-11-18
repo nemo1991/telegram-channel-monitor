@@ -66,7 +66,7 @@ async def test_two_flags_are_independent(bus: EventBus, storage: InMemoryReposit
     await storage.upsert_channel(ch)
 
     # 只开监听,TG 订阅仍 False
-    await storage.set_channel_subscribed(1, True)
+    await storage.set_channel_monitored(1, True)
     got = await storage.get_channel(1)
     assert got is not None and got.is_monitored is True and got.is_tg_subscribed is False
 
@@ -85,7 +85,7 @@ async def test_count_tg_subscribed_independent_of_monitored(
     await storage.upsert_channel(ChannelDTO(id=3, title="c", is_monitored=True))  # 监听但 TG 未订
 
     assert await storage.count_tg_subscribed() == 2
-    assert len(await storage.list_subscribed_channels()) == 1
+    assert len(await storage.list_monitored_channels()) == 1
 
 
 # ============================================================
