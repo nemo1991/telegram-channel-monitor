@@ -422,6 +422,27 @@ QGroupBox::title {
     color: {accent};
     font-size: 13px;
 }
+/* v2.0.5 FR-04:大盘「最近活动 / 频道统计」两个面板标题归位框内。
+ * 全局 QGroupBox 用 subcontrol-origin:margin 把标题放边框外的 margin 区,
+ * 视觉上"骑在框外"且顶部偏空。这里去掉 margin origin,标题回到框内顶部,
+ * padding-top 收紧到 10px;只命中 objectName=dashPanel,设置页不受影响。 */
+QGroupBox#dashPanel {
+    background: #ffffff;
+    border: 1px solid #e2e4e9;
+    border-radius: 8px;
+    margin-top: 0;
+    padding: 10px 12px 10px 12px;
+    font-weight: 600;
+    font-size: 13px;
+    color: #1a1a2e;
+}
+QGroupBox#dashPanel::title {
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    padding: 0 6px;
+    color: {accent};
+    font-size: 13px;
+}
 
 /* ===== 列表 ===== */
 QListWidget {

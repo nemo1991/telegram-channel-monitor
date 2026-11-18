@@ -223,10 +223,8 @@ class DashboardWidget(QWidget):
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(20)
 
-        # 标题
-        title = QLabel("操作台")
-        title.setObjectName("pageTitle")
-        root.addWidget(title)
+        # v2.0.5 FR-01:原 "操作台" pageTitle 标题移除,把纵向空间让给消息流。
+        # 全局 #pageTitle QSS 规则保留(设置页/详情页等仍依赖)。
 
         # --- 统计卡片行 ---
         cards = QHBoxLayout()
@@ -273,7 +271,9 @@ class DashboardWidget(QWidget):
         bottom_row.setSpacing(20)
 
         # 活动时间线(左)
+        # v2.0.5 FR-04:dashPanel 专属 QSS 让标题归位框内,不影响全局 QGroupBox。
         tl_group = QGroupBox("最近活动")
+        tl_group.setObjectName("dashPanel")
         tl_vbox = QVBoxLayout(tl_group)
         tl_vbox.setContentsMargins(0, 0, 0, 0)
         tl_vbox.setSpacing(0)
@@ -286,6 +286,7 @@ class DashboardWidget(QWidget):
 
         # 已订阅频道统计表(右)
         stats_group = QGroupBox("频道统计")
+        stats_group.setObjectName("dashPanel")
         sg_vbox = QVBoxLayout(stats_group)
         sg_vbox.setContentsMargins(0, 0, 0, 0)
         sg_vbox.setSpacing(0)
