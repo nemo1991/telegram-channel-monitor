@@ -35,8 +35,8 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
         kind=row["kind"],
         member_count=row["member_count"],
         created_at=row["created_at"],
-        # 物理列 subscribed 承载"监听"语义(历史命名,值等价迁入 monitored)。
-        is_monitored=bool(row.get("subscribed", True)),
+        # 物理列 monitored 承载"监听"语义(2.0.6 由 subscribed 正名)。
+        is_monitored=bool(row.get("monitored", False)),
         # v2.0.3:TG 订阅状态;旧库无此列时默认 False(不回填,靠刷新校正)。
         is_tg_subscribed=bool(row.get("tg_subscribed", False)),
         last_synced_at=row.get("last_synced_at"),
@@ -54,7 +54,7 @@ def _row_to_channel(row: asyncpg.Record) -> ChannelDTO:
 
 
 async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
-    """全字段 upsert(含 subscribed) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
+    """全字段 upsert(含 monitored) — 老调用方兼容;**新代码走 upsert_channel_metadata**。
 
     2026-09-03 v1.6.0 PR #Q2:加 `photo_local_key` 字段。
     2026-09-04 v1.6.4:加 4 个 spammer 过滤字段。
@@ -65,7 +65,7 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
             """
             INSERT INTO channels
                 (id, title, username, kind, member_count, created_at,
-                 subscribed, tg_subscribed, last_synced_at, photo_local_key,
+                 monitored, tg_subscribed, last_synced_at, photo_local_key,
                  is_verified, is_scam, is_fake, has_protected_content)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (id) DO UPDATE SET
@@ -74,7 +74,7 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
                 kind = EXCLUDED.kind,
                 member_count = EXCLUDED.member_count,
                 created_at = EXCLUDED.created_at,
-                subscribed = EXCLUDED.subscribed,
+                monitored = EXCLUDED.monitored,
                 tg_subscribed = EXCLUDED.tg_subscribed,
                 last_synced_at = EXCLUDED.last_synced_at,
                 photo_local_key = EXCLUDED.photo_local_key,
@@ -114,7 +114,7 @@ async def upsert_channel_metadata(self: PostgresRepository, channel: ChannelDTO)
             """
             INSERT INTO channels
                 (id, title, username, kind, member_count, created_at,
-                 subscribed, tg_subscribed, last_synced_at, photo_local_key,
+                 monitored, tg_subscribed, last_synced_at, photo_local_key,
                  is_verified, is_scam, is_fake, has_protected_content)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (id) DO UPDATE SET
@@ -194,22 +194,20 @@ async def update_channel_metadata(
         )
 
 
-async def set_channel_monitored(
-    self: PostgresRepository, channel_id: int, subscribed: bool
-) -> None:
-    """只设**监听**标志(物理列 subscribed = 语义 monitored);未建档时建 stub。"""
+async def set_channel_monitored(self: PostgresRepository, channel_id: int, monitored: bool) -> None:
+    """只设**监听**标志(物理列 monitored);未建档时建 stub。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
         # 不存在就先建一条 stub
         await conn.execute(
             """
-            INSERT INTO channels (id, title, subscribed)
+            INSERT INTO channels (id, title, monitored)
             VALUES ($1, $2, $3)
-            ON CONFLICT (id) DO UPDATE SET subscribed = EXCLUDED.subscribed
+            ON CONFLICT (id) DO UPDATE SET monitored = EXCLUDED.monitored
             """,
             channel_id,
             f"#{channel_id}",
-            subscribed,
+            monitored,
         )
 
 
@@ -252,14 +250,14 @@ async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:
 
 
 async def list_monitored_channels(self: PostgresRepository) -> list[ChannelDTO]:
-    """只返 subscribed=TRUE 的频道(按 id 升序);供 MonitorService 喂白名单。"""
+    """只返 monitored=TRUE 的频道(按 id 升序);供 MonitorService 喂白名单。"""
     assert self._pool is not None
     async with self._pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, title, username, kind, member_count, created_at, "
             "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
-            "FROM channels WHERE subscribed = TRUE ORDER BY id"
+            "FROM channels WHERE monitored = TRUE ORDER BY id"
         )
     return [_row_to_channel(r) for r in rows]
 

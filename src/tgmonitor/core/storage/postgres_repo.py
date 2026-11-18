@@ -153,9 +153,9 @@ class PostgresRepository(StorageRepository):
             has_protected_content=has_protected_content,
         )
 
-    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
+    async def set_channel_monitored(self, channel_id: int, monitored: bool) -> None:
         """thin delegate → `_channels_pg`. 设的是**监听**标志。"""
-        return await _channels.set_channel_monitored(self, channel_id, subscribed)
+        return await _channels.set_channel_monitored(self, channel_id, monitored)
 
     async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
         """thin delegate → `_channels_pg`. v2.0.3 设 TG 订阅标志。"""

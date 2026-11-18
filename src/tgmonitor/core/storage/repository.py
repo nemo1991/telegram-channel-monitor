@@ -132,11 +132,10 @@ class ChannelStore(ABC):
         ...
 
     @abstractmethod
-    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
-        """只设**监听**标志(物理列 subscribed = 语义 monitored),不动其它字段。
+    async def set_channel_monitored(self, channel_id: int, monitored: bool) -> None:
+        """只设**监听**标志(物理列 monitored),不动其它字段。
 
-        命名历史遗留(subscribed),v2.0.3 语义已正名为 monitored;方法名保留以免
-        波及大量调用方。
+        方法名与形参 2.0.6 均正名为 monitored(物理列同步改名,见 FR-08)。
         """
         ...
 

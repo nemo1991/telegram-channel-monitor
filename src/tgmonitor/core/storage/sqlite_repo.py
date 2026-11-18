@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS channels (
     member_count    INTEGER,
     created_at      TEXT,
     first_seen_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    subscribed      INTEGER NOT NULL DEFAULT 0,   -- 语义=是否监听(白名单);v2.0.3 正名为 monitored
+    monitored       INTEGER NOT NULL DEFAULT 0,   -- 语义=是否监听(白名单);物理列 2.0.6 由 subscribed 正名
     tg_subscribed   INTEGER NOT NULL DEFAULT 0,   -- v2.0.3:TG 侧是否仍订阅/加入(与监听独立)
     last_synced_at  TEXT,
     photo_local_key TEXT,
@@ -187,7 +187,7 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "member_count": "INTEGER",
         "created_at": "TEXT",
         "first_seen_at": "TEXT",
-        "subscribed": "INTEGER",
+        "monitored": "INTEGER",
         "tg_subscribed": "INTEGER",
         "last_synced_at": "TEXT",
         "photo_local_key": "TEXT",
@@ -329,8 +329,8 @@ def _row_to_channel(row: dict[str, Any]) -> ChannelDTO:
         kind=row["kind"],
         member_count=row["member_count"],
         created_at=_dt_from_db(row["created_at"]),
-        # 物理列 subscribed 承载"监听"语义(历史命名,值等价迁入 monitored)。
-        is_monitored=bool(row.get("subscribed", True)),
+        # 物理列 monitored 承载"监听"语义(2.0.6 由 subscribed 正名)。
+        is_monitored=bool(row.get("monitored", False)),
         # v2.0.3:TG 订阅状态;旧库无此列时默认 False(不回填,靠刷新校正)。
         is_tg_subscribed=bool(row.get("tg_subscribed", False)),
         last_synced_at=_dt_from_db(row.get("last_synced_at")),
@@ -497,6 +497,15 @@ class SqliteRepository(StorageRepository):
         """
         assert self._db is not None
         async with self._lock:
+            # 2.0.6 一次性列改名迁移:旧库物理列 subscribed(=监听)→monitored。
+            # 必须在 SCHEMA_SQL(IF NOT EXISTS)之前做 —— 否则旧表会先被补出
+            # 一个空的 monitored 列,造成「旧列有数据、新列空」的静默分裂。
+            cols = {
+                r["name"] for r in await self._db.execute_fetchall("PRAGMA table_info('channels')")
+            }
+            if "subscribed" in cols and "monitored" not in cols:
+                log.warning("init_schema: 迁移 channels.subscribed → monitored")
+                await self._db.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
             await self._db.executescript(SCHEMA_SQL)
             # 幂等补列 — 类型来自 EXPECTED_SCHEMA(与 SCHEMA_SQL 同步维护)。
             for table, columns in EXPECTED_SCHEMA.items():
@@ -595,7 +604,7 @@ class SqliteRepository(StorageRepository):
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, tg_subscribed, last_synced_at, photo_local_key,
+                     monitored, tg_subscribed, last_synced_at, photo_local_key,
                      is_verified, is_scam, is_fake, has_protected_content)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
@@ -604,7 +613,7 @@ class SqliteRepository(StorageRepository):
                     kind = excluded.kind,
                     member_count = excluded.member_count,
                     created_at = excluded.created_at,
-                    subscribed = excluded.subscribed,
+                    monitored = excluded.monitored,
                     tg_subscribed = excluded.tg_subscribed,
                     last_synced_at = excluded.last_synced_at,
                     photo_local_key = excluded.photo_local_key,
@@ -643,7 +652,7 @@ class SqliteRepository(StorageRepository):
                 """
                 INSERT INTO channels
                     (id, title, username, kind, member_count, created_at,
-                     subscribed, tg_subscribed, last_synced_at, photo_local_key,
+                     monitored, tg_subscribed, last_synced_at, photo_local_key,
                      is_verified, is_scam, is_fake, has_protected_content)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
@@ -719,17 +728,17 @@ class SqliteRepository(StorageRepository):
                 ),
             )
 
-    async def set_channel_monitored(self, channel_id: int, subscribed: bool) -> None:
-        """只设**监听**标志(物理列 subscribed = 语义 monitored);频道未建档时用 id 做 stub。"""
+    async def set_channel_monitored(self, channel_id: int, monitored: bool) -> None:
+        """只设**监听**标志(物理列 monitored);频道未建档时用 id 做 stub。"""
         assert self._db is not None
         async with self._lock:
             await self._db.execute(
                 """
-                INSERT INTO channels (id, title, subscribed)
+                INSERT INTO channels (id, title, monitored)
                 VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET subscribed = excluded.subscribed
+                ON CONFLICT (id) DO UPDATE SET monitored = excluded.monitored
                 """,
-                (channel_id, f"#{channel_id}", subscribed),
+                (channel_id, f"#{channel_id}", monitored),
             )
 
     async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
@@ -766,7 +775,7 @@ class SqliteRepository(StorageRepository):
         assert self._db is not None
         async with self._lock:
             rows = await self._db.execute_fetchall(
-                "SELECT * FROM channels WHERE subscribed = 1 ORDER BY id"
+                "SELECT * FROM channels WHERE monitored = 1 ORDER BY id"
             )
         return [_row_to_channel(dict(r)) for r in rows]
 
@@ -827,7 +836,7 @@ class SqliteRepository(StorageRepository):
             try:
                 await self._db.execute(
                     """
-                    INSERT INTO channels (id, title, subscribed)
+                    INSERT INTO channels (id, title, monitored)
                     VALUES (?, ?, 0)
                     ON CONFLICT (id) DO NOTHING
                     """,
