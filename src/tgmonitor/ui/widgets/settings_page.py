@@ -4,17 +4,20 @@
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
 以 QScrollArea 内分组排列,底部固定「保存到 .env」+「保存并应用」按钮。
 
-2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「📱 账户凭证」
+2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「账户凭证」
 分组,底层仍是 LoginDialog / app.auth.logout();头栏退化为纯标题。
+2026-11-18 v2.0.6:独立频道页撤销,ChannelWidget 单实例迁入本页
+「监听频道管理」分组(不走 FormSection,白名单进 core 存储不写 .env)。
 
-6 个分组(全部走 FormSection):
-  1. 账户凭证   — API ID / Hash / Phone / Session 目录 + 登录/登出入口
-  2. 网络代理   — SOCKS5 URL + 测试连接
-  3. 消息存储   — DB 后端 + DSN / 目录
-  4. 对象存储   — 后端 + 本地目录 / S3 凭据
-  5. 策略       — 媒体下载策略
-  6. 同步参数   — chat_delay / page_delay / resume_from_saved
-  7. 底部按钮栏
+7 个分组(前 6 个走 FormSection,监听频道为自定义 QGroupBox):
+  1. 账户凭证       — API ID / Hash / Phone / Session 目录 + 登录/登出入口
+  2. 监听频道管理   — 已加入 / 已监听双栏 + 搜索 + 全量同步(2.0.6 迁入)
+  3. 网络代理       — SOCKS5 URL + 测试连接
+  4. 消息存储       — DB 后端 + DSN / 目录
+  5. 对象存储       — 后端 + 本地目录 / S3 凭据
+  6. 策略           — 媒体下载策略
+  7. 同步参数       — chat_delay / page_delay / resume_from_saved
+  底部固定按钮栏
 """
 
 from __future__ import annotations
@@ -161,13 +164,13 @@ class SettingsPage(QWidget):
         root.addLayout(btn_bar)
 
     # ============================================================
-    # 8 个 FormSection 装配 — 字段描述 + build
+    # 6 个 FormSection 装配 — 字段描述 + build
     # ============================================================
 
     def _build_account(self, root: QVBoxLayout) -> None:
-        """📱 账户凭证 — API ID / Hash / Phone / Session 目录。"""
+        """账户凭证 — API ID / Hash / Phone / Session 目录。"""
         s = FormSection(
-            title=self.tr("📱 账户凭证"),
+            title=self.tr("账户凭证"),
             fields=(
                 FieldDef(
                     key="api_id",
@@ -277,12 +280,12 @@ class SettingsPage(QWidget):
         run_coro(self._loop, self._app.auth.logout(), error_label="logout")
 
     def _build_proxy(self, root: QVBoxLayout) -> None:
-        """🌐 网络代理 — SOCKS5 URL + 测试连接按钮(走 ActionDef 双态重译)。
+        """网络代理 — SOCKS5 URL + 测试连接按钮(走 ActionDef 双态重译)。
 
         ActionDef 提供 enabled→「测试连接」/ disabled→「测试中…」自动切。
         """
         s = FormSection(
-            title=self.tr("🌐 网络代理 (Proxy)"),
+            title=self.tr("网络代理 (Proxy)"),
             fields=(
                 FieldDef(
                     key="proxy",
@@ -307,13 +310,13 @@ class SettingsPage(QWidget):
         self.btn_test_proxy.clicked.connect(self._on_test_proxy)
 
     def _build_storage(self, root: QVBoxLayout) -> None:
-        """💾 消息存储 — DB 后端 + DSN(PG)/ SQLite 文件路径。
+        """消息存储 — DB 后端 + DSN(PG)/ SQLite 文件路径。
 
         字段显隐随后端切:POSTGRES 显 `db_dsn`,SQLITE 显 `sqlite_path`
         (见 `_on_db_backend_changed`,镜像 os_backend 的本地/S3 互斥模式)。
         """
         s = FormSection(
-            title=self.tr("💾 消息存储 (Database)"),
+            title=self.tr("消息存储 (Database)"),
             fields=(
                 FieldDef(
                     key="db_backend",
@@ -348,9 +351,9 @@ class SettingsPage(QWidget):
         self.cmb_db.currentIndexChanged.connect(self._on_db_backend_changed)
 
     def _build_objectstore(self, root: QVBoxLayout) -> None:
-        """📁 对象存储 — 后端 + 本地目录 / S3 凭据(后端切时显隐)。"""
+        """对象存储 — 后端 + 本地目录 / S3 凭据(后端切时显隐)。"""
         s = FormSection(
-            title=self.tr("📁 对象存储 (ObjectStore)"),
+            title=self.tr("对象存储 (ObjectStore)"),
             fields=(
                 FieldDef(
                     key="os_backend",
@@ -419,9 +422,9 @@ class SettingsPage(QWidget):
         self.cmb_os.currentIndexChanged.connect(self._on_os_backend_changed)
 
     def _build_policy(self, root: QVBoxLayout) -> None:
-        """⚙️ 策略 — 媒体下载策略 + 单文件大小 + 数据根目录。"""
+        """策略 — 媒体下载策略 + 单文件大小 + 数据根目录。"""
         s = FormSection(
-            title=self.tr("⚙️ 策略"),
+            title=self.tr("策略"),
             fields=(
                 FieldDef(
                     key="media_policy",
@@ -459,9 +462,9 @@ class SettingsPage(QWidget):
         self.in_data_root = s._widgets["data_root"]
 
     def _build_sync(self, root: QVBoxLayout) -> None:
-        """🔄 同步参数 — 频道间隔 / 分页间隔 / 续拉 checkbox。"""
+        """同步参数 — 频道间隔 / 分页间隔 / 续拉 checkbox。"""
         s = FormSection(
-            title=self.tr("🔄 同步参数"),
+            title=self.tr("同步参数"),
             fields=(
                 FieldDef(
                     key="chat_delay_ms",
@@ -753,11 +756,11 @@ class SettingsPage(QWidget):
                 )
                 writer.close()
                 await writer.wait_closed()
-                return self.tr(f"✅ 可达: {host}:{port}")
+                return self.tr(f"可达: {host}:{port}")
             except TimeoutError:
-                return self.tr("❌ 超时: 3 秒未响应")
+                return self.tr("超时: 3 秒未响应")
             except Exception as exc:
-                return self.tr(f"❌ 失败: {exc}")
+                return self.tr(f"失败: {exc}")
 
         def _show(msg: str) -> None:
             """on_success / on_error 共用:恢复按钮 + 弹窗。"""
@@ -769,7 +772,7 @@ class SettingsPage(QWidget):
             self._loop,
             _test(),
             on_success=_show,
-            on_error=lambda e: _show(self.tr(f"❌ 异常: {e}")),
+            on_error=lambda e: _show(self.tr(f"异常: {e}")),
             error_label="test_proxy",
         )
 
