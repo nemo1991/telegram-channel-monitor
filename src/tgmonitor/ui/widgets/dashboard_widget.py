@@ -324,6 +324,9 @@ class DashboardWidget(QWidget):
         sg_vbox.setSpacing(0)
 
         self.stats_table = QTableWidget(0, 3)
+        # 2026-11-18 v2.0.5:专属 objectName,让 QSS 只给本表头首末 section
+        # 收圆(表头浅灰方角会盖住表格 frame 顶部圆角)。
+        self.stats_table.setObjectName("statsTable")
         self.stats_table.setHorizontalHeaderLabels(["频道", "类型", "消息数"])
         self.stats_table.verticalHeader().setVisible(False)
         self.stats_table.setFrameShape(QFrame.NoFrame)

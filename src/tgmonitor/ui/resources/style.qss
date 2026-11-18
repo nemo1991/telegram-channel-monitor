@@ -512,6 +512,15 @@ QHeaderView::section {
     font-weight: 600;
     font-size: 12px;
 }
+/* 2026-11-18 v2.0.5:频道统计表表头首末 section 收圆,让表格 frame 自身的
+ * 顶部圆角显形。原状态下表头浅灰方角盖住 QTableWidget 的 border-radius,
+ * 顶部两角是直角、底部两角圆角,四角不一致。仅命中 #statsTable,不影响其它表格。 */
+QTableWidget#statsTable QHeaderView::section:first {
+    border-top-left-radius: 6px;
+}
+QTableWidget#statsTable QHeaderView::section:last {
+    border-top-right-radius: 6px;
+}
 
 /* ===== 状态栏(自定义 StatusBar widget,替代 QStatusBar) ===== */
 #customStatusBar {

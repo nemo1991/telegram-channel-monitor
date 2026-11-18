@@ -121,3 +121,29 @@ def test_live_area_has_rounded_wrapper_and_square_seam(qapp, qloop, tmp_path):
     assert "background: transparent" in stream_rule
     assert "border: none" in stream_rule
     win.close()
+
+
+# ---------- P5:频道统计表顶部两角圆角 ----------
+
+
+def test_stats_table_header_section_rounding_in_qss():
+    """P5:QSS 给 #statsTable 表头首末 section 收圆,露出 frame 顶部圆角。"""
+    qss = _qss()
+    first_rule = qss[
+        qss.index("QTableWidget#statsTable QHeaderView::section:first") : qss.index(
+            "QTableWidget#statsTable QHeaderView::section:last"
+        )
+    ]
+    last_rule = qss[qss.index("QTableWidget#statsTable QHeaderView::section:last") :]
+    assert "border-top-left-radius: 6px" in first_rule
+    assert "border-top-right-radius: 6px" in last_rule
+    # QTableWidget 本身保留 6px 圆角(底部两角靠它)
+    table_rule = qss[qss.index("QTableWidget {") : qss.index("QHeaderView::section {")]
+    assert "border-radius: 6px" in table_rule
+
+
+def test_stats_table_has_object_name(qapp, qloop, tmp_path):
+    """P5:stats_table 专属 objectName,规则不误伤其它表格。"""
+    win = build_real_main_window(qloop, tmp_path)
+    assert win.dashboard.stats_table.objectName() == "statsTable"
+    win.close()
