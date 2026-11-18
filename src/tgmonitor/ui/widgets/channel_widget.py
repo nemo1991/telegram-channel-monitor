@@ -139,7 +139,7 @@ def _channel_display_text(ch: ChannelDTO) -> str:
     """`@username`(有) 或 `#id title`(无 username)的展示串。
 
     2026-09-04 v1.6.4:spammer 徽标附加 — `is_verified` → ` ✓`,
-    `is_scam`/`is_fake` → ` ⚠️`(任一为真时显示一个 ⚠️,避免双标)。
+    `is_scam`/`is_fake` → ` 警告`(任一为真时显示一个 警告,避免双标)。
     """
     base = ch.display  # 直接走 DTO.display,统一 `@username` / `#id title` 格式
     if ch.is_verified:
@@ -422,16 +422,15 @@ class ChannelWidget(QWidget):
         self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)
         root.addWidget(self.subs_card, 2)
 
-        # ---- 兼容老 attribute 名(测试 + MainWindow 仍走旧 API)----
-        # 旧代码依赖 `self.lst_joined` / `lst_monitored` / `lbl_*_count` /
-        # `btn_refresh` / `btn_sync`,把桥接留在 ChannelWidget 层 —
-        # 测试 / 上层代码不再穿透到 card 层,ChannelListCard 是私有实现细节。
-        self.lst_joined = self.joined_card.lst
-        self.lst_monitored = self.subs_card.lst
-        self.lbl_joined_count = self.joined_card.count_label
-        self.lbl_subs_count = self.subs_card.count_label
-        self.btn_refresh = self.joined_card.btn_action
-        self.btn_sync = self.subs_card.btn_action
+        # ---- 公开只读句柄 ----
+        # 上层(MainWindow / UIAssembler)与契约测试通过这些语义明确的属性访问,
+        # 卡片内部实现仍由 ChannelListCard 封装。
+        self.joined_list = self.joined_card.lst
+        self.monitored_list = self.subs_card.lst
+        self.joined_count_label = self.joined_card.count_label
+        self.monitored_count_label = self.subs_card.count_label
+        self.refresh_button = self.joined_card.btn_action
+        self.sync_button = self.subs_card.btn_action
         self._empty_joined: QWidget | None = self.joined_card._empty_hint
 
     def _apply_filter(self, text: str) -> None:
@@ -448,10 +447,10 @@ class ChannelWidget(QWidget):
         双击加入/移出监听仍可被编程式调用,core 门控会一致拒绝。
         """
         tip = "" if enabled else "需先登录 Telegram 才能刷新/同步频道"
-        self.btn_refresh.setEnabled(enabled)
-        self.btn_refresh.setToolTip(tip)
-        self.btn_sync.setEnabled(enabled)
-        self.btn_sync.setToolTip(tip)
+        self.refresh_button.setEnabled(enabled)
+        self.refresh_button.setToolTip(tip)
+        self.sync_button.setEnabled(enabled)
+        self.sync_button.setToolTip(tip)
         # 列表交互:未登录时禁双击(加入/移出监听),core 门控同时兜底
         self.joined_card.lst.setEnabled(enabled)
         self.subs_card.lst.setEnabled(enabled)

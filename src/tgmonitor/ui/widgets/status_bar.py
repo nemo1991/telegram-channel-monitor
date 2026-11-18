@@ -19,10 +19,10 @@ LEFT 区(stretch:SelectedChannel=0 / Stats=0 / Activity=1):
     _ActivityLabel         现有 activity + throttle 逻辑
 
 RIGHT 区(stretch=0):
-    _ObjectsWarnLabel      ⚠ 对象存储不可用(可空)
+    _ObjectsWarnLabel      警告 对象存储不可用(可空)
     _UnifiedStateLabel     唯一状态位(登录态 / 连接态)
     _PausedLabel           ⏸ 暂停监听
-    _ErrorBellButton       🔔 N 错误铃铛(内部 EventBus 订阅 + ring buffer)
+    _ErrorBellButton       铃铛 N 错误铃铛(内部 EventBus 订阅 + ring buffer)
 
 自实现 transient 消息(QTimer + QLabel),保留 showMessage 短促提示语义。
 """
@@ -230,7 +230,7 @@ class _PausedLabel(QLabel):
 
 
 class _ErrorBellButton(QPushButton):
-    """RIGHT:🔔 N 错误铃铛 + ring buffer + EventBus 订阅。
+    """RIGHT:铃铛 N 错误铃铛 + ring buffer + EventBus 订阅。
 
     2026-09-14 v1.7.5 PR #6 (P0-K) 从 MainWindow._on_bus_auth_error 搬来:
     - 内部 ring buffer(上限 100 条 `(when, source, msg)`)
@@ -261,7 +261,7 @@ class _ErrorBellButton(QPushButton):
 
         MainWindow 之前 inline 这个 handler;搬过来后语义不变:
           1. ring buffer 仅留最近 100 条,防内存膨胀
-          2. 铃铛按钮显示 + 自增计数(纯图标「🔔」 → 「🔔 N」)
+          2. 铃铛按钮显示 + 自增计数(纯图标「铃铛」 → 「铃铛 N」)
           3. 弹 QMessageBox.warning(icon=Critical,非自动消失)
         """
         from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
@@ -307,7 +307,7 @@ class _ErrorBellButton(QPushButton):
 
 
 class _ObjectsWarnLabel(QLabel):
-    """RIGHT:⚠ 对象存储不可用(红字常驻,SettingsChanged 后被移除)。"""
+    """RIGHT:警告 对象存储不可用(红字常驻,SettingsChanged 后被移除)。"""
 
     def __init__(self, error: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)

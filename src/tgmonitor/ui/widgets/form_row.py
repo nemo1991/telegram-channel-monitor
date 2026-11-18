@@ -233,11 +233,11 @@ def empty_hint(
 
     跟 `MessageDetail._build_empty_state` 同模式,但抽成 helper 复用:
       - `MessageView`(实时流第一次打开 / 没订频道)— 全幅面板占位
-      - `ChannelWidget.lst_joined`(还没拉频道 / 还没登录)— 双栏上半占位
+      - `ChannelWidget.joined_list`(还没拉频道 / 还没登录)— 双栏上半占位
       - 任何需要"还没数据但给用户说明做什么"的 list / 视图
 
     Args:
-      icon: emoji 或单字符(💬 / 📡 / 📋 / 🔍 …),会被 setStyleSheet 放大到 36px
+      icon: emoji 或单字符(消息 / 频道 / 列表 / 搜索 …),会被 setStyleSheet 放大到 36px
       title: 主标题("暂无消息" / "暂无已加入频道");setObjectName("pageTitle")
       hint: 副说明(可换行 \\n),详细建议做法。空字符串 = 只显示 title。
       parent: 父 widget(可选)。

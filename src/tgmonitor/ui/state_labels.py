@@ -8,9 +8,9 @@
   4. `dashboard_widget.py:L344-353` if/elif chain (3 状态,跟 #3 不一致)
 
 抽 4 个表到 module,所有 caller 走同一 source of truth:
-  - `state_dot(state)` — 圆点 emoji(🟢 / 🔴 / 🟡 / ⚪ / ⏳)
+  - `state_dot(state)` — 圆点 emoji(就绪 / 错误 / 待处理 / 未知 / ⏳)
   - `state_label(state)` — 状态文本(已登录 / 错误 / 未登录 / 需验证码 / …)
-  - `state_badge(state)` — 圆点 + 标签 拼接 ("🟢 已登录"),给 dashboard card
+  - `state_badge(state)` — 圆点 + 标签 拼接 ("就绪 已登录"),给 dashboard card
   - `state_hint(state)` — 行动建议文字(给新用户引导)
 
 新增状态时,只需在 `STATE_DOT` / `STATE_LABEL` / `STATE_HINT` 各加一行,任意 caller 复用。
@@ -81,7 +81,7 @@ _TRANSLATE_CTX = "state_labels"
 
 
 def state_dot(state: str) -> str:
-    """圆点 emoji;未知状态返 ⚪。"""
+    """圆点标记;未知状态返默认圆点。"""
     return STATE_DOT.get(state, "⚪")
 
 
@@ -97,7 +97,7 @@ def state_label(state: str) -> str:
 def state_badge(state: str) -> str:
     """`圆点 + 标签` 拼接,给 dashboard card 主标题。
 
-    未知状态返 `⚪ {state}`(跟 dashboard 旧行为一致)。
+    未知状态返 `默认圆点 {state}`(跟 dashboard 旧行为一致)。
     """
     if state in STATE_DOT:
         return f"{STATE_DOT[state]} {state_label(state)}"

@@ -44,7 +44,7 @@ class ChannelDTO:
     # 2026-09-04 v1.6.4:spammer 过滤 UI 用。`is_verified` / `is_scam` /
     # `is_fake` 是 Telegram 频道实体字段(频道群组都有);`has_protected_content`
     # 是频道 / 私聊实体字段(channel / private)。basic_group 没这两个字段,
-    # 固定 False。UI 端 channel list 卡片标徽显示(✓ / ⚠️)。
+    # 固定 False。UI 端 channel list 卡片标徽显示(✓ / 警告)。
     is_verified: bool = False
     is_scam: bool = False
     is_fake: bool = False
@@ -147,7 +147,7 @@ class MediaDTO:
     download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
     download_error: str | None = None  # FAILED 时的原因(超限 / 超时 / 存储写入失败…)
 
-    # Sticker 专属 — 关联的 emoji 字符(如 "😀");其它 type 始终 None
+    # Sticker 专属 — 关联的 emoji 字符(如 "表情");其它 type 始终 None
     emoji: str | None = None
 
 
@@ -246,7 +246,7 @@ class ReactionDTO:
     """
 
     type: str = ""  # 'emoji' | 'custom_emoji' | '@type' raw 字符串
-    emoji: str = ""  # 标准 emoji 文本("😀")或自定义 emoji 占位符
+    emoji: str = ""  # 标准 emoji 文本("表情")或自定义 emoji 占位符
     count: int = 0
     is_chosen: bool = False
 
@@ -316,7 +316,7 @@ class ExportRequest:
     # 2026-09-10 v1.7.3:导出包含用户元数据(`is_favorite` / `tags` /
     # `notes`)。JSON / ZIP 走 `dataclasses.asdict` 总是含,本字段只控
     # CSV / Markdown / HTML / MEDIA_CSV 是否加列 / 加 block;默认 True
-    # 保持对 ★ / 🏷 / 📝 敏感的用户不踩坑。
+    # 保持对 ★ / 标签 / 备注 敏感的用户不踩坑。
     include_metadata: bool = True
 
 

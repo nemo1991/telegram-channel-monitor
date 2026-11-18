@@ -78,7 +78,7 @@ class Orchestrator:
             svc._handle_interactions_changed,
         )
         # 2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish
-        # MessageEdited 触发 UI 行 📌 刷新(只有 republish 才能让 UI 实时感知
+        # MessageEdited 触发 UI 行 置顶 刷新(只有 republish 才能让 UI 实时感知
         # 外部 pin,而不依赖下次 reload)。
         svc.bus.subscribe(
             MessagePinChanged,

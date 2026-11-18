@@ -82,7 +82,7 @@ class SchemaLifecycle(ABC):
 
 
 class ChannelStore(ABC):
-    """频道元数据 + 订阅标志。"""
+    """频道元数据 + 监听 / TG 订阅双标志。"""
 
     @abstractmethod
     async def upsert_channel(self, channel: ChannelDTO) -> None:
@@ -240,7 +240,7 @@ class MessageStore(ABC):
         """更新一条消息的 pin 状态。
 
         Telegram 推送消息 pin / unpin 触发;MonitorService 订阅后调
-        本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 📌
+        本方法落库,再 re-fetch DTO + publish `MessageEdited` 让 UI 行 置顶
         图标刷新。不存在消息 idempotent 不抛(与 `update_message_interactions`
         一致 — 落库时机早于本 update 的旧历史消息)。
         """
@@ -290,7 +290,7 @@ class MessageStore(ABC):
         SQL LIKE 通配符必须 escape 防止注入。
 
         `favorite_only` / `tag_only` / `pinned_only`:3 个用户元数据过滤
-        (对应 SearchBar ★/🏷/📌 3 toggle)。默认 False 不过滤;True 时仅返回
+        (对应 SearchBar ★/标签/置顶 3 toggle)。默认 False 不过滤;True 时仅返回
         满足条件的消息 — UI AND 语义:任一 True 字段必须命中。
         `tag_only=True` 表示「有任意 tag 即可」。
         """

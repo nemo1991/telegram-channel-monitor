@@ -128,7 +128,7 @@ class HtmlExporter(Exporter):
     ) -> int:
         """渲染 HTML;按 channel_id 分组 → 模板渲染 → 写文件 → 返回字节数。
 
-        2026-09-10 v1.7.3:`include_metadata=False` 时模板不输出 ★ / 🏷 / 📝 block
+        2026-09-10 v1.7.3:`include_metadata=False` 时模板不输出 ★ / 标签 / 备注 block
         (用户主动选择只导出文本+媒体,不掺私人标注)。
         """
         # 准备模板数据

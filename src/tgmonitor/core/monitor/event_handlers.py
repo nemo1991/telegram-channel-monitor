@@ -91,13 +91,13 @@ class EventHandlers:
         """2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish。
 
         与 `_handle_interactions_changed` 不同的是:这里**必须** republish
-        `MessageEdited` — UI 行的 📌 渲染依赖 in-memory DTO 的 `is_pinned`
+        `MessageEdited` — UI 行的 置顶 渲染依赖 in-memory DTO 的 `is_pinned`
         字段,而 in-memory DTO 不会自动从 storage 同步(每次 `replace_message`
         都靠 MessageEdited 触发)。republish 走完整 DTO re-fetch 保证 UI 拿到
         最新值。
 
         与 reactions 的 "不 republish" 区别:reactions 走 detail panel 单独
-        订阅,而 pin 只走 LIVE 行的 📌 图标 — 没有 detail panel 兜底,
+        订阅,而 pin 只走 LIVE 行的 置顶 图标 — 没有 detail panel 兜底,
         必须 republish。
         """
         from tgmonitor.core.events import MessageEdited

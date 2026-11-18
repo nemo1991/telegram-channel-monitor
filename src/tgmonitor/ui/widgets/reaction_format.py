@@ -4,7 +4,7 @@
 渲染 reactions,提取成公共 helper(避免两处实现分叉)。
 
 设计目标:
-- 短串(LIVE 行:`🔥 5  👍 3`,max_show 默认 4 限制宽度)
+- 短串(LIVE 行:表情及计数,max_show 默认 4 限制宽度)
 - 自己投的用 `[]` 包,详情面板需要(「我投过的」高亮),LIVE 行因宽度
   紧可不传 `is_chosen` 包装(默认)
 - `count=0` 跳过 — Telegram 偶尔推送空 reaction 占位
@@ -36,7 +36,7 @@ def format_reactions_short(
             避免行宽膨胀。
 
     Returns:
-        「🔥 5  👍 3」单行字符串;无 reactions 返空串。
+        「火焰 5  点赞 3」单行字符串;无 reactions 返空串。
     """
     if not reactions:
         return ""

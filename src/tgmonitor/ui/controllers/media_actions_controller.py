@@ -437,7 +437,7 @@ class MediaActionsController:
             e.media,
         )
         self._ctx.message_detail.refresh_if_showing(e.channel_id, e.telegram_msg_id)
-        # 活动指示器:成功/失败短促显示文件名;失败用 ⚠ 前缀
+        # 活动指示器:成功/失败短促显示文件名;失败用 警告 前缀
         fname = e.media.file_name or "?"
         if e.media.download_status == MediaDownloadStatus.DONE:
             self._ctx.status_bar.show_activity(f"已下载: {fname}", timeout_ms=1500)

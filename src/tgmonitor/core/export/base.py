@@ -39,7 +39,7 @@ class Exporter(ABC):
 
         `include_metadata=True` 时导出 `is_favorite` / `tags` / `notes`(JSON / ZIP
         永远含,asdict 透明);False 时只走原始字段。默认 True 保持 v1.7.2
-        视觉行为对 ★ / 🏷 / 📝 敏感的用户不踩坑。
+        视觉行为对 ★ / 标签 / 备注 敏感的用户不踩坑。
 
         `storage`(2026-09-29):缩略图独立表后,`include_thumbnails=True` 时需要
         用 `storage.get_thumbnail(channel_id, msg_id, media_idx)` 拿 thumb 行

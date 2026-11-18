@@ -290,7 +290,7 @@ class UiAssembler:
         # 消息导出 UI 入口按用户确认移除(core 能力保留)。
 
         # ChannelWidget 信号
-        mw.channel_panel.btn_refresh.clicked.connect(mw._on_refresh_channels)
+        mw.channel_panel.refresh_button.clicked.connect(mw._on_refresh_channels)
         mw.channel_panel.sync_requested.connect(mw._on_sync_requested)
 
         # MessageView → MessageDetail(点击消息显示详情)

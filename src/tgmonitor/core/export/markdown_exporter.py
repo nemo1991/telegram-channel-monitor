@@ -24,10 +24,10 @@ if TYPE_CHECKING:
 class MarkdownExporter(Exporter):
     """Markdown Exporter — 人类可读,按频道分组(`## title` → `### msg`)。
 
-    媒体列在每条消息下:`- 📎 **type** mime file_name (size)`,可读源 ID。
+    媒体列在每条消息下:`- 附件 **type** mime file_name (size)`,可读源 ID。
 
     2026-09-10 v1.7.3:`include_metadata=True`(默认)时每条消息下追加
-    metadata block(★ / 🏷 / 📝),`include_metadata=False` 时跳过。
+    metadata block(★ / 标签 / 备注),`include_metadata=False` 时跳过。
     """
 
     format = ExportFormat.MARKDOWN
@@ -103,8 +103,8 @@ def _render_markdown_meta(m: MessageDTO) -> list[str]:
 
     格式:
         > ★ 收藏
-        > 🏷 tag1, tag2
-        > 📝 备注文本
+        > 标签 tag1, tag2
+        > 备注文本
 
     文本走 `_scrub_markdown` 防注入(用户控制 notes 字段)。
     """

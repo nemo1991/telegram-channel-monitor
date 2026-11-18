@@ -16,9 +16,9 @@ signal / `_seen` / `count()` / `MAX_ITEMS`,`main_window._copy_current_message_te
   渲染。hidden=True 的行 delegate 直接 return,不画。
 
 格式(单行紧凑):
-  ⏱ 14:23:10  [新闻]  👤 @author  #msg_id
+  ⏱ 14:23:10  [新闻]  作者 @author  #msg_id
     消息正文(可能多行)…
-    📎 photo, document
+    附件 photo, document
 
 空状态:首启 / 没订阅频道 / 还没消息到时居中显示「暂无消息」占位面板
 (走 `form_row.empty_hint`),第一条数据到达自动隐藏。

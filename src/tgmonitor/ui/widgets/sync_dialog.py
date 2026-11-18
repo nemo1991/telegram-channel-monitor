@@ -203,8 +203,8 @@ class SyncProgressDialog(QDialog):
     def on_progress(self, e: ChannelSyncProgress) -> None:
         """VM 信号槽:每条 ChannelSyncProgress 更新对应频道行的状态 / 图标 / 进度。
 
-        stage → icon 映射:`metadata` 🔄 / `history` 📥 / `backoff` ⏸ /
-        `done` ✅ / `failed` ❌ / `init` ⏳ / `channel_start` ▶;history 阶段
+        stage → icon 映射:`metadata` 同步 / `history` 下载 / `backoff` ⏸ /
+        `done` 完成 / `failed` 失败 / `init` ⏳ / `channel_start` ▶;history 阶段
         `total=None` 时只显示「N 条」;init 阶段不进 row,只更新 summary。
         """
         # 2026-08-24:init 事件不进 row — 只更新顶部 summary,避免 0 号伪频道
