@@ -242,7 +242,7 @@ async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:
     async with self._pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
+            "monitored, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels ORDER BY id"
         )
@@ -255,7 +255,7 @@ async def list_monitored_channels(self: PostgresRepository) -> list[ChannelDTO]:
     async with self._pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
+            "monitored, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels WHERE monitored = TRUE ORDER BY id"
         )
@@ -268,7 +268,7 @@ async def get_channel(self: PostgresRepository, channel_id: int) -> ChannelDTO |
     async with self._pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, title, username, kind, member_count, created_at, "
-            "subscribed, tg_subscribed, last_synced_at, photo_local_key, "
+            "monitored, tg_subscribed, last_synced_at, photo_local_key, "
             "is_verified, is_scam, is_fake, has_protected_content "
             "FROM channels WHERE id = $1",
             channel_id,
