@@ -50,14 +50,14 @@ CREATE TABLE IF NOT EXISTS channels (
     member_count    INTEGER,
     created_at      TIMESTAMPTZ,
     first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    subscribed      BOOLEAN     NOT NULL DEFAULT FALSE,   -- 语义=是否监听;v2.0.3 正名为 monitored
+    monitored       BOOLEAN     NOT NULL DEFAULT FALSE,   -- 语义=是否监听;物理列 2.0.6 由 subscribed 正名
     tg_subscribed   BOOLEAN     NOT NULL DEFAULT FALSE,   -- v2.0.3:TG 侧是否仍订阅(与监听独立)
     last_synced_at  TIMESTAMPTZ
 );
 
 -- 兼容旧库:已存在的 channels 表补列(IF NOT EXISTS 幂等)。
--- subscribed 默认 TRUE 保留"存即订"语义 — 旧用户不会被升级变成未监听。
-ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribed BOOLEAN NOT NULL DEFAULT TRUE;
+-- monitored 默认 FALSE — 与 CREATE 默认及 SQLite 对齐(2.0.6 统一)。
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS monitored BOOLEAN NOT NULL DEFAULT FALSE;
 -- v2.0.3:TG 订阅状态新列,默认 FALSE(不回填,靠首次刷新全量校正)。
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS tg_subscribed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
@@ -238,7 +238,7 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
         "member_count": "INTEGER",
         "created_at": "TIMESTAMPTZ",
         "first_seen_at": "TIMESTAMPTZ",
-        "subscribed": "BOOLEAN",
+        "monitored": "BOOLEAN",
         "tg_subscribed": "BOOLEAN",
         "last_synced_at": "TIMESTAMPTZ",
         "photo_local_key": "TEXT",
@@ -394,6 +394,20 @@ async def init_schema(self: PostgresRepository) -> None:
     """
     assert self._pool is not None
     async with self._pool.acquire() as conn:
+        # 2.0.6 一次性列改名迁移:旧库物理列 subscribed(=监听)→monitored。
+        # 必须在 SCHEMA_SQL(IF NOT EXISTS)之前做 —— 否则旧表会先被 ADD 出
+        # 空的 monitored 列(DEFAULT FALSE),监听状态静默清零。
+        old_col = await conn.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='channels' AND column_name='subscribed'"
+        )
+        new_col = await conn.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='channels' AND column_name='monitored'"
+        )
+        if old_col is not None and new_col is None:
+            log.warning("init_schema: 迁移 channels.subscribed → monitored")
+            await conn.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
         try:
             await conn.execute(SCHEMA_SQL)
         except Exception as exc:

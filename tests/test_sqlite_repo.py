@@ -229,9 +229,9 @@ async def test_init_schema_backfills_new_columns_on_legacy_db(tmp_path) -> None:
         CREATE TABLE channels (
             id INTEGER PRIMARY KEY,
             title TEXT NOT NULL,
-            subscribed INTEGER NOT NULL DEFAULT 0
+            monitored INTEGER NOT NULL DEFAULT 0
         );
-        INSERT INTO channels (id, title, subscribed) VALUES (42, '旧频道', 0);
+        INSERT INTO channels (id, title, monitored) VALUES (42, '旧频道', 0);
         """
     )
     raw.commit()
