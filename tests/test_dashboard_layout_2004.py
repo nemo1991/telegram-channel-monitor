@@ -24,11 +24,11 @@ def _dashboard_layout(win) -> QVBoxLayout:
     return layout
 
 
-def test_nav_has_four_items_and_dashboard_is_home(qapp, qloop, tmp_path):
-    """G3-2：导航 4 项，大盘为首页。"""
+def test_nav_has_three_items_and_dashboard_is_home(qapp, qloop, tmp_path):
+    """G3-2 + v2.0.6：导航 3 项（频道页迁入设置页），大盘为首页。"""
     win = build_real_main_window(qloop, tmp_path)
-    assert len(win.nav._buttons) == 4
-    assert win.stack.count() == 4
+    assert len(win.nav._buttons) == 3
+    assert win.stack.count() == 3
     assert win.stack.widget(0) is win.dashboard
     assert win.stack.currentIndex() == 0
     win.close()
@@ -91,9 +91,9 @@ def _is_bottom_row(layout) -> bool:
     )
 
 
-def test_media_page_index_is_two():
-    """G3-5：媒体页索引 2（原 3），设置页索引 3。"""
+def test_media_page_index_is_one():
+    """G3-5 + v2.0.6：媒体页索引 1（原 2），设置页索引 2。"""
     from tgmonitor.ui.nav_bar import _NAV_LABELS_SRC
 
-    assert _NAV_LABELS_SRC == ("大盘", "频道", "媒体", "设置")
-    assert _NAV_LABELS_SRC.index("媒体") == 2
+    assert _NAV_LABELS_SRC == ("大盘", "媒体", "设置")
+    assert _NAV_LABELS_SRC.index("媒体") == 1

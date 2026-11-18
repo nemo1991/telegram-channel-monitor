@@ -131,23 +131,23 @@ class TestSwitchTab:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
-        # v2.0.4 FR-03:4 项导航,媒体页 idx=2
-        ctrl.switch_tab(2)
+        # v2.0.6:3 项导航,媒体页 idx=1
+        ctrl.switch_tab(1)
 
-        refs["nav"].set_current.assert_called_once_with(2)
+        refs["nav"].set_current.assert_called_once_with(1)
 
 
 class TestOnNavChanged:
-    """`on_nav_changed` — 切到 MEDIA 页(2)→ start media_refresh_debounce。
+    """`on_nav_changed` — 切到 MEDIA 页(1)→ start media_refresh_debounce。
 
-    2026-11-17 v2.0.4 FR-03:导航 5→4,媒体 idx 3→2,设置 idx 4→3。
+    2026-11-18 v2.0.6:导航 4→3,媒体 idx 2→1,设置 idx 3→2。
     """
 
     def test_media_tab_starts_debounce(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
-        ctrl.on_nav_changed(2)
+        ctrl.on_nav_changed(1)
 
         refs["media_refresh_debounce"].start.assert_called_once()
 
@@ -156,8 +156,7 @@ class TestOnNavChanged:
         ctrl = LifecycleController(ctx)
 
         ctrl.on_nav_changed(0)  # DASHBOARD (含实时流)
-        ctrl.on_nav_changed(1)  # CHANNELS
-        ctrl.on_nav_changed(3)  # SETTINGS
+        ctrl.on_nav_changed(2)  # SETTINGS
 
         refs["media_refresh_debounce"].start.assert_not_called()
 
