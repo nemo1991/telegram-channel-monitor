@@ -432,7 +432,10 @@ QGroupBox#dashPanel {
     border: 1px solid #e2e4e9;
     border-radius: 8px;
     margin-top: 0;
-    padding: 10px 12px 10px 12px;
+    /* 2026-11-18 v2.0.5:padding-top 10→28,给 ::title 单独留出一行。
+     * 原值下标题(subcontrol-origin:padding,约 y=2..18)与列表首行(y=11)
+     * 纵向重叠,列表背景盖住标题下半;列表现从 y≈29 起,标题完整可见。 */
+    padding: 28px 12px 10px 12px;
     font-weight: 600;
     font-size: 13px;
     color: #1a1a2e;

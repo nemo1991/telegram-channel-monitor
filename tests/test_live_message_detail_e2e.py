@@ -82,15 +82,10 @@ def test_click_live_message_shows_detail_and_switching_updates_it(qapp, qloop, t
     assert text_edit is not None
     assert second.text in text_edit.toPlainText()
 
-    # 关闭详情 → 回占位
-    close_btn = next(
-        (b for b in detail.findChildren(QPushButton) if b.text() == "关闭详情"),
-        None,
-    )
-    assert close_btn is not None
-    QTest.mouseClick(close_btn, Qt.MouseButton.LeftButton)
-    qapp.processEvents()
-    assert detail._current is None
+    # 2026-11-18 v2.0.5:关闭详情按钮已移除;复制文本按钮上提到 header 行。
+    labels = [b.text() for b in detail.findChildren(QPushButton)]
+    assert any("复制文本" in t for t in labels)
+    assert not any("关闭详情" in t for t in labels)
 
 
 def test_floating_new_message_button_stays_clickable(qapp, qloop, tmp_path):

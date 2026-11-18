@@ -72,7 +72,7 @@ def test_stretch_ratio_unchanged(qapp, qloop, tmp_path):
 
 
 def test_five_cards_and_values_intact(qapp, qloop, tmp_path):
-    """口径不变:仍为 5 张卡,取值/副文本接口可用。"""
+    """口径不变:仍为 5 张卡,取值接口可用(2026-11-18 起无副文本行)。"""
     win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
     dash = win.dashboard
     row = _cards_row(dash)
@@ -83,10 +83,10 @@ def test_five_cards_and_values_intact(qapp, qloop, tmp_path):
         dash.card_storage,
         dash.card_total_messages,
     ]
-    # set_value 仍工作(压缩未破坏卡片对外契约)
-    dash.card_channels.set_value("12", "副文本")
+    # set_value 仍工作(压缩未破坏卡片取值契约);底部副文本行已移除。
+    dash.card_channels.set_value("12")
     assert dash.card_channels.value_lbl.text() == "12"
-    assert dash.card_channels.sub_lbl.text() == "副文本"
+    assert not hasattr(dash.card_channels, "sub_lbl")
     win.close()
 
 
@@ -99,7 +99,7 @@ def test_compressed_card_text_not_clipped(qapp, qloop, tmp_path):
     win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
     dash = win.dashboard
     card = dash.card_channels
-    card.set_value("1234", "副文本")  # 填满三行再测
+    card.set_value("1234")
     vbox = card.layout()
     assert vbox is not None
     assert vbox.totalMinimumSize().height() <= card.height()
