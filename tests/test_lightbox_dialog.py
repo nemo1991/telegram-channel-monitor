@@ -423,7 +423,7 @@ def test_save_button_no_data_disabled(qapp: QApplication, sample_pixmap: QPixmap
 
 
 def test_close_button_accepts_dialog(qapp: QApplication, sample_pixmap: QPixmap) -> None:
-    """点 ✕ → dialog accept()(关闭)。"""
+    """点「关闭」→ dialog accept()(关闭)。"""
     dlg = LightboxDialog(pixmaps=[sample_pixmap])
     dlg._btn_close.click()
     assert dlg.result() == QDialog.Accepted

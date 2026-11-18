@@ -78,7 +78,7 @@ class ExportController:
             from PySide6.QtWidgets import QMessageBox
 
             QMessageBox.critical(mw, mw.tr("导出失败"), error)
-            self._ctx.status_bar.show_activity(f"⚠ 导出失败: {error}", timeout_ms=5000)
+            self._ctx.status_bar.show_activity(f"导出失败: {error}", timeout_ms=5000)
         elif result:
             from PySide6.QtWidgets import QMessageBox
 

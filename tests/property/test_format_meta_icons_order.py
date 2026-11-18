@@ -1,7 +1,7 @@
 """2026-09-17 PR 6:`_format_meta_icons` emoji 顺序不变量 property test。
 
 PR 6 plan 测点 2:任意 MessageDTO → `_format_meta_icons` 输出的 emoji 段
-必须按 ★ → 🏷 → 📝 → 📌 → reactions 固定顺序。
+必须按 ★ → 标签: → 备注: → [置顶] → reactions 固定顺序。
 
 测法:
 1. 构造多种 DTO 组合(空、单字段、全字段、tags 多/少、reactions 等)
@@ -71,17 +71,17 @@ def _first_index_of(s: str, needle: str) -> int:
         # 1. 只有 favorite
         (_make_msg(is_favorite=True), ["★"]),
         # 2. 只有 tag
-        (_make_msg(tags=["tech"]), ["🏷"]),
+        (_make_msg(tags=["tech"]), ["标签:"]),
         # 3. 只有 notes
-        (_make_msg(notes="hello"), ["📝"]),
+        (_make_msg(notes="hello"), ["备注:"]),
         # 4. 只有 pin
-        (_make_msg(is_pinned=True), ["📌"]),
-        # 5. ★ → 🏷
-        (_make_msg(is_favorite=True, tags=["t"]), ["★", "🏷"]),
-        # 6. 🏷 → 📝
-        (_make_msg(tags=["t"], notes="n"), ["🏷", "📝"]),
-        # 7. 📝 → 📌
-        (_make_msg(notes="n", is_pinned=True), ["📝", "📌"]),
+        (_make_msg(is_pinned=True), ["[置顶]"]),
+        # 5. ★ → 标签:
+        (_make_msg(is_favorite=True, tags=["t"]), ["★", "标签:"]),
+        # 6. 标签: → 备注:
+        (_make_msg(tags=["t"], notes="n"), ["标签:", "备注:"]),
+        # 7. 备注: → [置顶]
+        (_make_msg(notes="n", is_pinned=True), ["备注:", "[置顶]"]),
         # 8. 全 4 段 + reactions
         (
             _make_msg(
@@ -91,12 +91,12 @@ def _first_index_of(s: str, needle: str) -> int:
                 is_pinned=True,
                 reactions=[ReactionDTO(emoji="🔥", count=5)],
             ),
-            ["★", "🏷", "📝", "📌"],
+            ["★", "标签:", "备注:", "[置顶]"],
         ),
     ],
 )
 def test_format_meta_icons_segment_order(msg: MessageDTO, expected_segments: list[str]) -> None:
-    """`_format_meta_icons` 输出:每段存在则按 ★→🏷→📝→📌→reactions 顺序出现。
+    """`_format_meta_icons` 输出:每段存在则按 ★→标签:→备注:→[置顶]→reactions 顺序出现。
 
     用 `find` 取每段首次出现 idx,断言 idx 单调递增。
     """
@@ -129,7 +129,7 @@ def test_format_meta_icons_segment_order(msg: MessageDTO, expected_segments: lis
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 def test_format_meta_icons_invariant_order(is_favorite, tags, notes, is_pinned) -> None:
-    """任意 4 维组合(fav/tags/notes/pinned)→ 出现段按 ★→🏷→📝→📌 排序。"""
+    """任意 4 维组合(fav/tags/notes/pinned)→ 出现段按 ★→标签:→备注:→[置顶] 排序。"""
     msg = _make_msg(
         is_favorite=is_favorite,
         tags=tags,
@@ -142,11 +142,11 @@ def test_format_meta_icons_invariant_order(is_favorite, tags, notes, is_pinned) 
     if is_favorite:
         present_segments.append("★")
     if tags:
-        present_segments.append("🏷")
+        present_segments.append("标签:")
     if notes:
-        present_segments.append("📝")
+        present_segments.append("备注:")
     if is_pinned:
-        present_segments.append("📌")
+        present_segments.append("[置顶]")
 
     indices = [_first_index_of(out, seg) for seg in present_segments]
     assert indices == sorted(indices), (
@@ -168,16 +168,16 @@ def test_format_meta_icons_only_favorite() -> None:
 
 
 def test_format_meta_icons_reactions_appended_after_pin() -> None:
-    """reactions 在 📌 之后(plan:reactions 是末段)。"""
+    """reactions 在 [置顶] 之后(plan:reactions 是末段)。"""
     msg = _make_msg(
         is_pinned=True,
         reactions=[ReactionDTO(emoji="🔥", count=5)],
     )
     out = _format_meta_icons(msg)
-    pin_idx = _first_index_of(out, "📌")
+    pin_idx = _first_index_of(out, "[置顶]")
     rx_idx = _first_index_of(out, "🔥")
     assert pin_idx >= 0 and rx_idx >= 0
-    assert rx_idx > pin_idx, f"reactions 应在 📌 之后,output={out!r}"
+    assert rx_idx > pin_idx, f"reactions 应在 [置顶] 之后,output={out!r}"
 
 
 @example(notes="x" * 100)
@@ -199,10 +199,10 @@ def test_format_meta_icons_notes_truncates_at_30(notes: str) -> None:
     msg = _make_msg(notes=notes)
     out = _format_meta_icons(msg)
     if not notes:
-        assert "📝" not in out
+        assert "备注:" not in out
         return  # type: ignore[return-value]
-    # 有 notes → 📝 段必有
-    assert "📝" in out
+    # 有 notes → 备注: 段必有
+    assert "备注:" in out
     if len(notes) > 30:
         # 截断:out 应包含 `notes[:30] + '…'`
         expected_truncated = notes[:30] + "…"
@@ -212,10 +212,10 @@ def test_format_meta_icons_notes_truncates_at_30(notes: str) -> None:
     else:
         # 无截断:notes 原样保留(可能 notes 本身含 `…` 字符)
         assert notes in out, f"≤ 30 字符 notes 应原样保留,output={out!r}"
-        # 关键:output 中 📝 后面的内容**就是** notes(没有再加额外 `…` 截断)
+        # 关键:output 中 备注: 后面的内容**就是** notes(没有再加额外 `…` 截断)
         notes_idx = _first_index_of(out, notes)
         notes_after_marker = out[notes_idx + len(notes) :] if notes_idx >= 0 else ""
-        # 不应出现 `…📝…` 这种双 `…` 或截断
+        # 不应出现 `…备注:…` 这种双 `…` 或截断
         assert not notes_after_marker.startswith("…"), (
             f"≤ 30 字符 notes 不应再加截断 `…`,后续段={notes_after_marker!r}, output={out!r}"
         )

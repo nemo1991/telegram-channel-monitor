@@ -291,7 +291,7 @@ def test_append_with_media_dto_does_not_crash(qapp):
     view.append(msg)
     text = _item_text(view, 0)
     assert "look at this" in text
-    assert "📎" in text
+    assert "附件:" in text
     assert "photo" in text  # med.type.value 正确渲染
 
 
@@ -906,7 +906,7 @@ def test_stress_rolling_window_100_append_dedup_truncate(qapp):
 
 
 # ============================================================
-# 2026-09-10 v1.7.3:行渲染 ★ / 🏷 / 📝 / 📌
+# 2026-09-10 v1.7.3:行渲染 ★ / 标签: / 备注: / [置顶]
 # ============================================================
 #
 # v1.7.2 加了 is_favorite / tags / notes / is_pinned 字段但没渲染,用户右键
@@ -954,11 +954,11 @@ def test_format_meta_icons_favorite_star(qapp):
 
 
 def test_format_meta_icons_tags(qapp):
-    """v1.7.3:tags=["tech", "ai"] → "🏷tech,ai"。"""
+    """v1.7.3:tags=["tech", "ai"] → "标签:tech,ai"。"""
     from tgmonitor.ui.widgets.message_view import _format_meta_icons
 
     m = _make_meta_msg(tags=["tech", "ai"])
-    assert "🏷tech,ai" in _format_meta_icons(m)
+    assert "标签:tech,ai" in _format_meta_icons(m)
 
 
 def test_format_meta_icons_notes_snippet(qapp):
@@ -966,27 +966,27 @@ def test_format_meta_icons_notes_snippet(qapp):
     from tgmonitor.ui.widgets.message_view import _format_meta_icons
 
     short = _make_meta_msg(notes="需要 review")
-    assert "📝需要 review" in _format_meta_icons(short)
+    assert "备注:需要 review" in _format_meta_icons(short)
 
     long_text = "x" * 50
     long = _make_meta_msg(notes=long_text)
     out = _format_meta_icons(long)
     # 30 chars + …
-    assert "📝" in out
+    assert "备注:" in out
     assert "…" in out
     assert long_text not in out  # 完整 50 chars 不应出现
 
 
 def test_format_meta_icons_pinned(qapp):
-    """v1.7.3:is_pinned=True → 📌 icon。"""
+    """v1.7.3:is_pinned=True → [置顶] icon。"""
     from tgmonitor.ui.widgets.message_view import _format_meta_icons
 
     m = _make_meta_msg(is_pinned=True)
-    assert "📌" in _format_meta_icons(m)
+    assert "[置顶]" in _format_meta_icons(m)
 
 
 def test_format_meta_icons_combined(qapp):
-    """v1.7.3:4 类全有 → ★ 🏷 📝 📌 都在输出里(顺序 ★ → 🏷 → 📝 → 📌)。"""
+    """v1.7.3:4 类全有 → ★ 标签: 备注: [置顶] 都在输出里(顺序 ★ → 标签: → 备注: → [置顶])。"""
     from tgmonitor.ui.widgets.message_view import _format_meta_icons
 
     m = _make_meta_msg(
@@ -996,11 +996,11 @@ def test_format_meta_icons_combined(qapp):
         is_pinned=True,
     )
     out = _format_meta_icons(m)
-    assert out == "★ 🏷tech 📝review 📌"
+    assert out == "★ 标签:tech 备注:review [置顶]"
 
 
 def test_format_message_view_renders_metadata_icons(qapp):
-    """v1.7.3:端到端 — view.append(msg) 后 model._format 输出含 ★ / 🏷 / 📝 / 📌。"""
+    """v1.7.3:端到端 — view.append(msg) 后 model._format 输出含 ★ / 标签: / 备注: / [置顶]。"""
     view = MessageView()
     msg = _make_meta_msg(
         telegram_msg_id=42,
@@ -1013,9 +1013,9 @@ def test_format_message_view_renders_metadata_icons(qapp):
     text = _item_text(view, 0)
     # 4 个 icon 都应在行里
     assert "★" in text
-    assert "🏷vip" in text
-    assert "📝check" in text
-    assert "📌" in text
+    assert "标签:vip" in text
+    assert "备注:check" in text
+    assert "[置顶]" in text
 
 
 # ============================================================
@@ -1055,7 +1055,7 @@ def test_format_meta_icons_includes_reactions(qapp):
         ]
     )
     out = _format_meta_icons(m)
-    # 顺序固定:★ → 🏷 → 📝 → 📌 → reactions;self-chosen 不加 [] (LIVE 行模式)
+    # 顺序固定:★ → 标签: → 备注: → [置顶] → reactions;self-chosen 不加 [] (LIVE 行模式)
     assert out == "🔥 5  👍 3"
 
 
@@ -1164,7 +1164,7 @@ def test_dto_by_key_missing_returns_none(qapp):
 
 
 # ============================================================
-# 2026-09-14 v1.7.5 PR #8:★/🏷/📌 filter 测试(AND 语义)
+# 2026-09-14 v1.7.5 PR #8:★/标签:/[置顶] filter 测试(AND 语义)
 # ============================================================
 
 

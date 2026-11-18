@@ -778,7 +778,7 @@ class LightboxDialog(QDialog):
         self._btn_slideshow = self._make_btn("⏯", self.tr("幻灯片"))
         self._btn_slideshow.setCheckable(True)
         self._btn_save = self._make_btn("⤓", self.tr("另存为…"))
-        self._btn_close = self._make_btn("✕", self.tr("关闭"))
+        self._btn_close = self._make_btn("关闭", self.tr("关闭"))
 
         bar = self._control_bar.layout()
         assert isinstance(bar, QHBoxLayout)

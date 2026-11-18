@@ -88,9 +88,9 @@ class AppStateController:
         """VM `error` signal — 状态栏警告 + log。"""
         log.warning("error: %s", msg)
         # 2026-10-01 v1.11.x:showMessage 协议改走 status_bar 自管
-        self._ctx.status_bar.show_message(f"⚠ {msg}", 5000)
+        self._ctx.status_bar.show_message(f"警告:{msg}", 5000)
         # 活动指示器同步显示(右侧 conn + 中间 showMessage + 左侧 activity 三处)
-        self._ctx.status_bar.show_activity(f"⚠ {msg}", timeout_ms=5000)
+        self._ctx.status_bar.show_activity(f"警告:{msg}", timeout_ms=5000)
 
     async def on_bus_login(self, e) -> None:
         """EventBus `LoginStateChanged` — 底部状态位 + refresh_state + activity。
@@ -124,7 +124,9 @@ class AppStateController:
         if self._ctx.tray is None or not self._ctx.tray.is_active:
             self._ctx.status_bar.show_message(f"{event.title}: {event.body}", 5000)
         # 活动指示器:无 tray 兜底时也走左侧;有 tray 时左侧仍给提示
-        prefix = "⚠ " if event.level == "error" else ("⚡ " if event.level == "warning" else "")
+        prefix = (
+            "警告:" if event.level == "error" else ("注意:" if event.level == "warning" else "")
+        )
         self._ctx.status_bar.show_activity(f"{prefix}{event.title}: {event.body}", timeout_ms=5000)
 
     def on_bell_clicked(self) -> None:

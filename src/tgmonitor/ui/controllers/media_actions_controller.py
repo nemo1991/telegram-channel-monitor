@@ -442,7 +442,7 @@ class MediaActionsController:
         if e.media.download_status == MediaDownloadStatus.DONE:
             self._ctx.status_bar.show_activity(f"已下载: {fname}", timeout_ms=1500)
         else:
-            self._ctx.status_bar.show_activity(f"⚠ 下载失败: {fname}", timeout_ms=3000)
+            self._ctx.status_bar.show_activity(f"下载失败: {fname}", timeout_ms=3000)
         # 2026-09-26 fix(retry-no-feedback):下载结束后刷新 Media Manager
         # 列表 — retry 路径走 background download_one,完成后 UI 看不到
         # 新状态;正常首次下载完成后 widget 也只显示进度文字,不显示

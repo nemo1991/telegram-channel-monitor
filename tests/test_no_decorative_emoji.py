@@ -20,27 +20,11 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parents[1] / "src"
 _BOUNDARY_GLYPHS = {"★", "✓"}
 
-# B/C/D 层暂留的运行时字面量模块；PR-6b/6c 每清完一个模块就删一项。
+# B 层已清零；仅剩 C 层导出/服务消息与 D 层 reaction 占位符待处理。
 _RUNTIME_EMOJI_MODULES = {
     "tgmonitor/core/export/html_exporter.py",
     "tgmonitor/core/export/markdown_exporter.py",
     "tgmonitor/core/telegram/telethon_messages.py",
-    "tgmonitor/ui/controllers/app_state_controller.py",
-    "tgmonitor/ui/controllers/export_controller.py",
-    "tgmonitor/ui/controllers/media_actions_controller.py",
-    "tgmonitor/ui/state_labels.py",
-    "tgmonitor/ui/widgets/_mm_base.py",
-    "tgmonitor/ui/widgets/_mm_render.py",
-    "tgmonitor/ui/widgets/channel_widget.py",
-    "tgmonitor/ui/widgets/clear_channel_preview_dialog.py",
-    "tgmonitor/ui/widgets/export_dialog.py",
-    "tgmonitor/ui/widgets/lightbox_dialog.py",
-    "tgmonitor/ui/widgets/media_manager_widget.py",
-    "tgmonitor/ui/widgets/message_detail.py",
-    "tgmonitor/ui/widgets/message_empty_overlay.py",
-    "tgmonitor/ui/widgets/message_list_model_format.py",
-    "tgmonitor/ui/widgets/status_bar.py",
-    "tgmonitor/ui/widgets/sync_dialog.py",
 }
 
 

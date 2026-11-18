@@ -37,12 +37,12 @@ def _format_meta_icons(m: MessageDTO) -> str:
     if m.is_favorite:
         parts.append("★")
     if m.tags:
-        parts.append(f"🏷{','.join(m.tags)}")
+        parts.append(f"标签:{','.join(m.tags)}")
     if m.notes:
         snippet = m.notes if len(m.notes) <= 30 else m.notes[:30] + "…"
-        parts.append(f"📝{snippet}")
+        parts.append(f"备注:{snippet}")
     if m.is_pinned:
-        parts.append("📌")
+        parts.append("[置顶]")
     if m.reactions:
         rx = format_reactions_short(m.reactions, max_show=3, mark_chosen=False)
         if rx:
@@ -78,7 +78,7 @@ class FormatMixin:
         msg_id = m.telegram_msg_id
         head = f"⏱ {dt}  {ch_label}  #{msg_id}"
         if m.author:
-            head += f"  👤 {m.author}"
+            head += f"  {m.author}"
         # 2026-09-10 v1.7.3:用户元数据 / pin 图标行 — ★ 收藏 / 标签 / 备注截断
         # / 置顶 pin。与 v1.7.2 metadata 字段配套:v1.7.2 加了字段但没渲染,本版本补
         # 上。用户右键 ★ 后行立即显示 ★(无需 reload)。
@@ -94,9 +94,9 @@ class FormatMixin:
                 if med.download_status == MediaDownloadStatus.DOWNLOADING:
                     label += "⏳"
                 elif med.download_status == MediaDownloadStatus.FAILED:
-                    label += "❌"
+                    label += "[失败]"
                 elif med.download_status == MediaDownloadStatus.DONE:
                     label += "✓"
                 parts.append(label)
-            body += f"  📎 {','.join(parts)}"
+            body += f"  附件:{','.join(parts)}"
         return f"{head}\n  {body}"

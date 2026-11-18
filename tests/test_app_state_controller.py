@@ -151,8 +151,8 @@ class TestOnError:
 
         ctrl.on_error("网络断了")
 
-        ctx.status_bar.show_message.assert_called_once_with("⚠ 网络断了", 5000)
-        ctx.status_bar.show_activity.assert_called_once_with("⚠ 网络断了", timeout_ms=5000)
+        ctx.status_bar.show_message.assert_called_once_with("警告:网络断了", 5000)
+        ctx.status_bar.show_activity.assert_called_once_with("警告:网络断了", timeout_ms=5000)
 
 
 class TestOnBusLogin:
@@ -251,7 +251,7 @@ class TestOnNotificationFallback:
         event = NotificationRequested(title="错误", body="失败", level="error")
         await ctrl.on_notification_fallback(event)
 
-        ctx.status_bar.show_activity.assert_called_once_with("⚠ 错误: 失败", timeout_ms=5000)
+        ctx.status_bar.show_activity.assert_called_once_with("警告:错误: 失败", timeout_ms=5000)
 
     @pytest.mark.asyncio
     async def test_warning_level_uses_lightning_prefix(self) -> None:
@@ -260,7 +260,7 @@ class TestOnNotificationFallback:
         event = NotificationRequested(title="警告", body="注意", level="warning")
         await ctrl.on_notification_fallback(event)
 
-        ctx.status_bar.show_activity.assert_called_once_with("⚡ 警告: 注意", timeout_ms=5000)
+        ctx.status_bar.show_activity.assert_called_once_with("注意:警告: 注意", timeout_ms=5000)
 
 
 class TestOnBellClicked:

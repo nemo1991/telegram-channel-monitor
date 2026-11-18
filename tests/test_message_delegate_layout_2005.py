@@ -158,7 +158,7 @@ def test_public_contract_preserved(qapp):
 
 def test_typography_sans_serif_and_gray_time(qapp):
     """FR-03 步骤二:去等宽 <pre>、字体无衬线、时间灰字 span。"""
-    html = MessageItemDelegate._plain_to_html("⏱ 10:30:45  [新闻]  #7  👤 alice\n  正文")
+    html = MessageItemDelegate._plain_to_html("⏱ 10:30:45  [新闻]  #7  alice\n  正文")
     assert "<pre" not in html  # 去等宽
     assert "font-family:sans-serif" in html  # 无衬线(与最近活动一致)
     assert "white-space:pre-wrap" in html and "word-wrap:break-word" in html  # 折行护栏

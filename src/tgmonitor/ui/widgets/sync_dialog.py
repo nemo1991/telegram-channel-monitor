@@ -216,11 +216,11 @@ class SyncProgressDialog(QDialog):
             self._add_row(e.channel_id)
         title = self._channel_titles.get(e.channel_id, f"#{e.channel_id}")
         icon = {
-            "metadata": "🔄",
-            "history": "📥",
-            "backoff": "⏸",
-            "done": "✅",
-            "failed": "❌",
+            "metadata": "同步中",
+            "history": "下载中",
+            "backoff": "暂停",
+            "done": "完成",
+            "failed": "失败",
             "init": "⏳",
             "channel_start": "▶",
         }.get(e.stage, "•")

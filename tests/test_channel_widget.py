@@ -11,7 +11,7 @@
 - 真实 TDLib local_path(改用临时目录 + bytes fixture)
 - ChannelWidget UI 主流程 — 见 test_main_window_channels.py
 
-2026-09-04 v1.6.4:spammer 过滤 UI 标徽显示(✓ / ⚠️)+ 频道头像实时刷新。
+2026-09-04 v1.6.4:spammer 过滤 UI 标徽显示(✓ / [风险])+ 频道头像实时刷新。
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ def test_channel_display_text_no_badges(qapp) -> None:
     text = _channel_display_text(ch)
     assert text == "@test"
     assert "✓" not in text
-    assert "⚠" not in text
+    assert "[风险]" not in text
 
 
 def test_channel_display_text_verified_badge(qapp) -> None:
@@ -183,32 +183,32 @@ def test_channel_display_text_verified_badge(qapp) -> None:
 
 
 def test_channel_display_text_scam_warning(qapp) -> None:
-    """v1.6.4:`is_scam=True` → display 末尾 `⚠️`。"""
+    """v1.6.4:`is_scam=True` → display 末尾 `[风险]`。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
     ch = _channel(username="s", is_scam=True)
     text = _channel_display_text(ch)
-    assert "⚠" in text
+    assert "[风险]" in text
 
 
 def test_channel_display_text_fake_warning(qapp) -> None:
-    """v1.6.4:`is_fake=True` → display 末尾 `⚠️`(与 scam 同后缀,不双标)。"""
+    """v1.6.4:`is_fake=True` → display 末尾 `[风险]`(与 scam 同后缀,不双标)。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
     ch = _channel(username="f", is_fake=True)
     text = _channel_display_text(ch)
-    # 一个 ⚠ 即可(任一为真)
-    assert text.count("⚠") == 1
+    # 一个风险标记即可(任一为真)
+    assert text.count("[风险]") == 1
 
 
 def test_channel_display_text_verified_and_scam(qapp) -> None:
-    """v1.6.4:`is_verified` + `is_scam` 同时 → ✓ ⚠️ 都出现。"""
+    """v1.6.4:`is_verified` + `is_scam` 同时 → ✓ [风险] 都出现。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
     ch = _channel(is_verified=True, is_scam=True)
     text = _channel_display_text(ch)
     assert "✓" in text
-    assert "⚠" in text
+    assert "[风险]" in text
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ def test_channel_display_text_verified_and_scam(qapp) -> None:
 
 
 def test_apply_title_changed_preserves_verified_badge(qapp, qloop_16) -> None:
-    """v1.6.4:title 更新后徽标后缀(✓ / ⚠️)保留。"""
+    """v1.6.4:title 更新后徽标后缀(✓ / [风险])保留。"""
     widget = _build_widget(qapp, qloop_16)
     # 无 username → display = `#id title`,title 改动会反映到文本上
     ch = _channel(cid=100, title="Old", username=None, is_verified=True)
@@ -319,7 +319,7 @@ def test_set_items_renders_photo_and_badges(
     assert widget.joined_card.lst.count() == 3
     texts = [widget.joined_card.lst.item(i).text() for i in range(3)]
     assert any("✓" in t for t in texts)
-    assert any("⚠" in t for t in texts)
+    assert any("[风险]" in t for t in texts)
     # 所有 icon 都非 null(verified/scam 走 emoji fallback;有 photo 走 render)
     for i in range(3):
         assert not widget.joined_card.lst.item(i).icon().isNull()

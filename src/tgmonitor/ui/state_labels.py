@@ -31,18 +31,18 @@ from PySide6.QtCore import QCoreApplication
 # 错误:任意状态 → error →  待手动 close
 # 关闭:任意状态 → closing → closed
 STATE_DOT: dict[str, str] = {
-    "ready": "🟢",
-    "error": "🔴",
-    "phone_required": "🟡",
-    "code_required": "🟡",
-    "email_required": "🟡",
-    "email_code_required": "🟡",
-    "registration_required": "🟡",
-    "password_required": "🟡",
-    "closed": "⚪",
-    "logging_out": "⏳",
-    "closing": "⏳",
-    "uninit": "⚪",
+    "ready": "●",
+    "error": "×",
+    "phone_required": "…",
+    "code_required": "…",
+    "email_required": "…",
+    "email_code_required": "…",
+    "registration_required": "…",
+    "password_required": "…",
+    "closed": "–",
+    "logging_out": "…",
+    "closing": "…",
+    "uninit": "–",
 }
 
 # 状态文案 source 字符串(中文);显示走下面的 state_label()。
@@ -82,7 +82,7 @@ _TRANSLATE_CTX = "state_labels"
 
 def state_dot(state: str) -> str:
     """圆点标记;未知状态返默认圆点。"""
-    return STATE_DOT.get(state, "⚪")
+    return STATE_DOT.get(state, "–")
 
 
 def state_label(state: str) -> str:
@@ -101,7 +101,7 @@ def state_badge(state: str) -> str:
     """
     if state in STATE_DOT:
         return f"{STATE_DOT[state]} {state_label(state)}"
-    return f"⚪ {state}"
+    return f"– {state}"
 
 
 def state_hint(state: str) -> str:

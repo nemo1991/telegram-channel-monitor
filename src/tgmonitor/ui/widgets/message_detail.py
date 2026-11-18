@@ -132,7 +132,7 @@ class MessageDetail(QScrollArea):
         v.setSpacing(8)
         v.setAlignment(Qt.AlignCenter)
 
-        icon = QLabel("💬")
+        icon = QLabel("消息")
         icon.setAlignment(Qt.AlignCenter)
         # 用 objectName 而不是 setStyleSheet:空状态 icon 走全局 QSS
         # (`QLabel#emptyHintIcon { font-size: 36px; }`),保持全局样式一致
@@ -192,7 +192,7 @@ class MessageDetail(QScrollArea):
         header_row.addWidget(header)
         header_row.addStretch(1)
 
-        self._btn_copy_text = QPushButton(self.tr("📋 复制文本"))
+        self._btn_copy_text = QPushButton(self.tr("复制文本"))
         self._btn_copy_text.setObjectName("detailActionBtn")
         self._btn_copy_text.setEnabled(bool(m.text))  # 空文本无意义,灰掉
         self._btn_copy_text.clicked.connect(self._on_copy_text)
@@ -239,7 +239,7 @@ class MessageDetail(QScrollArea):
 
         # ---- 媒体 ----
         if m.has_media:
-            v.addWidget(self._section_label(self.tr(f"📎 媒体 ({len(m.media)})")))
+            v.addWidget(self._section_label(self.tr(f"媒体 ({len(m.media)})")))
             for i, med in enumerate(m.media):
                 med_label = QLabel(self._format_media(med, i + 1))
                 med_label.setWordWrap(True)
@@ -262,7 +262,7 @@ class MessageDetail(QScrollArea):
 
         # ---- 原始 JSON ----
         if m.raw:
-            v.addWidget(self._section_label(self.tr("🔍 原始 JSON")))
+            v.addWidget(self._section_label(self.tr("原始 JSON")))
             raw_str = json.dumps(m.raw, indent=2, ensure_ascii=False, default=str)
             raw_edit = QPlainTextEdit(raw_str)
             raw_edit.setReadOnly(True)
@@ -318,7 +318,7 @@ class MessageDetail(QScrollArea):
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
             lines.append(self.tr("   状态: 下载中… ⏳"))
         elif med.download_status == MediaDownloadStatus.FAILED:
-            lines.append(self.tr("   状态: 下载失败 ❌"))
+            lines.append(self.tr("   状态: 下载失败"))
             if med.download_error:
                 lines.append(self.tr(f"   原因: {med.download_error}"))
         return "\n".join(lines)

@@ -53,7 +53,7 @@ class ClearChannelPreviewDialog(QDialog):
 
         # 标题
         title_label = QLabel(
-            self.tr("🗑 清空频道 {title}").format(
+            self.tr("清空频道 {title}").format(
                 title=self._channel_title or f"#{self._preview.channel_id}"
             )
         )
@@ -61,7 +61,7 @@ class ClearChannelPreviewDialog(QDialog):
         layout.addWidget(title_label)
 
         # 警告
-        warn = QLabel(self.tr("⚠ 此操作不可撤销。确认前请仔细检查以下数据:"))
+        warn = QLabel(self.tr("注意:此操作不可撤销。确认前请仔细检查以下数据:"))
         layout.addWidget(warn)
 
         # 数据项
