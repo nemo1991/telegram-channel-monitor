@@ -72,7 +72,7 @@ def test_no_decorative_emoji_in_comments_and_docstrings() -> None:
     """A 层：注释 token 与 docstring 节点内容中不得出现装饰性 emoji。"""
     offenders: list[str] = []
     for path in sorted(_SRC.rglob("*.py")):
-        rel = path.relative_to(_SRC)
+        rel = path.relative_to(_SRC).as_posix()
         source = path.read_text(encoding="utf-8")
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.type == tokenize.COMMENT and (hits := _decorative(token.string)):
@@ -88,7 +88,7 @@ def test_runtime_emoji_limited_to_whitelisted_modules() -> None:
     found: set[str] = set()
     offenders: list[str] = []
     for path in sorted(_SRC.rglob("*.py")):
-        rel = str(path.relative_to(_SRC))
+        rel = path.relative_to(_SRC).as_posix()
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         doc_ids = {id(node) for node in _docstring_nodes(tree)}
