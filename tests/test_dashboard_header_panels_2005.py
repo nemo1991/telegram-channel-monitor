@@ -17,12 +17,7 @@ from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 
 _QSS_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "src"
-    / "tgmonitor"
-    / "ui"
-    / "resources"
-    / "style.qss"
+    Path(__file__).resolve().parent.parent / "src" / "tgmonitor" / "ui" / "resources" / "style.qss"
 )
 
 
@@ -58,9 +53,7 @@ def test_global_pagetitle_qss_rule_preserved():
 def test_dash_panels_have_object_name_and_titles(qapp, qloop, tmp_path):
     """G4:两个面板命中 dashPanel,title 文本保持 2004 契约。"""
     win = build_real_main_window(qloop, tmp_path)
-    groups = [
-        g for g in win.dashboard.findChildren(QGroupBox) if g.objectName() == "dashPanel"
-    ]
+    groups = [g for g in win.dashboard.findChildren(QGroupBox) if g.objectName() == "dashPanel"]
     assert [g.title() for g in groups] == ["最近活动", "频道统计"]
     win.close()
 
