@@ -181,11 +181,23 @@ class MessageDetail(QScrollArea):
         v.setContentsMargins(16, 16, 16, 16)
         v.setSpacing(12)
 
-        # ---- header: 频道 + msg_id ----
+        # ---- header: msg_id(左) + 复制文本(右) ----
+        # 2026-11-18 v2.0.5:复制文本按钮从底部操作行上提到 header,与 #msg_id
+        # 同一行平行;去掉底部独立的关闭行(详见本方法末尾)。
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
         header = QLabel(f"#{m.telegram_msg_id}")
         # 颜色 / font-size / letter-spacing 都走全局 QSS (`#detailHeader`)
         header.setObjectName("detailHeader")
-        v.addWidget(header)
+        header_row.addWidget(header)
+        header_row.addStretch(1)
+
+        self._btn_copy_text = QPushButton(self.tr("📋 复制文本"))
+        self._btn_copy_text.setObjectName("detailActionBtn")
+        self._btn_copy_text.setEnabled(bool(m.text))  # 空文本无意义,灰掉
+        self._btn_copy_text.clicked.connect(self._on_copy_text)
+        header_row.addWidget(self._btn_copy_text)
+        v.addLayout(header_row)
 
         # ---- 元数据 ----
         meta_group = QFrame()
@@ -214,8 +226,9 @@ class MessageDetail(QScrollArea):
         v.addWidget(meta_group)
 
         # ---- 正文 ----
+        # 2026-11-18 v2.0.5:去掉「📝 正文」小标题 —— 纯文本框自身已是正文,
+        # 上方再挂一个标题浪费纵向空间(消息流要"省空间"的整体方向)。
         if m.text:
-            v.addWidget(self._section_label(self.tr("📝 正文")))
             text_edit = QPlainTextEdit(m.text)
             text_edit.setReadOnly(True)
             text_edit.setFrameShape(QFrame.NoFrame)
@@ -260,21 +273,11 @@ class MessageDetail(QScrollArea):
             raw_edit.setObjectName("rawJsonEdit")
             v.addWidget(raw_edit)
 
-        # 关闭按钮(顶部右上角 — 不在主视图,做成行内)
+        # 2026-11-18 v2.0.5:底部操作行(复制文本 + 关闭详情)整体移除 ——
+        # 复制文本已上提到 header 与 #msg_id 平行;关闭详情入口去掉(只读看板
+        # 里点其它消息即切换,无需额外关闭按钮),省出的纵向空间给正文/媒体。
+        # 保留 v.addStretch 让内容不足时贴顶,不撑满整块。
         v.addStretch(1)
-        close_row = QHBoxLayout()
-        # 2026-11-16 v2.0.2:LIVE 页只读化 — 移除导出 / 删除按钮,仅保留复制文本(A3 已确认)
-        self._btn_copy_text = QPushButton(self.tr("📋 复制文本"))
-        self._btn_copy_text.setObjectName("detailActionBtn")
-        self._btn_copy_text.setEnabled(bool(m.text))  # 空文本无意义,灰掉
-        self._btn_copy_text.clicked.connect(self._on_copy_text)
-        close_row.addWidget(self._btn_copy_text)
-
-        close_row.addStretch(1)
-        btn_close = QPushButton(self.tr("关闭详情"))
-        btn_close.clicked.connect(lambda: self.show_message(None))
-        close_row.addWidget(btn_close)
-        v.addLayout(close_row)
 
         self.setWidget(wrap)
 

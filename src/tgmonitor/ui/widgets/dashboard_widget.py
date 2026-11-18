@@ -49,7 +49,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import action_icon
-from tgmonitor.ui.state_labels import state_badge, state_hint
+from tgmonitor.ui.state_labels import state_badge
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -72,9 +72,12 @@ _KIND_LABELS: dict[str, str] = {
 
 
 class _StatCard(QFrame):
-    """单个统计卡片 — 数字 + 标签,纯视觉组件。
+    """单个统计卡片 — 标题 + 数值,两行纯视觉组件。
 
     QSS 用 objectName="statCard" 统一样式(白底圆角 + 阴影)。
+    2026-11-18 v2.0.5:底部 sub_lbl 行整体移除(标题已表达语义,副文本冗余);
+    数值行改成可容纳一个或两个**等大**数值的水平容器 —— 存储后端卡用
+    `set_value_pair()` 把 DB / 对象并排展示,二者同为 #statValue 字号。
     """
 
     def __init__(self, title: str, icon_name: str, parent: QWidget | None = None) -> None:
@@ -86,10 +89,8 @@ class _StatCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         vbox = QVBoxLayout(self)
-        # v2.0.5 FR-02: tighter margins/spacing + 16px 图标,让三行内容在
-        # 68px 固定高度内不被裁切(布局 minimumSize 实测 ≤ 68)。
         vbox.setContentsMargins(16, 6, 16, 6)
-        vbox.setSpacing(1)
+        vbox.setSpacing(2)
 
         # 图标 + 标题
         top = QHBoxLayout()
@@ -104,19 +105,29 @@ class _StatCard(QFrame):
         top.addStretch()
         vbox.addLayout(top)
 
-        # 数值
+        # 数值行:单值 or 两个等值(存储后端)。两个 label 同为 #statValue 样式。
+        value_row = QHBoxLayout()
+        value_row.setSpacing(8)
         self.value_lbl = QLabel("—")
         self.value_lbl.setObjectName("statValue")
-        vbox.addWidget(self.value_lbl)
+        value_row.addWidget(self.value_lbl)
+        self.value2_lbl = QLabel("")
+        self.value2_lbl.setObjectName("statValue")
+        self.value2_lbl.hide()  # 默认单值,双值卡按需 show
+        value_row.addWidget(self.value2_lbl)
+        value_row.addStretch(1)
+        vbox.addLayout(value_row)
 
-        # 副文本
-        self.sub_lbl = QLabel("")
-        self.sub_lbl.setProperty("role", "hint")
-        vbox.addWidget(self.sub_lbl)
-
-    def set_value(self, value: str, sub: str = "") -> None:
+    def set_value(self, value: str) -> None:
+        """设置单个数值(默认形态),隐藏第二数值。"""
         self.value_lbl.setText(value)
-        self.sub_lbl.setText(sub)
+        self.value2_lbl.hide()
+
+    def set_value_pair(self, value: str, value2: str) -> None:
+        """并排显示两个**等大**数值(存储后端卡:DB + 对象)。"""
+        self.value_lbl.setText(value)
+        self.value2_lbl.setText(value2)
+        self.value2_lbl.show()
 
 
 class _ActivityEntry(QWidget):
@@ -364,10 +375,7 @@ class DashboardWidget(QWidget):
 
     def _sync_state_card(self, e: LoginStateChanged) -> None:
         """登录态事件 → 同步连接状态卡片(纯 UI 副作用,不属于活动文案)。"""
-        self.card_state.set_value(
-            state_badge(e.state),
-            e.detail[:60] if e.detail else "",
-        )
+        self.card_state.set_value(state_badge(e.state))
 
     def _add_activity(self, icon_name: str, text: str, occurred_at: datetime | None = None) -> None:
         """追加一条活动记录到列表头部(最新的在上面)。
@@ -418,22 +426,17 @@ class DashboardWidget(QWidget):
         `known_channels`(=已监听)凑数,改为异步读库里 `tg_subscribed=1`
         计数;存量库迁移不回填,首次刷新前显示 0 属预期。
         """
-        self.card_subscribed.set_value(str(subscribed_count), "正在监听")
+        self.card_subscribed.set_value(str(subscribed_count))
 
         # 登录状态 — 走 state_labels 单源映射
         state = self._app.client.state
-        if state == "ready":
-            me = self._app.client.me
-            detail = me.get("first_name", "") or me.get("username", "") if me else ""
-            self.card_state.set_value(state_badge(state), detail)
-        else:
-            self.card_state.set_value(state_badge(state), state_hint(state))
+        self.card_state.set_value(state_badge(state))
 
-        # 存储后端
+        # 存储后端 —— v2.0.5:DB 与对象并排、等大(#statValue)。
         settings = self._app.settings
         db_label = settings.db_backend.value if settings.db_backend else "?"
         os_label = settings.objectstore_backend.value if settings.objectstore_backend else "?"
-        self.card_storage.set_value(f"DB:{db_label}", f"对象:{os_label}")
+        self.card_storage.set_value_pair(f"DB:{db_label}", f"对象:{os_label}")
 
         # 异步取数:TG 订阅频道数 + 每频道消息数统计表
         self._refresh_joined_count()
@@ -483,7 +486,7 @@ class DashboardWidget(QWidget):
         run_coro(
             self._loop,
             self._fetch_joined_count(),
-            on_success=lambda n: self.card_channels.set_value(str(n), "TG 订阅频道"),
+            on_success=lambda n: self.card_channels.set_value(str(n)),
             error_label="dashboard_joined_count",
         )
 
@@ -495,7 +498,7 @@ class DashboardWidget(QWidget):
         """
         if not self._monitor.subscribed_ids:
             self.stats_table.setRowCount(0)
-            self.card_total_messages.set_value("0", "无已监听频道")
+            self.card_total_messages.set_value("0")
             return
         if self._loop is None:
             return  # 测试环境无 loop
@@ -539,7 +542,7 @@ class DashboardWidget(QWidget):
         total: int,
     ) -> None:
         """从 background loop 调回主线程填充表格。"""
-        self.card_total_messages.set_value(f"{total:,}", "已监听频道累计")
+        self.card_total_messages.set_value(f"{total:,}")
         self.stats_table.setRowCount(len(rows))
         for i, (title, kind, count) in enumerate(rows):
             self.stats_table.setItem(i, 0, QTableWidgetItem(title))
