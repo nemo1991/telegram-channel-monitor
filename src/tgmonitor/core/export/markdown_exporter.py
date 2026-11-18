@@ -77,7 +77,7 @@ class MarkdownExporter(Exporter):
                 if m.media:
                     for med in m.media:
                         lines.append(
-                            f"- 📎 **{med.type.value}**  "
+                            f"- 附件: **{med.type.value}**  "
                             f"{med.mime_type or ''}  "
                             f"{_scrub_markdown(med.file_name) if med.file_name else ''}  "
                             f"({_human_size(med.file_size)})"
@@ -112,9 +112,9 @@ def _render_markdown_meta(m: MessageDTO) -> list[str]:
     if m.is_favorite:
         out.append("> ★ 收藏")
     if m.tags:
-        out.append(f"> 🏷 {_scrub_markdown(', '.join(m.tags))}")
+        out.append(f"> 标签: {_scrub_markdown(', '.join(m.tags))}")
     if m.notes:
-        out.append(f"> 📝 {_scrub_markdown(m.notes)}")
+        out.append(f"> 备注: {_scrub_markdown(m.notes)}")
     return out
 
 

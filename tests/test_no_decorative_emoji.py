@@ -1,11 +1,10 @@
 """装饰性 emoji 静态守卫（2.0.6 FR-09）。
 
 分层口径（与 PRD-2.0.6 §5.8 对齐）：
-- A 层：注释 / docstring —— 零容忍，本守卫第一批即锁死；
-- B/C 层：运行时字面量（UI 文案 / 导出模板 / 服务消息）—— 按模块宽白名单起步，
-  每批清理后从白名单移除；白名单出现"已无 emoji 的模块"同样判失败，避免只增不减；
-- D 层：Telegram reaction 等用户真实表情数据 —— 永久允许的边界见
-  `_BOUNDARY_GLYPHS` 与后续批次的细粒度例外，不在此处放宽。
+- A 层：注释 / docstring —— 零容忍；
+- B/C 层：UI 文案 / 导出模板 / 服务消息 —— 装饰 emoji 已全部改为纯文字；
+- D 层：Telegram reaction 等用户真实表情数据 —— 唯一例外精确到字面量，
+  见 `_D_LAYER_LITERALS`，不允许任何模块级放宽。
 
 `★` / `✓` 是与文字语义绑定的边界字形（收藏 / 完成），按 PRD 口径不做全清。
 """
@@ -20,11 +19,10 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parents[1] / "src"
 _BOUNDARY_GLYPHS = {"★", "✓"}
 
-# B 层已清零；仅剩 C 层导出/服务消息与 D 层 reaction 占位符待处理。
-_RUNTIME_EMOJI_MODULES = {
-    "tgmonitor/core/export/html_exporter.py",
-    "tgmonitor/core/export/markdown_exporter.py",
-    "tgmonitor/core/telegram/telethon_messages.py",
+# 最终态：唯一例外是 D 层自定义 reaction 的占位符（`ReactionDTO.emoji` 值），
+# 属于 Telegram 领域数据而非 UI 装饰。精确到字面量，禁止任何模块级放宽。
+_D_LAYER_LITERALS = {
+    ("tgmonitor/core/telegram/telethon_messages.py", "🖼 "),
 }
 
 
@@ -67,10 +65,10 @@ def test_no_decorative_emoji_in_comments_and_docstrings() -> None:
     assert not offenders, "注释/docstring 中的装饰 emoji 未清:\n" + "\n".join(offenders)
 
 
-def test_runtime_emoji_limited_to_whitelisted_modules() -> None:
-    """B/C/D 层：运行时字面量的 emoji 仅允许出现在待清理白名单模块。"""
-    found: set[str] = set()
+def test_runtime_emoji_only_in_reaction_domain_data() -> None:
+    """最终态：运行时字面量的 emoji 仅允许 D 层 reaction 领域数据占位符。"""
     offenders: list[str] = []
+    seen: set[tuple[str, str]] = set()
     for path in sorted(_SRC.rglob("*.py")):
         rel = path.relative_to(_SRC).as_posix()
         source = path.read_text(encoding="utf-8")
@@ -81,11 +79,14 @@ def test_runtime_emoji_limited_to_whitelisted_modules() -> None:
                 continue
             if id(node) in doc_ids:
                 continue
-            if hits := _decorative(node.value):
-                if rel not in _RUNTIME_EMOJI_MODULES:
-                    offenders.append(f"{rel}:{node.lineno}: {hits}")
-                else:
-                    found.add(rel)
-    assert not offenders, "白名单外的运行时 emoji:\n" + "\n".join(offenders)
-    stale = _RUNTIME_EMOJI_MODULES - found
-    assert not stale, "白名单已过期,请随清理进度移除:\n" + "\n".join(sorted(stale))
+            if not _decorative(node.value):
+                continue
+            key = (rel, node.value)
+            if key in _D_LAYER_LITERALS:
+                seen.add(key)
+            else:
+                offenders.append(f"{rel}:{node.lineno}: {_decorative(node.value)}")
+    assert not offenders, "非白名单的运行时 emoji:\n" + "\n".join(offenders)
+    assert seen == _D_LAYER_LITERALS, "D 层白名单已漂移:" + "\n".join(
+        sorted(_D_LAYER_LITERALS - seen) + sorted(seen - _D_LAYER_LITERALS)
+    )
