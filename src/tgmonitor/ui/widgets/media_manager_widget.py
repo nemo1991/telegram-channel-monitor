@@ -2,11 +2,11 @@
 
 布局(从 plan):
 ┌────────────────────────────────────────────────────┐
-│  [Channel ▼] [Type ▼] [Status ▼] [Search🔍] [Refresh]
+│  [Channel ▼] [Type ▼] [Status ▼] [Search] [Refresh]
 ├────────────────────────────────────────────────────┤
-│  🖼 [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Reveal][Copy][Retry][Delete]
-│  🎬 [Dev]  #msg17 video clip.mp4 5.4MB ❌ [Open][Reveal][Copy][Retry][Delete]
-│  🎵 [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Reveal][Copy][Retry][Delete]
+│  [Image] [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Reveal][Copy][Retry][Delete]
+│  [Video] [Dev]  #msg17 video clip.mp4 5.4MB [Failed] [Open][Reveal][Copy][Retry][Delete]
+│  [Audio] [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Reveal][Copy][Retry][Delete]
 ├────────────────────────────────────────────────────┤
 │  [Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans]
 │  Storage: 142 MB / 23 files · 1 failed
@@ -204,7 +204,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         root.addLayout(self._build_toolbar())
 
     def _build_filter_bar(self) -> QHBoxLayout:
-        """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search🔍] [◀ Page N/M ▶] [Refresh]。"""
+        """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search搜索] [◀ Page N/M ▶] [Refresh]。"""
         hbox = QHBoxLayout()
         hbox.setSpacing(8)
         hbox.addWidget(self._build_channel_filter())

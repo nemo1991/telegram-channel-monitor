@@ -124,7 +124,7 @@ class MessagePinChanged(Event):
 
     重要语义:Telegram 推送只携带 `(chat_id, message_id, is_pinned)` 三元组
     (没有完整 message DTO)。MonitorService 订阅后从 storage re-fetch 完整
-    DTO + publish `MessageEdited` 触发 UI 行 📌 图标刷新。
+    DTO + publish `MessageEdited` 触发 UI 行 置顶 图标刷新。
     """
 
     channel_id: int = 0

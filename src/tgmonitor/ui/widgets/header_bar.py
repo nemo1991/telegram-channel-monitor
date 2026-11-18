@@ -5,7 +5,7 @@
   + 登录/登出按钮,固定高 44px。
 - 2026-11-16 v2.0.2:移除中部 `SearchBar`。
 - 2026-11-17 v2.0.3:登录态合并进底部单一状态位(`StatusBar._UnifiedStateLabel`),
-  登录/登出入口迁移到 `SettingsPage`「📱 账户凭证」分组。头栏仅保留
+  登录/登出入口迁移到 `SettingsPage`「账户凭证」分组。头栏仅保留
   `tgmonitor` 标题作品牌锚点(`nav_bar.py` 注释依赖该锚点),不再暴露
   `state_dot` / `state_label` / `btn_action` / `btn_logout` / `update_state`。
 """

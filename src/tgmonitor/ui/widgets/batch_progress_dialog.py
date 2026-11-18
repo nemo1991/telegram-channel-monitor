@@ -8,7 +8,7 @@
   `AppService._cancel_event.set()`,批量 facade 下一个 item break。
   best-effort:已发 Telegram RPC 可能 server-side 仍完成,但 UI 显示
   「操作中断:cancelled」+ 自动 close,符合直觉。
-- react / unreact 标题插入 emoji(`"批量回应 😀 中…"`)— `extra` kwarg 传入。
+- react / unreact 标题插入 emoji(`"批量回应 <表情> 中…"`)— `extra` kwarg 传入。
 - 完成(BatchDone) → 自动 close;close 后解除 signal 连接。
 - 通用 op 字符串("delete"/"mark_read"/"forward"/"pin"/"react" 等),
   标题随 op 切换。
@@ -62,7 +62,7 @@ class BatchProgressDialog(QDialog):
         """`op` 为空用「批量操作中…」通用标题;非空走 `_OP_DEFAULT_TITLES`。
 
         2026-09-10 v1.7.3:`extra` 在 react/unreact 时传入 emoji char,标题
-        会插入(`"批量回应 😀 中…"`);其他 op 忽略 `extra`。
+        会插入(`"批量回应 <表情> 中…"`);其他 op 忽略 `extra`。
 
         2026-09-14 v1.7.5 PR #6 (P0-J):`_failures` 缓存 BatchDone.failures
         列表,失败 > 0 时显示「查看失败详情」按钮 + 自动弹 dialog。
@@ -74,7 +74,7 @@ class BatchProgressDialog(QDialog):
         self._failures: list[tuple[int, int, str]] = []
         title = _OP_DEFAULT_TITLES.get(op, "批量操作中…")
         if op in ("react", "unreact") and extra:
-            # 「批量回应 😀 中…」 — 把 emoji 插到「中」前
+            # 「批量回应 表情 中…」 — 把 emoji 插到「中」前
             title = title.replace("中…", f"{extra} 中…")
         self.setWindowTitle(self.tr(title))
         self.setModal(False)

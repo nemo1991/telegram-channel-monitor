@@ -1,27 +1,17 @@
 """主窗口 — 导航(左) + 内容页(QStackedWidget)。
 
-架构从「工具栏 + splitter 侧栏」改为「竖向导航 + 五页内容」:
+2026-11-18 v2.0.6:撤销独立频道页,监听频道管理迁入设置页 —— 内容页 5→3。
 
   ┌─────────────────────────────────────────────┐
-  │ ●                          🟢 已登录  [登出] │ ← 紧凑头栏
+  │ ●                          已登录  [登出]   │ ← 紧凑头栏
   ├──┬──────────────────────────────────────────┤
-  │  │                                           │
-  │ 📡  │  QStackedWidget                        │
-  │ 实时│   0: 实时流(LIVE) — MessageView 全宽     │
-  │    │   1: 大盘(DASHBOARD) — 统计 + 活动        │
-  │ 📊  │   2: 频道(CHANNELS) — ChannelWidget     │
-  │ 大盘│   3: 媒体管理(MEDIA) — MediaManagerWidget│
-  │    │   4: 设置(SETTINGS) — 整页配置           │
-  │ 📋  │                                           │
-  │ 频道│                                           │
-  │    │                                           │
-  │ 💾  │                                           │
-  │ 媒体│                                           │
-  │    │                                           │
-  │ ⚙  │                                           │
-  │ 设置│                                           │
+  │  │  QStackedWidget                           │
+  │  │   0: 大盘(DASHBOARD) — 统计 + 活动 + 实时流 │
+  │  │   1: 媒体管理(MEDIA) — MediaManagerWidget  │
+  │  │   2: 设置(SETTINGS) — 整页配置             │
+  │  │      └ 监听频道管理 — ChannelWidget        │
   ├──┴──────────────────────────────────────────┤
-  │ 🟢 Ready · 3 channels · 0 new               │ ← 状态栏
+  │ Ready · 3 channels · 0 new                  │ ← 状态栏
   └─────────────────────────────────────────────┘
 
 退出路径(保持与旧版一致):
@@ -90,7 +80,7 @@ ShutdownCb = Callable[[], Awaitable[None]]
 
 
 class MainWindow(QMainWindow):
-    """应用主窗口:左导航 + 5 页内容 + 紧凑头栏 + 状态栏。
+    """应用主窗口:左导航 + 3 页内容 + 紧凑头栏 + 状态栏。
 
     # 5 个 page 由 QStackedWidget 持有:
     #   0 LIVE      → MessageView + MessageDetail(实时流 + 详情)

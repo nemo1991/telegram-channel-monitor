@@ -48,7 +48,7 @@ def _to_local_str(dt: datetime | None) -> str:
 
 
 def _format_reactions(reactions: list[ReactionDTO]) -> str:
-    """PR #10:reactions 列表 → 单行展示 `😀 5  👍 3  ...`。
+    """PR #10:reactions 列表 → 单行展示「表情及计数」。
 
     2026-09-11 v1.7.4:实现下沉到 `format_reactions_short`(同目录 `reaction_format.py`),
     LIVE 行 + 详情面板共用一份代码 — 避免两处分叉。
@@ -226,7 +226,7 @@ class MessageDetail(QScrollArea):
         v.addWidget(meta_group)
 
         # ---- 正文 ----
-        # 2026-11-18 v2.0.5:去掉「📝 正文」小标题 —— 纯文本框自身已是正文,
+        # 2026-11-18 v2.0.5:去掉正文小标题 —— 纯文本框自身已是正文,
         # 上方再挂一个标题浪费纵向空间(消息流要"省空间"的整体方向)。
         if m.text:
             text_edit = QPlainTextEdit(m.text)

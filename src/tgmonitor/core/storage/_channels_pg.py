@@ -1,6 +1,6 @@
 """PG 频道子模块 — 2026-10-16 plan-batch8-1.3。
 
-持 11 个频道 + meta method(`upsert_channel` / `upsert_channel_metadata` /
+持 13 个方法(11 个频道域 + 2 个 meta 域:`upsert_channel` / `upsert_channel_metadata` /
 `update_channel_metadata` / `set_channel_monitored` / `list_channels` /
 `list_monitored_channels` / `get_channel` / `delete_channel` /
 `get_max_telegram_msg_id` / `get_meta` / `set_meta`)+ 顶部

@@ -306,7 +306,7 @@ class RenderMixin(_Base):
         med: MediaDTO,
         key: _RowKey,
     ) -> QWidget:
-        """单行自绘:🖼 [Channel] #msg42 type filename size status [Open][Retry][Delete]。"""
+        """单行自绘:[Image] [Channel] #msg42 type filename size status [Open][Retry][Delete]。"""
         w = QWidget()
         w.setObjectName("mediaRow")
         hbox = QHBoxLayout(w)

@@ -34,7 +34,7 @@ class FilterMixin:
         向后兼容:旧调用 `set_filter(text)` 仍能用(默认 favorite/tag/pinned=False)。
 
         2026-09-14 v1.7.5 PR #8:加 favorite/tag/pinned 3 个 bool kwarg(AND
-        语义)。SearchBar ★/🏷/📌 toggle 状态走这条路径 — 即时 narrow LIVE
+        语义)。SearchBar ★/标签/置顶 toggle 状态走这条路径 — 即时 narrow LIVE
         流已加载消息,无 IO。`search_messages` 异步路径另走 storage 服务端过滤。
         """
         self._filter_text = text.strip().lower()  # type: ignore[attr-defined]

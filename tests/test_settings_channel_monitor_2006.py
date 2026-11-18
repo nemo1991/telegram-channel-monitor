@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import QGroupBox, QLabel
 
 from tests.fixtures._real_window import build_real_main_window
@@ -69,3 +71,29 @@ def test_no_standalone_channel_page(qapp, qloop, tmp_path):
     all_titles = [lbl.text() for lbl in win.findChildren(QLabel)]
     assert "频道管理" not in all_titles
     win.close()
+
+
+def test_channel_widget_has_no_legacy_compat_aliases() -> None:
+    """FR-09 L1:旧兼容桥接属性已由语义明确的公开句柄替代。"""
+    source = (
+        Path(__file__).resolve().parents[1] / "src/tgmonitor/ui/widgets/channel_widget.py"
+    ).read_text(encoding="utf-8")
+    legacy = (
+        "lst_joined",
+        "lst_monitored",
+        "lbl_joined_count",
+        "lbl_subs_count",
+        "btn_refresh",
+        "btn_sync",
+    )
+    for name in legacy:
+        assert name not in source, f"旧桥接属性 {name} 回潮"
+    for name in (
+        "joined_list",
+        "monitored_list",
+        "joined_count_label",
+        "monitored_count_label",
+        "refresh_button",
+        "sync_button",
+    ):
+        assert f"self.{name}" in source, f"新公开句柄 {name} 缺失"

@@ -10,7 +10,7 @@
     form_section.py(FormSection)        ←───  本模块:整组(10+ 字段)
             ▲
             │
-    settings_page.py                    ←───  编排 8 个 FormSection
+    settings_page.py                    ←───  编排 6 个 FormSection
 
 ## 关键设计
 

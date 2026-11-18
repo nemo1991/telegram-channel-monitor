@@ -196,7 +196,7 @@ class TelegramClient(Protocol):
         """emoji 回应 — per-message RPC,不支持批量;调用方走循环 + 异常隔离。
 
         `reaction` 两种格式(2026-09-10 v1.7.3):
-        - 普通 emoji char:`"😀"` `"🔥"` 等 → ReactionEmoji
+        - 普通 emoji char:`"表情"` `"火焰"` 等 → ReactionEmoji
         - custom emoji:`"custom_emoji_id:<id>"` →
           ReactionCustomEmoji(Telegram Premium 自定义 emoji)
         """

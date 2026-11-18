@@ -16,13 +16,13 @@ from tgmonitor.core.dto import MediaDownloadStatus, MessageDTO
 
 
 def _format_meta_icons(m: MessageDTO) -> str:
-    """2026-09-10 v1.7.3:把 ★ / 🏷 / 📝 / 📌 拼成一行字符串;无 metadata 返空串。
+    """2026-09-10 v1.7.3:把 ★ / 标签 / 备注 / 置顶 拼成一行字符串;无 metadata 返空串。
 
-    顺序固定:★ → 🏷 / 📝 / 📌(★ 最重要,放最前;📌 server-side state 放最后)。
+    顺序固定:★ → 标签 / 备注 / 置顶(★ 最重要,放最前;置顶 server-side state 放最后)。
     tags 用 `,` 分隔(与 LIVE 行 hover / MessageDetail 一致);notes 超过
     30 字符截断加 `…`(行高可控,避免 100 字备注撑爆单行)。
 
-    2026-09-11 v1.7.4:reactions 拼到末尾(`🔥 5  👍 3`)— 由
+    2026-09-11 v1.7.4:reactions 拼到末尾(`火焰 5  点赞 3`)— 由
     MessageInteractionsChanged event 触发本地刷新,实时性受限于 Telegram
     互动信息推送(bots-only `updateMessageReactions` user client 不收)。
 
@@ -79,8 +79,8 @@ class FormatMixin:
         head = f"⏱ {dt}  {ch_label}  #{msg_id}"
         if m.author:
             head += f"  👤 {m.author}"
-        # 2026-09-10 v1.7.3:用户元数据 / pin 图标行 — ★ 收藏 / 🏷tags / 📝notes 截断
-        # / 📌 pin。与 v1.7.2 metadata 字段配套:v1.7.2 加了字段但没渲染,本版本补
+        # 2026-09-10 v1.7.3:用户元数据 / pin 图标行 — ★ 收藏 / 标签 / 备注截断
+        # / 置顶 pin。与 v1.7.2 metadata 字段配套:v1.7.2 加了字段但没渲染,本版本补
         # 上。用户右键 ★ 后行立即显示 ★(无需 reload)。
         meta_icons = _format_meta_icons(m)
         if meta_icons:
@@ -90,7 +90,7 @@ class FormatMixin:
             parts = []
             for med in m.media:
                 label = med.type.value
-                # 下载状态标记:⏳ 下载中 / ❌ 失败 / ✓ 已下载(PENDING 不加后缀)
+                # 下载状态标记:⏳ 下载中 / 失败标记 / ✓ 已下载(PENDING 不加后缀)
                 if med.download_status == MediaDownloadStatus.DOWNLOADING:
                     label += "⏳"
                 elif med.download_status == MediaDownloadStatus.FAILED:

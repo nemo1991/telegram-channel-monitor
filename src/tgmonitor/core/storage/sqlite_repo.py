@@ -1,6 +1,6 @@
 """SQLite 仓储 — v2.0.0 默认后端(aiosqlite,WAL)。
 
-单文件内聚实现 `StorageRepository` 全部 42 方法,查询语义与
+单文件内聚实现 `StorageRepository` 的全部方法,查询语义与
 `postgres_repo` 逐条对齐(契约测试 `tests/test_storage_backends.py`
 parametrize 守门)。
 

@@ -479,8 +479,8 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
         # MainWindow 构造会触发 __init__ 里的 _refresh_state + bootstrap_ui
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # initial state:已知频道为空,标签应是 "0"
-        assert win.channel_panel.lbl_joined_count.text() == "已加入频道 · 0"
-        assert win.channel_panel.lst_joined.count() == 0
+        assert win.channel_panel.joined_count_label.text() == "已加入频道 · 0"
+        assert win.channel_panel.joined_list.count() == 0
 
 
 # ============================================================
@@ -516,7 +516,7 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
 
         widget = ChannelWidget(app_svc, qloop)
         # 构造完没有数据 → _empty_joined 应显示
-        assert widget.lst_joined.count() == 0
+        assert widget.joined_list.count() == 0
         assert not widget._empty_joined.isHidden()
 
 
@@ -557,12 +557,12 @@ def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
                 ChannelDTO(id=42, title="新闻频道", kind="channel"),
             ]
         )
-        assert widget.lst_joined.count() == 1
+        assert widget.joined_list.count() == 1
         assert widget._empty_joined.isHidden()
 
         # 清空回 [] → overlay 再出现
         widget.set_joined([])
-        assert widget.lst_joined.count() == 0
+        assert widget.joined_list.count() == 0
         assert not widget._empty_joined.isHidden()
 
 
