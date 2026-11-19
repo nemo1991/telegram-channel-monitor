@@ -27,6 +27,8 @@ Contributors)。
 | `src/tgmonitor/resources/icons/nav_settings.svg`       | Lucide `settings`   |
 | `src/tgmonitor/resources/icons/nav_live.svg`           | Lucide `radio`(2 道大弧 + 中心点) |
 | `src/tgmonitor/resources/icons/nav_channels.svg`       | Lucide `list`(3 dot + 3 line) |
+| `src/tgmonitor/resources/icons/plus.svg`               | Lucide `plus` |
+| `src/tgmonitor/resources/icons/minus.svg`              | Lucide `minus` |
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
 

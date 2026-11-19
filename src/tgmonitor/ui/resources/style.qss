@@ -573,7 +573,7 @@ QTableWidget#statsTable QHeaderView::section:last {
     background: #ffffff;
 }
 
-/* ===== 频道卡片(ChannelWidget 上/下栏) ===== */
+/* ===== 频道卡片(ChannelWidget 左右两栏) ===== */
 #channelCard {
     background: #ffffff;
     border: 1px solid #e2e4e9;
@@ -583,6 +583,24 @@ QTableWidget#statsTable QHeaderView::section:last {
     font-size: 14px;
     font-weight: 700;
     color: #1a1a2e;
+}
+/* v2.0.7 FR-07:行尾加入/移出按钮(图标走 tinted_action_icon) */
+#channelRowName {
+    font-size: 13px;
+    color: #1a1a2e;
+}
+#channelRowAction {
+    border: none;
+    background: transparent;
+    padding: 2px;
+    margin: 0;
+}
+#channelRowAction:hover {
+    background: #eef4fd;
+    border-radius: 4px;
+}
+#channelRowAction:disabled {
+    opacity: 0.45;
 }
 
 /* v2.0.7 FR-02:旧状态点 / 旧头栏状态标签的零消费者规则已清理,
