@@ -604,7 +604,13 @@ class MainWindow(QMainWindow):
     def _refresh_state(self) -> None:
         """channels_changed / 登录状态变化 / 定时 触发刷新。"""
         all_known = self._vm.known_channels
-        self.channel_panel.set_joined(list(all_known.values()))
+        # 2026-11-19 hotfix:左栏「已加入频道」不在这里刷。
+        # known_channels 语义是「仅已监听」(VM bootstrap 从 storage
+        # list_monitored_channels 拉),拿它 set_joined 会在每次监听变更
+        # (双击加入/移出 → channels_changed → 本方法)时把左栏覆盖成
+        # 右栏内容 —— 用户看到「已加入」栏塌缩成与「已监听」相同。
+        # 左栏唯一数据源是「刷新」按钮的 refresh_joined_channels →
+        # joined_loaded → set_joined,与监听状态解耦。
         subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.monitored_ids]
         self.channel_panel.set_monitored(subscribed)
 
