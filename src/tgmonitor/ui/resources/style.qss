@@ -458,6 +458,32 @@ QGroupBox#dashPanel::title {
     font-size: 13px;
 }
 
+/* v2.0.7 FR-05:设置页各分组标题归位卡片内左上(大盘 dashPanel 同款)。
+ * 专属 objectName 命中,全局 QGroupBox 的 margin-top:14px 规则不动。
+ * 内容顶部留白由 form_section 的 layout margin(40px)提供,这里 padding 归零。 */
+QGroupBox#settingsSection,
+QGroupBox#settingsChannelMonitorGroup {
+    background: #ffffff;
+    border: 1px solid #e2e4e9;
+    border-radius: 10px;
+    margin-top: 0;
+    padding: 0;
+    font-weight: 600;
+    font-size: 13px;
+    color: #1a1a2e;
+}
+QGroupBox#settingsSection::title,
+QGroupBox#settingsChannelMonitorGroup::title {
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    top: 10px;
+    left: 16px;
+    padding: 0 4px;
+    color: {accent};
+    font-size: 14px;
+    font-weight: 700;
+}
+
 /* ===== 列表 ===== */
 QListWidget {
     background: #ffffff;
@@ -539,7 +565,12 @@ QTableWidget#statsTable QHeaderView::section:last {
 /* ===== 滚动区域(设置页) ===== */
 #settingsScroll {
     border: none;
-    background: transparent;
+    background: #ffffff;
+}
+/* v2.0.7 FR-04:设置页整页白底,消除 #contentArea 的灰色透出。 */
+#settingsPage,
+#settingsPage #settingsScrollContent {
+    background: #ffffff;
 }
 
 /* ===== 频道卡片(ChannelWidget 上/下栏) ===== */

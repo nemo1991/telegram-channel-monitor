@@ -2,7 +2,7 @@
 """SettingsPage — 整页设置(不再是模态对话框)。
 
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
-以 QScrollArea 内分组排列,底部固定「保存到 .env」+「保存并应用」按钮。
+以 QScrollArea 内分组排列,底部固定「保存并应用」按钮(v2.0.7 FR-09)。
 
 2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「账户凭证」
 分组,底层仍是 LoginDialog / app.auth.logout();头栏退化为纯标题。
@@ -76,13 +76,14 @@ class SettingsPage(QWidget):
         parent: QWidget | None = None,
         channel_panel: ChannelWidget | None = None,
     ) -> None:
-        """建 6 个分组 + 底部按钮 + 加载当前设置。
+        """建 6 个 FormSection + 1 个监听分组 + 底部按钮 + 加载当前设置。
 
-        `env_path` 是「保存到 .env」按钮的写入路径(platform-native 由 app.py 注入)。
+        `env_path` 是「保存并应用」写入的 platform-native .env 路径(由 app.py 注入)。
         `channel_panel` 是 2.0.6 从频道页迁入的监听频道控件(单实例 reparent,
         MainWindow 仍持引用);不经 FormSection,不参与 collect() 写 .env。
         """
         super().__init__(parent)
+        self.setObjectName("settingsPage")
         self._app = app
         self._loop = loop
         self._env_path = env_path
@@ -106,11 +107,8 @@ class SettingsPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 固定标题 — 走 tr() 一次性
-        self.header_label = QLabel(self.tr("设置"))
-        self.header_label.setObjectName("pageTitle")
-        self.header_label.setContentsMargins(24, 24, 24, 8)
-        root.addWidget(self.header_label)
+        # v2.0.7 FR-04:页面级「设置」标题删除(导航已指明当前页),
+        # 顶部空间直接给第一张卡片。全局 #pageTitle QSS 规则保留给其它页。
 
         # 滚动区域
         scroll = QScrollArea()
@@ -119,8 +117,9 @@ class SettingsPage(QWidget):
         scroll.setObjectName("settingsScroll")
 
         scroll_content = QWidget()
+        scroll_content.setObjectName("settingsScrollContent")
         form_root = QVBoxLayout(scroll_content)
-        form_root.setContentsMargins(24, 8, 24, 24)
+        form_root.setContentsMargins(24, 16, 24, 24)
         form_root.setSpacing(16)
 
         # 6 个 FormSection(标题已 tr)
@@ -244,11 +243,12 @@ class SettingsPage(QWidget):
         box = QGroupBox(self.tr("监听频道管理"))
         box.setObjectName("settingsChannelMonitorGroup")
         box_layout = QVBoxLayout(box)
-        box_layout.setContentsMargins(12, 12, 12, 12)
-        box_layout.setSpacing(8)
+        # v2.0.7 FR-05/FR-10:与 FormSection 卡片同款内边距(顶部 40px 给标题)。
+        box_layout.setContentsMargins(16, 40, 16, 16)
+        box_layout.setSpacing(12)
         box_layout.addWidget(panel, 1)
-        # QScrollArea(widgetResizable) 内 stretch 不生效,给最小高度保证双栏可见。
-        box.setMinimumHeight(460)
+        # v2.0.7 FR-06:左右布局后纵向占用减半,最小高度 460→360。
+        box.setMinimumHeight(360)
         root.addWidget(box)
 
     @property
@@ -598,7 +598,7 @@ class SettingsPage(QWidget):
         """
         s = self._app.settings
 
-        # 8 section 通用 load
+        # 7 个分组通用 load(6 个 FormSection + 监听频道由 MainWindow 单独刷)
         section_values = {
             # account
             "api_id": s.api_id,

@@ -151,10 +151,16 @@ class FormSection:
         (test_form_row.py:109-112,174-177 守门)。
         """
         gb = QGroupBox(self.title, parent)
+        # v2.0.7 FR-05:专属 objectName 让 QSS 把标题画在卡片内左上,
+        # 不影响全局 QGroupBox(大盘 dashPanel 同款做法)。
+        gb.setObjectName("settingsSection")
         v = QVBoxLayout(gb)
-        v.setContentsMargins(8, 8, 8, 8)
+        # 顶部 40px 给「卡片内左上」的标题留位(QSS 只管标题定位)。
+        v.setContentsMargins(16, 40, 16, 16)
         form = QFormLayout()
         form.setLabelAlignment(form.labelAlignment())
+        # v2.0.7 FR-10:表单行距统一 12px。
+        form.setSpacing(12)
         v.addLayout(form)
 
         self._groupbox = gb
