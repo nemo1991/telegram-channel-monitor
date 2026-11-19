@@ -119,7 +119,7 @@ def _wait_for_sync(loop, pred, *, timeout: float = 2.0, step: float = 0.02) -> b
     return False
 
 
-def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
+def test_vm_bootstrap_populates_monitored_channels_from_storage(qapp, qloop):
     """2026-09-29:VM.bootstrap_ui 改走 storage 真理,不再走 TDLib getChats。
 
     设计意图:
@@ -133,7 +133,7 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
     测试:
       1) client.add_channel 注入 3 个频道(TD 视角)
       2) storage.upsert_channel 注入 2 个 is_monitored=True(真理视角)
-      3) VM.bootstrap_ui 触发后,known_channels 应等于 2(只真理),
+      3) VM.bootstrap_ui 触发后,monitored_channels 应等于 2(只真理),
          不是 3——反映新语义。
 
     2026-10-03 v1.12.1 follow-up:setup_async 改走一次性临时 loop 跑 setup
@@ -192,20 +192,20 @@ def test_vm_bootstrap_populates_known_channels_from_storage(qapp, qloop):
         # 触发 bootstrap_ui → 内部 fire-and-forget _go()
         vm.bootstrap_ui()
 
-        # 等 known_channels 填入 2 个(只真理)
+        # 等 monitored_channels 填入 2 个(只真理)
         def _two_channels() -> bool:
-            return len(vm.known_channels) >= 2
+            return len(vm.monitored_channels) >= 2
 
         ok = _wait_for_sync(qloop, _two_channels, timeout=3.0)
         assert ok, (
-            f"VM.bootstrap_ui 没有在 3s 内填 known_channels;"
-            f"got known_channels={dict(vm.known_channels)}"
+            f"VM.bootstrap_ui 没有在 3s 内填 monitored_channels;"
+            f"got monitored_channels={dict(vm.monitored_channels)}"
         )
         # 新语义:VM 走 storage,只看到 2 个 subscribed(不是 3 个 TD 加入)
-        assert len(vm.known_channels) == 2
-        assert sorted(vm.known_channels.keys()) == [100, 200]
+        assert len(vm.monitored_channels) == 2
+        assert sorted(vm.monitored_channels.keys()) == [100, 200]
         # 300 不应出现 —— TD join 了但 storage 没订阅,真理优先
-        assert 300 not in vm.known_channels
+        assert 300 not in vm.monitored_channels
 
 
 def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
@@ -220,7 +220,7 @@ def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
     测试:
       1) client._state = 'uninit'(中间态,模拟 client 还没走完启动)
       2) storage 里 2 个 subscribed channels(真理已就绪)
-      3) VM.bootstrap_ui 触发后,**不等 state 变 ready**,known_channels
+      3) VM.bootstrap_ui 触发后,**不等 state 变 ready**,monitored_channels
          立刻填上 2 个 —— storage 不需要 TDLib state。
 
     2026-10-03 v1.12.1 follow-up:同 test_main_window_initial_refresh_state_is_empty
@@ -266,17 +266,17 @@ def test_vm_bootstrap_does_not_wait_for_client_state(qapp, qloop):
 
         # 给 0.5s —— storage 是同步真理,500ms 应该填好(测试也不让 wait 太长)
         def _two_channels() -> bool:
-            return len(vm.known_channels) >= 2
+            return len(vm.monitored_channels) >= 2
 
         ok = _wait_for_sync(qloop, _two_channels, timeout=0.5)
         assert ok, (
             f"VM.bootstrap_ui 应该不依赖 TDLib state;但 1s 内没填上 channels。"
-            f"known_channels={dict(vm.known_channels)};"
+            f"monitored_channels={dict(vm.monitored_channels)};"
             f"client._state={client._state!r}"
         )
         # 关键断言:client 仍然是中间态,但 VM 已经填好
         assert client._state == "uninit"
-        assert sorted(vm.known_channels.keys()) == [100, 200]
+        assert sorted(vm.monitored_channels.keys()) == [100, 200]
 
 
 def test_list_joined_waits_for_state_to_become_ready_via_telethon_client(
@@ -715,8 +715,8 @@ def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
 # ============================================================
 
 
-def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
-    """`_build_sync_titles(ids)` 从 VM.known_channels 拉 title,缺时回退
+def test_build_sync_titles_uses_monitored_channels(qapp, qloop) -> None:
+    """`_build_sync_titles(ids)` 从 VM.monitored_channels 拉 title,缺时回退
     `#<id>`。"""
     import tempfile
 
@@ -751,7 +751,7 @@ def test_build_sync_titles_uses_known_channels(qapp, qloop) -> None:
 
 
 def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
-    """VM.known_channels 有 DTO 时优先用 `.title`,不回退。"""
+    """VM.monitored_channels 有 DTO 时优先用 `.title`,不回退。"""
     import tempfile
 
     from tgmonitor.core.app_service import AppService
@@ -779,8 +779,8 @@ def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
         app_svc, monitor = fut.result(timeout=10.0)
 
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-        # 直接 inject VM.known_channels 一个 DTO(2026-10-09 走 `SyncFlowController`)
-        win._vm.known_channels[42] = ChannelDTO(id=42, title="新闻频道")
+        # 直接 inject VM.monitored_channels 一个 DTO(2026-10-09 走 `SyncFlowController`)
+        win._vm.monitored_channels[42] = ChannelDTO(id=42, title="新闻频道")
         titles = win._sync_flow_ctrl._build_sync_titles([42, 100])
         assert titles[42] == "新闻频道"
         assert titles[100] == "#100"  # 没 DTO,回退
@@ -929,15 +929,15 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
 
 def test_refresh_state_keeps_joined_list_when_only_monitored_known(qapp, qloop) -> None:
     """双击加入监听触发 _refresh_state 后,左栏「已加入频道」不得被
-    known_channels(=已监听子集)覆盖。
+    monitored_channels 覆盖。
 
     现场 bug(用户 2026-11-19 反馈):左栏装入 TG 全部已加入频道后,
     双击某个加入监听 → ChannelMonitored → channels_changed →
-    `_refresh_state` → `set_joined(known_channels)` 用「仅已监听」
+    `_refresh_state` → `set_joined(monitored_channels)` 用「仅已监听」
     覆盖左栏,导致左栏塌缩成与右栏「已监听」完全相同。
 
     左栏数据源应只由「刷新」按钮的 joined_loaded→set_joined 驱动;
-    known_channels 语义是「仅已监听」,只能喂右栏交集。
+    monitored_channels 语义是「仅已监听」,只能喂右栏交集。
     """
     import tempfile
 
@@ -968,13 +968,13 @@ def test_refresh_state_keeps_joined_list_when_only_monitored_known(qapp, qloop) 
         win.channel_panel.set_joined(joined)
         assert win.channel_panel.joined_list.count() == 3
 
-        # 模拟 known_channels 只含 1 个已监听频道(双击加入后的真实状态)
-        win._vm.known_channels = {100: ChannelDTO(id=100, title="已加入A")}
+        # 模拟 monitored_channels 只含 1 个已监听频道(双击加入后的真实状态)
+        win._vm.monitored_channels = {100: ChannelDTO(id=100, title="已加入A")}
 
         # 触发监听变更后的状态刷新
         win._refresh_state()
 
         # 左栏必须仍是全部 3 个已加入频道,不得塌缩成右栏那 1 个
         assert win.channel_panel.joined_list.count() == 3, (
-            "左栏被 known_channels(仅已监听)覆盖 —— 双击加入后左栏塌缩成右栏"
+            "左栏被 monitored_channels(仅已监听)覆盖 —— 双击加入后左栏塌缩成右栏"
         )

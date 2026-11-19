@@ -14,7 +14,7 @@ facade 不再持:
   21 events(channels 2 + system 7 + messages 3 + media 5 + export 4)
 - `_wire_bus` — 1 行 `super().wire_bus()` 委派也由 `BusMixin.__init__`
   内部 `self.wire_bus()` 调,facade 不需要再声明
-- 3 字段初始化:`known_channels` / `_export_task` / `_message_count` —
+- 3 字段初始化:`monitored_channels` / `_export_task` / `_message_count` —
   改由各自 mixin 类体声明提供 default 初值(ChannelsMixin 字典
   / ExportMixin None / MessagesMixin 0),BusMixin.__init__ 不重复
   赋值(避免 facade init 跨 mixin 写字段违反「字段同 mixin 持有」)
@@ -52,7 +52,7 @@ class MonitorViewModel(
     # 安全更新 UI。不持有任何业务状态 — 业务状态在 `MonitorService._whitelist`
     # 和 `AppService`。
     #
-    # `known_channels` 是 UI 缓存(VM 唯一例外,ChannelsMixin 持有):订阅后
+    # `monitored_channels` 是 UI 缓存(VM 唯一例外,ChannelsMixin 持有):订阅后
     # 收到 `ChannelMonitored` 就更新,VM 用它在下栏显示频道名 — 不重新查
     # storage。
     #
@@ -64,7 +64,7 @@ class MonitorViewModel(
     #
     # 2026-10-20 plan-batch9-η:`__init__` 由 `BusMixin.__init__` 接管,
     # facade 类体不再声明。3 引用(`app` / `monitor` / `loop`)+ 3 字段
-    # (`known_channels` / `_export_task` / `_message_count`)由各自 mixin
+    # (`monitored_channels` / `_export_task` / `_message_count`)由各自 mixin
     # 类体 default 初值兜底。
     #
     # 33 Signal 分布:
@@ -90,7 +90,7 @@ class MonitorViewModel(
     #   `cancel_current_batch` / `export_media_list` / `export_zip`
     #
     # 3 状态字段:
-    # - `known_channels: dict[int, ChannelDTO]` — ChannelsMixin 类体声明,
+    # - `monitored_channels: dict[int, ChannelDTO]` — ChannelsMixin 类体声明,
     #   ChannelMonitored / ChannelUnmonitored handler 维护
     # - `_export_task: asyncio.Future[None] | None` — ExportMixin 类体声明,
     #   start_export 写入 / _on_export_done 清空

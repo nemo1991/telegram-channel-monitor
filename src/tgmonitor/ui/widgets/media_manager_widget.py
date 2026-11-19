@@ -95,7 +95,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     | 归属 | 文件 | 内容 |
     |---|---|---|
     | **facade(本类)** | `media_manager_widget.py` | 14 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` 文案访问器** |
-    | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_known_channels` |
+    | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_monitored_channels` |
     | `RenderMixin` | `_mm_render.py` | 16 method — VM 注入 / 缩略图 LRU / 列表重渲 / 行构建 / meta 列 / 行内按钮 / 下载进度 |
     | `ActionsMixin` | `_mm_actions.py` | 11 method — 选中集 / 批量重试·删除·清频道 / CSV·ZIP 导出 |
     | 共享常量 | `_mm_base.py` | `_RowKey` / `_format_size` / `_MEDIA_ICONS` / `_STATUS_TEXT` / `LIGHTBOX_PREVIEWABLE_TYPES` |
@@ -154,7 +154,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self._vm: object | None = None
 
         # filter 状态(channel id list / 已知频道缓存 / 数据 / 选中集合)
-        self._known_channels: dict[int, ChannelDTO] = {}
+        self._monitored_channels: dict[int, ChannelDTO] = {}
         self._rows: list[tuple[MessageDTO, int, MediaDTO]] = []
         self._last_keys: list[_RowKey] = []  # 与 _rows 一一对应,row → key
         # 分页(2026-08-25 v1.3.0 PR #6)— `_total` 从 VM payload 拿;

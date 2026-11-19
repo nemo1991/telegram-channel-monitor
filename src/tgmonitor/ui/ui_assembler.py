@@ -133,7 +133,7 @@ class UiAssembler:
             self._mw.app,
             self._mw.monitor,
             loop=self._mw.loop,
-            channels_provider=lambda: self._mw._vm.known_channels,
+            channels_provider=lambda: self._mw._vm.monitored_channels,
             live_view=live_view,
             message_detail=message_detail,
         )

@@ -10,7 +10,7 @@
   立即 AttributeError 在 `wire_bus()` 调时即失败(显式优于静默漏挂)
 - `__init__()` — 2026-10-20 plan-batch9-η 起接管 facade 初始化:
   `super().__init__()` 收口 QObject → 赋 3 facade 实例引用 →
-  `self.wire_bus()` 触发自动 wire 21 events。3 字段(known_channels /
+  `self.wire_bus()` 触发自动 wire 21 events。3 字段(monitored_channels /
   _export_task / _message_count)由各自 mixin 类级声明提供 default 初值,
   `__init__` 不重复赋值以避免「facade init 跨 mixin 写字段」违反
   字段同 mixin 持有原则。
@@ -53,7 +53,7 @@ class BusMixin:
 
     `__init__` 2026-10-20 plan-batch9-η 起接管 facade 初始化 — `super().__init__()`
     走 QObject → 赋 3 facade 实例引用(`app` / `monitor` / `loop`) →
-    `self.wire_bus()` 触发自动 wire 21 events。3 字段(known_channels /
+    `self.wire_bus()` 触发自动 wire 21 events。3 字段(monitored_channels /
     _export_task / _message_count)由各自 mixin 类级声明提供 default
     初值,本 `__init__` 不重复赋值以避免 facade init 跨 mixin 写字段。
     """
@@ -75,9 +75,9 @@ class BusMixin:
         21 events(channels 2 + system 7 + messages 3 + media 5 + export 4)。
 
         3 字段(语义上归各 mixin 持有,init 集中在本方法避免 mutable
-        default 共享陷阱 — `known_channels: dict = {}` 类体 default
+        default 共享陷阱 — `monitored_channels: dict = {}` 类体 default
         会被多 VM 实例共享,违反 facade per-instance 语义):
-        - `self.known_channels: dict[int, ChannelDTO] = {}`(ChannelsMixin 域)
+        - `self.monitored_channels: dict[int, ChannelDTO] = {}`(ChannelsMixin 域)
         - `self._message_count: int = 0`(MessagesMixin 域)
         - `self._export_task: asyncio.Future[None] | None = None`
           (ExportMixin 域)
@@ -97,7 +97,7 @@ class BusMixin:
         self.loop = loop
         # 2026-10-20 plan-batch9-η:3 mixin 字段单点 init 收口(类体
         # default 不能用 `= {}` mutable shared,改在本方法显式实例属性赋值)
-        self.known_channels: dict[int, ChannelDTO] = {}
+        self.monitored_channels: dict[int, ChannelDTO] = {}
         self._message_count = 0
         self._export_task: asyncio.Future[None] | None = None
         self.wire_bus()

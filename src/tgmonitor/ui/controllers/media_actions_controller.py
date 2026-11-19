@@ -63,9 +63,11 @@ class MediaActionsController:
     def on_media_refresh(self) -> None:
         """Media Manager 顶部 refresh / filter 变化 → 拉一次列表。
 
-        同时把当前 known channels 推给 widget 的 channel 下拉框。
+        同时把当前 monitored channels 推给 widget 的 channel 下拉框。
         """
-        self._ctx.media_manager.set_known_channels(list(self._ctx.vm.known_channels.values()))
+        self._ctx.media_manager.set_monitored_channels(
+            list(self._ctx.vm.monitored_channels.values())
+        )
         f = self._ctx.media_manager.current_filters()
         self._ctx.vm.load_media_list(
             channel_id=f["channel_id"],
@@ -167,7 +169,7 @@ class MediaActionsController:
 
         if not isinstance(preview, DeleteChannelPreview):
             return
-        ch = self._ctx.vm.known_channels.get(channel_id)
+        ch = self._ctx.vm.monitored_channels.get(channel_id)
         title = ch.title if ch else ""
         from tgmonitor.ui.widgets.clear_channel_preview_dialog import (
             ClearChannelPreviewDialog,

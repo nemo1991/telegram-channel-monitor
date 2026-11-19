@@ -3,14 +3,14 @@
 
 `MonitorViewModel` 拆 5 mixin + BusMixin 第二步(2026-10-19
 plan-batch9-β):channels 域 = 2 handler + 4 method + 1 signal +
-`known_channels` 字段。
+`monitored_channels` 字段。
 
 - handler:`_on_channel_monitored` / `_on_channel_unmonitored`
 - method:`bootstrap_ui` / `refresh_monitored_channels` /
   `monitor_channel` / `unmonitor_channel`
 - signal:`channels_changed`
-- 状态:`known_channels: dict[int, ChannelDTO]`(public,被
-  `main_window.py:755` `self._vm.known_channels` 读,不能改命名 /
+- 状态:`monitored_channels: dict[int, ChannelDTO]`(public,被
+  `main_window.py:755` `self._vm.monitored_channels` 读,不能改命名 /
   访问性)— 由 monitor_vm `__init__` 显式设 `{}`,本 mixin 不写
   `__init__` 避免与 facade 冲突(2026-10-19 plan-batch9 §8 风险
   #2 缓解:仅 BusMixin 的 `__init__` 显式 `super().__init__()` 收口)
@@ -58,7 +58,7 @@ class ChannelsMixin(_Base):
     - 4 method:`bootstrap_ui` / `refresh_monitored_channels` /
       `monitor_channel` / `unmonitor_channel`
     - 1 signal:`channels_changed`
-    - 1 状态字段:`known_channels: dict[int, ChannelDTO]`(由
+    - 1 状态字段:`monitored_channels: dict[int, ChannelDTO]`(由
       monitor_vm `__init__` 设,本 mixin 不写 init)
     - 2 EventBus handler:ChannelMonitored / ChannelUnmonitored
     """
@@ -70,10 +70,10 @@ class ChannelsMixin(_Base):
     # `BusMixin.__init__` 统一接管。
     # **不能**写 `= {}` mutable default — 会被多 VM 实例共享
     # (Python 类属性语义,违反 facade per-instance 语义)。
-    # BusMixin.__init__ 显式 `self.known_channels: dict[int, ChannelDTO] = {}`
+    # BusMixin.__init__ 显式 `self.monitored_channels: dict[int, ChannelDTO] = {}`
     # 创建每实例独立空 dict,符合 plan §8 #2 「单点 init 收敛」惯例
     # (plan-batch7-goal2 MessageListModel 7 字段单点 init 模式)。
-    known_channels: dict[int, ChannelDTO]
+    monitored_channels: dict[int, ChannelDTO]
 
     # 2026-10-19 plan-batch9-β:handler 自动挂 — BusMixin.wire_bus()
     # 走 MRO walk 累加本 dict,`getattr(self, name)` 拿 bound method
@@ -89,14 +89,14 @@ class ChannelsMixin(_Base):
     async def _on_channel_monitored(self, e: object) -> None:
         if not isinstance(e, ChannelMonitored) or e.channel is None:
             return
-        self.known_channels[e.channel.id] = e.channel
+        self.monitored_channels[e.channel.id] = e.channel
         # 走 ChannelService → MonitorService 内部 WhitelistManager(sync),
         # 不绕过领域服务直调 `self.monitor.add_to_whitelist(cid)`。
         self.app.channels.add_to_whitelist(e.channel.id)
         self.channels_changed.emit()
         # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _StatsLabel 订阅
         # stats_changed(SystemMixin 持有)→ 跨 mixin emit。
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
+        self.stats_changed.emit((len(self.monitored_channels), self._message_count))
 
     async def _on_channel_unmonitored(self, e: object) -> None:
         if not isinstance(e, ChannelUnmonitored):
@@ -104,13 +104,13 @@ class ChannelsMixin(_Base):
         # 2026-10-15 plan-batch6-2 副产物:同上,走 facade。
         self.app.channels.remove_from_whitelist(e.channel_id)
         # 2026-09-29:Media Manager combo 走 storage 真理,unsub 后
-        # 立即从 known_channels 清掉 — 下次 channels_changed →
-        # set_known_channels 不再显示这个频道。不必等下次
+        # 立即从 monitored_channels 清掉 — 下次 channels_changed →
+        # set_monitored_channels 不再显示这个频道。不必等下次
         # refresh_monitored_channels 同步。
-        self.known_channels.pop(e.channel_id, None)
+        self.monitored_channels.pop(e.channel_id, None)
         self.channels_changed.emit()
         # 跨 mixin emit(SystemMixin stats_changed signal)
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
+        self.stats_changed.emit((len(self.monitored_channels), self._message_count))
 
     # ---- 4 public method ----
 
@@ -119,7 +119,7 @@ class ChannelsMixin(_Base):
 
         2026-08-30 沿用 — 为什么需要:
         - `bootstrap()` 同步了 `_subscribed` 到内存,但 VM 不知道。
-        - VM 的 `known_channels` 只在 `refresh_monitored_channels`
+        - VM 的 `monitored_channels` 只在 `refresh_monitored_channels`
           或 `ChannelMonitored` 事件后才填充,启动时为空 →
           `_refresh_state` 算 `subscribed` 时筛不出任何行 → 下栏
           一直空。
@@ -129,13 +129,13 @@ class ChannelsMixin(_Base):
 
         已监听的 id 列表(monitor._whitelist)在 `app._setup_async`
         里已经从 storage 读回并 set,这里只负责把 DTO 拉回来
-        填 `known_channels`,然后 emit `channels_changed` 让 UI
+        填 `monitored_channels`,然后 emit `channels_changed` 让 UI
         算交集并刷新。
         """
         self.refresh_monitored_channels()
 
     def refresh_monitored_channels(self) -> None:
-        """后台从 storage 拉已监听频道 → 填 known_channels → emit channels_changed。
+        """后台从 storage 拉已监听频道 → 填 monitored_channels → emit channels_changed。
 
         2026-09-29:从 `list_joined_channels`(TDLib getChats,实时但
         跟真理漂移)改为 `list_monitored_channels`(storage 落库
@@ -152,13 +152,13 @@ class ChannelsMixin(_Base):
         async def _go() -> None:
             chs = await self.app.channels.list_monitored_channels()
             for ch in chs:
-                self.known_channels[ch.id] = ch
+                self.monitored_channels[ch.id] = ch
             self.channels_changed.emit()
             # 2026-10-01 v1.11.x 状态栏组件化:启动后立即 emit
             # stats_changed 让状态栏 _StatsLabel 拿到首屏已监听
             # 频道数。
             self.stats_changed.emit(
-                (len(self.known_channels), self._message_count),
+                (len(self.monitored_channels), self._message_count),
             )
 
         run_coro(self.loop, _go(), error_label="refresh_channels")

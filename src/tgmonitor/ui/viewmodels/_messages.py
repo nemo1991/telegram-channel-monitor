@@ -33,7 +33,7 @@ signal(顶部搜索功能区整体移除)。`load_recent_messages` limit 200→1
   emit `self.last_message_received` / `self.stats_changed` 是本 mixin signal;
   emit `self.message_received` 也本 mixin — 跨 mixin 通信 0。
 - `_on_message_received` 外部 emit 触发方:`ChannelsMixin._on_channel_monitored`
-  也 emit `self.stats_changed.emit((len(self.known_channels),
+  也 emit `self.stats_changed.emit((len(self.monitored_channels),
   self._message_count))` — 跨 mixin emit(ChannelsMixin → MessagesMixin
   signal),由 Shiboken metaclass 透传,mypy 已被文件头 disable-error-code
   屏蔽。
@@ -133,7 +133,7 @@ class MessagesMixin(_Base):
         # _LastMessageLabel 自己渲染;MainWindow 不再关心。
         self._message_count += 1
         self.last_message_received.emit(e.message.date)
-        self.stats_changed.emit((len(self.known_channels), self._message_count))
+        self.stats_changed.emit((len(self.monitored_channels), self._message_count))
 
     async def _on_message_edited(self, e: object) -> None:
         """2026-08-24:Telegram 推送的编辑事件 → 转发 UI。

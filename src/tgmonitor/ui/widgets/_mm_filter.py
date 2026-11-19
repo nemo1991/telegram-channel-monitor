@@ -4,11 +4,11 @@
 `MediaManagerWidget` 拆 3 mixin + facade 的**第二步**:抽筛选与分页域。
 
 - 6 method:`_wire_filter` / `_render_page_info` / `_on_page_prev` /
-  `_on_page_next` / `set_known_channels` / `current_filters`
+  `_on_page_next` / `set_monitored_channels` / `current_filters`
 - 持有 widget 引用(均由 facade `_build_*` 建好后挂到 facade):
   `cmb_channel` / `cmb_type` / `cmb_status` / `cmb_sort` / `cmb_dir` /
   `edit_search` / `lbl_page` / `btn_prev` / `btn_next`
-- 持有状态:`_page` / `_page_size` / `_total` / `_known_channels`
+- 持有状态:`_page` / `_page_size` / `_total` / `_monitored_channels`
   / `_search_timer`(后者由 `_wire_filter` 懒建)
 
 **本 mixin 不含 UI 文案调用** —— 选它做第一个搬家的 mixin 正是为了
@@ -49,7 +49,7 @@ class FilterMixin(_Base):
     """筛选联动 + 分页导航 + filter 导出 — 2026-10-20 plan-batch10-β。
 
     公开 API 1:1 保留原 `MediaManagerWidget` 筛选域:
-    - 2 public method:`set_known_channels` / `current_filters`
+    - 2 public method:`set_monitored_channels` / `current_filters`
     - 4 private method:`_wire_filter` / `_render_page_info` /
       `_on_page_prev` / `_on_page_next`
     """
@@ -118,13 +118,13 @@ class FilterMixin(_Base):
 
     # ---- 公共槽(MainWindow 调) ----
 
-    def set_known_channels(self, channels: list[ChannelDTO]) -> None:
+    def set_monitored_channels(self, channels: list[ChannelDTO]) -> None:
         """VM.bootstrap_ui → MainWindow → 这里。
 
         重新填充 channel combo;保留当前选中。
         """
         cur = self.cmb_channel.currentData()
-        self._known_channels = {c.id: c for c in channels}
+        self._monitored_channels = {c.id: c for c in channels}
         self.cmb_channel.blockSignals(True)
         self.cmb_channel.clear()
         self.cmb_channel.addItem("All channels", None)
