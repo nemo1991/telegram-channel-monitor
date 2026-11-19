@@ -355,14 +355,14 @@ async def test_channel_stats_show_real_title_and_kind(qapp: QApplication) -> Non
         return_value={11: SimpleNamespace(messages=3), 22: SimpleNamespace(messages=5)}
     )
 
-    rows, total = await dash._fetch_channel_rows()
+    # v2.0.7 FR-01:total 仅供已删除的「消息总数」顶卡,现已从返回值移除。
+    rows = await dash._fetch_channel_rows()
     assert rows[0] == ("科技早报", "频道", 3)
     assert rows[1] == ("闲聊群", "群组", 5)
     assert rows[2] == ("#33", "群组", 0)
     assert rows[3] == ("无类型频道", "", 0)
-    assert total == 8
 
-    dash._apply_stats_table(rows, total)
+    dash._apply_stats_table(rows)
     assert dash.stats_table.item(0, 0).text() == "科技早报"
     assert dash.stats_table.item(0, 1).text() == "频道"
     assert dash.stats_table.item(3, 1).text() == ""

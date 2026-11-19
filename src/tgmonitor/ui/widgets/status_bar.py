@@ -38,7 +38,7 @@ from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from tgmonitor.core.events import AuthErrorOccurred
-from tgmonitor.ui.state_labels import state_dot, state_hint, state_label
+from tgmonitor.ui.state_labels import state_color_bucket, state_dot, state_hint, state_label
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -196,12 +196,24 @@ class _UnifiedStateLabel(QLabel):
         self._render()
 
     def _render(self) -> None:
+        # 2026-11-19 v2.0.7 FR-02:唯一状态位挂语义色档位,QSS 负责色号。
         if self._login_state != "ready":
             self.setText(f"{state_dot(self._login_state)} {state_label(self._login_state)}")
             self.setToolTip(state_hint(self._login_state))
+            self._set_state_bucket(self._login_state)
         else:
             self.setText(_conn_state_label(self._conn_state))
             self.setToolTip(state_hint("ready"))
+            self._set_state_bucket(self._conn_state)
+
+    def _set_state_bucket(self, state: str) -> None:
+        bucket = state_color_bucket(state)
+        if self.property("state") == bucket:
+            return
+        self.setProperty("state", bucket)
+        # 动态 property 变化后需重新 polish 才会应用新 QSS 规则。
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class _PausedLabel(QLabel):
