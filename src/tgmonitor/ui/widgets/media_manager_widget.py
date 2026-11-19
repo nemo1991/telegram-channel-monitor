@@ -113,15 +113,19 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     """
 
     # 单条操作 — payload 是 (channel_id, telegram_msg_id, media_idx)
-    open_requested = Signal(int, int, int)
-    retry_requested = Signal(int, int, int)
-    delete_requested = Signal(int, int, int)
+    # 2026-11-19 hotfix:channel_id 必须走 qlonglong(64 位)。`Signal(int)` 是
+    # C++ 32 位 int,真实 Telegram chat_id 会让 shiboken OverflowError 污染
+    # slot 的 error indicator,首个 Qt 调用(如 render_pixmap 的 QPixmap())
+    # 随即 SystemError;详见 ChannelListCard.item_double_clicked 的注释。
+    open_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
+    retry_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
+    delete_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 — 走相同的 (cid, mid, idx) 协议。
-    reveal_requested = Signal(int, int, int)
-    copy_requested = Signal(int, int, int)
+    reveal_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
+    copy_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点击缩略图触发,
     # MainWindow 接到后异步加载原图 bytes → QPixmap → 弹 LightboxDialog。
-    preview_requested = Signal(int, int, int)
+    preview_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
 
     # 批量操作 — payload 是 list[_RowKey]
     batch_retry_requested = Signal(list)
@@ -141,7 +145,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
     # 2026-08-25 PR #4:按频道批量删除 — payload channel_id(MainWindow 收到后
     # 二次确认 + 调 vm.delete_by_channel)
-    clear_channel_requested = Signal(int)
+    clear_channel_requested = Signal("qlonglong")  # type: ignore[arg-type]
 
     # 频道列表变化(VM.refresh_joined_channels → 这里)
     set_channels_requested = Signal()  # MainWindow 接到就 vm.refresh_joined_channels

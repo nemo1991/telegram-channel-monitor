@@ -84,7 +84,9 @@ class MessageDetail(QScrollArea):
     # 2026-08-31 v1.5.0 PR #A8:Lightbox 内嵌预览 — 点媒体卡(PHOTO/STICKER/ANIMATION
     # 且 DONE 状态)→ 异步加载原图 bytes → 弹 LightboxDialog。MainWindow 接到信号
     # 后处理流程同 `_on_media_preview`(复用 main_window.py 内的加载器)。
-    preview_requested = Signal(int, int, int)
+    # channel_id 是 64 位 Telegram chat_id;Signal(int) 会 shiboken Overflow
+    # 并让 slot 首个 Qt 调用报 SystemError,必须用 qlonglong。
+    preview_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
 
     # 2026-09-08 v1.7.0:详情顶部按钮 — 2026-11-16 v2.0.2 只读化后仅剩复制文本
     # (导出 / 删除随 LIVE 页只读化移除,core 层能力保留)

@@ -100,17 +100,21 @@ class MediaMixin(_Base):
     media_deleted = Signal(object)  # MediaDeleted 转发
     media_reconcile_done = Signal(object)  # MediaReconcileFinished 转发
     # 按频道批量删除完成(2026-08-25 PR #4)— payload (channel_id, deleted_count)
-    channel_cleared = Signal(int, int)
+    # 2026-11-19 hotfix:channel_id 是 64 位 Telegram chat_id。`Signal(int)` 映射
+    # 到 C++ 32 位 int,真实 id(如 -1001375475051)会让 shiboken 抛 OverflowError
+    # 并残留 error indicator,slot 里首个 Qt 绑定调用即报 SystemError(缩略图
+    # 渲染在 QPixmap() 处炸)。沿用 ChannelListCard 的 qlonglong 惯例。
+    channel_cleared = Signal("qlonglong", int)  # type: ignore[arg-type]
     # 缩略图加载完成(2026-08-25 PR #1)— payload (channel_id, telegram_msg_id,
     # media_idx, bytes)。2026-10-15 plan-batch6-2:VM 退回纯 EventBus+signal
     # 适配器,QPixmap 渲染下沉到 widget 端(media_manager_widget._on_thumbnail_loaded
     # 自行调 `render_pixmap(bytes)`);信号 payload 改 `bytes` 后,Qt metatype
     # `QByteArray` 跨线程安全,VM 不再越界做 Qt 像素渲染(plan-batch3 误记
     # 「已修」,实测架构层 leak 没动)。
-    thumbnail_loaded = Signal(int, int, int, bytes)
+    thumbnail_loaded = Signal("qlonglong", int, int, bytes)  # type: ignore[arg-type]
     # 打开媒体失败(2026-08-25 v1.3.0 PR #5)— payload
     # (channel_id, telegram_msg_id, media_idx, reason)
-    open_media_failed = Signal(int, int, int, str)
+    open_media_failed = Signal("qlonglong", int, int, str)  # type: ignore[arg-type]
     # Clear Channel 预览就绪(2026-08-25 v1.3.0 PR #8)— payload
     # DeleteChannelPreview(只读)。MainWindow 接到后弹
     # `ClearChannelPreviewDialog` 二次确认,确认后才走 `vm.delete_by_channel`。
