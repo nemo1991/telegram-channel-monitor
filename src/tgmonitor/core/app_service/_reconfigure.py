@@ -147,11 +147,14 @@ async def reconfigure(app: AppService, new_settings: Settings) -> None:
     )
 
 
-# ---------- 公共 method:validate_backends(UI 「仅保存到 .env」按钮用)----------
+# ---------- 公共 method:validate_backends(独立后端连通性校验 API)----------
 
 
 async def validate_backends(app: AppService, new_settings: Settings) -> None:
-    """仅校验后端连通性,**不切换运行时** — 供「仅保存到 .env」按钮用。
+    """仅校验后端连通性,**不切换运行时**。
+
+    2026-11-19 v2.0.7 FR-09:原 UI「仅保存到 .env」入口已删除,本 API 作为
+    core 公共能力保留(可由 CLI / 外部调用方复用),行为不变。
 
     storage:connect → init_schema → close;objectstore:connect → close。
     任一失败上抛,调用方据此放弃落盘 .env;成功时 `app.storage` /

@@ -65,7 +65,7 @@ class SettingsPage(QWidget):
     """整页设置。在 QStackedWidget 中作为一页使用。
 
     构造后自动从 app.settings 加载当前值。
-    UI 改动不实时生效 — 用户点「保存并应用」或「保存到 .env」才写。
+    UI 改动不实时生效 — 用户点「保存并应用」才写盘并热重载(v2.0.7 FR-09)。
     """
 
     def __init__(
@@ -145,13 +145,10 @@ class SettingsPage(QWidget):
         self._on_db_backend_changed()
         self._on_os_backend_changed()
 
-        # 底部固定按钮
+        # 底部固定按钮 — v2.0.7 FR-09:「仅保存到 .env」删除,
+        # 只保留「保存并应用」(写盘 + 热重载),靠 stretch 推到右下。
         btn_bar = QHBoxLayout()
         btn_bar.setContentsMargins(24, 12, 24, 16)
-
-        self.btn_save_env = QPushButton(self.tr("仅保存到 .env"))
-        self.btn_save_env.clicked.connect(self._on_save_env)
-        btn_bar.addWidget(self.btn_save_env)
 
         btn_bar.addStretch(1)
 
@@ -636,59 +633,6 @@ class SettingsPage(QWidget):
     # ============================================================
     # 槽 — 跟原版一致(行为零变化)
     # ============================================================
-
-    def _on_save_env(self) -> None:
-        """仅写 .env,不热重载;写前同样做后端连通性校验。"""
-        try:
-            e = self._collect()
-        except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
-            log.exception("collect settings failed")
-            QMessageBox.critical(self, self.tr("保存失败"), self.tr(f"读取表单失败: {exc}"))
-            return
-        errs = e.validate()
-        if errs:
-            QMessageBox.warning(self, self.tr("校验失败"), "\n".join(errs))
-            return
-        new_settings = e.to_settings()
-
-        # 校验期间禁用按钮,避免重复点击叠加多个校验任务
-        self.btn_save_env.setEnabled(False)
-        self.btn_apply.setEnabled(False)
-
-        async def _validate_and_save() -> None:
-            await self._app.validate_backends(new_settings)
-            # 后端就绪后才写 .env(重启 bootstrap 用的就是这份配置)
-            update_env_with_settings(self._env_path, new_settings)
-
-        def _saved(_result: object) -> None:
-            self.btn_save_env.setEnabled(True)
-            self.btn_apply.setEnabled(True)
-            QMessageBox.information(
-                self, self.tr("已保存"), self.tr(f"设置已写入 {self._env_path}")
-            )
-
-        def _save_failed(exc: BaseException) -> None:
-            self.btn_save_env.setEnabled(True)
-            self.btn_apply.setEnabled(True)
-            if isinstance(exc, OSError):
-                QMessageBox.critical(self, self.tr(".env 写入失败"), str(exc))
-                return
-            QMessageBox.critical(
-                self,
-                self.tr("保存失败"),
-                self.tr(
-                    f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
-                    "请检查数据库 / 对象存储配置与对应服务是否可达后重试。"
-                ),
-            )
-
-        run_coro(
-            self._loop,
-            _validate_and_save(),
-            on_success=_saved,
-            on_error=_save_failed,
-            error_label="validate_backends",
-        )
 
     def _on_apply(self) -> None:
         """保存并应用:后端校验通过后才写 .env + 热重载。"""

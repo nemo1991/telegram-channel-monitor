@@ -126,6 +126,9 @@ def spin_field(
                    tooltip="0 = 无限制")
     """
     spin = QSpinBox()
+    # v2.0.7 FR-08:去掉上下箭头按钮,保留键盘输入与范围钳制/校验。
+    # 当前唯一 INT 字段是账户凭证的 API ID。
+    spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
     spin.setRange(min, max)
     spin.setValue(value)
     if suffix:
