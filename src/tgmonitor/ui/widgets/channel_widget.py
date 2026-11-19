@@ -319,9 +319,10 @@ class ChannelListCard(QWidget):
                 continue
             cid = item.data(Qt.UserRole)
             ch = mapping.get(int(cid)) if cid is not None else None
-            hidden = bool(text) and (ch is None or text not in (
-                (ch.title or "").lower() + " " + (ch.username or "").lower()
-            ))
+            hidden = bool(text) and (
+                ch is None
+                or text not in ((ch.title or "").lower() + " " + (ch.username or "").lower())
+            )
             item.setHidden(hidden)
             # setItemWidget 的行不会随 item.setHidden 自动隐藏,须显式同步。
             widget = self.lst.itemWidget(item)

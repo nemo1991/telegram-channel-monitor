@@ -56,8 +56,10 @@ def test_bottom_hint_and_double_click_gone(qapp) -> None:
 
 def test_row_text_has_no_chat_id_but_keeps_it_in_data(qapp) -> None:
     card = _card("plus")
-    card.set_items([ChannelDTO(id=_BIG_ID, title="科技早报", username="tech", kind="channel")],
-                   count_template="{n}")
+    card.set_items(
+        [ChannelDTO(id=_BIG_ID, title="科技早报", username="tech", kind="channel")],
+        count_template="{n}",
+    )
     item = card.lst.item(0)
     assert item is not None
     assert item.text() == "科技早报  @tech"
