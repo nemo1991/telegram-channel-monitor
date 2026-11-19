@@ -188,6 +188,9 @@ class InMemoryRepository(StorageRepository):
     async def count_tg_subscribed(self) -> int:
         return sum(1 for c in self.channels.values() if c.is_tg_subscribed)
 
+    async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
+        return [c for c in self.channels.values() if c.is_tg_subscribed]
+
     async def list_channels(self) -> list[ChannelDTO]:
         return list(self.channels.values())
 

@@ -765,6 +765,15 @@ class SqliteRepository(StorageRepository):
             row = await cur.fetchone()
         return int(row[0]) if row else 0
 
+    async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返 tg_subscribed=1 的频道(按 id;2026-11-19 左栏启动读库用)。"""
+        assert self._db is not None
+        async with self._lock:
+            rows = await self._db.execute_fetchall(
+                "SELECT * FROM channels WHERE tg_subscribed = 1 ORDER BY id"
+            )
+        return [_row_to_channel(dict(r)) for r in rows]
+
     async def list_channels(self) -> list[ChannelDTO]:
         assert self._db is not None
         async with self._lock:

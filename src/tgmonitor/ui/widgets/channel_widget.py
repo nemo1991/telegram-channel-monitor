@@ -4,7 +4,7 @@
 把"监听谁"这事最简化:
 - **上半栏「已加入频道」**:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
 - **下半栏「已监听」**:当前监听白名单(真理走 `storage.list_monitored_channels()`),
-  **双击 = 移出监听;多选 + 全量同步…**
+  **双击 = 移出监听**。2026-11-19 起不再有全量同步入口(移除)。
 
 事件:`ChannelMonitored / ChannelUnmonitored` 会刷新下半栏。
 设计原则:开关监听是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -136,12 +136,17 @@ def _kind_emoji_icon(kind: str) -> QIcon:
 
 
 def _channel_display_text(ch: ChannelDTO) -> str:
-    """`@username`(有) 或 `#id title`(无 username)的展示串。
+    """频道列表行文本 — **频道名称为主、username 为辅**(2026-11-19 用户反馈)。
 
-    2026-09-04 v1.6.4:spammer 徽标附加 — `is_verified` → ` ✓`,
-    `is_scam`/`is_fake` → ` [风险]`(任一为真时显示一个风险标记,避免双标)。
+    格式:`title  @username · id`(有 username)/ `title · id`(无 username)。
+    此前走 `ch.display`,有 username 时只显示 `@username`、频道名完全不出现,
+    与「名称为主」相反。现与 `channel_picker_dialog._format_row_text` 同口径。
+
+    id 保留在行尾:同名频道(常见)靠 id 区分;完整 chat_id 仍可另加 tooltip。
+    末尾附加 spammer 徽标:`is_verified` → ` ✓`,`is_scam`/`is_fake` → ` [风险]`。
     """
-    base = ch.display  # 直接走 DTO.display,统一 `@username` / `#id title` 格式
+    title = ch.title or "(无标题)"
+    base = f"{title}  @{ch.username} · {ch.id}" if ch.username else f"{title} · {ch.id}"
     if ch.is_verified:
         base += " ✓"
     if ch.is_scam or ch.is_fake:
@@ -150,12 +155,12 @@ def _channel_display_text(ch: ChannelDTO) -> str:
 
 
 class ChannelListCard(QWidget):
-    """频道管理页的双栏之一 — 标题 + action button + list + 底部 hint。
+    """频道管理页的双栏之一 — 标题 + (可选) action button + list + 底部 hint。
 
     把"已加入"和"已监听"两张卡的同构部件抽出来(原本是 ChannelWidget._build
     里两段各 ~30 行的复制粘贴),只在 __init__ 参数里区分:
-      - title / action 按钮标签 / action tooltip
-      - 是否多选(已监听需要,已加入 single)
+      - title / action 按钮标签 / action tooltip / show_action(下栏无按钮)
+      - 是否多选(extended_selection;2026-11-19 起两栏均 single)
       - 是否带 empty_hint(已加入需要;已监听没"空监听白名单"歧义场景)
       - bottom_hint(双击行为提示)
 
@@ -165,12 +170,11 @@ class ChannelListCard(QWidget):
       - `add_item(channel)` / `remove_by_cid(cid)` / `find_cid(cid)` —
         增量更新(监听开关事件驱动)
       - `apply_filter(text, joined_mapping)` — 按 text 过滤可见
-      - `selected_cids()` — 多选模式:取当前选中行的 id 列表
-      - 属性:`lst`(QListWidget)、`btn_action`、`count_label`
+      - 属性:`lst`(QListWidget)、`btn_action`(`QPushButton | None`)、`count_label`
 
     Signals:
       - `item_double_clicked(qlonglong)` — channel_id
-      - `action_clicked()` — action 按钮被点
+      - `action_clicked()` — action 按钮被点(仅 show_action=True 的卡)
     """
 
     # Telegram chat_id 是 64 位带符号整数(如 -1001375475051),`Signal(int)`
@@ -188,6 +192,7 @@ class ChannelListCard(QWidget):
         extended_selection: bool = False,
         empty_hint_spec: tuple[str, str, str] | None = None,
         bottom_hint: str = "",
+        show_action: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -199,34 +204,42 @@ class ChannelListCard(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        # 标题行 — title label + 弹性间隔 + action button
+        # 标题行 — title label + 弹性间隔 + action button(可关闭)
         head = QHBoxLayout()
         self.count_label = QLabel(title)
         self.count_label.setObjectName("cardSectionTitle")
         head.addWidget(self.count_label)
         head.addStretch(1)
-        self.btn_action = QPushButton(action_label)
-        if action_tooltip:
-            self.btn_action.setToolTip(action_tooltip)
-        head.addWidget(self.btn_action)
+        # 2026-11-19:下栏「已监听」不再有全量同步入口 → show_action=False
+        # 时不建按钮。btn_action 类型 `QPushButton | None`。
+        self.btn_action: QPushButton | None = None
+        if show_action:
+            self.btn_action = QPushButton(action_label)
+            if action_tooltip:
+                self.btn_action.setToolTip(action_tooltip)
+            head.addWidget(self.btn_action)
         root.addLayout(head)
 
-        # 列表
+        # 列表 + 空态占位 — 2026-11-19 一起放进 QStackedWidget,让「暂无已加入
+        # 频道」显示在**卡片框内**（与列表同一区域），而不是原来那样作为列表
+        # 下方的独立 widget 显示在框外。QStackedWidget 非当前页 `isHidden()`
+        # 为 True，与既有 `_empty_hint.isHidden()` 契约断言语义一致。
         self.lst = QListWidget()
         self.lst.setAlternatingRowColors(True)
         if extended_selection:
-            # 多选 — Ctrl/Shift 多选 + 全选(Ctrl+A)用于批量 sync
+            # 多选模式预留（当前两栏均 single；保留参数供未来扩展）
             self.lst.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.lst.itemDoubleClicked.connect(self._on_lst_double_clicked)
-        root.addWidget(self.lst)
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self.lst)  # index 0 — 有数据
+        root.addWidget(self._stack, 1)
 
-        # empty_hint(可选)— 类型 `QWidget | None`,mypy 在 `_refresh_empty_state`
-        # 内调 `setVisible` 不再报 object 没 attr;默认 None 表示不显示 hint。
+        # empty_hint(可选)— 叠在列表区域(index 1),空时切入。
         self._empty_hint: QWidget | None = None
         if empty_hint_spec is not None:
             icon_e, title_e, hint_e = empty_hint_spec
             self._empty_hint = empty_hint(icon_e, title_e, hint_e)
-            root.addWidget(self._empty_hint)
+            self._stack.addWidget(self._empty_hint)  # index 1 — 空态
 
         # 底部 hint label(行为提示)
         if bottom_hint:
@@ -235,7 +248,11 @@ class ChannelListCard(QWidget):
             root.addWidget(lbl)
 
         # 信号
-        self.btn_action.clicked.connect(self.action_clicked)
+        if self.btn_action is not None:
+            self.btn_action.clicked.connect(self.action_clicked)
+
+        # 初始态：列表为空 → 切到空态页（配置了 hint 时）。
+        self._refresh_empty_state()
 
     # ---- 数据装载 ----
 
@@ -313,31 +330,16 @@ class ChannelListCard(QWidget):
             hay = (ch.title or "").lower() + " " + (ch.username or "").lower()
             item.setHidden(text not in hay)
 
-    def selected_cids(self) -> list[int]:
-        """多选模式:取当前选中行的 channel_ids(用于全量同步)。"""
-        return [
-            int(self.lst.item(i).data(Qt.UserRole))
-            for i in range(self.lst.count())
-            if self.lst.item(i) is not None and self.lst.item(i).isSelected()
-        ]
-
-    def all_cids(self) -> list[int]:
-        """所有行的 cid(无选项全量同步时 fallback)。"""
-        out: list[int] = []
-        for i in range(self.lst.count()):
-            it = self.lst.item(i)
-            if it is not None:
-                cid = it.data(Qt.UserRole)
-                if cid is not None:
-                    out.append(int(cid))
-        return out
-
     # ---- helpers ----
 
     def _refresh_empty_state(self) -> None:
-        """list count == 0 + 配置了 empty_hint → 显示;否则隐藏。"""
+        """list count == 0 + 配置了 empty_hint → 切到空态页;否则切回列表页。
+
+        2026-11-19:lst 与 empty_hint 同处 QStackedWidget,空态显示在卡片框内。
+        非当前页 `isHidden()` 为 True,保持既有可见性契约。
+        """
         if self._empty_hint is not None:
-            self._empty_hint.setVisible(self.lst.count() == 0)
+            self._stack.setCurrentIndex(1 if self.lst.count() == 0 else 0)
 
     def _on_lst_double_clicked(self, item: QListWidgetItem) -> None:
         cid = item.data(Qt.UserRole)
@@ -349,7 +351,7 @@ class ChannelWidget(QWidget):
     """频道管理面板 — 已加入 + 已监听 双栏 + 搜索过滤。
 
     已加入:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
-    已监听:当前监听白名单(真理走 storage),**双击 = 移出监听;多选 + 全量同步**
+    已监听:当前监听白名单(真理走 storage),**双击 = 移出监听**
 
     内部用两张 `ChannelListCard` 实例(`joined_card` / `subs_card`)
     实际承载 UI,ChannelWidget 自身只负责装配 + 搜索 + EventBus 接线和
@@ -358,8 +360,7 @@ class ChannelWidget(QWidget):
 
     # 异步拉频道后 → 主线程刷新 list
     joined_loaded = Signal(list)
-    # 用户在"已监听"栏多选 + 点"全量同步…" → 触发 sync dialog
-    sync_requested = Signal(list)  # list[int] channel_ids
+    # 2026-11-19:删除全量同步入口后 sync_requested 信号一并移除。
 
     def __init__(
         self,
@@ -377,6 +378,18 @@ class ChannelWidget(QWidget):
         self._wire_bus()
         # 异步拉频道 → 主线程刷新
         self.joined_loaded.connect(self._apply_joined)
+        # 2026-11-19:进入设置先读库展示已加入频道(tg_subscribed=True),
+        # 不再空白等用户点「同步」。TG 拉取 + 落库只在用户点「同步」时发生。
+        self._bootstrap_joined_from_storage()
+
+    def _bootstrap_joined_from_storage(self) -> None:
+        """构造后异步读库填充左栏 — 只读,不连 TG、不改库。"""
+        run_coro(
+            self.loop,
+            self.app.channels.list_tg_subscribed_channels(),
+            error_label="bootstrap_joined_channels",
+            on_success=lambda chs: self.joined_loaded.emit(list(chs)),
+        )
 
     # ---- UI ----
 
@@ -395,13 +408,13 @@ class ChannelWidget(QWidget):
         # 上栏 — 已加入(`ChannelListCard`,已接入 empty_hint #2-6)
         self.joined_card = ChannelListCard(
             title="已加入频道",
-            action_label="刷新",
-            action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组",
+            action_label="同步",
+            action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组并保存到本地",
             extended_selection=False,
             empty_hint_spec=(
                 "≡",
                 "暂无已加入频道",
-                "请先在「设置 → 账户」登录 Telegram 账号,\n登录成功后点「刷新」自动拉取。",
+                "请先到「设置 → 账户」登录 Telegram 账号,\n登录成功后点「同步」拉取频道。",
             ),
             bottom_hint="双击一行 → 加入监听白名单",
         )
@@ -409,16 +422,15 @@ class ChannelWidget(QWidget):
         self.joined_card.item_double_clicked.connect(self._on_joined_double_click)
         root.addWidget(self.joined_card, 3)
 
-        # 下栏 — 已监听
+        # 下栏 — 已监听（2026-11-19:全量同步入口删除，无 action 按钮）
         self.subs_card = ChannelListCard(
             title="已监听",
-            action_label="全量同步…",
-            action_tooltip="多选 + 全量拉取元数据 + 历史消息(可调频率防封号)",
-            extended_selection=True,
+            action_label="",
+            extended_selection=False,
             empty_hint_spec=None,  # 已监听「空」语义不明,不放 empty_hint
-            bottom_hint="双击一行 → 移出监听;Ctrl/Shift 多选 → 全量同步…",
+            bottom_hint="双击一行 → 移出监听",
+            show_action=False,
         )
-        self.subs_card.action_clicked.connect(self._on_sync_clicked)
         self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)
         root.addWidget(self.subs_card, 2)
 
@@ -436,7 +448,6 @@ class ChannelWidget(QWidget):
         self.joined_count_label = self.joined_card.count_label
         self.monitored_count_label = self.subs_card.count_label
         self.refresh_button = self.joined_card.btn_action
-        self.sync_button = self.subs_card.btn_action
         self._empty_joined: QWidget | None = self.joined_card._empty_hint
 
     def _apply_filter(self, text: str) -> None:
@@ -452,11 +463,10 @@ class ChannelWidget(QWidget):
         真正的执行安全由 core 域服务入口门控保证(UI 禁用只是体验,不是安全边界):
         双击加入/移出监听仍可被编程式调用,core 门控会一致拒绝。
         """
-        tip = "" if enabled else "需先登录 Telegram 才能刷新/同步频道"
-        self.refresh_button.setEnabled(enabled)
-        self.refresh_button.setToolTip(tip)
-        self.sync_button.setEnabled(enabled)
-        self.sync_button.setToolTip(tip)
+        tip = "" if enabled else "需先登录 Telegram 才能同步频道"
+        if self.refresh_button is not None:
+            self.refresh_button.setEnabled(enabled)
+            self.refresh_button.setToolTip(tip)
         # 列表交互:未登录时禁双击(加入/移出监听),core 门控同时兜底
         self.joined_card.lst.setEnabled(enabled)
         self.subs_card.lst.setEnabled(enabled)
@@ -595,17 +605,3 @@ class ChannelWidget(QWidget):
             self.app.channels.unmonitor_channel(int(cid)),
             error_label="unmonitor_channel",
         )
-
-    def _on_sync_clicked(self) -> None:
-        """用户多选 + 全量同步:收集 selected channel_ids,emit sync_requested。
-
-        多选优先;没选则全量;都为空才弹提示框。
-        """
-        ids = self.subs_card.selected_cids()
-        if not ids:
-            # 没选:全部订阅
-            ids = self.subs_card.all_cids()
-        if not ids:
-            QMessageBox.information(self, "全量同步", "已监听列表为空,先从上方已加入频道里加入监听")
-            return
-        self.sync_requested.emit(ids)

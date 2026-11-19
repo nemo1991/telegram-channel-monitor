@@ -236,6 +236,19 @@ async def count_tg_subscribed(self: PostgresRepository) -> int:
         return await conn.fetchval("SELECT COUNT(*) FROM channels WHERE tg_subscribed = TRUE")
 
 
+async def list_tg_subscribed_channels(self: PostgresRepository) -> list[ChannelDTO]:
+    """只返 tg_subscribed=TRUE 的频道(按 id;2026-11-19 左栏启动读库用)。"""
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, title, username, kind, member_count, created_at, "
+            "monitored, tg_subscribed, last_synced_at, photo_local_key, "
+            "is_verified, is_scam, is_fake, has_protected_content "
+            "FROM channels WHERE tg_subscribed = TRUE ORDER BY id"
+        )
+    return [_row_to_channel(r) for r in rows]
+
+
 async def list_channels(self: PostgresRepository) -> list[ChannelDTO]:
     """所有频道(按 id 升序);含未订阅的。"""
     assert self._pool is not None

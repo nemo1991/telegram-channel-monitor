@@ -165,6 +165,10 @@ class PostgresRepository(StorageRepository):
         """thin delegate → `_channels_pg`. v2.0.3 大盘已加入频道计数。"""
         return await _channels.count_tg_subscribed(self)
 
+    async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
+        """thin delegate → `_channels_pg`. 2026-11-19 左栏启动读库用。"""
+        return await _channels.list_tg_subscribed_channels(self)
+
     async def list_channels(self) -> list[ChannelDTO]:
         """thin delegate → `_channels_pg`."""
         return await _channels.list_channels(self)

@@ -520,6 +520,61 @@ def test_channel_widget_empty_joined_visible_when_no_data(qapp, qloop):
         assert not widget._empty_joined.isHidden()
 
 
+def test_channel_widget_bootstrap_joined_from_storage(qapp, qloop):
+    """2026-11-19:进入设置先读库展示已加入频道，不等用户点「同步」。
+
+    库里预置 tg_subscribed=1 的频道，TG client 视角为空 —— 构造 ChannelWidget
+    后左栏应出现库数据，证明数据源是库而非 TG 拉取。
+    """
+    from tgmonitor.core.app_service import AppService
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.widgets.channel_widget import ChannelWidget
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = _window_settings(Path(td))
+        bus = EventBus()
+        client = FakeTelegramClient()  # TG 视角为空（不 add_channel）
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        async def seed():
+            await storage.connect()
+            # 库里 2 个已加入(tg_subscribed=1)，1 个仅监听但未加入
+            await storage.upsert_channel(ChannelDTO(id=10, title="库频道A", is_tg_subscribed=True))
+            await storage.upsert_channel(ChannelDTO(id=20, title="库频道B", is_tg_subscribed=True))
+            await storage.upsert_channel(ChannelDTO(id=30, title="仅监听", is_monitored=True))
+
+        asyncio.run_coroutine_threadsafe(seed(), qloop).result(timeout=10.0)
+
+        async def build():
+            from tgmonitor.core.monitor.service import MonitorService
+
+            monitor = MonitorService(bus, client, storage, objects, settings)
+            return AppService(bus, client, storage, objects, settings), monitor
+
+        app_svc, _ = asyncio.run_coroutine_threadsafe(build(), qloop).result(timeout=10.0)
+
+        widget = ChannelWidget(app_svc, qloop)
+        # 左栏按钮已改名「同步」（原「刷新」）
+        assert widget.refresh_button.text() == "同步"
+        # 异步读库回填：signal 是 queued 连接，测试里需要 pump Qt 事件循环
+        import time as _t
+
+        deadline = _t.monotonic() + 3.0
+        while _t.monotonic() < deadline and widget.joined_list.count() != 2:
+            qapp.processEvents()
+            _t.sleep(0.02)
+        ok = widget.joined_list.count() == 2
+        assert ok, f"构造后未从库回填已加入频道，count={widget.joined_list.count()}"
+        texts = [widget.joined_list.item(i).text() for i in range(widget.joined_list.count())]
+        assert any("库频道A" in t for t in texts)
+        assert any("库频道B" in t for t in texts)
+        assert not any("仅监听" in t for t in texts)  # tg_subscribed=0 不进左栏
+        # 装载数据后空态隐藏
+        assert widget._empty_joined.isHidden()
+
+
 def test_channel_widget_empty_joined_hidden_after_set_joined(qapp, qloop):
     """set_joined([...]) 装载数据 → _empty_joined 自动隐藏。"""
     from tgmonitor.core.app_service import AppService
@@ -651,16 +706,6 @@ def test_channel_list_card_apply_filter(qapp):
     assert visible == [1]  # Python Daily is index 1 (alphabetic sort)
 
 
-def test_channel_list_card_selected_cids_when_no_selection(qapp):
-    """默认 SingleSelection + 没选 → selected_cids 返 []。"""
-    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
-
-    card = ChannelListCard(title="x", action_label="y")
-    card.set_items([ChannelDTO(id=1, title="c1", kind="channel")], count_template="{n}")
-    assert card.selected_cids() == []
-    assert card.all_cids() == [1]
-
-
 def test_channel_list_card_extended_selection_mode(qapp):
     """`extended_selection=True` 把 list 切到 ExtendedSelection(用来多选 sync)。"""
     from PySide6.QtWidgets import QAbstractItemView
@@ -693,6 +738,33 @@ def test_channel_list_card_empty_hint_visibility_toggles(qapp):
     assert not card._empty_hint.isHidden()  # 清空 → 再显示
 
 
+def test_channel_list_card_empty_hint_inside_list_area(qapp):
+    """2026-11-19 显示修复：空态占位与列表在**同一区域**（卡片框内）。
+
+    此前 empty_hint 是列表下方的独立兄弟 widget，用户看到「暂无已加入频道」
+    显示在「已加入频道」框外。现在二者同处 QStackedWidget，切换而非并排。
+    """
+    from PySide6.QtWidgets import QStackedWidget
+
+    from tgmonitor.ui.widgets.channel_widget import ChannelListCard
+
+    card = ChannelListCard(
+        title="x",
+        action_label="y",
+        empty_hint_spec=("提示", "空", "请加数据"),
+    )
+    # 列表与空态同父（同一个 QStackedWidget）= 同一显示区域
+    assert isinstance(card._stack, QStackedWidget)
+    assert card.lst.parent() is card._stack
+    assert card._empty_hint.parent() is card._stack
+    assert card.lst is card._stack.widget(0)
+    assert card._empty_hint is card._stack.widget(1)
+    # 空 → 当前页是空态；有数据 → 切回列表
+    assert card._stack.currentWidget() is card._empty_hint
+    card.set_items([ChannelDTO(id=1, title="c", kind="channel")], count_template="{n}")
+    assert card._stack.currentWidget() is card.lst
+
+
 def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
     """action_clicked / item_double_clicked 信号正常触发。"""
     from tgmonitor.ui.widgets.channel_widget import ChannelListCard
@@ -708,218 +780,6 @@ def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
     card.item_double_clicked.connect(double_clicked_ids.append)
     card.lst.itemDoubleClicked.emit(card.lst.item(0))
     assert double_clicked_ids == [42]  # integer channel_id,not QListWidgetItem
-
-
-# ============================================================
-# MainWindow._on_sync_requested 拆出的 helper
-# ============================================================
-
-
-def test_build_sync_titles_uses_monitored_channels(qapp, qloop) -> None:
-    """`_build_sync_titles(ids)` 从 VM.monitored_channels 拉 title,缺时回退
-    `#<id>`。"""
-    import tempfile
-
-    from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.ui.main_window import MainWindow
-
-    with tempfile.TemporaryDirectory() as td:
-        settings = _window_settings(Path(td))
-
-        bus = EventBus()
-        client = FakeTelegramClient()
-        client._state = "ready"
-        storage = InMemoryRepository()
-        objects = LocalObjectStore(root=Path(td) / "o")
-
-        async def setup_async():
-            await storage.connect()
-            from tgmonitor.core.monitor.service import MonitorService
-
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=10.0)
-
-        win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-        # VM 没数据,全部回退到 `#<id>`(2026-10-09 v1.12.x 抽到 `SyncFlowController`)
-        titles = win._sync_flow_ctrl._build_sync_titles([100, 200, 300])
-        assert titles == {100: "#100", 200: "#200", 300: "#300"}
-
-
-def test_build_sync_titles_uses_vm_dto_when_present(qapp, qloop) -> None:
-    """VM.monitored_channels 有 DTO 时优先用 `.title`,不回退。"""
-    import tempfile
-
-    from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.ui.main_window import MainWindow
-
-    with tempfile.TemporaryDirectory() as td:
-        settings = _window_settings(Path(td))
-
-        bus = EventBus()
-        client = FakeTelegramClient()
-        client._state = "ready"
-        storage = InMemoryRepository()
-        objects = LocalObjectStore(root=Path(td) / "o")
-
-        async def setup_async():
-            await storage.connect()
-            from tgmonitor.core.monitor.service import MonitorService
-
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=10.0)
-
-        win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-        # 直接 inject VM.monitored_channels 一个 DTO(2026-10-09 走 `SyncFlowController`)
-        win._vm.monitored_channels[42] = ChannelDTO(id=42, title="新闻频道")
-        titles = win._sync_flow_ctrl._build_sync_titles([42, 100])
-        assert titles[42] == "新闻频道"
-        assert titles[100] == "#100"  # 没 DTO,回退
-
-
-def test_show_sync_options_dialog_returns_defaults_from_settings(qapp, qloop) -> None:
-    """`_show_sync_options_dialog` 默认从 settings 拉 sync_chat_delay_ms 等。
-
-    不直接 exec()(modal 阻塞),而是把 SyncOptionsDialog 替换成 stub 验证
-    SyncOptions 默认值正确。
-
-    注:main_window 直接 `from sync_dialog import SyncOptionsDialog`,
-    binding 在 main_window namespace,patch 必须在 `main_window.SyncOptionsDialog`
-    而非 `sync_dialog.SyncOptionsDialog` 才生效。
-    """
-    import tempfile
-
-    from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.config import Settings
-    from tgmonitor.core.dto import SyncOptions
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.ui import main_window as mw
-
-    # 2026-10-09 v1.12.x:`SyncOptionsDialog` 已从 main_window 移到
-    # `sync_flow_controller`,patch 走 controller 自身的 namespace。
-    from tgmonitor.ui.controllers import sync_flow_controller as sfc_mod
-
-    with tempfile.TemporaryDirectory() as td:
-        settings = Settings.for_test(
-            phone="+8612345",
-            session_dir=Path(td) / "s",
-            db_root=Path(td) / "m",
-            objectstore_root=Path(td) / "o",
-            sync_chat_delay_ms=777,
-            sync_page_delay_ms=888,
-        )
-
-        bus = EventBus()
-        client = FakeTelegramClient()
-        client._state = "ready"
-        storage = InMemoryRepository()
-        objects = LocalObjectStore(root=Path(td) / "o")
-
-        async def setup_async():
-            await storage.connect()
-            from tgmonitor.core.monitor.service import MonitorService
-
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=10.0)
-
-        win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-
-        # Patch `SyncOptionsDialog` 在 `SyncFlowController` 的 namespace(controller
-        # 模块顶层 `from sync_dialog import SyncOptionsDialog`,binding 在此)。
-        captured: dict = {}
-
-        class _StubDialog:
-            def __init__(self, channel_ids, titles, defaults, parent):
-                captured["channel_ids"] = channel_ids
-                captured["titles"] = titles
-                captured["defaults"] = defaults
-
-            def exec(self) -> int:  # pretend user clicked OK
-                return 1  # QDialog.Accepted
-
-            def options(self):
-                return captured["defaults"]
-
-        original = sfc_mod.SyncOptionsDialog
-        sfc_mod.SyncOptionsDialog = _StubDialog  # type: ignore[assignment,misc]
-        try:
-            result = win._sync_flow_ctrl._show_sync_options_dialog(
-                [1, 2, 3],
-                {1: "c1", 2: "c2", 3: "c3"},
-            )
-        finally:
-            sfc_mod.SyncOptionsDialog = original  # type: ignore[assignment,misc]
-
-        assert isinstance(result, SyncOptions)
-        assert result.chat_delay_ms == 777
-        assert result.page_delay_ms == 888
-        # titles / channel_ids 也透传
-        assert captured["channel_ids"] == [1, 2, 3]
-        assert captured["titles"] == {1: "c1", 2: "c2", 3: "c3"}
-
-
-def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> None:
-    """用户点取消 → exec() 返 0 → helper 返 None — caller 不继续 sync。"""
-    import tempfile
-
-    from tgmonitor.core.app_service import AppService
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.ui import main_window as mw
-    from tgmonitor.ui.controllers import sync_flow_controller as sfc_mod
-
-    with tempfile.TemporaryDirectory() as td:
-        settings = _window_settings(Path(td))
-
-        bus = EventBus()
-        client = FakeTelegramClient()
-        client._state = "ready"
-        storage = InMemoryRepository()
-        objects = LocalObjectStore(root=Path(td) / "o")
-
-        async def setup_async():
-            await storage.connect()
-            from tgmonitor.core.monitor.service import MonitorService
-
-            monitor = MonitorService(bus, client, storage, objects, settings)
-            app_svc = AppService(bus, client, storage, objects, settings)
-            return app_svc, monitor
-
-        fut = asyncio.run_coroutine_threadsafe(setup_async(), qloop)
-        app_svc, monitor = fut.result(timeout=10.0)
-
-        win = mw.MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
-
-        class _StubCancelDialog:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def exec(self) -> int:
-                return 0  # QDialog.Rejected
-
-            def options(self):
-                return None
-
-        original = sfc_mod.SyncOptionsDialog
-        sfc_mod.SyncOptionsDialog = _StubCancelDialog  # type: ignore[assignment,misc]
-        try:
-            result = win._sync_flow_ctrl._show_sync_options_dialog([1], {1: "c1"})
-        finally:
-            sfc_mod.SyncOptionsDialog = original  # type: ignore[assignment,misc]
-
-        assert result is None
 
 
 # ============================================================
