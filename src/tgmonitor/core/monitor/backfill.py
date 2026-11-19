@@ -62,7 +62,7 @@ class BackfillRunner:
             ):
                 if n >= self._svc._BACKFILL_MAX_PAGE:
                     log.warning(
-                        "backfill channel %d hit cap %d; 新消息过多,建议手动全量同步",
+                        "backfill channel %d hit cap %d; 新消息过多，已达本次回填上限",
                         channel_id,
                         self._svc._BACKFILL_MAX_PAGE,
                     )

@@ -51,7 +51,6 @@ from tgmonitor.ui.controllers import (
     MessageStreamController,
     SettingsReactionController,
     SyncController,
-    SyncFlowController,
     TrayController,
 )
 from tgmonitor.ui.nav_bar import VerticalNavBar
@@ -231,10 +230,8 @@ class MainWindow(QMainWindow):
         self._settings_reaction_ctrl = SettingsReactionController(self._ctx)
         self._export_ctrl = ExportController(self._ctx)
         self._sync_ctrl = SyncController(self._ctx)
-        # 2026-10-09 v1.12.x 下一 plan 目标 1.1:抽 `SyncFlowController` —
-        # 接管 `_on_sync_requested` 38 行 orchestrator + 3 helper。SyncController
-        # 仍走 `_on_sync_all_channels` 委派 main_window thin delegate。
-        self._sync_flow_ctrl = SyncFlowController(self._ctx)
+        # 2026-11-19:全量同步入口（SyncFlowController + sync_dialog）整体移除；
+        # SyncController 保留用于进度/完成事件反馈与已监听列表刷新。
         # 2026-10-09 plan 目标 1.2:抽 `AppStateController` — 接管 C+D 类 82 LOC
         # (VM login/conn/error + EventBus notification/login + bell/clear)。
         self._app_state_ctrl = AppStateController(self._ctx)
@@ -512,10 +509,6 @@ class MainWindow(QMainWindow):
         """2026-10-01 v1.12.x:委托 `ExportController`。"""
         self._export_ctrl.on_export()
 
-    def _on_sync_all_channels(self) -> None:
-        """大盘快速操作:全量同步所有已订阅频道 — 委托 `SyncController`(v1.12.x)。"""
-        self._sync_ctrl.on_sync_all_channels()
-
     def _on_detail_copy_text(self, text: str) -> None:
         """详情「复制文本」toast — clipboard 写入已在 MessageDetail 内完成。"""
         self.status_bar.show_message(self.tr("已复制"), 2000)
@@ -592,12 +585,6 @@ class MainWindow(QMainWindow):
         self._settings_reaction_ctrl.on_settings_changed(
             what, needs_relogin, needs_restart, backend_label
         )
-
-    # ======================== 同步请求 ========================
-
-    def _on_sync_requested(self, channel_ids: list[int]) -> None:
-        """同步请求入口 thin delegate — 委托 `SyncFlowController`(2026-10-09)。"""
-        self._sync_flow_ctrl.on_sync_requested(channel_ids)
 
     # ======================== 状态刷新 ========================
 

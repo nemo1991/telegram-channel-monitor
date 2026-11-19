@@ -23,7 +23,6 @@ from tgmonitor.ui.controllers.media_actions_controller import MediaActionsContro
 from tgmonitor.ui.controllers.message_stream_controller import MessageStreamController
 from tgmonitor.ui.controllers.settings_reaction_controller import SettingsReactionController
 from tgmonitor.ui.controllers.sync_controller import SyncController
-from tgmonitor.ui.controllers.sync_flow_controller import SyncFlowController
 from tgmonitor.ui.controllers.tray_controller import TrayController
 
 __all__ = [
@@ -33,7 +32,6 @@ __all__ = [
     "SettingsReactionController",
     "ExportController",
     "SyncController",
-    "SyncFlowController",
     "LifecycleController",
     "MediaActionsController",
     "MessageStreamController",

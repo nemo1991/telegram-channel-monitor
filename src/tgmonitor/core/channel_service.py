@@ -75,6 +75,15 @@ class ChannelService:
         """已订阅频道 — **单一真理**走 storage(删 `_subscribed` cache 后)。"""
         return await self._storage.list_monitored_channels()
 
+    async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
+        """已加入 Telegram 频道 — 读库(tg_subscribed=True),不连 TG。
+
+        2026-11-19:设置页「已加入频道」左栏启动即时展示的数据源。与
+        `list_monitored_channels()`(已监听白名单)是两个独立语义。用户点
+        「同步」才走 `refresh_joined_channels()` 连 TG 拉取 + 落库校正。
+        """
+        return await self._storage.list_tg_subscribed_channels()
+
     # ---------- 订阅 / 退订 ----------
 
     async def monitor_channel(self, channel: ChannelDTO) -> None:

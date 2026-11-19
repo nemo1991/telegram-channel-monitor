@@ -85,6 +85,7 @@ def test_channel_widget_has_no_legacy_compat_aliases() -> None:
         "lbl_subs_count",
         "btn_refresh",
         "btn_sync",
+        "sync_button",  # 2026-11-19:全量同步入口删除后不应回潮
     )
     for name in legacy:
         assert name not in source, f"旧桥接属性 {name} 回潮"
@@ -93,7 +94,27 @@ def test_channel_widget_has_no_legacy_compat_aliases() -> None:
         "monitored_list",
         "joined_count_label",
         "monitored_count_label",
-        "refresh_button",
-        "sync_button",
+        "refresh_button",  # 左栏「同步」按钮（原刷新）
     ):
         assert f"self.{name}" in source, f"新公开句柄 {name} 缺失"
+
+
+def test_full_sync_entry_removed_2006() -> None:
+    """2026-11-19:桌面端「全量同步」入口整体移除，防止回潮。
+
+    core `channel_sync` / CLI `tgmonitor sync` 保留；本守卫只锁 UI 入口：
+    - ChannelWidget 不再 emit `sync_requested`
+    - 下栏「已监听」无全量同步按钮
+    - sync_flow_controller.py / sync_dialog.py 文件已删除
+    """
+    root = Path(__file__).resolve().parents[1]
+    cw_src = (root / "src/tgmonitor/ui/widgets/channel_widget.py").read_text(encoding="utf-8")
+    # 只锁代码定义，允许说明性注释里出现这些词（记录移除历史）
+    assert "sync_requested = Signal" not in cw_src, "全量同步信号定义回潮"
+    assert 'action_label="全量同步' not in cw_src, "全量同步按钮回潮"
+
+    assert not (root / "src/tgmonitor/ui/controllers/sync_flow_controller.py").exists()
+    assert not (root / "src/tgmonitor/ui/widgets/sync_dialog.py").exists()
+
+    # 下栏构造使用 show_action=False（无按钮）
+    assert "show_action=False" in cw_src

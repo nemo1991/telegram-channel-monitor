@@ -1,18 +1,17 @@
 # mypy: disable-error-code=attr-defined
 # 访问 `MainWindow._on_sync_requested`(复杂 38 行 orchestrator,留 main_window)
 # — controller 通过私有成员调用复用,避免重复实现。
-"""全量同步 controller — `_on_sync_*` / `_on_refresh_channels` / `_on_sync_all_channels`。
+"""同步反馈 controller — `_on_refresh_channels` / `_on_sync_progress` / `_on_sync_done`。
 
-2026-10-01 v1.12.x 从 `MainWindow` 抽出。4 个 handler:
-- `_on_refresh_channels`:刷新已订阅频道列表
-- `_on_sync_all_channels`:全量同步入口(2026-11-17 v2.0.3 D4 大盘按钮已移除,
-  频道页走 `SyncFlowController.on_sync_requested`;此处保留供编程式/日后恢复)
+2026-10-01 v1.12.x 从 `MainWindow` 抽出。3 个 handler:
+- `_on_refresh_channels`:刷新已监听列表
 - `_on_sync_progress`:VM `ChannelSyncProgress` event → 状态栏活动指示器
 - `_on_sync_done`:VM `ChannelSyncDone` event → 状态栏汇总提示
 
-`_on_sync_requested` 是复杂 38 行 orchestrator(含 3 个 helpers + async
-`_go` + signal cleanup),留 `MainWindow` 处理。`on_sync_all_channels` 通
-过 `mw._on_sync_requested(ids)` 复用。
+2026-11-19:桌面端「全量同步」按钮整体移除，`on_sync_all_channels` 与
+`SyncFlowController` / `sync_dialog` 一并删除。core `channel_sync` 能力保留
+（CLI `tgmonitor sync` 仍可用），其产生的 progress/done 事件仍由本 controller
+反馈到状态栏。
 """
 
 from __future__ import annotations
@@ -32,28 +31,6 @@ class SyncController:
         self._ctx.status_bar.show_message(mw.tr("拉取频道列表…"), 2000)
         self._ctx.status_bar.show_activity("拉取频道列表…")
         self._ctx.vm.refresh_monitored_channels()
-
-    def on_sync_all_channels(self) -> None:
-        """大盘快速操作:全量同步所有已订阅频道。
-
-        委托 `SyncFlowController.on_sync_requested`(2026-10-09 v1.12.x 抽提
-        出 main_window 4 个 helper 后的 orchestrator)— controller 不重复实现。
-        """
-        from PySide6.QtWidgets import QMessageBox
-
-        mw = self._ctx.main_window
-        ids = list(self._ctx.monitor.monitored_ids)
-        if not ids:
-            QMessageBox.information(
-                mw,
-                mw.tr("全量同步"),
-                mw.tr("已监听列表为空,先订阅频道"),
-            )
-            return
-        # 2026-10-09 v1.12.x:thin delegate `_on_sync_requested` 仍保留在
-        # main_window.signal-connect 拓扑(channel_panel.sync_requested),
-        # 调用走 `self._ctx.main_window._on_sync_requested` 透传。
-        mw._on_sync_requested(ids)
 
     def on_sync_progress(self, e) -> None:
         """全量同步进度 → 左侧活动指示器持续显示。dialog 自身进度条同步。"""

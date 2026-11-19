@@ -286,12 +286,14 @@ class UiAssembler:
         # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
         mw.nav.current_changed.connect(mw._on_nav_changed)
         # 2026-11-17 v2.0.3 D3/D4:header 按钮与 dashboard 三按钮接线删除。
-        # 登录/登出入口由 SettingsPage 自管;刷新/全量同步仍在 ChannelWidget,
+        # 登录/登出入口由 SettingsPage 自管;同步入口在 ChannelWidget 左栏,
         # 消息导出 UI 入口按用户确认移除(core 能力保留)。
+        # 2026-11-19:下栏全量同步按钮及 sync_requested 链路删除。
 
-        # ChannelWidget 信号
+        # ChannelWidget 信号（全量同步入口已移除，仅保留左栏同步）
+        # 左栏 show_action=True → refresh_button 运行时必非 None
+        assert mw.channel_panel.refresh_button is not None
         mw.channel_panel.refresh_button.clicked.connect(mw._on_refresh_channels)
-        mw.channel_panel.sync_requested.connect(mw._on_sync_requested)
 
         # MessageView → MessageDetail(点击消息显示详情)
         mw.live_view.message_selected.connect(mw.message_detail.show_message)

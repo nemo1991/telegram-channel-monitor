@@ -45,6 +45,13 @@ def _build_widget(qapp, qloop_16):  # noqa: ANN001 — 测试 helper
 
     app = MagicMock()
     app.bus = EventBus()
+
+    # 2026-11-19:ChannelWidget 构造时会读库填充左栏，mock 需返回真实
+    # coroutine（run_coro 要求 coroutine，不能是 MagicMock）。
+    async def _empty_joined() -> list:
+        return []
+
+    app.channels.list_tg_subscribed_channels = _empty_joined
     widget = ChannelWidget(app, qloop_16)
     return widget
 
@@ -162,13 +169,14 @@ def test_kind_icon_photo_load_failure_falls_back_to_emoji(
 
 
 def test_channel_display_text_no_badges(qapp) -> None:
-    """v1.6.4:无 4 字段时 display = `ch.display`,无徽标后缀。"""
+    """2026-11-19:名称为主、username 为辅 — `title  @username · id`,无徽标。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
-    # ChannelDTO.username 不带 @ 前缀,display 属性加 @
     ch = _channel(username="test")
     text = _channel_display_text(ch)
-    assert text == "@test"
+    assert text == "Test Channel  @test · 100", f"名称为主格式不符: {text!r}"
+    # 频道名必须在 username 之前(主次关系)
+    assert text.index("Test Channel") < text.index("@test")
     assert "✓" not in text
     assert "[风险]" not in text
 
@@ -219,16 +227,15 @@ def test_channel_display_text_verified_and_scam(qapp) -> None:
 def test_apply_title_changed_preserves_verified_badge(qapp, qloop_16) -> None:
     """v1.6.4:title 更新后徽标后缀(✓ / [风险])保留。"""
     widget = _build_widget(qapp, qloop_16)
-    # 无 username → display = `#id title`,title 改动会反映到文本上
+    # 无 username → 文本为 `title · id`,title 改动会反映到文本上
     ch = _channel(cid=100, title="Old", username=None, is_verified=True)
     widget.set_joined([ch])
     widget._apply_title_changed(100, "New")
 
     item = widget.joined_card.lst.item(0)
     assert item is not None
-    # display 用 `#100 <title>` 格式
     text = item.text()
-    assert "#100" in text
+    assert "· 100" in text
     assert "New" in text
     assert "Old" not in text
     assert "✓" in text  # 徽标保留

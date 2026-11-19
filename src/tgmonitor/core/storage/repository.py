@@ -150,6 +150,15 @@ class ChannelStore(ABC):
         ...
 
     @abstractmethod
+    async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
+        """只返回 TG 侧仍订阅/加入(tg_subscribed=True)的频道(2026-11-19 新增)。
+
+        与 `list_monitored_channels()` 是两个独立语义:前者是「已加入频道」
+        列表(左栏启动读库展示的数据源),后者是「已监听」白名单。
+        """
+        ...
+
+    @abstractmethod
     async def list_channels(self) -> list[ChannelDTO]:
         """所有频道(包含未订阅的);顺序无要求。"""
         ...
