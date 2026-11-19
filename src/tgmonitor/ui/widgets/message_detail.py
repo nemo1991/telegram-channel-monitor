@@ -232,16 +232,19 @@ class MessageDetail(QScrollArea):
         v.addWidget(meta_group)
 
         # ---- 正文 ----
-        # 2026-11-18 v2.0.5:去掉正文小标题 —— 纯文本框自身已是正文,
-        # 上方再挂一个标题浪费纵向空间(消息流要"省空间"的整体方向)。
+        # 2026-11-18 v2.0.5:去掉正文小标题 —— 纯文本框自身已是正文。
+        # 2026-11-19 v2.0.7 FR-03:正文改 QLabel(wordWrap) 自撑高。此前
+        # QPlainTextEdit + setMaximumHeight(220) 让长文本在正文区域内出一条
+        # 纵向滚动条,外层 MessageDetail(QScrollArea) 又滚一次 —— 双层滚动。
+        # QLabel 的 sizeHint 随折行内容增长,由外层面板统一承接高度。
+        # TextPlain 防止消息里的 < / & 被当 HTML 解析;保留鼠标选中复制。
         if m.text:
-            text_edit = QPlainTextEdit(m.text)
-            text_edit.setReadOnly(True)
-            text_edit.setFrameShape(QFrame.NoFrame)
-            text_edit.setMaximumHeight(220)
-            # `transparent` 走 `#detailTextEdit` QSS
-            text_edit.setObjectName("detailTextEdit")
-            v.addWidget(text_edit)
+            text_label = QLabel(m.text)
+            text_label.setObjectName("detailTextEdit")
+            text_label.setWordWrap(True)
+            text_label.setTextFormat(Qt.TextFormat.PlainText)
+            text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            v.addWidget(text_label)
 
         # ---- 媒体 ----
         if m.has_media:

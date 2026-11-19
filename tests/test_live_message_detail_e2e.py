@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPlainTextEdit, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from tests.fixtures._factories import make_message
 from tests.fixtures._real_window import build_real_main_window
@@ -71,16 +71,17 @@ def test_click_live_message_shows_detail_and_switching_updates_it(qapp, qloop, t
 
     first = _click_row(win, qapp, 0)
     assert detail._current is first, "点击后详情必须指向被点中的消息 DTO"
-    text_edit = detail.findChild(QPlainTextEdit, "detailTextEdit")
-    assert text_edit is not None
-    assert first.text in text_edit.toPlainText()
+    # v2.0.7 FR-03:正文已是 QLabel(wordWrap),由外层面板统一滚动。
+    body = detail.findChild(QLabel, "detailTextEdit")
+    assert body is not None
+    assert first.text in body.text()
 
     second = _click_row(win, qapp, 1)
     assert second is not first
     assert detail._current is second, "切换行后详情必须更新为新消息"
-    text_edit = detail.findChild(QPlainTextEdit, "detailTextEdit")
-    assert text_edit is not None
-    assert second.text in text_edit.toPlainText()
+    body = detail.findChild(QLabel, "detailTextEdit")
+    assert body is not None
+    assert second.text in body.text()
 
     # 2026-11-18 v2.0.5:关闭详情按钮已移除;复制文本按钮上提到 header 行。
     labels = [b.text() for b in detail.findChildren(QPushButton)]
