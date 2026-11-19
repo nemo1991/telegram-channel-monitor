@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel
 
 from tests.fixtures._factories import make_message
+from tgmonitor.core.dto import ReactionDTO
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 
 
@@ -50,3 +51,46 @@ def test_detail_hides_views_field(qapp) -> None:
     detail.show_message(make_message(channel_id=100, msg_id=6, views=123456, forwards=42))
     texts = _label_texts(detail)
     assert "42" in texts, f"转发字段应保留，实际 labels={texts}"
+
+
+def test_detail_renders_reactions_without_crash(qapp) -> None:
+    """带 reactions 的消息打开详情必须正常渲染「反应」行，不抛 AttributeError。
+
+    2026-11-19 现场崩溃：`show_message()` 曾误把模块级 `_format_reactions`
+    当实例方法调用（`self._format_reactions`），只要消息带 reaction 就必崩。
+    此前所有详情测试都不构造 reactions，导致该分支从未被执行。
+    """
+    detail = MessageDetail()
+    detail.show_message(
+        make_message(
+            channel_id=100,
+            msg_id=7,
+            reactions=[
+                ReactionDTO(emoji="🔥", count=5, is_chosen=True),
+                ReactionDTO(emoji="👍", count=3),
+            ],
+        )
+    )
+
+    texts = _label_texts(detail)
+    assert "反应:" in texts, f"应显示反应字段，实际 labels={texts}"
+    assert "[🔥 5]  👍 3" in texts, f"应显示 reaction 文本（自投高亮），实际 labels={texts}"
+
+
+def test_detail_reactions_full_display_not_truncated(qapp) -> None:
+    """详情面板全量展示 reactions（max_show=999），不做 LIVE 行的 3 个截断。"""
+    detail = MessageDetail()
+    detail.show_message(
+        make_message(
+            channel_id=100,
+            msg_id=8,
+            reactions=[
+                ReactionDTO(emoji=e, count=i + 1)
+                for i, e in enumerate(["🔥", "👍", "❤️", "🎉", "👀"])
+            ],
+        )
+    )
+
+    texts = _label_texts(detail)
+    assert "+2" not in texts, f"详情不应截断 reactions，实际 labels={texts}"
+    assert any("👀 5" in t for t in texts), f"第 5 个 reaction 也应显示，实际 labels={texts}"
