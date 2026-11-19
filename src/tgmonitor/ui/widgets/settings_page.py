@@ -191,8 +191,8 @@ class SettingsPage(QWidget):
                     kind=FieldKind.PATH,
                     label=self.tr("Session 目录:"),
                     placeholder=str(_user_data_dir() / "session"),
-                    on_default=lambda: self._set_default(self.in_session_dir, "session"),
-                    default_tooltip=self.tr("恢复为 platform-native 默认目录"),
+                    # 2.0.8:删除「默认」按钮 —— 该行的位置让给登录/登出入口
+                    # (见 _build_account 末尾 auth_row 注入)。
                 ),
             ),
         )
@@ -209,24 +209,29 @@ class SettingsPage(QWidget):
         self.in_phone = s._widgets["phone"]
         self.in_session_dir = s._widgets["session_dir"]
 
-        # 2026-11-17 v2.0.3 D3:登录/登出入口。两个按钮常驻(由 set_login_state
-        # 控制显隐),不经 FormSection —— 它们不参与 _collect()/保存到 .env。
-        auth_row = QHBoxLayout()
-        auth_row.setContentsMargins(0, 0, 0, 0)
-        auth_row.setSpacing(8)
-        self.btn_login = QPushButton(self.tr("登录…"))
+        # 2026-11-19 v2.0.8 FR-01:登录/登出入口放到「Session 目录」行的
+        # 「默认」按钮位置 —— 原 2.0.3/2.0.4 是凭证分组底部独立一行(带 stretch),
+        # 现改为直接注入 path_field 行内的 QHBoxLayout(浏览…之后)。
+        # 两个按钮常驻(由 set_login_state 控制显隐),不经 FormSection ——
+        # 它们不参与 _collect()/保存到 .env。
+        #
+        # 注意:path_field 的 `_widgets["session_dir"]` 是内层 QLineEdit,
+        # 其 parent 是承载 [edit | 浏览…] 的 row_w。取该 row_w 的 QHBoxLayout
+        # 追加即可,不需要额外 addLayout 到分组底部。
+        self.btn_login = QPushButton(self.tr("登录"))
         self.btn_login.setObjectName("settingsLoginBtn")
         self.btn_login.clicked.connect(self._on_login_clicked)
-        auth_row.addWidget(self.btn_login)
         self.btn_logout = QPushButton(self.tr("登出"))
         self.btn_logout.setObjectName("settingsLogoutBtn")
         self.btn_logout.clicked.connect(self._on_logout_clicked)
-        auth_row.addWidget(self.btn_logout)
-        auth_row.addStretch(1)
-        # FR-02:塞进凭证分组内部(QVBoxLayout),不再 addLayout 到 form_root。
-        gb_layout = gb.layout()
-        assert gb_layout is not None  # FormSection.build 必建 QVBoxLayout
-        gb_layout.addLayout(auth_row)
+
+        session_edit = self.in_session_dir
+        session_row_w = session_edit.parentWidget()
+        assert session_row_w is not None  # path_field 必把 edit 收进 row_w
+        session_row = session_row_w.layout()
+        assert isinstance(session_row, QHBoxLayout)  # path_field 用 QHBoxLayout
+        session_row.addWidget(self.btn_login)
+        session_row.addWidget(self.btn_logout)
 
     def _build_channel_monitor(self, root: QVBoxLayout) -> None:
         """监听频道管理 — 从频道页迁入的 ChannelWidget 单实例(2.0.6)。
@@ -265,10 +270,23 @@ class SettingsPage(QWidget):
         self.btn_logout.setEnabled(logged_in)
 
     def _on_login_clicked(self) -> None:
-        """设置页「登录…」— 弹 LoginDialog(内部订阅 LoginStateChanged 自动切页)。"""
+        """设置页「登录」— 直接用「账户凭证」里的手机号发起登录。
+
+        2.0.8 FR-01:不再弹「输入手机号」页。读本页手机号输入框(用户改了
+        还没保存也能用),交给 LoginDialog 自动提交;验证码 / 2FA / 邮箱
+        等后续步骤仍在该对话框内按 LoginStateChanged 就地切换。
+        """
         from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
 
-        dlg = LoginDialog(self._app, self._loop, self.window())
+        phone = self.in_phone.text().strip()
+        if not phone:
+            QMessageBox.warning(
+                self,
+                self.tr("无法登录"),
+                self.tr("请先在「账户凭证」中填写手机号。"),
+            )
+            return
+        dlg = LoginDialog(self._app, self._loop, self.window(), phone=phone)
         dlg.exec()
 
     def _on_logout_clicked(self) -> None:

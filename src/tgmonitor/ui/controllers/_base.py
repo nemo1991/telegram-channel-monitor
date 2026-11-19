@@ -42,6 +42,7 @@ from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
+from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.status_bar import StatusBar
@@ -100,3 +101,6 @@ class MainWindowCtx:
     # 2026-11-17 v2.0.3 D3:登录/登出入口迁到设置页,状态适配需要访问。
     # 可选 — 轻量 controller 单测的 ctx 桩不必构造完整 SettingsPage。
     settings_page: SettingsPage | None = None
+    # v2.0.8:消息管理页 —— 可选,轻量 controller 单测的 ctx 桩不必构造完整页。
+    # 必须放最后(dataclass 要求 default 字段在非 default 之后)。
+    message_manager: MessageManagerWidget | None = None

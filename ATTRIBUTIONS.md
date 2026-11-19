@@ -25,6 +25,7 @@ Contributors)。
 | `src/tgmonitor/resources/icons/kind_group.svg`         | Lucide `user-round` |
 | `src/tgmonitor/resources/icons/nav_dashboard.svg`      | Lucide `layout-dashboard` |
 | `src/tgmonitor/resources/icons/nav_settings.svg`       | Lucide `settings`   |
+| `src/tgmonitor/resources/icons/nav_messages.svg`       | Lucide `message-square` |
 | `src/tgmonitor/resources/icons/nav_live.svg`           | Lucide `radio`(2 道大弧 + 中心点) |
 | `src/tgmonitor/resources/icons/nav_channels.svg`       | Lucide `list`(3 dot + 3 line) |
 | `src/tgmonitor/resources/icons/plus.svg`               | Lucide `plus` |

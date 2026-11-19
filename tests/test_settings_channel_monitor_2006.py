@@ -64,10 +64,10 @@ def test_main_and_ctx_share_single_panel(qapp, qloop, tmp_path):
 
 
 def test_no_standalone_channel_page(qapp, qloop, tmp_path):
-    """G4：导航 3 项、stack 3 页,不再有独立「频道管理」页标题。"""
+    """G4 + v2.0.8：导航 4 项、stack 4 页,不再有独立「频道管理」页标题。"""
     win = build_real_main_window(qloop, tmp_path)
-    assert len(win.nav._buttons) == 3
-    assert win.stack.count() == 3
+    assert len(win.nav._buttons) == 4
+    assert win.stack.count() == 4
     all_titles = [lbl.text() for lbl in win.findChildren(QLabel)]
     assert "频道管理" not in all_titles
     win.close()

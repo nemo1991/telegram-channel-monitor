@@ -1,14 +1,15 @@
 """主窗口 — 导航(左) + 内容页(QStackedWidget)。
 
-2026-11-18 v2.0.6:撤销独立频道页,监听频道管理迁入设置页 —— 内容页 5→3。
+2026-11-19 v2.0.8:新增消息管理页 —— 内容页 3→4。
 
   ┌─────────────────────────────────────────────┐
-  │ ●                          已登录  [登出]   │ ← 紧凑头栏
+  │ ●                          已登录           │ ← 紧凑头栏(纯标题)
   ├──┬──────────────────────────────────────────┤
   │  │  QStackedWidget                           │
   │  │   0: 大盘(DASHBOARD) — 统计 + 活动 + 实时流 │
-  │  │   1: 媒体管理(MEDIA) — MediaManagerWidget  │
-  │  │   2: 设置(SETTINGS) — 整页配置             │
+  │  │   1: 消息管理(MESSAGES) — MessageManagerWidget │
+  │  │   2: 媒体管理(MEDIA) — MediaManagerWidget  │
+  │  │   3: 设置(SETTINGS) — 整页配置             │
   │  │      └ 监听频道管理 — ChannelWidget        │
   ├──┴──────────────────────────────────────────┤
   │ Ready · 3 channels · 0 new                  │ ← 状态栏
@@ -62,6 +63,7 @@ from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
+from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.status_bar import StatusBar
@@ -79,14 +81,13 @@ ShutdownCb = Callable[[], Awaitable[None]]
 
 
 class MainWindow(QMainWindow):
-    """应用主窗口:左导航 + 3 页内容 + 紧凑头栏 + 状态栏。
+    """应用主窗口:左导航 + 4 页内容 + 紧凑头栏 + 状态栏。
 
-    # 5 个 page 由 QStackedWidget 持有:
-    #   0 LIVE      → MessageView + MessageDetail(实时流 + 详情)
-    #   1 DASHBOARD → 统计 + 活动时间线 + 快速操作
-    #   2 CHANNELS  → ChannelWidget(订阅 / 退订 / 全量同步)
-    #   3 MEDIA     → MediaManagerWidget(浏览 / 重试 / 删 / 打开 + prune)
-    #   4 SETTINGS  → 整页配置(凭据 / 存储 / 代理 / 媒体 / 同步)
+    # 4 个 page 由 QStackedWidget 持有(v2.0.8):
+    #   0 DASHBOARD  → 统计 + 活动时间线 + 实时流(MessageView + Detail)
+    #   1 MESSAGES   → MessageManagerWidget(历史消息查看 / 筛选)
+    #   2 MEDIA      → MediaManagerWidget(浏览 / 重试 / 删 / 打开 + prune)
+    #   3 SETTINGS   → 整页配置(凭据 / 监听频道 / 存储 / 代理 / 媒体 / 同步)
     #
     # 退出:closeEvent 同步阻塞等 async shutdown 完成,保证 storage / client /
     #       tdjson 子进程都被显式关掉。
@@ -223,6 +224,7 @@ class MainWindow(QMainWindow):
             tray=self._tray,
             media_refresh_debounce=self._media_refresh_debounce,
             settings_page=self.settings_page,
+            message_manager=self.message_manager,
         )
         self._tray_ctrl = TrayController(self._ctx)
         # 2026-11-17 v2.0.3 D3:登录/登出入口迁到 SettingsPage 自管,
@@ -422,6 +424,7 @@ class MainWindow(QMainWindow):
         self.dashboard = cast(DashboardWidget, widgets["dashboard"])
         self.channel_panel = cast(ChannelWidget, widgets["channel_panel"])
         self.media_manager = cast(MediaManagerWidget, widgets["media_manager"])
+        self.message_manager = cast(MessageManagerWidget, widgets["message_manager"])
         self.settings_page = cast(SettingsPage, widgets["settings_page"])
         self.status_bar = cast(StatusBar, widgets["status_bar"])
         self._media_refresh_debounce = cast(QTimer, widgets["media_refresh_debounce"])

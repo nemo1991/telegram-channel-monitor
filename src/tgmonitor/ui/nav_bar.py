@@ -1,17 +1,26 @@
 # mypy: disable-error-code="attr-defined"
 """VerticalNavBar — 左侧竖向导航(深色底,跨主题)。
 
-3 个 Tab:
+4 个 Tab(v2.0.8 新增消息管理):
   0: 大盘(DASHBOARD)  — 统计 + 活动时间线 + 实时流
-  1: 媒体管理(MEDIA)  — 浏览 / 重试 / 删 / 打开 + orphan reconcile
-  2: 设置(SETTINGS)   — 所有配置(凭据/监听频道/存储/代理/媒体/同步)
+  1: 消息管理(MESSAGES) — 历史消息查看 / 频道·关键词·日期·收藏筛选
+  2: 媒体管理(MEDIA)  — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+  3: 设置(SETTINGS)   — 所有配置(凭据/监听频道/存储/代理/媒体/同步)
 
 2026-11-18 v2.0.6:撤销独立频道页 —— 监听频道管理迁入设置页,导航 4→3。
+2026-11-19 v2.0.8:新增「消息」页,导航 3→4。
 
 设计:
 - 固定深色底 — 形成稳定的"导航锚点",不随系统设置变化
+  **2.0.8 修复**:此前只在 _NavButton 上用 palette 设背景,父级
+  VerticalNavBar 自身没有底色,idle 按钮又用 Qt.transparent → 整条 nav
+  实际透出 QMainWindow 的 #f5f6fa 浅底,浅灰图标/文字与底色几乎同色,
+  用户报"看不清 / 图标显示不全"。现在 nav 自身显式刷深色底 + QSS 双保险。
 - 每个按钮 = 24px 图标 + 10px 标签文字(竖直堆叠)
-- 选中态:白色图标+文字 + 左侧 3px accent 条 + 浅蓝渐变叠层
+  **2.0.8 修复**:此前按钮有 3px 透明左边框(占位防抖动),但文字标签是
+  固定 64px 宽 → 在只剩 61px 的内容区里溢出,左侧被裁。去掉该边框,
+  改由按钮整体尺寸保证不抖(active 有实色蓝底自证,不需要左边线)。
+- 选中态:白色图标+文字 + accent 实色蓝底
 - 悬停态:微亮背景(永远比 idle 亮、永远比 active 暗)
 - **图标走 tinted_action_icon(显式注入 fg)**:Qt 的 QSvgRenderer 不解析
   currentColor,所以不能依赖 QSS color → SVG currentColor 链路 — 必须
@@ -33,11 +42,12 @@ from tgmonitor.ui.icon import tinted_action_icon
 # 标签走 `QCoreApplication.translate`,与其余 UI 文案写法一致。
 # 2026-11-17 v2.0.4 FR-03:实时流迁入大盘,撤销独立页 → 4 项,大盘为首页。
 # 2026-11-18 v2.0.6:频道页迁入设置页 → 3 项。
-_NAV_LABELS_SRC = ("大盘", "媒体", "设置")
+# 2026-11-19 v2.0.8:新增消息管理页 → 4 项。
+_NAV_LABELS_SRC = ("大盘", "消息", "媒体", "设置")
 
 
 def _nav_label(idx: int) -> str:
-    """Return the translated label for nav item idx (0..2).
+    """Return the translated label for nav item idx (0..3).
 
     用 module-level function 而不是直接调 translate,保持 `_NAV_ITEMS`
     结构(icon_name + label)的兼容性。
@@ -47,27 +57,26 @@ def _nav_label(idx: int) -> str:
     return QCoreApplication.translate("nav_bar", _NAV_LABELS_SRC[idx])
 
 
-_NAV_ICONS = ("nav_dashboard", "nav_media", "nav_settings")
+_NAV_ICONS = ("nav_dashboard", "nav_messages", "nav_media", "nav_settings")
 
 
 def _nav_items() -> list[tuple[str, str]]:
     """导航项 (icon_name, label) 列表。"""
-    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(3)), strict=True))
+    return list(zip(_NAV_ICONS, (_nav_label(i) for i in range(len(_NAV_LABELS_SRC))), strict=True))
 
 
 # ---- 配色 token(直接 hex,固定样式,本文件自包含) ----
 #
-# 关键设计:**active 用纯 accent 实色填充**,跟父级 nav 底(#1e1e2e)有
-# 强烈对比。原来 active 也用深色,跟父级同色,用户根本看不出选中。
-# 3 态(active / hover / idle)必须有清晰对比:
-#   active  >  hover  >  idle
+# 2.0.8:nav 自身底色显式刷深色(nav_bg),idle 前景提亮到 #dfe3f0,
+# 保证 idle / hover / active 三态与底色都有清晰对比:
+#   active(蓝底白字)> hover(中蓝灰)> idle(深底亮灰字)
 _LIGHT = {
-    # 父级 nav bg = #1a1a26(浅色主题 nav 底故意保持深色做"锚点")
+    "nav_bg": "#1e2433",  # 导航条底色(深色锚点,与右侧 #f5f6fa 强区隔)
     "active_bg": "#5b9cf5",  # accent 实色 — 强对比
-    "hover_bg": "#2c2c45",  # 比父级 #1a1a26 亮一阶
+    "hover_bg": "#343c56",  # 比 nav_bg 亮一阶
     "idle_bg": "transparent",
     "active_fg": "#ffffff",
-    "inactive_fg": "#b0b5c8",
+    "inactive_fg": "#dfe3f0",  # 2.0.8 提亮(#b0b5c8 在深色底上仍偏暗)
     "accent": "#5b9cf5",
     "accent_soft": "rgba(91,156,245,0.22)",
 }
@@ -89,22 +98,24 @@ class _NavButton(QWidget):
         self._hovering = False
         self._icon_name = icon_name
 
-        self.setFixedSize(64, 64)
+        # 2.0.8:72×68 + 28px 图标容器(24px pixmap 居中留 2px padding),
+        # 去掉旧 3px 透明左边框后文字标签 72px 正好铺满内容区,不再被裁切。
+        self.setFixedSize(72, 68)
         self.setCursor(Qt.PointingHandCursor)
 
         vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(0, 6, 0, 4)
-        vbox.setSpacing(2)
+        vbox.setContentsMargins(0, 8, 0, 6)
+        vbox.setSpacing(4)
         vbox.setAlignment(Qt.AlignCenter)
 
         self._ico_label = QLabel()
-        self._ico_label.setFixedSize(24, 24)
+        self._ico_label.setFixedSize(28, 28)
         self._ico_label.setAlignment(Qt.AlignCenter)
         vbox.addWidget(self._ico_label, 0, Qt.AlignCenter)
 
         self._txt_label = QLabel(label)
         self._txt_label.setAlignment(Qt.AlignCenter)
-        self._txt_label.setFixedWidth(64)
+        self._txt_label.setFixedWidth(72)
         vbox.addWidget(self._txt_label, 0, Qt.AlignCenter)
 
         self._refresh_style()
@@ -122,7 +133,7 @@ class _NavButton(QWidget):
             icon = tinted_action_icon(self._icon_name, QColor(p["active_fg"]))
         else:
             icon = tinted_action_icon(self._icon_name, QColor(p["inactive_fg"]))
-        self._ico_label.setPixmap(icon.pixmap(24, 24))
+        self._ico_label.setPixmap(icon.pixmap(24, 24))  # 28px 容器内居中,四周 2px padding 防裁切
 
         # ---- 背景:active / hover / idle 三态清晰分层 ----
         # **重要**:除 QSS 外,再用 setAutoFillBackground + QPalette 兜底。
@@ -142,13 +153,9 @@ class _NavButton(QWidget):
         self.setAutoFillBackground(True)
         self.setPalette(pal)
 
-        # ---- QSS:左侧 3px 占位防 layout 抖动,active 时无 accent(蓝底自证) ----
-        # active 用实色蓝底,无需额外左边线;非 active 给一个透明 3px 占位
-        # 让按钮宽度保持 64 不变(不切换 active 时整条 nav 不抖)。
-        border_left = "3px solid transparent"
-        self.setStyleSheet(
-            f"border-left:{border_left};border-top:0;border-right:0;border-bottom:0;"
-        )
+        # 2.0.8:原先这里给所有态设 3px 透明左边框占位防抖,但文字标签
+        # 固定 64px 宽 > 61px 内容区 → 图标/文字左侧被裁。现去掉边框,
+        # 按钮固定尺寸本身保证不抖,active 用整块蓝底自证选中态。
 
         # ---- label palette + QSS(双保险) ----
         for lbl in (self._ico_label, self._txt_label):
@@ -177,18 +184,27 @@ class _NavButton(QWidget):
 
 
 class VerticalNavBar(QWidget):
-    """深色垂直导航栏,容纳 5 个 _NavButton。"""
+    """深色垂直导航栏,容纳 4 个 _NavButton。"""
 
     current_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """建 5 个 _NavButton + 默认高亮第一个(0 = LIVE)。"""
+        """建 4 个 _NavButton + 默认高亮第一个(0 = 大盘)。"""
         super().__init__(parent)
         self._current = 0
         self._buttons: list[_NavButton] = []
 
-        self.setFixedWidth(68)
+        # 2.0.8:nav 自身必须显式刷底色 —— 旧实现只给 _NavButton 用 palette,
+        # idle 按钮是 Qt.transparent,于是整条 nav 透出主窗 #f5f6fa 浅底,
+        # 浅灰前景几乎不可见。palette + QSS 双保险(跨平台)。
+        p = _palette()
+        self.setFixedWidth(76)
         self.setObjectName("navBar")
+        nav_pal = self.palette()
+        nav_pal.setColor(self.backgroundRole(), QColor(p["nav_bg"]))
+        self.setAutoFillBackground(True)
+        self.setPalette(nav_pal)
+        self.setStyleSheet(f"QWidget#navBar {{ background: {p['nav_bg']}; }}")
 
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(0, 16, 0, 0)
