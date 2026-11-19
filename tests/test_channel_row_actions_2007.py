@@ -69,8 +69,9 @@ def test_row_text_has_no_chat_id_but_keeps_it_in_data(qapp) -> None:
 
     row = card.lst.itemWidget(item)
     assert row is not None
+    # 2026-11-19 hotfix:文字由 item delegate 独占渲染,挂件 label 留空去重影。
     name = row.findChild(QLabel, "channelRowName")
-    assert name is not None and name.text() == item.text()
+    assert name is not None and name.text() == ""
     card.deleteLater()
 
 

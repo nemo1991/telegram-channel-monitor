@@ -565,12 +565,12 @@ QTableWidget#statsTable QHeaderView::section:last {
 /* ===== 滚动区域(设置页) ===== */
 #settingsScroll {
     border: none;
-    background: #ffffff;
+    background: transparent;
 }
-/* v2.0.7 FR-04:设置页整页白底,消除 #contentArea 的灰色透出。 */
+/* 2026-11-19 hotfix:设置页背景跟随大盘 #contentArea(#f5f6fa),卡片仍白底浮于其上。 */
 #settingsPage,
 #settingsPage #settingsScrollContent {
-    background: #ffffff;
+    background: #f5f6fa;
 }
 
 /* ===== 频道卡片(ChannelWidget 左右两栏) ===== */

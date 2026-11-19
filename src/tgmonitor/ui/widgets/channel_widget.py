@@ -216,6 +216,9 @@ class ChannelListCard(QWidget):
         head = QHBoxLayout()
         self.count_label = QLabel(title)
         self.count_label.setObjectName("cardSectionTitle")
+        # 2026-11-19 hotfix:右栏无「同步」按钮,标题行会被压到 label 高度(20px),
+        # 左栏因按钮撑到 31px → 两栏列表顶部错开 11px。给标题固定高度对齐两栏。
+        self.count_label.setFixedHeight(31)
         head.addWidget(self.count_label)
         head.addStretch(1)
         # 2026-11-19:下栏「已监听」不再有全量同步入口 → show_action=False
@@ -262,7 +265,7 @@ class ChannelListCard(QWidget):
     def set_items(self, channels: list[ChannelDTO], *, count_template: str) -> None:
         """装载频道 + 设置标题右侧 count(format 用 `{n}` 占位)。
 
-        `count_template`:例如 `"已加入频道 · {n}"`、`"已监听 · {n}"`、
+        `count_template`:例如 `"已加入 · {n}"`、`"已监听 · {n}"`、
         `"已监听:{n}"`。模板只接受一个整数占位。
 
         2026-09-04 v1.6.4:`_kind_icon(kind, photo_local_key)` 优先渲染频道
@@ -352,7 +355,12 @@ class ChannelListCard(QWidget):
         self.lst.clear()
 
     def _add_row(self, ch: ChannelDTO) -> None:
-        """建一行:item 仍 setText(保留文本契约),widget 提供行尾图标按钮。"""
+        """建一行:文字/头像由 item delegate 独占渲染,widget 只提供行尾按钮。
+
+        2026-11-19 hotfix:此前 item.setText(text) 与 widget 内 QLabel(text) 双重
+        绘制 → 文字重影。widget 背景透明浮在 item 上,delegate 文字透出;若 label
+        再画一遍同文本就叠成重影。现 label 留空,仅作 Expanding 占位把按钮推到最右。
+        """
         text = _channel_display_text(ch)
         item = QListWidgetItem(text)
         item.setData(Qt.UserRole, ch.id)
@@ -366,7 +374,8 @@ class ChannelListCard(QWidget):
         row_lay = QHBoxLayout(row)
         row_lay.setContentsMargins(4, 2, 4, 2)
         row_lay.setSpacing(4)
-        name = QLabel(text)
+        # 空 label 仅作占位撑开按钮;文字交给 item delegate,避免重影。
+        name = QLabel()
         name.setObjectName("channelRowName")
         name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         row_lay.addWidget(name)
@@ -383,14 +392,8 @@ class ChannelListCard(QWidget):
         self.lst.setItemWidget(item, row)
 
     def _set_row_text(self, item: QListWidgetItem, text: str) -> None:
-        """item 与挂件内label 同步文本(事件驱动标题变更时两处都要更新)。"""
+        """更新行文本 — 只改 item(delegate 独占渲染,2026-11-19 去重影)。"""
         item.setText(text)
-        widget = self.lst.itemWidget(item)
-        if widget is None:
-            return
-        name = widget.findChild(QLabel, "channelRowName")
-        if name is not None:
-            name.setText(text)
 
     def _refresh_empty_state(self) -> None:
         """list count == 0 + 配置了 empty_hint → 切到空态页;否则切回列表页。
@@ -466,7 +469,7 @@ class ChannelWidget(QWidget):
 
         # 左栏 — 已加入(`ChannelListCard`,已接入 empty_hint #2-6)
         self.joined_card = ChannelListCard(
-            title="已加入频道",
+            title="已加入",
             action_label="同步",
             action_tooltip="从 Telegram 拉取当前账号加入的全部频道/群组并保存到本地",
             extended_selection=False,
@@ -495,10 +498,10 @@ class ChannelWidget(QWidget):
 
         root.addLayout(cards_row, 1)
 
-        # 构造即初始化两栏计数为 0(如「已加入频道 · 0」),与 _refresh_state
+        # 构造即初始化两栏计数为 0(如「已加入 · 0」),与 _refresh_state
         # 解耦 —— 左栏此后只由「刷新」按钮的 set_joined 驱动,右栏由监听
         # 状态驱动。不初始化会停在无计数的标题文本(title 本身)。
-        self.joined_card.clear_items(count_template="已加入频道 · {n}")
+        self.joined_card.clear_items(count_template="已加入 · {n}")
         self.subs_card.clear_items(count_template="已监听 · {n}")
 
         # ---- 公开只读句柄 ----
@@ -539,7 +542,7 @@ class ChannelWidget(QWidget):
     def set_joined(self, channels: list[ChannelDTO]) -> None:
         """外部装入已加入频道(DTO 列表)— 由 `MainWindow._refresh_state` 调。"""
         self._joined = {c.id: c for c in channels}
-        self.joined_card.set_items(channels, count_template="已加入频道 · {n}")
+        self.joined_card.set_items(channels, count_template="已加入 · {n}")
         # 触发过滤(数据变了)
         self._apply_filter(self.search_edit.text())
 

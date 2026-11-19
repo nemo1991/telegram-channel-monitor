@@ -479,7 +479,7 @@ def test_main_window_initial_refresh_state_is_empty(qapp, qloop):
         # MainWindow 构造会触发 __init__ 里的 _refresh_state + bootstrap_ui
         win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
         # initial state:已知频道为空,标签应是 "0"
-        assert win.channel_panel.joined_count_label.text() == "已加入频道 · 0"
+        assert win.channel_panel.joined_count_label.text() == "已加入 · 0"
         assert win.channel_panel.joined_list.count() == 0
 
 
