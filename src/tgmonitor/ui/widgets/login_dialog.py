@@ -44,11 +44,19 @@ class LoginDialog(QDialog):
         app: AppService,
         loop: asyncio.AbstractEventLoop,
         parent: QWidget | None = None,
+        *,
+        phone: str | None = None,
     ) -> None:
-        """建 modal dialog + 自动按当前 LoginState 选页(手机号 / 验证码 / 2FA)。"""
+        """建 modal dialog + 自动按当前 LoginState 选页(手机号 / 验证码 / 2FA)。
+
+        2.0.8 FR-01:`phone` 由设置页「账户凭证」直接传入 — 非空时在手机号
+        页自动提交,用户不再看到「输入手机号」这一步。None / 空串保持旧行为
+        (展示手机号输入页),兼容主界面直接点登录的用法。
+        """
         super().__init__(parent)
         self.app = app
         self.loop = loop
+        self._initial_phone = (phone or "").strip()
         self.setWindowTitle(self.tr("Telegram 登录"))
         self.setModal(True)
         self._expected_state: str = ""
@@ -162,6 +170,19 @@ class LoginDialog(QDialog):
             self._render(state, "")
         except Exception:  # noqa: BLE001
             log.exception("init LoginDialog state")
+            state = "unknown"
+        # 2.0.8 FR-01:设置页传入手机号时跳过手输页,直接提交。
+        # 只在需要手机号的几档状态提交(ready 时 _render 已 hide();
+        # code/password/email/registration 等页等用户填后续凭证)。
+        if self._initial_phone and state in (
+            "phone_required",
+            "closed",
+            "uninit",
+            "unknown",
+            "error",
+        ):
+            self.in_phone.setText(self._initial_phone)
+            self._submit_phone()
 
     def _render(self, state: str, detail: str = "") -> None:
         self._expected_state = state

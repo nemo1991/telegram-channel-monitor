@@ -80,14 +80,19 @@ class LifecycleController:
         # nav.set_current 已经 emit current_changed,stack 会自动跟
 
     def on_nav_changed(self, idx: int) -> None:
-        """nav tab 切换 — 切到 MEDIA 页触发一次列表刷新。
+        """nav tab 切换 — 切到 MESSAGES / MEDIA 页各触发一次列表刷新。
 
-        2026-11-17 v2.0.4 FR-03:撤销独立实时流页后 MEDIA 从 idx 3 → idx 2。
-        2026-11-18 v2.0.6:撤销独立频道页后 MEDIA 从 idx 2 → idx 1。
+        2026-11-18 v2.0.6:MEDIA idx 2 → 1。
+        2026-11-19 v2.0.8:新增 MESSAGES idx 1,MEDIA 后移到 idx 2。
         其他页忽略。VM 异步拉数据,第一次可能因 monitored_channels 还没就绪而
         短暂为空,后续 channels_changed → _refresh_state 也会再刷一次。
         """
         if idx == 1:
+            # 消息管理页:按需查询(不是实时流),每次切入都重跑筛选条件。
+            mm = self._ctx.message_manager
+            if mm is not None:
+                mm.refresh()
+        elif idx == 2:
             # 走 `media_refresh_debounce` timer → `MediaActionsController.
             # flush_media_refresh_pending` → `vm.refresh_media_list`(节流
             # 避免快速切 tab 时反复拉)。

@@ -4,7 +4,7 @@
 - `show_and_raise` unminimize + 顶置 + 焦点
 - `quit_app` 标 `_truly_quit=True` + 调 `qt_app.quit()`
 - `switch_tab` 委托 nav.set_current
-- `on_nav_changed` 切到 MEDIA 页(3)→ start media_refresh_debounce
+- `on_nav_changed` 切到 MESSAGES(1)→ refresh / MEDIA(2)→ start media_refresh_debounce
 - `on_global_escape` 非 LIVE → 回 LIVE(搜索分支已移除)
 - `copy_current_message_text` LIVE 选中消息 text → clipboard + status 提示
 """
@@ -53,6 +53,7 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
     status_bar = MagicMock(name="status_bar")
     media_refresh_debounce = MagicMock(spec=QTimer, name="media_refresh_debounce")
     search_debounce = MagicMock(spec=QTimer, name="search_debounce")
+    message_manager = MagicMock(name="message_manager")
 
     # main_window.tr(...) 返原文
     mw.tr = MagicMock(side_effect=lambda s: s)
@@ -68,6 +69,7 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
         status_bar=status_bar,
         media_refresh_debounce=media_refresh_debounce,
         search_debounce=search_debounce,
+        message_manager=message_manager,
     )
     refs = {
         "mw": mw,
@@ -80,6 +82,7 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
         "status_bar": status_bar,
         "media_refresh_debounce": media_refresh_debounce,
         "search_debounce": search_debounce,
+        "message_manager": message_manager,
     }
     return ctx, refs
 
@@ -138,25 +141,35 @@ class TestSwitchTab:
 
 
 class TestOnNavChanged:
-    """`on_nav_changed` — 切到 MEDIA 页(1)→ start media_refresh_debounce。
+    """`on_nav_changed` — MESSAGES(1)→ refresh 消息页;MEDIA(2)→ debounce。
 
-    2026-11-18 v2.0.6:导航 4→3,媒体 idx 2→1,设置 idx 3→2。
+    2026-11-19 v2.0.8:导航 3→4,消息 idx 1,媒体 idx 2,设置 idx 3。
     """
 
-    def test_media_tab_starts_debounce(self, qapp_session) -> None:
+    def test_messages_tab_refreshes_message_manager(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
         ctrl.on_nav_changed(1)
 
+        refs["message_manager"].refresh.assert_called_once()
+        refs["media_refresh_debounce"].start.assert_not_called()
+
+    def test_media_tab_starts_debounce(self, qapp_session) -> None:
+        ctx, refs = _make_ctx(qapp_session)
+        ctrl = LifecycleController(ctx)
+
+        ctrl.on_nav_changed(2)
+
         refs["media_refresh_debounce"].start.assert_called_once()
+        refs["message_manager"].refresh.assert_not_called()
 
     def test_non_media_tab_does_not_start_debounce(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
         ctrl = LifecycleController(ctx)
 
         ctrl.on_nav_changed(0)  # DASHBOARD (含实时流)
-        ctrl.on_nav_changed(2)  # SETTINGS
+        ctrl.on_nav_changed(3)  # SETTINGS
 
         refs["media_refresh_debounce"].start.assert_not_called()
 

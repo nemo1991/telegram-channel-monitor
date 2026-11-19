@@ -57,6 +57,7 @@ from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
 from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
+from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
 from tgmonitor.ui.widgets.message_view import MessageView
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 from tgmonitor.ui.widgets.tray_icon import TrayIcon
@@ -145,7 +146,16 @@ class UiAssembler:
         # 先建实例,构造 SettingsPage 时注入;assembler 仍把它放进返回 dict。
         channel_panel = ChannelWidget(self._mw.app, self._mw.loop)
 
-        # 1: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
+        # 1: 消息管理(v2.0.8)— 历史消息查看 / 频道·关键词·日期·收藏筛选。
+        # channels_provider 让频道下拉读 VM 的实时监听频道真理(与大盘统计同源)。
+        message_manager = MessageManagerWidget(
+            self._mw.app,
+            self._mw.loop,
+            channels_provider=lambda: self._mw._vm.monitored_channels,
+        )
+        stack.addWidget(message_manager)
+
+        # 2: 媒体管理(Media Manager) — 浏览 / 重试 / 删 / 打开 + orphan reconcile
         media_page = QWidget()
         media_layout = QVBoxLayout(media_page)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -154,7 +164,7 @@ class UiAssembler:
         media_layout.addWidget(media_manager)
         stack.addWidget(media_page)
 
-        # 2: 设置
+        # 3: 设置
         settings_page = SettingsPage(
             self._mw.app,
             self._mw.loop,
@@ -206,6 +216,7 @@ class UiAssembler:
             "dashboard": dashboard,
             "channel_panel": channel_panel,
             "media_manager": media_manager,
+            "message_manager": message_manager,
             "settings_page": settings_page,
             "status_bar": status_bar,
             "media_refresh_debounce": media_refresh_debounce,
