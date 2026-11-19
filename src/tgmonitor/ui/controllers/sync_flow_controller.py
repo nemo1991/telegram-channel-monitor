@@ -28,7 +28,7 @@ class SyncFlowController:
         """同步请求入口 — 编排 4 个 helper 把 38 行展开成 10 行 orchestrator。
 
         流程:
-          1. titles dict 从 VM known_channels 拉(channel id → title)
+          1. titles dict 从 VM monitored_channels 拉(channel id → title)
           2. show options dialog → user 取消或 settings 不合规就 None
           3. open progress dialog + connect VM signals to it
           4. run_coro 后台 fire 同步 — 协程 finally 里清理 signal connections
@@ -68,7 +68,7 @@ class SyncFlowController:
         """
         titles: dict[int, str] = {}
         for cid in channel_ids:
-            ch = self._ctx.vm.known_channels.get(cid)
+            ch = self._ctx.vm.monitored_channels.get(cid)
             titles[cid] = ch.title if ch else f"#{cid}"
         return titles
 

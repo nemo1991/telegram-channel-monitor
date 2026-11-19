@@ -207,7 +207,7 @@ class DashboardWidget(QWidget):
         """建 5 张统计卡 + 实时流 + 时间线 + 频道表 + 接 EventBus + 心跳。
 
         `loop=None` 用于无 loop 的测试环境,会跳过异步取数。
-        `channels_provider` 由 MainWindow 注入 VM 的 known_channels,供频道
+        `channels_provider` 由 MainWindow 注入 VM 的 monitored_channels,供频道
         统计表显示真实 title / kind;未提供时退化为 `#id` + 空类型。
         2026-11-17 v2.0.4 FR-03:`live_view` / `message_detail` 由 MainWindow
         注入(单实例从独立 LIVE 页迁入);未提供时实时流区留空(测试环境)。
@@ -443,7 +443,7 @@ class DashboardWidget(QWidget):
         """由 MainWindow._refresh_state 调,刷新统计卡片。
 
         2026-11-17 v2.0.3 D5/FR-06:「已加入频道」不再拿 VM 的
-        `known_channels`(=已监听)凑数,改为异步读库里 `tg_subscribed=1`
+        `monitored_channels` 凑数,改为异步读库里 `tg_subscribed=1`
         计数;存量库迁移不回填,首次刷新前显示 0 属预期。
         """
         self.card_monitored.set_value(str(monitored_count))

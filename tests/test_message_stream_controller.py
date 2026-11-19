@@ -33,7 +33,7 @@ from tgmonitor.ui.controllers.message_stream_controller import (  # noqa: E402
 
 def _make_ctx(
     *,
-    known_channels: dict[int, ChannelDTO] | None = None,
+    monitored_channels: dict[int, ChannelDTO] | None = None,
 ) -> tuple[MainWindowCtx, dict[str, MagicMock]]:
     """构造 MainWindowCtx + 暴露常用 mock 引用给测试体。
 
@@ -42,7 +42,7 @@ def _make_ctx(
     """
     live_view = MagicMock(name="live_view")
     vm = MagicMock(name="vm")
-    vm.known_channels = known_channels if known_channels is not None else {}
+    vm.monitored_channels = monitored_channels if monitored_channels is not None else {}
     status_bar = MagicMock(name="status_bar")
     message_detail = MagicMock(name="message_detail")
     ctx = MainWindowCtx(
@@ -87,7 +87,7 @@ def _make_msg(*, channel_id: int = 100, telegram_msg_id: int = 5):
 
 
 def test_on_message_received_calls_set_channel_titles_and_append() -> None:
-    """新消息 → set_channel_titles(从 vm.known_channels)+ append(m)。"""
+    """新消息 → set_channel_titles(从 vm.monitored_channels)+ append(m)。"""
     ctx, refs = _make_ctx()
     ctrl = MessageStreamController(ctx)
     m = _make_msg(channel_id=100)
@@ -99,7 +99,7 @@ def test_on_message_received_calls_set_channel_titles_and_append() -> None:
 def test_on_message_received_syncs_channel_titles_to_detail() -> None:
     """2026-11-16:频道名映射同时喂详情面板,避免列表显示名称、详情变回 id。"""
     ch = ChannelDTO(id=100, title="Tech News")
-    ctx, refs = _make_ctx(known_channels={100: ch})
+    ctx, refs = _make_ctx(monitored_channels={100: ch})
     ctrl = MessageStreamController(ctx)
     ctrl.on_message_received(_make_msg(channel_id=100))
     expected = {100: "Tech News"}
@@ -108,9 +108,9 @@ def test_on_message_received_syncs_channel_titles_to_detail() -> None:
 
 
 def test_on_message_received_throttles_activity_with_channel_title() -> None:
-    """新消息 → throttle_activity 用 vm.known_channels 里的频道标题。"""
+    """新消息 → throttle_activity 用 vm.monitored_channels 里的频道标题。"""
     ch = ChannelDTO(id=100, title="Tech News")
-    ctx, refs = _make_ctx(known_channels={100: ch})
+    ctx, refs = _make_ctx(monitored_channels={100: ch})
     ctrl = MessageStreamController(ctx)
     ctrl.on_message_received(_make_msg(channel_id=100))
     refs["status_bar"].throttle_activity.assert_called_once()
@@ -123,7 +123,7 @@ def test_on_message_received_throttles_activity_with_channel_title() -> None:
 
 def test_on_message_received_falls_back_to_channel_id_when_unknown() -> None:
     """未知频道标题时显示 `+1 #N`,而不是抛 KeyError。"""
-    ctx, refs = _make_ctx(known_channels={})
+    ctx, refs = _make_ctx(monitored_channels={})
     ctrl = MessageStreamController(ctx)
     ctrl.on_message_received(_make_msg(channel_id=999))
     args = refs["status_bar"].throttle_activity.call_args

@@ -84,7 +84,7 @@ class LifecycleController:
 
         2026-11-17 v2.0.4 FR-03:撤销独立实时流页后 MEDIA 从 idx 3 → idx 2。
         2026-11-18 v2.0.6:撤销独立频道页后 MEDIA 从 idx 2 → idx 1。
-        其他页忽略。VM 异步拉数据,第一次可能因 known_channels 还没就绪而
+        其他页忽略。VM 异步拉数据,第一次可能因 monitored_channels 还没就绪而
         短暂为空,后续 channels_changed → _refresh_state 也会再刷一次。
         """
         if idx == 1:

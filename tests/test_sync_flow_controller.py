@@ -1,7 +1,7 @@
 """`SyncFlowController` 单元测试 — 2026-10-09 v1.12.x 下一 plan 目标 1.1。
 
 覆盖纯逻辑:
-- `_build_sync_titles` — VM.known_channels 有/无 title 两种 case
+- `_build_sync_titles` — VM.monitored_channels 有/无 title 两种 case
 - `_show_sync_options_dialog` — 取消返 None,确认返 options
 - `_wire_sync_progress_signals` — VM signal 连到 dialog slot
 - `on_sync_requested` 集成 — options=None 提前返回,options 走 progress dialog
@@ -30,7 +30,7 @@ from tgmonitor.ui.controllers.sync_flow_controller import (  # noqa: E402
 def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
     """构造 MainWindowCtx + 暴露常用 mock 引用。"""
     vm = MagicMock(name="vm")
-    vm.known_channels = {}  # 默认空 — 测试可改
+    vm.monitored_channels = {}  # 默认空 — 测试可改
     vm.sync_progress = MagicMock(name="sync_progress")
     vm.sync_done = MagicMock(name="sync_done")
 
@@ -73,14 +73,14 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
 
 
 class TestBuildSyncTitles:
-    """`_build_sync_titles` — VM.known_channels 有/无回退 `#<id>`。"""
+    """`_build_sync_titles` — VM.monitored_channels 有/无回退 `#<id>`。"""
 
-    def test_known_channels_returns_title(self) -> None:
+    def test_monitored_channels_returns_title(self) -> None:
         """VM 有 DTO → 用 `.title`。"""
         ctx, refs = _make_ctx()
         ch = MagicMock()
         ch.title = "Channel A"
-        refs["vm"].known_channels = {1: ch}
+        refs["vm"].monitored_channels = {1: ch}
 
         ctrl = SyncFlowController(ctx)
         result = ctrl._build_sync_titles([1])
@@ -90,7 +90,7 @@ class TestBuildSyncTitles:
     def test_unknown_channel_falls_back_to_hash_id(self) -> None:
         """VM 没找到(VMe 还没 bootstrap)→ 回退 `#<id>`。"""
         ctx, refs = _make_ctx()
-        refs["vm"].known_channels = {}
+        refs["vm"].monitored_channels = {}
 
         ctrl = SyncFlowController(ctx)
         result = ctrl._build_sync_titles([42, 99])
@@ -102,7 +102,7 @@ class TestBuildSyncTitles:
         ctx, refs = _make_ctx()
         ch = MagicMock()
         ch.title = "Channel A"
-        refs["vm"].known_channels = {1: ch}
+        refs["vm"].monitored_channels = {1: ch}
 
         ctrl = SyncFlowController(ctx)
         result = ctrl._build_sync_titles([1, 2])

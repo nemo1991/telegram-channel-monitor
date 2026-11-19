@@ -32,7 +32,7 @@ message_view 1028→318 的同一条拆分线。
 字段保留:Media 域不持有 facade 私有字段;`_export_task` 是 ExportMixin
 业务(本 mixin 不持)。
 
-单点 init 收敛:`known_channels` / `_export_task` / `_message_count`
+单点 init 收敛:`monitored_channels` / `_export_task` / `_message_count`
 仍 facade `__init__` 兜底(plan §8 风险 #2 惯例)。
 
 MRO:`MonitorViewModel(ChannelsMixin, SystemMixin, MessagesMixin,

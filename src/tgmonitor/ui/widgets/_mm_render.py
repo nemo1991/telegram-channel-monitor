@@ -353,8 +353,8 @@ class RenderMixin(_Base):
         2026-09-01 v1.5.1 PR #B3:status 列 label 存到 self._status_labels,
         on_download_progress 事件按 _RowKey 定位行 + setText。
         """
-        # channel name(优先 known_channels,否则 #channel_id)
-        ch = self._known_channels.get(msg.channel_id)
+        # channel name(优先 monitored_channels,否则 #channel_id)
+        ch = self._monitored_channels.get(msg.channel_id)
         ch_label = ch.display if ch else f"#{msg.channel_id}"
         lbl_channel = QLabel(ch_label)
         lbl_channel.setFixedWidth(140)

@@ -6,6 +6,10 @@
 历史背景：v2.0.3 已确立术语「订阅=TG 侧已加入(tg_subscribed)、监听=
 monitor 白名单」；2.0.6 把频道域里用 subscribe 词根表达监听的标识符
 一次清干净，本测试防止未来回潮。
+
+2026-11-19 补：UI 层 `MonitorViewModel.known_channels`（语义=仅已监听，
+名实不符且诱发左栏覆盖 bug）同批正名为 `monitored_channels`，本文件
+一并守卫其不回潮。
 """
 
 from __future__ import annotations
@@ -63,3 +67,18 @@ def test_event_domain_and_tg_subscribe_not_touched():
     text = _src_text()
     missing = [name for name in _REQUIRED if name not in text]
     assert missing == [], f"事件域/TG 订阅标识符被误改: {missing}"
+
+
+def test_ui_known_channels_alias_is_gone():
+    """2026-11-19：UI 层 `known_channels`（语义=仅已监听）已正名为
+    `monitored_channels`，防止名实不符的旧名回潮再次诱发左栏覆盖 bug。"""
+    offenders = []
+    for p in _SRC.rglob("*.py"):
+        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if "known_channels" in line:
+                offenders.append(f"{p.relative_to(_SRC).as_posix()}:{lineno}")
+    assert offenders == [], f"UI 层旧名 known_channels 回潮: {offenders}"
+
+    # 反向：正名后的字段确实存在（误改/漏改即失败）
+    text = _src_text()
+    assert "monitored_channels" in text, "monitored_channels 正名未落地"
