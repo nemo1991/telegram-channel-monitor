@@ -129,6 +129,12 @@ def spin_field(
     # v2.0.7 FR-08:去掉上下箭头按钮,保留键盘输入与范围钳制/校验。
     # 当前唯一 INT 字段是账户凭证的 API ID。
     spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+    # 2026-11-19 hotfix:PySide6 在 NoButtons + 全局 QSS padding 下,把内部
+    # QLineEdit 宽度算成 1px → 数字被裁切(截图实测 text='1' 但不可见)。
+    # 显式给内部 lineEdit 最小宽度兜底,不改 spin 的 value()/setValue() API。
+    line_edit = spin.lineEdit()
+    if line_edit is not None:
+        line_edit.setMinimumWidth(120)
     spin.setRange(min, max)
     spin.setValue(value)
     if suffix:
