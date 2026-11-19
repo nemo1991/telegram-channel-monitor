@@ -220,7 +220,11 @@ class MessageDetail(QScrollArea):
             meta_layout.addWidget(_FieldRow(self.tr("已编辑"), "✓"))
         # 2026-08-27 v1.4.0 PR #10:reactions 列表(emoji + count + 自己投了高亮)
         if m.reactions:
-            rx_label = self._format_reactions(m.reactions)
+            # 2026-11-19 hotfix:此处原误写成 `self._format_reactions(...)`,
+            # 但实现早在 v1.7.4 就下沉为模块级函数(委托 format_reactions_short),
+            # MessageDetail 上从无该方法 —— 带 reactions 的消息打开详情必崩。
+            # 调用去掉 self. 走模块级函数即可,与 LIVE 行共用同一份格式化逻辑。
+            rx_label = _format_reactions(m.reactions)
             if rx_label:
                 meta_layout.addWidget(_FieldRow(self.tr("反应"), rx_label))
         v.addWidget(meta_group)
