@@ -422,6 +422,12 @@ class ChannelWidget(QWidget):
         self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)
         root.addWidget(self.subs_card, 2)
 
+        # 构造即初始化两栏计数为 0(如「已加入频道 · 0」),与 _refresh_state
+        # 解耦 —— 左栏此后只由「刷新」按钮的 set_joined 驱动,右栏由监听
+        # 状态驱动。不初始化会停在无计数的标题文本(title 本身)。
+        self.joined_card.clear_items(count_template="已加入频道 · {n}")
+        self.subs_card.clear_items(count_template="已监听 · {n}")
+
         # ---- 公开只读句柄 ----
         # 上层(MainWindow / UIAssembler)与契约测试通过这些语义明确的属性访问,
         # 卡片内部实现仍由 ChannelListCard 封装。

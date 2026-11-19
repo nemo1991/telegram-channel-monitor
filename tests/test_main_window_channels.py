@@ -920,3 +920,61 @@ def test_show_sync_options_dialog_returns_none_when_cancelled(qapp, qloop) -> No
             sfc_mod.SyncOptionsDialog = original  # type: ignore[assignment,misc]
 
         assert result is None
+
+
+# ============================================================
+# 2026-11-19 hotfix:双击加入监听后「已加入频道」左栏被塌缩成已监听
+# ============================================================
+
+
+def test_refresh_state_keeps_joined_list_when_only_monitored_known(qapp, qloop) -> None:
+    """双击加入监听触发 _refresh_state 后,左栏「已加入频道」不得被
+    known_channels(=已监听子集)覆盖。
+
+    现场 bug(用户 2026-11-19 反馈):左栏装入 TG 全部已加入频道后,
+    双击某个加入监听 → ChannelMonitored → channels_changed →
+    `_refresh_state` → `set_joined(known_channels)` 用「仅已监听」
+    覆盖左栏,导致左栏塌缩成与右栏「已监听」完全相同。
+
+    左栏数据源应只由「刷新」按钮的 joined_loaded→set_joined 驱动;
+    known_channels 语义是「仅已监听」,只能喂右栏交集。
+    """
+    import tempfile
+
+    from tgmonitor.core.objectstore.local_store import LocalObjectStore
+    from tgmonitor.ui.main_window import MainWindow
+
+    with tempfile.TemporaryDirectory() as td:
+        settings = _window_settings(Path(td))
+        bus = EventBus()
+        client = FakeTelegramClient()
+        client._state = "ready"
+        storage = InMemoryRepository()
+        objects = LocalObjectStore(root=Path(td) / "o")
+
+        fut = asyncio.run_coroutine_threadsafe(
+            _build_setup(storage, objects, bus, client, settings), qloop
+        )
+        app_svc, monitor = fut.result(timeout=10.0)
+
+        win = MainWindow(app_svc, monitor, qloop, env_path=Path(td) / ".env")
+
+        # 模拟「刷新」按钮拉回 TG 全部已加入频道(3 个)填入左栏
+        joined = [
+            ChannelDTO(id=100, title="已加入A"),
+            ChannelDTO(id=200, title="已加入B"),
+            ChannelDTO(id=300, title="已加入C"),
+        ]
+        win.channel_panel.set_joined(joined)
+        assert win.channel_panel.joined_list.count() == 3
+
+        # 模拟 known_channels 只含 1 个已监听频道(双击加入后的真实状态)
+        win._vm.known_channels = {100: ChannelDTO(id=100, title="已加入A")}
+
+        # 触发监听变更后的状态刷新
+        win._refresh_state()
+
+        # 左栏必须仍是全部 3 个已加入频道,不得塌缩成右栏那 1 个
+        assert win.channel_panel.joined_list.count() == 3, (
+            "左栏被 known_channels(仅已监听)覆盖 —— 双击加入后左栏塌缩成右栏"
+        )
