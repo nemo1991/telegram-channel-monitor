@@ -1,6 +1,6 @@
-"""v2.0.5 消息详情精修契约 — 去正文小标题 / 去关闭详情 / 复制按钮上提 header。
+"""v2.0.5/v2.0.7 消息详情精修契约 — 去正文小标题 / 去关闭详情 / 复制按钮上提。
 
-- 无正文小标题QLabel,正文 QPlainTextEdit(#detailTextEdit)仍在且内容不变;
+- 无正文小标题 QLabel;正文 v2.0.7 起是 QLabel(#detailTextEdit)且内容不变;
 - 无「关闭详情」按钮;
 - 复制文本按钮与 #msg_id 标头同处一行(header),点击仍写剪贴板 + emit。
 - 其它小节标题(媒体 / 原始 JSON)不受影响。
@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QLabel, QPlainTextEdit, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from tests.fixtures._factories import make_message
 from tgmonitor.ui.widgets.message_detail import MessageDetail
@@ -19,15 +19,17 @@ def _labels(detail: MessageDetail) -> list[QLabel]:
     return detail.findChildren(QLabel)
 
 
-def test_no_body_section_label_but_text_edit_present(qapp) -> None:
-    """F1:去掉正文小标题小标题,但正文文本框仍在、内容不变。"""
+def test_no_body_section_label_but_text_present(qapp) -> None:
+    """F1:去掉正文小标题;正文 QLabel 承载全文且内容不变。"""
     detail = MessageDetail()
     detail.show_message(make_message(msg_id=7, text="正文内容 ABC"))
 
-    assert not any("正文" in lbl.text() for lbl in _labels(detail)), "不应再显示正文小标题"
-    text_edit = detail.findChild(QPlainTextEdit, "detailTextEdit")
-    assert text_edit is not None
-    assert "正文内容 ABC" in text_edit.toPlainText()
+    body = detail.findChild(QLabel, "detailTextEdit")
+    assert body is not None
+    assert "正文内容 ABC" in body.text()
+    # 正文自身文本含「正文」二字,检查"小标题"时须排除它。
+    other_labels = [lbl for lbl in _labels(detail) if lbl is not body]
+    assert not any("正文" in lbl.text() for lbl in other_labels), "不应再显示正文小标题"
 
 
 def test_other_section_labels_intact(qapp) -> None:

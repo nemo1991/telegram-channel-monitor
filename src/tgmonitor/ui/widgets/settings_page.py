@@ -2,7 +2,7 @@
 """SettingsPage — 整页设置(不再是模态对话框)。
 
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
-以 QScrollArea 内分组排列,底部固定「保存到 .env」+「保存并应用」按钮。
+以 QScrollArea 内分组排列,底部固定「保存并应用」按钮(v2.0.7 FR-09)。
 
 2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「账户凭证」
 分组,底层仍是 LoginDialog / app.auth.logout();头栏退化为纯标题。
@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -65,7 +64,7 @@ class SettingsPage(QWidget):
     """整页设置。在 QStackedWidget 中作为一页使用。
 
     构造后自动从 app.settings 加载当前值。
-    UI 改动不实时生效 — 用户点「保存并应用」或「保存到 .env」才写。
+    UI 改动不实时生效 — 用户点「保存并应用」才写盘并热重载(v2.0.7 FR-09)。
     """
 
     def __init__(
@@ -76,13 +75,14 @@ class SettingsPage(QWidget):
         parent: QWidget | None = None,
         channel_panel: ChannelWidget | None = None,
     ) -> None:
-        """建 6 个分组 + 底部按钮 + 加载当前设置。
+        """建 6 个 FormSection + 1 个监听分组 + 底部按钮 + 加载当前设置。
 
-        `env_path` 是「保存到 .env」按钮的写入路径(platform-native 由 app.py 注入)。
+        `env_path` 是「保存并应用」写入的 platform-native .env 路径(由 app.py 注入)。
         `channel_panel` 是 2.0.6 从频道页迁入的监听频道控件(单实例 reparent,
         MainWindow 仍持引用);不经 FormSection,不参与 collect() 写 .env。
         """
         super().__init__(parent)
+        self.setObjectName("settingsPage")
         self._app = app
         self._loop = loop
         self._env_path = env_path
@@ -106,11 +106,8 @@ class SettingsPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 固定标题 — 走 tr() 一次性
-        self.header_label = QLabel(self.tr("设置"))
-        self.header_label.setObjectName("pageTitle")
-        self.header_label.setContentsMargins(24, 24, 24, 8)
-        root.addWidget(self.header_label)
+        # v2.0.7 FR-04:页面级「设置」标题删除(导航已指明当前页),
+        # 顶部空间直接给第一张卡片。全局 #pageTitle QSS 规则保留给其它页。
 
         # 滚动区域
         scroll = QScrollArea()
@@ -119,8 +116,9 @@ class SettingsPage(QWidget):
         scroll.setObjectName("settingsScroll")
 
         scroll_content = QWidget()
+        scroll_content.setObjectName("settingsScrollContent")
         form_root = QVBoxLayout(scroll_content)
-        form_root.setContentsMargins(24, 8, 24, 24)
+        form_root.setContentsMargins(24, 16, 24, 24)
         form_root.setSpacing(16)
 
         # 6 个 FormSection(标题已 tr)
@@ -146,13 +144,10 @@ class SettingsPage(QWidget):
         self._on_db_backend_changed()
         self._on_os_backend_changed()
 
-        # 底部固定按钮
+        # 底部固定按钮 — v2.0.7 FR-09:「仅保存到 .env」删除,
+        # 只保留「保存并应用」(写盘 + 热重载),靠 stretch 推到右下。
         btn_bar = QHBoxLayout()
         btn_bar.setContentsMargins(24, 12, 24, 16)
-
-        self.btn_save_env = QPushButton(self.tr("仅保存到 .env"))
-        self.btn_save_env.clicked.connect(self._on_save_env)
-        btn_bar.addWidget(self.btn_save_env)
 
         btn_bar.addStretch(1)
 
@@ -244,11 +239,12 @@ class SettingsPage(QWidget):
         box = QGroupBox(self.tr("监听频道管理"))
         box.setObjectName("settingsChannelMonitorGroup")
         box_layout = QVBoxLayout(box)
-        box_layout.setContentsMargins(12, 12, 12, 12)
-        box_layout.setSpacing(8)
+        # v2.0.7 FR-05/FR-10:与 FormSection 卡片同款内边距(顶部 40px 给标题)。
+        box_layout.setContentsMargins(16, 40, 16, 16)
+        box_layout.setSpacing(12)
         box_layout.addWidget(panel, 1)
-        # QScrollArea(widgetResizable) 内 stretch 不生效,给最小高度保证双栏可见。
-        box.setMinimumHeight(460)
+        # v2.0.7 FR-06:左右布局后纵向占用减半,最小高度 460→360。
+        box.setMinimumHeight(360)
         root.addWidget(box)
 
     @property
@@ -598,7 +594,7 @@ class SettingsPage(QWidget):
         """
         s = self._app.settings
 
-        # 8 section 通用 load
+        # 7 个分组通用 load(6 个 FormSection + 监听频道由 MainWindow 单独刷)
         section_values = {
             # account
             "api_id": s.api_id,
@@ -636,59 +632,6 @@ class SettingsPage(QWidget):
     # ============================================================
     # 槽 — 跟原版一致(行为零变化)
     # ============================================================
-
-    def _on_save_env(self) -> None:
-        """仅写 .env,不热重载;写前同样做后端连通性校验。"""
-        try:
-            e = self._collect()
-        except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
-            log.exception("collect settings failed")
-            QMessageBox.critical(self, self.tr("保存失败"), self.tr(f"读取表单失败: {exc}"))
-            return
-        errs = e.validate()
-        if errs:
-            QMessageBox.warning(self, self.tr("校验失败"), "\n".join(errs))
-            return
-        new_settings = e.to_settings()
-
-        # 校验期间禁用按钮,避免重复点击叠加多个校验任务
-        self.btn_save_env.setEnabled(False)
-        self.btn_apply.setEnabled(False)
-
-        async def _validate_and_save() -> None:
-            await self._app.validate_backends(new_settings)
-            # 后端就绪后才写 .env(重启 bootstrap 用的就是这份配置)
-            update_env_with_settings(self._env_path, new_settings)
-
-        def _saved(_result: object) -> None:
-            self.btn_save_env.setEnabled(True)
-            self.btn_apply.setEnabled(True)
-            QMessageBox.information(
-                self, self.tr("已保存"), self.tr(f"设置已写入 {self._env_path}")
-            )
-
-        def _save_failed(exc: BaseException) -> None:
-            self.btn_save_env.setEnabled(True)
-            self.btn_apply.setEnabled(True)
-            if isinstance(exc, OSError):
-                QMessageBox.critical(self, self.tr(".env 写入失败"), str(exc))
-                return
-            QMessageBox.critical(
-                self,
-                self.tr("保存失败"),
-                self.tr(
-                    f"后端配置未通过校验,已放弃保存(设置未写入 .env):\n\n{exc}\n\n"
-                    "请检查数据库 / 对象存储配置与对应服务是否可达后重试。"
-                ),
-            )
-
-        run_coro(
-            self._loop,
-            _validate_and_save(),
-            on_success=_saved,
-            on_error=_save_failed,
-            error_label="validate_backends",
-        )
 
     def _on_apply(self) -> None:
         """保存并应用:后端校验通过后才写 .env + 热重载。"""

@@ -1,7 +1,8 @@
-"""v2.0.5 统计卡精修契约 — 去副文本行 + 存储后端 DB/对象等大。
+"""v2.0.5/v2.0.7 统计卡精修契约 — 单行化 + 存储后端 DB/对象等大。
 
-- 每张卡的 VBox 只有两行:标题行 + 数值行,无 role=hint 的副文本 QLabel;
-- card_storage 用 set_value_pair 后,DB 与对象两个 QLabel 同处数值行、
+- v2.0.7 FR-01:每张卡根布局是单个 QHBoxLayout(图标 + 标题 + 数值同排),
+  无 role=hint 的副文本 QLabel、无嵌套行;
+- card_storage 用 set_value_pair 后,DB 与对象两个 QLabel 同处该行、
   同为 #statValue objectName(同字号),并同时可见;
 - 其它卡 set_value 只显示单值(value2_lbl 隐藏);
 - 真实窗口 update_stats() 后存储卡确实填入两后端值且可见。
@@ -25,7 +26,6 @@ def test_no_sub_hint_row_on_cards(qapp, qloop, tmp_path):
         dash.card_monitored,
         dash.card_state,
         dash.card_storage,
-        dash.card_total_messages,
     ):
         assert isinstance(card, _StatCard)
         hints = [lbl for lbl in card.findChildren(QLabel) if lbl.property("role") == "hint"]
@@ -34,15 +34,15 @@ def test_no_sub_hint_row_on_cards(qapp, qloop, tmp_path):
     win.close()
 
 
-def test_card_layout_has_two_rows(qapp, qloop, tmp_path):
-    """F1:卡片根布局 = 标题行(QHBox) + 数值行(QHBox),无第三行。"""
+def test_card_layout_is_single_row(qapp, qloop, tmp_path):
+    """v2.0.7 FR-01:卡片根布局是单个 QHBox,无嵌套的第二行。"""
     win = build_real_main_window(qloop, tmp_path)
     card = win.dashboard.card_storage
-    vbox = card.layout()
-    assert isinstance(vbox, QVBoxLayout)
-    rows = [vbox.itemAt(i).layout() for i in range(vbox.count())]
-    assert all(isinstance(r, QHBoxLayout) for r in rows)
-    assert len(rows) == 2, f"卡片应只有标题行 + 数值行,实际 {len(rows)} 行"
+    row = card.layout()
+    assert isinstance(row, QHBoxLayout)
+    assert not isinstance(row, QVBoxLayout)
+    nested = [row.itemAt(i).layout() for i in range(row.count())]
+    assert all(n is None for n in nested), "卡片只保留一行,不得有嵌套行"
     win.close()
 
 
@@ -60,12 +60,10 @@ def test_storage_db_and_object_same_size(qapp):
     assert card.value_lbl.isVisibleTo(card) or card.value_lbl.isVisible()
     assert card.value2_lbl.isVisibleTo(card) or card.value2_lbl.isVisible()
 
-    # 两者所在的数值行是标题行之后的第二个 QHBoxLayout
-    vbox = card.layout()
-    assert isinstance(vbox, QVBoxLayout)
-    value_row = vbox.itemAt(1).layout()
-    assert isinstance(value_row, QHBoxLayout)
-    members = [value_row.itemAt(i).widget() for i in range(value_row.count())]
+    # v2.0.7 FR-01:两个数值与标题同处根 QHBox 行
+    row = card.layout()
+    assert isinstance(row, QHBoxLayout)
+    members = [row.itemAt(i).widget() for i in range(row.count())]
     assert card.value_lbl in members and card.value2_lbl in members
 
 

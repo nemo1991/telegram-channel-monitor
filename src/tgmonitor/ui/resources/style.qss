@@ -3,9 +3,9 @@
  * 设计原则:
  *   2. 卡片式统计(Dashboard)圆角 + 浅阴影
  *   3. 清晰层级:标题/正文/提示三档字号
- *   4. 保留状态点颜色体系
+ *   4. 状态色按语义档位着色(绿/红/琥珀/灰),不依赖彩色 emoji
  *
- * 状态色(Tailwind v3 调色板 — 2026 现代化,两主题共用):
+ * 状态色(Tailwind v3 调色板 — #statValue[state] / #statusStateLabel[state]):
  *   就绪  → #16a34a
  *   进行中→ #f59e0b
  *   错误  → #dc2626
@@ -40,11 +40,6 @@ QMainWindow {
     font-weight: 700;
     color: #1a1a2e;
     letter-spacing: 0.3px;
-}
-#headerState {
-    font-size: 13px;
-    color: #5a5d64;
-    font-weight: 500;
 }
 #headerActionBtn {
     padding: 4px 14px;
@@ -301,11 +296,21 @@ QLabel#favoriteStarLabel {
     background: #fafbfc;
 }
 #statValue {
-    /* v2.0.5 FR-02:卡片压缩到 68px,数值字号 24→20px 避免拥挤 */
-    font-size: 20px;
+    /* v2.0.5:24→20px;v2.0.7 FR-01 单行卡:20→18px 与标题同排 */
+    font-size: 18px;
     font-weight: 700;
     color: #1a1a2e;
 }
+/* v2.0.7 FR-02:登录/连接状态语义色(property 由 state_labels 分档)。
+   保留字形(●/×/…/–)与文案,颜色仅作辅助通道。 */
+#statValue[state="ready"]   { color: #16a34a; }
+#statValue[state="error"]   { color: #dc2626; }
+#statValue[state="pending"] { color: #f59e0b; }
+#statValue[state="unset"]   { color: #94a3b8; }
+#statusStateLabel[state="ready"]   { color: #16a34a; font-weight: 600; }
+#statusStateLabel[state="error"]   { color: #dc2626; font-weight: 600; }
+#statusStateLabel[state="pending"] { color: #f59e0b; font-weight: 600; }
+#statusStateLabel[state="unset"]   { color: #94a3b8; }
 QLabel[role="card-title"] {
     font-size: 12px;
     color: #7a7d88;
@@ -453,6 +458,32 @@ QGroupBox#dashPanel::title {
     font-size: 13px;
 }
 
+/* v2.0.7 FR-05:设置页各分组标题归位卡片内左上(大盘 dashPanel 同款)。
+ * 专属 objectName 命中,全局 QGroupBox 的 margin-top:14px 规则不动。
+ * 内容顶部留白由 form_section 的 layout margin(40px)提供,这里 padding 归零。 */
+QGroupBox#settingsSection,
+QGroupBox#settingsChannelMonitorGroup {
+    background: #ffffff;
+    border: 1px solid #e2e4e9;
+    border-radius: 10px;
+    margin-top: 0;
+    padding: 0;
+    font-weight: 600;
+    font-size: 13px;
+    color: #1a1a2e;
+}
+QGroupBox#settingsSection::title,
+QGroupBox#settingsChannelMonitorGroup::title {
+    subcontrol-origin: padding;
+    subcontrol-position: top left;
+    top: 10px;
+    left: 16px;
+    padding: 0 4px;
+    color: {accent};
+    font-size: 14px;
+    font-weight: 700;
+}
+
 /* ===== 列表 ===== */
 QListWidget {
     background: #ffffff;
@@ -534,10 +565,15 @@ QTableWidget#statsTable QHeaderView::section:last {
 /* ===== 滚动区域(设置页) ===== */
 #settingsScroll {
     border: none;
-    background: transparent;
+    background: #ffffff;
+}
+/* v2.0.7 FR-04:设置页整页白底,消除 #contentArea 的灰色透出。 */
+#settingsPage,
+#settingsPage #settingsScrollContent {
+    background: #ffffff;
 }
 
-/* ===== 频道卡片(ChannelWidget 上/下栏) ===== */
+/* ===== 频道卡片(ChannelWidget 左右两栏) ===== */
 #channelCard {
     background: #ffffff;
     border: 1px solid #e2e4e9;
@@ -548,19 +584,27 @@ QTableWidget#statsTable QHeaderView::section:last {
     font-weight: 700;
     color: #1a1a2e;
 }
-
-/* ===== 状态点(留作兼容,新 UI 用 emoji) ===== */
-QFrame#statusDot {
-    border-radius: 8px;
-    min-width: 16px;
-    max-width: 16px;
-    min-height: 16px;
-    max-height: 16px;
+/* v2.0.7 FR-07:行尾加入/移出按钮(图标走 tinted_action_icon) */
+#channelRowName {
+    font-size: 13px;
+    color: #1a1a2e;
 }
-QFrame#statusDot[state="ready"]    { background: #16a34a; }
-QFrame#statusDot[state="pending"]  { background: #f59e0b; }
-QFrame#statusDot[state="error"]    { background: #dc2626; }
-QFrame#statusDot[state="unset"]    { background: #94a3b8; }
+#channelRowAction {
+    border: none;
+    background: transparent;
+    padding: 2px;
+    margin: 0;
+}
+#channelRowAction:hover {
+    background: #eef4fd;
+    border-radius: 4px;
+}
+#channelRowAction:disabled {
+    opacity: 0.45;
+}
+
+/* v2.0.7 FR-02:旧状态点 / 旧头栏状态标签的零消费者规则已清理,
+   状态色现统一走 #statValue[state] / #statusStateLabel[state]。 */
 
 /* ===== 提示 / Warn / Error ===== */
 QLabel[role="hint"] {

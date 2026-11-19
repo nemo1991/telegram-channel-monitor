@@ -1,13 +1,17 @@
 # mypy: disable-error-code="attr-defined"
-"""ChannelWidget — 主窗口侧栏下半部。
+"""ChannelWidget — 监听频道管理(设置页内嵌单实例)。
 
 把"监听谁"这事最简化:
-- **上半栏「已加入频道」**:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
-- **下半栏「已监听」**:当前监听白名单(真理走 `storage.list_monitored_channels()`),
-  **双击 = 移出监听**。2026-11-19 起不再有全量同步入口(移除)。
+- **左栏「已加入频道」**:从 Telegram 现拉/库中已加入的频道,行尾 `+` = 加入监听
+- **右栏「已监听」**:当前监听白名单(真理走 `storage.list_monitored_channels()`),
+  行尾 `−` = 移出监听。2026-11-19 起不再有全量同步入口(移除)。
 
-事件:`ChannelMonitored / ChannelUnmonitored` 会刷新下半栏。
-设计原则:开关监听是高频操作,不应该藏在工具栏「刷新频道」里然后一揽子全量订。
+2026-11-19 v2.0.7 FR-06/FR-07:双栏由上下改左右;底部双击提示删除;
+行文本不再展示 chat_id(仍存在 item 的 Qt.UserRole 供逻辑使用);
+双击入口删除,统一走行尾图标按钮。
+
+事件:`ChannelMonitored / ChannelUnmonitored` 会刷新右栏。
+设计原则:开关监听是高频操作,应该是行内显式按钮,不是隐藏手势。
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -27,7 +31,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -136,17 +142,15 @@ def _kind_emoji_icon(kind: str) -> QIcon:
 
 
 def _channel_display_text(ch: ChannelDTO) -> str:
-    """频道列表行文本 — **频道名称为主、username 为辅**(2026-11-19 用户反馈)。
+    """频道列表行文本 — **频道名称为主、username 为辅**。
 
-    格式:`title  @username · id`(有 username)/ `title · id`(无 username)。
-    此前走 `ch.display`,有 username 时只显示 `@username`、频道名完全不出现,
-    与「名称为主」相反。现与 `channel_picker_dialog._format_row_text` 同口径。
-
-    id 保留在行尾:同名频道(常见)靠 id 区分;完整 chat_id 仍可另加 tooltip。
+    格式:`title  @username`(有 username)/ `title`(无 username)。
+    2026-11-19 v2.0.7 FR-07:chat_id 不再展示(行尾与 tooltip 都没有),
+    但仍存在 item 的 `Qt.UserRole` 中供逻辑使用(同名频道靠它区分)。
     末尾附加 spammer 徽标:`is_verified` → ` ✓`,`is_scam`/`is_fake` → ` [风险]`。
     """
     title = ch.title or "(无标题)"
-    base = f"{title}  @{ch.username} · {ch.id}" if ch.username else f"{title} · {ch.id}"
+    base = f"{title}  @{ch.username}" if ch.username else title
     if ch.is_verified:
         base += " ✓"
     if ch.is_scam or ch.is_fake:
@@ -155,32 +159,35 @@ def _channel_display_text(ch: ChannelDTO) -> str:
 
 
 class ChannelListCard(QWidget):
-    """频道管理页的双栏之一 — 标题 + (可选) action button + list + 底部 hint。
+    """监听管理的左右两栏之一 — 标题 + (可选) action + list + 行尾图标按钮。
 
-    把"已加入"和"已监听"两张卡的同构部件抽出来(原本是 ChannelWidget._build
-    里两段各 ~30 行的复制粘贴),只在 __init__ 参数里区分:
-      - title / action 按钮标签 / action tooltip / show_action(下栏无按钮)
-      - 是否多选(extended_selection;2026-11-19 起两栏均 single)
-      - 是否带 empty_hint(已加入需要;已监听没"空监听白名单"歧义场景)
-      - bottom_hint(双击行为提示)
+    两张卡的同构部件抽在这里,只在 __init__ 参数里区分:
+      - title / action 按钮标签 / action tooltip / show_action(右栏无按钮)
+      - 是否多选(extended_selection;两栏均 single)
+      - 是否带 empty_hint(左栏需要;右栏没"空监听白名单"歧义场景)
+      - `row_action_icon`("plus"=加入监听 / "minus"=移出监听)
+
+    2026-11-19 v2.0.7 FR-07:双击入口与底部提示删除,改为每行右侧图标按钮。
+    每行用 `setItemWidget` 挂一个水平 QWidget(名称 Label + QToolButton);
+    同时仍给 QListWidgetItem.setText,保留行文本契约与过滤逻辑。
 
     Public API 给 ChannelWidget 用:
       - `set_items(channels, *, count_template)` — 装载频道列表 + 更新标题
       - `clear_items()` — 清空 + 重新显示 empty_hint(如果配置了)
-      - `add_item(channel)` / `remove_by_cid(cid)` / `find_cid(cid)` —
-        增量更新(监听开关事件驱动)
+      - `add_item(channel)` / `remove_by_cid(cid)` / `find_cid(cid)` — 增量更新
       - `apply_filter(text, joined_mapping)` — 按 text 过滤可见
-      - 属性:`lst`(QListWidget)、`btn_action`(`QPushButton | None`)、`count_label`
+      - `set_row_actions_enabled(enabled)` — 门控行尾按钮
+      - 属性:`lst`、`btn_action`(`QPushButton | None`)、`count_label`
 
     Signals:
-      - `item_double_clicked(qlonglong)` — channel_id
+      - `item_action_clicked(qlonglong)` — 行尾按钮点击,携带 channel_id
       - `action_clicked()` — action 按钮被点(仅 show_action=True 的卡)
     """
 
     # Telegram chat_id 是 64 位带符号整数(如 -1001375475051),`Signal(int)`
     # 映射到 C++ 32 位 int,emit 会 shiboken Overflow 且 slot 派发失败;
     # 必须用 64 位 C++ 类型 `qlonglong`。
-    item_double_clicked = Signal("qlonglong")  # type: ignore[arg-type]  # PySide6 字符串签名,stub 不认
+    item_action_clicked = Signal("qlonglong")  # type: ignore[arg-type]  # PySide6 字符串签名,stub 不认
     action_clicked = Signal()
 
     def __init__(
@@ -191,7 +198,7 @@ class ChannelListCard(QWidget):
         action_tooltip: str = "",
         extended_selection: bool = False,
         empty_hint_spec: tuple[str, str, str] | None = None,
-        bottom_hint: str = "",
+        row_action_icon: str = "",
         show_action: bool = True,
         parent: QWidget | None = None,
     ) -> None:
@@ -199,6 +206,7 @@ class ChannelListCard(QWidget):
         self.setObjectName("channelCard")
         self._title = title
         self._empty_hint_spec = empty_hint_spec
+        self._row_action_icon = row_action_icon
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -229,7 +237,6 @@ class ChannelListCard(QWidget):
         if extended_selection:
             # 多选模式预留（当前两栏均 single；保留参数供未来扩展）
             self.lst.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.lst.itemDoubleClicked.connect(self._on_lst_double_clicked)
         self._stack = QStackedWidget()
         self._stack.addWidget(self.lst)  # index 0 — 有数据
         root.addWidget(self._stack, 1)
@@ -241,11 +248,7 @@ class ChannelListCard(QWidget):
             self._empty_hint = empty_hint(icon_e, title_e, hint_e)
             self._stack.addWidget(self._empty_hint)  # index 1 — 空态
 
-        # 底部 hint label(行为提示)
-        if bottom_hint:
-            lbl = QLabel(bottom_hint)
-            lbl.setProperty("role", "hint")
-            root.addWidget(lbl)
+        # v2.0.7 FR-06:底部双击行为提示删除 —— 操作入口已改为行尾图标按钮。
 
         # 信号
         if self.btn_action is not None:
@@ -265,31 +268,23 @@ class ChannelListCard(QWidget):
         2026-09-04 v1.6.4:`_kind_icon(kind, photo_local_key)` 优先渲染频道
         头像;`_channel_display_text(ch)` 附加 verified/scam 徽标。
         """
-        self.lst.clear()
+        self._clear_rows()
         for ch in sorted(channels, key=lambda c: (c.title or "").lower()):
-            item = QListWidgetItem(_channel_display_text(ch))
-            item.setData(Qt.UserRole, ch.id)
-            item.setIcon(_kind_icon(ch.kind, ch.photo_local_key))
-            self.lst.addItem(item)
+            self._add_row(ch)
         self.count_label.setText(count_template.format(n=len(channels)))
         self._refresh_empty_state()
 
     def clear_items(self, *, count_template: str) -> None:
         """清空 + 显示 empty_hint(如果配置了)。"""
-        self.lst.clear()
+        self._clear_rows()
         self.count_label.setText(count_template.format(n=0))
         self._refresh_empty_state()
 
     def add_item(self, ch: ChannelDTO) -> None:
         """监听事件时增量追加一条。注意:不复检是否重复(ChannelWidget 已用
         `_monitored_ids` set 防重)。
-
-        2026-09-04 v1.6.4:头像 + 徽标走 _kind_icon / _channel_display_text。
         """
-        item = QListWidgetItem(_channel_display_text(ch))
-        item.setData(Qt.UserRole, ch.id)
-        item.setIcon(_kind_icon(ch.kind, ch.photo_local_key))
-        self.lst.addItem(item)
+        self._add_row(ch)
         self._refresh_empty_state()
 
     def remove_by_cid(self, channel_id: int) -> bool:
@@ -297,7 +292,10 @@ class ChannelListCard(QWidget):
         for i in range(self.lst.count()):
             it = self.lst.item(i)
             if it is not None and it.data(Qt.UserRole) == channel_id:
+                widget = self.lst.itemWidget(it)
                 self.lst.takeItem(i)
+                if widget is not None:
+                    widget.deleteLater()
                 self._refresh_empty_state()
                 return True
         return False
@@ -321,16 +319,78 @@ class ChannelListCard(QWidget):
                 continue
             cid = item.data(Qt.UserRole)
             ch = mapping.get(int(cid)) if cid is not None else None
-            if not text:
-                item.setHidden(False)
+            hidden = bool(text) and (
+                ch is None
+                or text not in ((ch.title or "").lower() + " " + (ch.username or "").lower())
+            )
+            item.setHidden(hidden)
+            # setItemWidget 的行不会随 item.setHidden 自动隐藏,须显式同步。
+            widget = self.lst.itemWidget(item)
+            if widget is not None:
+                widget.setHidden(hidden)
+
+    def set_row_actions_enabled(self, enabled: bool) -> None:
+        """门控行尾加减按钮(布局层;core require_ready 才是安全边界)。"""
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            widget = self.lst.itemWidget(it) if it is not None else None
+            if widget is None:
                 continue
-            if ch is None:
-                item.setHidden(True)
-                continue
-            hay = (ch.title or "").lower() + " " + (ch.username or "").lower()
-            item.setHidden(text not in hay)
+            btn = widget.findChild(QToolButton, "channelRowAction")
+            if btn is not None:
+                btn.setEnabled(enabled)
 
     # ---- helpers ----
+
+    def _clear_rows(self) -> None:
+        """清空列表,释放挂在各 item 上的行 widget(避免 viewport 残留)。"""
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            widget = self.lst.itemWidget(it) if it is not None else None
+            if widget is not None:
+                widget.deleteLater()
+        self.lst.clear()
+
+    def _add_row(self, ch: ChannelDTO) -> None:
+        """建一行:item 仍 setText(保留文本契约),widget 提供行尾图标按钮。"""
+        text = _channel_display_text(ch)
+        item = QListWidgetItem(text)
+        item.setData(Qt.UserRole, ch.id)
+        item.setIcon(_kind_icon(ch.kind, ch.photo_local_key))
+        item.setSizeHint(QSize(20, 34))
+        self.lst.addItem(item)
+        if not self._row_action_icon:
+            return
+
+        row = QWidget()
+        row_lay = QHBoxLayout(row)
+        row_lay.setContentsMargins(4, 2, 4, 2)
+        row_lay.setSpacing(4)
+        name = QLabel(text)
+        name.setObjectName("channelRowName")
+        name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row_lay.addWidget(name)
+
+        btn = QToolButton()
+        btn.setObjectName("channelRowAction")
+        btn.setIcon(tinted_action_icon(self._row_action_icon, QColor("#5b9cf5")))
+        btn.setToolTip("加入监听" if self._row_action_icon == "plus" else "移出监听")
+        btn.setCursor(Qt.PointingHandCursor)
+        cid = int(ch.id)
+        # 默认参数捕获 cid:避开 late-binding;int 经 qlonglong 信号保留 64 位。
+        btn.clicked.connect(lambda _checked=False, cid=cid: self.item_action_clicked.emit(cid))
+        row_lay.addWidget(btn)
+        self.lst.setItemWidget(item, row)
+
+    def _set_row_text(self, item: QListWidgetItem, text: str) -> None:
+        """item 与挂件内label 同步文本(事件驱动标题变更时两处都要更新)。"""
+        item.setText(text)
+        widget = self.lst.itemWidget(item)
+        if widget is None:
+            return
+        name = widget.findChild(QLabel, "channelRowName")
+        if name is not None:
+            name.setText(text)
 
     def _refresh_empty_state(self) -> None:
         """list count == 0 + 配置了 empty_hint → 切到空态页;否则切回列表页。
@@ -341,17 +401,12 @@ class ChannelListCard(QWidget):
         if self._empty_hint is not None:
             self._stack.setCurrentIndex(1 if self.lst.count() == 0 else 0)
 
-    def _on_lst_double_clicked(self, item: QListWidgetItem) -> None:
-        cid = item.data(Qt.UserRole)
-        if cid is not None:
-            self.item_double_clicked.emit(int(cid))
-
 
 class ChannelWidget(QWidget):
-    """频道管理面板 — 已加入 + 已监听 双栏 + 搜索过滤。
+    """监听频道管理 — 左右两栏 + 搜索过滤。
 
-    已加入:从 Telegram 现拉的已加入频道/群组,**双击 = 加入监听白名单**
-    已监听:当前监听白名单(真理走 storage),**双击 = 移出监听**
+    左「已加入频道」:行尾 `+` = 加入监听白名单;
+    右「已监听」:行尾 `−` = 移出监听。
 
     内部用两张 `ChannelListCard` 实例(`joined_card` / `subs_card`)
     实际承载 UI,ChannelWidget 自身只负责装配 + 搜索 + EventBus 接线和
@@ -405,7 +460,11 @@ class ChannelWidget(QWidget):
         self.search_edit.textChanged.connect(self._apply_filter)
         root.addWidget(self.search_edit)
 
-        # 上栏 — 已加入(`ChannelListCard`,已接入 empty_hint #2-6)
+        # v2.0.7 FR-06:左右两栏同处一个 QHBox;搜索框仍独占顶部一行。
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
+
+        # 左栏 — 已加入(`ChannelListCard`,已接入 empty_hint #2-6)
         self.joined_card = ChannelListCard(
             title="已加入频道",
             action_label="同步",
@@ -416,23 +475,25 @@ class ChannelWidget(QWidget):
                 "暂无已加入频道",
                 "请先到「设置 → 账户」登录 Telegram 账号,\n登录成功后点「同步」拉取频道。",
             ),
-            bottom_hint="双击一行 → 加入监听白名单",
+            row_action_icon="plus",
         )
         self.joined_card.action_clicked.connect(self._on_refresh)
-        self.joined_card.item_double_clicked.connect(self._on_joined_double_click)
-        root.addWidget(self.joined_card, 3)
+        self.joined_card.item_action_clicked.connect(self._on_joined_action)
+        cards_row.addWidget(self.joined_card, 1)
 
-        # 下栏 — 已监听（2026-11-19:全量同步入口删除，无 action 按钮）
+        # 右栏 — 已监听（2026-11-19:全量同步入口删除，无 action 按钮）
         self.subs_card = ChannelListCard(
             title="已监听",
             action_label="",
             extended_selection=False,
             empty_hint_spec=None,  # 已监听「空」语义不明,不放 empty_hint
-            bottom_hint="双击一行 → 移出监听",
+            row_action_icon="minus",
             show_action=False,
         )
-        self.subs_card.item_double_clicked.connect(self._on_monitored_double_click)
-        root.addWidget(self.subs_card, 2)
+        self.subs_card.item_action_clicked.connect(self._on_monitored_action)
+        cards_row.addWidget(self.subs_card, 1)
+
+        root.addLayout(cards_row, 1)
 
         # 构造即初始化两栏计数为 0(如「已加入频道 · 0」),与 _refresh_state
         # 解耦 —— 左栏此后只由「刷新」按钮的 set_joined 驱动,右栏由监听
@@ -461,15 +522,17 @@ class ChannelWidget(QWidget):
         **只做呈现,不重复判定规则** —— 判定在 core `ops_gate.is_ready`,
         本方法由 `AppStateController` 收到 `LoginStateChanged` 后调用。
         真正的执行安全由 core 域服务入口门控保证(UI 禁用只是体验,不是安全边界):
-        双击加入/移出监听仍可被编程式调用,core 门控会一致拒绝。
+        行尾按钮即便被编程式触发,core 门控仍会一致拒绝。
         """
         tip = "" if enabled else "需先登录 Telegram 才能同步频道"
         if self.refresh_button is not None:
             self.refresh_button.setEnabled(enabled)
             self.refresh_button.setToolTip(tip)
-        # 列表交互:未登录时禁双击(加入/移出监听),core 门控同时兜底
+        # 列表禁用会连带禁掉行按钮;再显式遍历加固(过滤隐藏时仍生效)。
         self.joined_card.lst.setEnabled(enabled)
         self.subs_card.lst.setEnabled(enabled)
+        self.joined_card.set_row_actions_enabled(enabled)
+        self.subs_card.set_row_actions_enabled(enabled)
 
     # ---- 数据装载 ----
 
@@ -530,7 +593,7 @@ class ChannelWidget(QWidget):
             for i in range(card.lst.count()):
                 it = card.lst.item(i)
                 if it and it.data(Qt.UserRole) == channel_id:
-                    it.setText(_channel_display_text(ch))
+                    card._set_row_text(it, _channel_display_text(ch))
 
     def _apply_photo_changed(self, channel_id: int, local_path: str | None) -> None:
         """2026-09-03 v1.6.0 PR #Q2 stub → 2026-09-04 v1.6.4 实装:
@@ -584,22 +647,21 @@ class ChannelWidget(QWidget):
     def _apply_joined(self, chs: list[ChannelDTO]) -> None:
         self.set_joined(chs)
 
-    def _on_joined_double_click(self, cid: int) -> None:
-        """`ChannelListCard.item_double_clicked` 直接给 channel_id。"""
+    def _on_joined_action(self, cid: int) -> None:
+        """左栏行尾 `+` → 加入监听(core 调用与旧双击槽一致)。"""
         ch = self._joined.get(cid)
         if ch is None:
             return
         if cid in self._monitored_ids:
-            return  # 已监听,双击无效(改在已监听栏里移出)
+            return  # 已监听时按钮无效(改在右栏点 `−` 移出)
         run_coro(
             self.loop,
             self.app.channels.monitor_channel(ch),
             error_label="monitor_channel",
         )
 
-    def _on_monitored_double_click(self, cid: int) -> None:
-        if cid is None:
-            return
+    def _on_monitored_action(self, cid: int) -> None:
+        """右栏行尾 `−` → 移出监听。"""
         run_coro(
             self.loop,
             self.app.channels.unmonitor_channel(int(cid)),

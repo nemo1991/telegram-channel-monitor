@@ -169,12 +169,13 @@ def test_kind_icon_photo_load_failure_falls_back_to_emoji(
 
 
 def test_channel_display_text_no_badges(qapp) -> None:
-    """2026-11-19:名称为主、username 为辅 — `title  @username · id`,无徽标。"""
+    """v2.0.7 FR-07:名称为主、username 为辅,不展示 chat_id、无徽标。"""
     from tgmonitor.ui.widgets.channel_widget import _channel_display_text
 
     ch = _channel(username="test")
     text = _channel_display_text(ch)
-    assert text == "Test Channel  @test · 100", f"名称为主格式不符: {text!r}"
+    assert text == "Test Channel  @test", f"名称为主格式不符: {text!r}"
+    assert "100" not in text
     # 频道名必须在 username 之前(主次关系)
     assert text.index("Test Channel") < text.index("@test")
     assert "✓" not in text
@@ -227,7 +228,7 @@ def test_channel_display_text_verified_and_scam(qapp) -> None:
 def test_apply_title_changed_preserves_verified_badge(qapp, qloop_16) -> None:
     """v1.6.4:title 更新后徽标后缀(✓ / [风险])保留。"""
     widget = _build_widget(qapp, qloop_16)
-    # 无 username → 文本为 `title · id`,title 改动会反映到文本上
+    # 无 username → 文本为纯 title;title 改动会反映到文本上
     ch = _channel(cid=100, title="Old", username=None, is_verified=True)
     widget.set_joined([ch])
     widget._apply_title_changed(100, "New")
@@ -235,7 +236,7 @@ def test_apply_title_changed_preserves_verified_badge(qapp, qloop_16) -> None:
     item = widget.joined_card.lst.item(0)
     assert item is not None
     text = item.text()
-    assert "· 100" in text
+    assert "100" not in text  # v2.0.7 FR-07:不展示 chat_id
     assert "New" in text
     assert "Old" not in text
     assert "✓" in text  # 徽标保留

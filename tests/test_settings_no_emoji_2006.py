@@ -31,7 +31,7 @@ def test_settings_page_has_no_emoji():
 
 
 def test_group_titles_are_plain_text(qapp, qloop, tmp_path):
-    """FR-04：各分组标题为纯文字(无符号前缀),pageTitle 结构保留。"""
+    """FR-04：各分组标题为纯文字(无符号前缀);v2.0.7 页级标题已删。"""
     from tests.fixtures._real_window import build_real_main_window
     from tgmonitor.ui.widgets.settings_page import SettingsPage
 
@@ -47,6 +47,7 @@ def test_group_titles_are_plain_text(qapp, qloop, tmp_path):
     assert "账户凭证" in titles
     assert "监听频道管理" in titles
 
-    # pageTitle 结构保留(全局 QSS 规则命中)
-    assert settings.header_label.objectName() == "pageTitle"
+    # v2.0.7 FR-04:页面级「设置」标题删除,全局 #pageTitle QSS 规则仍保留给其它页。
+    # 注意:空态提示(form_row.empty_hint)内部也用 #pageTitle,那里不算页级标题。
+    assert not hasattr(settings, "header_label")
     win.close()

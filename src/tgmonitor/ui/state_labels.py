@@ -45,6 +45,36 @@ STATE_DOT: dict[str, str] = {
     "uninit": "–",
 }
 
+# 2026-11-19 v2.0.7 FR-02:状态语义色分档(唯一映射)。
+# 值不是色号而是档位名,色号真值源在 style.qss 的
+# `#statValue[state=…]` / `#statusStateLabel[state=…]` 规则里 —— 避免
+# 重演 2.0.6 之前「3 处分散映射」导致去 emoji 后状态色全丢。
+# 覆盖 12 个登录态 + 5 个连接态(`status_bar._CONN_STATE_LABEL_SRC`)。
+#   ready   绿 — 已登录 / TG 已连接
+#   error   红 — 需要处理的错误
+#   pending 琥珀 — 进行中 / 需用户行动(验证码/2FA/登录流程)
+#   unset   灰 — 未启动 / 关闭中 / 状态未知
+STATE_COLOR_BUCKET: dict[str, str] = {
+    # 登录态
+    "ready": "ready",
+    "error": "error",
+    "phone_required": "pending",
+    "code_required": "pending",
+    "email_required": "pending",
+    "email_code_required": "pending",
+    "registration_required": "pending",
+    "password_required": "pending",
+    "closed": "unset",
+    "logging_out": "unset",
+    "closing": "unset",
+    "uninit": "unset",
+    # 连接态(与登录态共用 ready / unknown 命名)
+    "waiting_for_network": "pending",
+    "connecting": "pending",
+    "updating": "pending",
+    "unknown": "unset",
+}
+
 # 状态文案 source 字符串(中文);显示走下面的 state_label()。
 STATE_LABEL_SRC: dict[str, str] = {
     "ready": "已登录",
@@ -102,6 +132,15 @@ def state_badge(state: str) -> str:
     if state in STATE_DOT:
         return f"{STATE_DOT[state]} {state_label(state)}"
     return f"– {state}"
+
+
+def state_color_bucket(state: str) -> str:
+    """状态 → 语义色档位(ready/error/pending/unset);未知按 unset。
+
+    供 UI 给 QLabel 设置 `property("state", bucket)`,色号由 QSS 统一定义。
+    连接态的 `unknown` 与登录态的 `uninit` 都落 unset,不额外造档位。
+    """
+    return STATE_COLOR_BUCKET.get(state, "unset")
 
 
 def state_hint(state: str) -> str:

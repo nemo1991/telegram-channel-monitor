@@ -1,8 +1,8 @@
 """v2.0.5 FR-02 契约 — 压缩顶部统计卡,把纵向空间让给消息流。
 
-- G2(几何):固定 1280×800 窗口下,卡片行 100→68px、消息流 splitter
+- G2(几何):固定 1280×800 窗口下,卡片行 100→68→48px、消息流 splitter
   318→356px(不减)、root margin/spacing 与 cards spacing 收紧、stretch 3:2 不变。
-- 5 张卡与取数口径不变(不精简、不改 DTO)。
+- v2.0.7 FR-01:「消息总数」卡删除(信息已在频道统计表),剩 4 张单行卡。
 - 压缩后文字不裁切(QFontMetrics 校验最小高度)。
 """
 
@@ -24,9 +24,9 @@ def _cards_row(dash: DashboardWidget) -> QHBoxLayout:
     lay = dash.layout()
     for i in range(lay.count()):
         sub = lay.itemAt(i).layout()
-        if isinstance(sub, QHBoxLayout) and sub.count() == 5:
+        if isinstance(sub, QHBoxLayout) and sub.count() == 4:
             return sub
-    raise AssertionError("找不到 5 卡统计行")
+    raise AssertionError("找不到 4 卡统计行")
 
 
 def test_cards_compressed_and_splitter_grows(qapp, qloop, tmp_path):
@@ -38,8 +38,9 @@ def test_cards_compressed_and_splitter_grows(qapp, qloop, tmp_path):
     row = _cards_row(dash)
     card = dash.card_channels
     assert card.height() < _BASELINE_CARD_H
-    assert card.height() <= 68
-    assert row.geometry().height() <= 68
+    # v2.0.7 FR-01:单行卡 68→48px。
+    assert card.height() == 48
+    assert row.geometry().height() <= 48
 
     sp = dash.findChild(QSplitter, "dashboardLiveSplitter")
     assert sp is not None
@@ -71,18 +72,18 @@ def test_stretch_ratio_unchanged(qapp, qloop, tmp_path):
     win.close()
 
 
-def test_five_cards_and_values_intact(qapp, qloop, tmp_path):
-    """口径不变:仍为 5 张卡,取值接口可用(2026-11-18 起无副文本行)。"""
+def test_four_cards_and_values_intact(qapp, qloop, tmp_path):
+    """v2.0.7 FR-01:删「消息总数」后剩 4 张卡,取值接口不变。"""
     win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
     dash = win.dashboard
     row = _cards_row(dash)
-    assert [row.itemAt(i).widget() for i in range(5)] == [
+    assert [row.itemAt(i).widget() for i in range(4)] == [
         dash.card_channels,
         dash.card_monitored,
         dash.card_state,
         dash.card_storage,
-        dash.card_total_messages,
     ]
+    assert not hasattr(dash, "card_total_messages")
     # set_value 仍工作(压缩未破坏卡片取值契约);底部副文本行已移除。
     dash.card_channels.set_value("12")
     assert dash.card_channels.value_lbl.text() == "12"

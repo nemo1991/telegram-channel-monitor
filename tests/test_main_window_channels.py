@@ -765,21 +765,30 @@ def test_channel_list_card_empty_hint_inside_list_area(qapp):
     assert card._stack.currentWidget() is card.lst
 
 
-def test_channel_list_card_signals_emit_on_action_and_double_click(qapp):
-    """action_clicked / item_double_clicked 信号正常触发。"""
+def test_channel_list_card_signals_emit_on_action_and_row_button(qapp):
+    """v2.0.7 FR-07:action_clicked / 行尾按钮 signal 触发,64 位 id 不溢出。"""
+    from PySide6.QtWidgets import QToolButton
+
     from tgmonitor.ui.widgets.channel_widget import ChannelListCard
 
-    card = ChannelListCard(title="x", action_label="act")
+    card = ChannelListCard(title="x", action_label="act", row_action_icon="plus")
     action_calls: list[int] = []
     card.action_clicked.connect(lambda: action_calls.append(1))
     card.btn_action.click()
     assert action_calls == [1]
 
-    card.set_items([ChannelDTO(id=42, title="x", kind="channel")], count_template="{n}")
-    double_clicked_ids: list[int] = []
-    card.item_double_clicked.connect(double_clicked_ids.append)
-    card.lst.itemDoubleClicked.emit(card.lst.item(0))
-    assert double_clicked_ids == [42]  # integer channel_id,not QListWidgetItem
+    big_id = -1001375475051  # 真实 Telegram chat_id,32 位 Signal 会溢出
+    card.set_items([ChannelDTO(id=big_id, title="x", kind="channel")], count_template="{n}")
+    actioned_ids: list[int] = []
+    card.item_action_clicked.connect(actioned_ids.append)
+    row = card.lst.itemWidget(card.lst.item(0))
+    assert row is not None
+    btn = row.findChild(QToolButton, "channelRowAction")
+    assert btn is not None
+    btn.click()
+    assert actioned_ids == [big_id]
+    assert not hasattr(card, "item_double_clicked")
+    card.deleteLater()
 
 
 # ============================================================

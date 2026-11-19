@@ -49,7 +49,7 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.icon import action_icon
-from tgmonitor.ui.state_labels import state_badge
+from tgmonitor.ui.state_labels import state_badge, state_color_bucket
 
 if TYPE_CHECKING:
     from tgmonitor.core.app_service import AppService
@@ -72,51 +72,44 @@ _KIND_LABELS: dict[str, str] = {
 
 
 class _StatCard(QFrame):
-    """单个统计卡片 — 标题 + 数值,两行纯视觉组件。
+    """单个统计卡片 — 一行内展示「图标 + 标题 + 数值」。
 
     QSS 用 objectName="statCard" 统一样式(白底圆角 + 阴影)。
-    2026-11-18 v2.0.5:底部 sub_lbl 行整体移除(标题已表达语义,副文本冗余);
-    数值行改成可容纳一个或两个**等大**数值的水平容器 —— 存储后端卡用
-    `set_value_pair()` 把 DB / 对象并排展示,二者同为 #statValue 字号。
+    2026-11-19 v2.0.7 FR-01:两行(标题行 + 数值行)合并为单行,高度 68→48。
+    存储后端卡用 `set_value_pair()` 把 DB / 对象并排展示,二者同为
+    #statValue 字号;FR-02 给数值 label 挂 `property("state", 档位)`,
+    色号真值源在 style.qss。
     """
 
     def __init__(self, title: str, icon_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statCard")
-        # v2.0.5 FR-02:卡片高度 100→68,把纵向空间让给消息流。
-        self.setFixedHeight(68)
+        # v2.0.5 FR-02:100→68;v2.0.7 FR-01 单行化后再压到 48。
+        self.setFixedHeight(48)
         self.setMinimumWidth(160)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(16, 6, 16, 6)
-        vbox.setSpacing(2)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 6, 14, 6)
+        row.setSpacing(8)
 
-        # 图标 + 标题
-        top = QHBoxLayout()
-        top.setSpacing(8)
         ico = QLabel()
         ico.setPixmap(action_icon(icon_name).pixmap(16, 16))
         ico.setFixedSize(16, 16)
-        top.addWidget(ico)
+        row.addWidget(ico)
         title_lbl = QLabel(title)
         title_lbl.setProperty("role", "card-title")
-        top.addWidget(title_lbl)
-        top.addStretch()
-        vbox.addLayout(top)
+        row.addWidget(title_lbl)
+        row.addStretch(1)
 
-        # 数值行:单值 or 两个等值(存储后端)。两个 label 同为 #statValue 样式。
-        value_row = QHBoxLayout()
-        value_row.setSpacing(8)
+        # 数值与标题同排:单值 or 两个等值(存储后端)。
         self.value_lbl = QLabel("—")
         self.value_lbl.setObjectName("statValue")
-        value_row.addWidget(self.value_lbl)
+        row.addWidget(self.value_lbl)
         self.value2_lbl = QLabel("")
         self.value2_lbl.setObjectName("statValue")
         self.value2_lbl.hide()  # 默认单值,双值卡按需 show
-        value_row.addWidget(self.value2_lbl)
-        value_row.addStretch(1)
-        vbox.addLayout(value_row)
+        row.addWidget(self.value2_lbl)
 
     def set_value(self, value: str) -> None:
         """设置单个数值(默认形态),隐藏第二数值。"""
@@ -128,6 +121,16 @@ class _StatCard(QFrame):
         self.value_lbl.setText(value)
         self.value2_lbl.setText(value2)
         self.value2_lbl.show()
+
+    def set_state(self, state: str) -> None:
+        """按登录/连接状态设置数值 label 的语义色档位(色号由 QSS 定义)。"""
+        bucket = state_color_bucket(state)
+        if self.value_lbl.property("state") == bucket:
+            return
+        self.value_lbl.setProperty("state", bucket)
+        # Qt 在动态 property 变化后需重新 polish 才会应用新的 QSS 规则。
+        self.value_lbl.style().unpolish(self.value_lbl)
+        self.value_lbl.style().polish(self.value_lbl)
 
 
 class _ActivityEntry(QWidget):
@@ -257,9 +260,8 @@ class DashboardWidget(QWidget):
         self.card_storage = _StatCard("存储后端", "settings")
         cards.addWidget(self.card_storage)
 
-        self.card_total_messages = _StatCard("消息总数", "kind_channel")
-        cards.addWidget(self.card_total_messages)
-
+        # 2026-11-19 v2.0.7 FR-01:「消息总数」顶卡删除 —— 与底部「频道统计」
+        # 表第三列同源同口径(同一 rows 聚合),信息只保留一次。
         root.addLayout(cards)
 
         # 2026-11-17 v2.0.3 D4:快速操作行(刷新 / 导出 / 全量同步)整体移除。
@@ -396,6 +398,7 @@ class DashboardWidget(QWidget):
     def _sync_state_card(self, e: LoginStateChanged) -> None:
         """登录态事件 → 同步连接状态卡片(纯 UI 副作用,不属于活动文案)。"""
         self.card_state.set_value(state_badge(e.state))
+        self.card_state.set_state(e.state)
 
     def _add_activity(self, icon_name: str, text: str, occurred_at: datetime | None = None) -> None:
         """追加一条活动记录到列表头部(最新的在上面)。
@@ -448,9 +451,10 @@ class DashboardWidget(QWidget):
         """
         self.card_monitored.set_value(str(monitored_count))
 
-        # 登录状态 — 走 state_labels 单源映射
+        # 登录状态 — 文案与语义色都走 state_labels 单源映射
         state = self._app.client.state
         self.card_state.set_value(state_badge(state))
+        self.card_state.set_state(state)
 
         # 存储后端 —— v2.0.5:DB 与对象并排、等大(#statValue)。
         settings = self._app.settings
@@ -518,7 +522,6 @@ class DashboardWidget(QWidget):
         """
         if not self._monitor.monitored_ids:
             self.stats_table.setRowCount(0)
-            self.card_total_messages.set_value("0")
             return
         if self._loop is None:
             return  # 测试环境无 loop
@@ -526,15 +529,19 @@ class DashboardWidget(QWidget):
         run_coro(
             self._loop,
             self._fetch_channel_rows(),
-            on_success=lambda result: self._apply_stats_table(*result),
+            on_success=self._apply_stats_table,
             error_label="dashboard_refresh_stats",
         )
 
-    async def _fetch_channel_rows(self) -> tuple[list[tuple[str, str, int]], int]:
-        """单次聚合 + 从 VM 元数据映射取真实 title / kind。"""
+    async def _fetch_channel_rows(self) -> list[tuple[str, str, int]]:
+        """单次聚合 + 从 VM 元数据映射取真实 title / kind。
+
+        2026-11-19 v2.0.7 FR-01:原先同时返回 `total` 仅供「消息总数」顶卡,
+        该卡删除后 total 成为死计算,一并去掉(表格逐行消息数不变)。
+        """
         monitored_ids = list(self._monitor.monitored_ids)
         if not monitored_ids:
-            return [], 0
+            return []
         try:
             bucket = await self._app.storage.aggregate_per_channel(monitored_ids)
         except Exception:  # noqa: BLE001
@@ -544,25 +551,18 @@ class DashboardWidget(QWidget):
         provider = self._channels_provider
         channels: Mapping[int, ChannelDTO] = provider() if provider else {}
         rows: list[tuple[str, str, int]] = []
-        total = 0
         for cid in monitored_ids:
             stats = bucket.get(cid)
             # 缺省 → ChannelStats() 全 0
             count = stats.messages if stats else 0
-            total += count
             ch = channels.get(cid)
             title = ch.title if ch is not None and ch.title else f"#{cid}"
             kind = _KIND_LABELS.get(ch.kind, "") if ch is not None else ""
             rows.append((title, kind, count))
-        return rows, total
+        return rows
 
-    def _apply_stats_table(
-        self,
-        rows: list[tuple[str, str, int]],
-        total: int,
-    ) -> None:
+    def _apply_stats_table(self, rows: list[tuple[str, str, int]]) -> None:
         """从 background loop 调回主线程填充表格。"""
-        self.card_total_messages.set_value(f"{total:,}")
         self.stats_table.setRowCount(len(rows))
         for i, (title, kind, count) in enumerate(rows):
             self.stats_table.setItem(i, 0, QTableWidgetItem(title))
