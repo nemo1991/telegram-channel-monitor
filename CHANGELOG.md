@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [2.0.6] - 2026-11-18
+## [2.0.6] - 2026-11-19
 
 主题:**功能归位 + 命名与历史债清偿**。撤销独立频道页,监听频道管理迁入设置页;
 频道域「subscribe」歧义命名、物理列名与全局装饰 emoji 一次性清理。
@@ -32,6 +32,13 @@
   `test_no_decorative_emoji.py`,最终态仅放行一处自定义 reaction 占位符。
 - **历史债扫尾**:删除 ChannelWidget 旧兼容属性别名,改为语义明确的公开句柄;
   「5 页 / 8 个 FormSection / 方法数 42」等过时注释与主窗口结构图同步更新。
+- **频道面板展示与入口收敛（11-19 现场反馈）**:频道名称改为「标题为主、@username 与 id 为辅」,
+  空态提示移入列表框内;进入设置页即读库回填已加入频道,左栏「刷新」改名「同步」;
+  桌面端「全量同步」入口整体移除（core 与 CLI `tgmonitor sync` 能力保留,
+  `core/monitor/backfill.py` 文案同步调整）。
+- **命名进一步正名（11-19 现场反馈）**:`known_channels` 语义实为「仅已监听」,UI / VM 全档
+  正名为 `monitored_channels`（含媒体侧 `_known_channels` / `set_known_channels`）,
+  新增回潮守卫。
 
 ### 修复
 
@@ -39,6 +46,14 @@
   建表改为 `monitored` 后抛 `UndefinedColumnError`;已修正并新增不依赖 Docker 的
   静态守卫,防止只在 CI integration 暴露的漏改。
 - **空态引导指向已撤销的「频道」页**:改为引导用户到「设置 → 监听频道管理」加入监听。
+- **消息详情带 reactions 必崩**:模块级 `_format_reactions` 被误写为实例方法,
+  打开带 reactions 的消息详情必抛 `AttributeError`;已改回模块级调用并补 2 条回归用例。
+- **双击加入监听后「已加入频道」左栏塌缩**:`MainWindow._refresh_state` 误用仅含已监听的
+  `known_channels` 覆盖左栏;左栏数据源恢复为 TG 侧已加入频道,与监听状态解耦。
+- **媒体页缩略图批量 SystemError**:PySide6 `Signal(int)` 是 C++ 32 位 int,
+  真实 64 位 Telegram chat_id 触发 shiboken OverflowError 残留,slot 内首个 Qt 调用
+  `QPixmap()` 报 SystemError;所有承载 channel_id 的信号改用 `qlonglong`,
+  新增 12 例回归（真实 ID 正向 + 回退源码反向验证）。
 
 ## [2.0.5] - 2026-11-18
 
