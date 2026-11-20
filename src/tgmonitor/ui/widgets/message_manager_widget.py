@@ -2,27 +2,30 @@
 """MessageManagerWidget — v2.0.8 新增「消息」导航页:查看 + 筛选已落库消息。
 
 与大实时流(`MessageView`)不同,本页是**按需查询**的历史消息浏览器:
-- 顶部筛选栏:频道 / 关键词 / 日期范围 / 收藏 / 有标签 / 置顶
-- 中部表格:频道 · 时间 · 类型 · 摘要 · 标记(一次最多 500 条)
-- 下部详情:选中行展示完整正文 + 标签 / 备注 / 媒体文件清单
+- 顶部筛选栏:频道 / 关键词 / 日期范围(预设 + 自定义)
+- 中部表格:频道 · 时间 · 类型 · 摘要(全量落库消息,本地分页)
+- 底部:上一页 / 页码 / 下一页 + 详情区(完整正文 + 标签 / 备注 / 媒体)
 
-查询复用 core 已有能力 `app.messages.list_messages(...)` —— search 子串匹配
-text + media.file_name,favorite/tag/pinned 为 AND 语义,日期走 storage
-date 字段;UI 只负责收集条件、渲染结果,不重复实现过滤逻辑。
+v2.0.9 二次修正:
+  - 移除收藏 / 有标签 / 置顶 3 个筛选 —— 用户判定无实际意义,core 侧能力保留;
+  - 日期由「勾选框 + 两个裸 QDateEdit」改为预设下拉(全部/今天/近7天/近30天/
+    自定义),选中「自定义」才显示两个日期框;
+  - 删除无实际意义的「标记」列;查询/重置按钮统一尺寸;
+  - 去掉 500 条上限(改为全量查询 + 本地分页),可翻看全部消息。
 
-跨边界只传 DTO(MessageDTO / ChannelDTO),core 不感知 Qt。
+查询复用 core 已有能力 `app.messages.list_messages(...)` —— UI 只负责收集
+条件、渲染结果,不重复实现过滤逻辑。跨边界只传 DTO,core 不感知 Qt。
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QDateEdit,
     QHBoxLayout,
@@ -46,12 +49,17 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# 单次查询上限 —— 消息详情页要显示摘要,500 条已足够人工浏览;
-# 真要导全量走 core 的导出/分页能力,不在本页做无限加载。
-_QUERY_LIMIT = 500
+# 本地分页大小 —— core 一次性返回全部候选消息,UI 按页渲染。
+_PAGE_SIZE = 50
 
-# 日期控件起始值(用当前日期,勾选后才生效,qss 上以 chk_date 控制显隐态)。
-_DATE_PLACEHOLDER_YEAR = 2000
+# 日期预设(data 存字符串,「自定义」时才启用两个 QDateEdit)。
+_DATE_PRESETS = (
+    ("全部时间", "all"),
+    ("今天", "today"),
+    ("近 7 天", "7d"),
+    ("近 30 天", "30d"),
+    ("自定义…", "custom"),
+)
 
 
 class MessageManagerWidget(QWidget):
@@ -81,7 +89,9 @@ class MessageManagerWidget(QWidget):
         self._app = app
         self._loop = loop
         self._channels_provider = channels_provider
-        self._rows: list[MessageDTO] = []
+        self._rows: list[MessageDTO] = []  # 当前页要渲染的行
+        self._all_rows: list[MessageDTO] = []  # 全量查询结果(分页源)
+        self._page = 0  # 0-based
         self._channel_titles: dict[int, str] = {}
 
         self._build_ui()
@@ -107,6 +117,19 @@ class MessageManagerWidget(QWidget):
         splitter.setSizes([420, 180])
         root.addWidget(splitter, 1)
 
+        # 分页栏 + 状态 —— 与媒体管理页交互一致:上一页 / 页码 / 下一页。
+        pager = QHBoxLayout()
+        pager.setSpacing(8)
+        self.btn_prev = QPushButton(self.tr("‹ 上一页"))
+        self.btn_next = QPushButton(self.tr("下一页 ›"))
+        self.lbl_page = QLabel("1 / 1")
+        self.lbl_page.setObjectName("messageManagerPage")
+        pager.addStretch(1)
+        pager.addWidget(self.btn_prev)
+        pager.addWidget(self.lbl_page)
+        pager.addWidget(self.btn_next)
+        root.addLayout(pager)
+
         self.lbl_status = QLabel(self.tr("尚未查询"))
         self.lbl_status.setObjectName("messageManagerStatus")
         root.addWidget(self.lbl_status)
@@ -126,43 +149,41 @@ class MessageManagerWidget(QWidget):
         self.edit_search.setMinimumWidth(180)
         bar.addWidget(self.edit_search, 1)
 
-        self.chk_favorite = QCheckBox(self.tr("收藏"))
-        self.chk_tagged = QCheckBox(self.tr("有标签"))
-        self.chk_pinned = QCheckBox(self.tr("置顶"))
-        bar.addWidget(self.chk_favorite)
-        bar.addWidget(self.chk_tagged)
-        bar.addWidget(self.chk_pinned)
+        # v2.0.9:日期预设下拉 —— 常用区间一键选,只有「自定义…」才露日期框。
+        self.cmb_date = QComboBox()
+        self.cmb_date.setObjectName("messageManagerDate")
+        for label, data in _DATE_PRESETS:
+            self.cmb_date.addItem(self.tr(label), data)
+        bar.addWidget(self.cmb_date)
 
-        # 日期范围:默认不启用(两个 QDateEdit 禁用),勾选后参与筛选。
-        self.chk_date = QCheckBox(self.tr("日期"))
-        bar.addWidget(self.chk_date)
         self.date_from = QDateEdit()
         self.date_to = QDateEdit()
         for w in (self.date_from, self.date_to):
             w.setCalendarPopup(True)
             w.setDisplayFormat("yyyy-MM-dd")
-            w.setEnabled(False)
+            w.hide()  # 默认隐藏,cmb_date 选「自定义…」才显示
             bar.addWidget(w)
-        self.date_from.setDate(QDate(_DATE_PLACEHOLDER_YEAR, 1, 1))
+        self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_to.setDate(QDate.currentDate())
 
+        # v2.0.9:查询/重置统一步调 —— 同样 76×30、同样的通用按钮样式。
         self.btn_query = QPushButton(self.tr("查询"))
         self.btn_query.setObjectName("primaryBtn")
-        bar.addWidget(self.btn_query)
-
         self.btn_reset = QPushButton(self.tr("重置"))
-        bar.addWidget(self.btn_reset)
+        # 34px 高容纳 primaryBtn 的 8px 上下 padding(13px 字体),避免文字被压。
+        for btn in (self.btn_query, self.btn_reset):
+            btn.setFixedSize(76, 34)
+            bar.addWidget(btn)
         return bar
 
     def _build_table(self) -> QTableWidget:
-        table = QTableWidget(0, 5)
+        table = QTableWidget(0, 4)  # v2.0.9:删「标记」列
         table.setHorizontalHeaderLabels(
             [
                 self.tr("频道"),
                 self.tr("时间"),
                 self.tr("类型"),
                 self.tr("摘要"),
-                self.tr("标记"),
             ]
         )
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -176,15 +197,15 @@ class MessageManagerWidget(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         return table
 
     def _wire(self) -> None:
         self.btn_query.clicked.connect(self.refresh)
         self.btn_reset.clicked.connect(self.reset_filters)
         self.edit_search.returnPressed.connect(self.refresh)
-        self.chk_date.toggled.connect(self.date_from.setEnabled)
-        self.chk_date.toggled.connect(self.date_to.setEnabled)
+        self.cmb_date.currentIndexChanged.connect(self._on_date_preset_changed)
+        self.btn_prev.clicked.connect(self._on_page_prev)
+        self.btn_next.clicked.connect(self._on_page_next)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         # 跨线程安全:run_coro 的回调只 emit,渲染在主线程槽内做
         self.messages_loaded.connect(self._apply_messages)
@@ -193,7 +214,7 @@ class MessageManagerWidget(QWidget):
     # ---- 对外入口 ----
 
     def refresh(self) -> None:
-        """重新拉取消息 —— 导航切到本页 / 点「查询」时调用。"""
+        """重新拉取全部匹配消息 —— 导航切到本页 / 点「查询」时调用。"""
         self._sync_channel_combo()
         self.lbl_status.setText(self.tr("查询中…"))
         self.btn_query.setEnabled(False)
@@ -204,16 +225,14 @@ class MessageManagerWidget(QWidget):
         search = self.edit_search.text().strip()
 
         async def _go() -> list[MessageDTO]:
+            # v2.0.9:limit=None 取全部候选,UI 本地分页 —— 可翻看全部消息。
             return await self._app.messages.list_messages(
                 channel_ids=channel_ids,
                 date_from=date_from,
                 date_to=date_to,
-                limit=_QUERY_LIMIT,
+                limit=None,
                 search=search,
                 include_unmonitored=True,
-                favorite_only=self.chk_favorite.isChecked(),
-                tag_only=self.chk_tagged.isChecked(),
-                pinned_only=self.chk_pinned.isChecked(),
             )
 
         def _done(msgs: list[MessageDTO]) -> None:
@@ -236,10 +255,8 @@ class MessageManagerWidget(QWidget):
         """清空全部筛选并重新查询。"""
         self.cmb_channel.setCurrentIndex(0)
         self.edit_search.clear()
-        self.chk_favorite.setChecked(False)
-        self.chk_tagged.setChecked(False)
-        self.chk_pinned.setChecked(False)
-        self.chk_date.setChecked(False)
+        self.cmb_date.setCurrentIndex(0)  # 全部时间
+        self._page = 0
         self.refresh()
 
     # ---- 内部 ----
@@ -263,23 +280,51 @@ class MessageManagerWidget(QWidget):
         finally:
             self.cmb_channel.blockSignals(False)
 
+    def _on_date_preset_changed(self) -> None:
+        """日期预设切换 —— 只有「自定义…」才显示两个日期框。"""
+        custom = self.cmb_date.currentData() == "custom"
+        self.date_from.setVisible(custom)
+        self.date_to.setVisible(custom)
+        self._page = 0
+
     def _selected_dates(self) -> tuple[datetime | None, datetime | None]:
-        if not self.chk_date.isChecked():
+        """日期预设 → (起, 止) naive datetime,None 表示不过滤。"""
+        preset = self.cmb_date.currentData()
+        if preset == "all" or preset is None:
             return None, None
+        today = datetime.now()
+        if preset == "today":
+            start = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1) - timedelta(microseconds=1)
+            return start, end
+        if preset in ("7d", "30d"):
+            days = 7 if preset == "7d" else 30
+            start = (today - timedelta(days=days - 1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            end = today.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return start, end
+        # 自定义:QDate 的 year/month/day 构造 naive datetime —— storage
+        # 的 _dt_to_db 对 naive 原样编码 ISO。
         d1 = self.date_from.date()
         d2 = self.date_to.date()
-        # QDate.toPyDate() 在 PySide6 stub 里返回 object,直接用 year/month/day
-        # 构造 naive datetime —— storage 的 _dt_to_db 对 naive 原样编码 ISO。
         start = datetime(d1.year(), d1.month(), d1.day(), 0, 0, 0)
         end = datetime(d2.year(), d2.month(), d2.day(), 23, 59, 59, 999999)
         return start, end
 
-    def _on_query_failed(self, msg: str) -> None:
-        self.btn_query.setEnabled(True)
-        self.lbl_status.setText(msg)
+    # ---- 分页 ----
 
-    def _apply_messages(self, msgs: list[MessageDTO]) -> None:
-        self._rows = list(msgs)
+    def _total_pages(self) -> int:
+        return max(1, (len(self._all_rows) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+
+    def _render_page(self) -> None:
+        """按 _page 把 _all_rows 的当前页切片渲染到表格。"""
+        total_pages = self._total_pages()
+        if self._page >= total_pages:
+            self._page = max(0, total_pages - 1)
+        start = self._page * _PAGE_SIZE
+        self._rows = self._all_rows[start : start + _PAGE_SIZE]
+
         self.table.setRowCount(len(self._rows))
         for row, msg in enumerate(self._rows):
             values = (
@@ -289,7 +334,6 @@ class MessageManagerWidget(QWidget):
                 else msg.date.strftime("%Y-%m-%d %H:%M"),
                 self._message_kind(msg),
                 " ".join(msg.text.split())[:160],
-                self._message_flags(msg),
             )
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -297,10 +341,34 @@ class MessageManagerWidget(QWidget):
                 self.table.setItem(row, col, item)
         self.table.clearSelection()
         self.detail.clear()
-        self.btn_query.setEnabled(True)
-        suffix = self.tr(f" · 上限 {_QUERY_LIMIT} 条") if len(self._rows) >= _QUERY_LIMIT else ""
-        self.lbl_status.setText(self.tr(f"共 {len(self._rows)} 条消息{suffix}"))
+
+        self.lbl_page.setText(f"{self._page + 1} / {total_pages}")
+        self.btn_prev.setEnabled(self._page > 0)
+        self.btn_next.setEnabled(self._page + 1 < total_pages)
+        total = len(self._all_rows)
+        self.lbl_status.setText(self.tr(f"共 {total} 条消息 · 每页 {_PAGE_SIZE} 条"))
         self.query_finished.emit(len(self._rows))
+
+    def _on_page_prev(self) -> None:
+        if self._page > 0:
+            self._page -= 1
+            self._render_page()
+
+    def _on_page_next(self) -> None:
+        if self._page + 1 < self._total_pages():
+            self._page += 1
+            self._render_page()
+
+    def _on_query_failed(self, msg: str) -> None:
+        self.btn_query.setEnabled(True)
+        self.lbl_status.setText(msg)
+
+    def _apply_messages(self, msgs: list[MessageDTO]) -> None:
+        """查询完成(主线程槽)—— 存全量结果,重置到第 1 页渲染。"""
+        self._all_rows = list(msgs)
+        self._page = 0
+        self.btn_query.setEnabled(True)
+        self._render_page()
 
     def _on_selection_changed(self) -> None:
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
@@ -316,17 +384,6 @@ class MessageManagerWidget(QWidget):
             return "文本"
         kinds = {m.type.value for m in msg.media}
         return ", ".join(sorted(kinds))
-
-    @staticmethod
-    def _message_flags(msg: MessageDTO) -> str:
-        flags: list[str] = []
-        if msg.is_favorite:
-            flags.append("★")
-        if msg.tags:
-            flags.append(f"#{len(msg.tags)}")
-        if msg.is_pinned:
-            flags.append("置顶")
-        return " ".join(flags)
 
     def _format_detail(self, msg: MessageDTO) -> str:
         channel = self._channel_titles.get(msg.channel_id, str(msg.channel_id))
