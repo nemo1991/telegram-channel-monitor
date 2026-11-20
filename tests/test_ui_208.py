@@ -223,10 +223,13 @@ def test_message_manager_row_selection_shows_detail(qapp, qloop, tmp_path) -> No
 
 
 def test_nav_v209_colors_and_pill(qapp, qloop, tmp_path) -> None:
-    """idle 纯白、hover 与 active 同蓝系(色差小)、选中态圆角背景。"""
+    """idle 中亮暖灰、hover 与 active 同蓝系(色差小)、选中态圆角背景。"""
     from tgmonitor.ui.nav_bar import _LIGHT
 
-    assert QColor(_LIGHT["inactive_fg"]).lightness() == 255  # 纯白
+    # v2.1.0:idle 从纯白改中亮暖灰 —— 与深底仍有足够亮度差,但不是纯白
+    idle_l = QColor(_LIGHT["inactive_fg"]).lightness()
+    assert 150 <= idle_l <= 220  # 中亮,非纯白(255)
+    assert idle_l - QColor(_LIGHT["nav_bg"]).lightness() > 110
     # hover 与 active 同色系:色相接近(都落在蓝色区间 200~230),色差小
     h_hue = QColor(_LIGHT["hover_bg"]).hue()
     a_hue = QColor(_LIGHT["active_bg"]).hue()
@@ -239,6 +242,50 @@ def test_nav_v209_colors_and_pill(qapp, qloop, tmp_path) -> None:
     active = win.nav._buttons[0]
     assert "border-radius" in active._bg.styleSheet()
     assert _LIGHT["active_bg"].lower() in active._bg.styleSheet().lower()
+    win.close()
+
+
+def test_nav_v210_paints_background_not_via_qss(qapp, qloop, tmp_path) -> None:
+    """v2.1.0:nav 底色靠 paintEvent 自绘,不依赖 QSS/palette background 跨平台解析。"""
+    from tgmonitor.ui.nav_bar import VerticalNavBar
+
+    assert "paintEvent" in VerticalNavBar.__dict__  # 自身实现(非继承)
+    win = build_real_main_window(qloop, tmp_path)
+    # grab 出的像素确实是深色底 —— 即便真机 QSS 不生效也由 QPainter 保证
+    img = win.nav.grab().toImage()
+    assert QColor(img.pixelColor(2, 2)).name() == "#1e2433"
+    win.close()
+
+
+def test_message_pager_row_above_detail(qapp, qloop, tmp_path) -> None:
+    """v2.1.0:条数信息与分页按钮同一行,该行位于详情区上方。"""
+    from PySide6.QtWidgets import QHBoxLayout
+
+    win = build_real_main_window(qloop, tmp_path)
+    mm = win.message_manager
+    # 四者共享同一父布局(pager 行)
+    parents = {
+        "status": mm.lbl_status.parentWidget(),
+        "prev": mm.btn_prev.parentWidget(),
+        "page": mm.lbl_page.parentWidget(),
+        "next": mm.btn_next.parentWidget(),
+    }
+    assert len(set(parents.values())) == 1  # 同一个 parent widget
+    # pager 是嵌套在详情 pane 的 QVBoxLayout 里的 QHBoxLayout —— 找到它
+    parent = mm.lbl_status.parentWidget()
+    top_lay = parent.layout()
+    hbox = next(
+        top_lay.itemAt(i).layout()
+        for i in range(top_lay.count())
+        if isinstance(top_lay.itemAt(i).layout(), QHBoxLayout)
+    )
+    widgets = {hbox.itemAt(i).widget() for i in range(hbox.count())}
+    assert {mm.lbl_status, mm.btn_prev, mm.lbl_page, mm.btn_next} <= widgets
+    # 该行在详情文本框之上:top_lay 里 pager 布局的索引 < detail 的索引
+    # (窗口未 show 时几何坐标恒为 0,用布局顺序判更稳)
+    pager_idx = next(i for i in range(top_lay.count()) if top_lay.itemAt(i).layout() is hbox)
+    detail_idx = next(i for i in range(top_lay.count()) if top_lay.itemAt(i).widget() is mm.detail)
+    assert pager_idx < detail_idx
     win.close()
 
 

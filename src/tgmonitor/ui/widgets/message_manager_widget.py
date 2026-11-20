@@ -4,7 +4,10 @@
 与大实时流(`MessageView`)不同,本页是**按需查询**的历史消息浏览器:
 - 顶部筛选栏:频道 / 关键词 / 日期范围(预设 + 自定义)
 - 中部表格:频道 · 时间 · 类型 · 摘要(全量落库消息,本地分页)
-- 底部:上一页 / 页码 / 下一页 + 详情区(完整正文 + 标签 / 备注 / 媒体)
+- 详情区上方:分页行(条数信息 + 上一页 / 页码 / 下一页),其下为完整正文
+  + 标签 / 备注 / 媒体
+
+v2.1.0:分页行与条数信息合并到同一行,移到详情区上方(不再孤立在窗口底部)。
 
 v2.0.9 二次修正:
   - 移除收藏 / 有标签 / 置顶 3 个筛选 —— 用户判定无实际意义,core 侧能力保留;
@@ -106,33 +109,42 @@ class MessageManagerWidget(QWidget):
 
         root.addLayout(self._build_filter_bar())
 
+        # v2.1.0:分页栏(条数信息 + 上一页/页码/下一页)合并成一行,放在消息
+        # 详情**上方**。做法:splitter 下半部分是一个容器 widget,内部竖排
+        # [分页行][详情];这样分隔条依旧只隔「表格 / 详情区」,分页行随详情区
+        # 一起,视觉上紧贴详情顶部。
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.table = self._build_table()
-        self.detail = QTextBrowser()
-        self.detail.setObjectName("messageManagerDetail")
-        self.detail.setPlaceholderText(self.tr("选中一行查看完整消息内容"))
-        self.detail.setOpenExternalLinks(False)
         splitter.addWidget(self.table)
-        splitter.addWidget(self.detail)
-        splitter.setSizes([420, 180])
-        root.addWidget(splitter, 1)
 
-        # 分页栏 + 状态 —— 与媒体管理页交互一致:上一页 / 页码 / 下一页。
+        detail_pane = QWidget()
+        detail_lay = QVBoxLayout(detail_pane)
+        detail_lay.setContentsMargins(0, 4, 0, 0)
+        detail_lay.setSpacing(4)
+
         pager = QHBoxLayout()
         pager.setSpacing(8)
+        self.lbl_status = QLabel(self.tr("尚未查询"))
+        self.lbl_status.setObjectName("messageManagerStatus")
         self.btn_prev = QPushButton(self.tr("‹ 上一页"))
         self.btn_next = QPushButton(self.tr("下一页 ›"))
         self.lbl_page = QLabel("1 / 1")
         self.lbl_page.setObjectName("messageManagerPage")
-        pager.addStretch(1)
+        pager.addWidget(self.lbl_status, 1)  # 条数信息占左侧弹性空间
         pager.addWidget(self.btn_prev)
         pager.addWidget(self.lbl_page)
         pager.addWidget(self.btn_next)
-        root.addLayout(pager)
+        detail_lay.addLayout(pager)
 
-        self.lbl_status = QLabel(self.tr("尚未查询"))
-        self.lbl_status.setObjectName("messageManagerStatus")
-        root.addWidget(self.lbl_status)
+        self.detail = QTextBrowser()
+        self.detail.setObjectName("messageManagerDetail")
+        self.detail.setPlaceholderText(self.tr("选中一行查看完整消息内容"))
+        self.detail.setOpenExternalLinks(False)
+        detail_lay.addWidget(self.detail, 1)
+
+        splitter.addWidget(detail_pane)
+        splitter.setSizes([420, 220])
+        root.addWidget(splitter, 1)
 
     def _build_filter_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()

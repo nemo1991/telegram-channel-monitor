@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -69,19 +69,26 @@ def _nav_items() -> list[tuple[str, str]]:
 # ---- 配色 token(直接 hex,固定样式,本文件自包含) ----
 #
 # 2.0.9 二次修正:
-#   - idle 前景改「纯白 + 高对比」—— 2.0.8 的 #dfe3f0 在深色底上仍被用户
-#     判为「太浅」(浅灰白视觉上发虚)。纯白 #ffffff 是亮度上限,配 2px
-#     描边图标在深底上最实、最清晰。
 #   - hover 与 active 收敛为**同一蓝色系**(hover=#4a7fd4 是 active=#5b9cf5
 #     的暗一档),避免 2.0.8 的「深蓝灰 hover → 亮蓝 active」跳变突兀。
 #   - 选中/悬浮态走 QSS 圆角胶囊(8px),去掉方方正正的直角块。
+#
+# 2.1.0 三次修正(idle 辨识度):
+#   - **根因**:nav 底色此前靠 QSS/QPalette 设给 QWidget —— 这条路径跨平台
+#     不稳(macOS Cocoa / Wayland 上 QSS background 常不生效),真机上整条
+#     nav 透出主窗 #f5f6fa 浅底,而 idle 图标是纯白 → 与浅底接近、看不清。
+#     2.1.0 改为 VerticalNavBar.paintEvent 用 QPainter.fillRect 直接画底色,
+#     任何平台都生效,不再依赖 QSS/palette 背景解析。
+#   - idle 前景从纯白改为**中亮暖灰 #b9c2d4**:即使个别平台仍有底色偏差,
+#     中灰调也不会像纯白那样与浅底糊在一起;在深色底上与 nav_bg 亮度差
+#     仍 >110,清晰可辨。
 _LIGHT = {
     "nav_bg": "#1e2433",  # 导航条底色(深色锚点,与右侧 #f5f6fa 强区隔)
     "active_bg": "#5b9cf5",  # accent 实色 — 强对比
     "hover_bg": "#4a7fd4",  # 2.0.9:active 同色系暗一档,缩小 hover/active 色差
     "idle_bg": "transparent",
     "active_fg": "#ffffff",
-    "inactive_fg": "#ffffff",  # 2.0.9:纯白,深色底上最高对比,不再发虚
+    "inactive_fg": "#b9c2d4",  # 2.1.0:中亮暖灰,避免纯白与浅底糊在一起
     "accent": "#5b9cf5",
     "accent_soft": "rgba(91,156,245,0.22)",
     "pill_radius": "8",  # 2.0.9:选中/悬浮圆角半径(px)
@@ -242,6 +249,19 @@ class VerticalNavBar(QWidget):
         # 默认高亮第一个
         if self._buttons:
             self._buttons[0].set_active(True)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        """自绘深色底 —— 绕开 QSS/QPalette background 在 QWidget 上跨平台不稳。
+
+        项目历史坑(2.0.8 / 2.1.0):nav 底色靠 setStyleSheet/palette 设给
+        QWidget,macOS Cocoa / Wayland 上 QSS background 常不生效 → 整条 nav
+        透出主窗浅底,白色 idle 图标与浅底接近、看不清。QPainter.fillRect
+        走的是 Qt 绘制底层,任何平台都生效,不依赖样式表解析。
+        """
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(_palette()["nav_bg"]))
+        painter.end()
+        super().paintEvent(event)
 
     def _on_btn_clicked(self, idx: int) -> None:
         if idx == self._current:
