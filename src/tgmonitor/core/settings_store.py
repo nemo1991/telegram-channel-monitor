@@ -135,6 +135,21 @@ def update_env_with_settings(env_path: Path, settings: Settings) -> None:
     write_env_file(env, env_path)
 
 
+def update_env_credentials(env_path: Path, *, api_id: int, api_hash: str, phone: str) -> None:
+    """只把 3 个 Telegram 凭据写入 .env(保形更新其余 key)。
+
+    供设置页「登录」使用:用户点登录时应把当场填写的 API ID / Hash / Phone
+    落盘,但**不该**连带提交其它分组尚未点「保存并应用」的改动(数据库 /
+    对象存储 / 策略等)。`update_env_with_settings` 会重写全部 TG_* 字段,
+    这里只动这 3 个 key,语义与按钮职责对齐。
+    """
+    env = parse_env_file(env_path)
+    env.pairs["TG_API_ID"] = str(api_id)
+    env.pairs["TG_API_HASH"] = api_hash
+    env.pairs["TG_PHONE"] = phone
+    write_env_file(env, env_path)
+
+
 def update_env_paused(env_path: Path, paused: bool) -> None:
     """2026-09-04 v1.6.6:写 TG_PAUSED=true|false 到 .env(只动这一行)。
 

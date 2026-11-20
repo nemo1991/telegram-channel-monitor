@@ -1,11 +1,13 @@
 # mypy: disable-error-code="attr-defined"
-"""LoginDialog — 鉴权交互的兜底对话框(手机号 / 验证码 / 2FA)。
+"""LoginDialog — 鉴权交互对话框(手机号 / 验证码 / 2FA)。
 
-凭据主要在设置页填写(账户凭证组);此对话框是用户在主界面直接点「登录」
-时的交互入口,按当前登录状态就地切换:
-- `phone_required` / `closed` / `uninit` → 手机号页,提交后触发验证码下发
-- `code_required` → 验证码页
-- `password_required` → 2FA 密码页
+两种用法:
+1. **设置页「登录」(code_only=True)** — 验证码已由设置页请求成功,本对话框
+   只收验证码 / 2FA / 邮箱等后续凭证,**不显示手机号页、也不自动发码**。
+2. **主界面直接登录(默认)** — 按当前登录状态就地切换:
+   - `phone_required` / `closed` / `uninit` → 手机号页,提交后触发验证码下发
+   - `code_required` → 验证码页
+   - `password_required` → 2FA 密码页
 
 弹窗期间 Telegram 状态变化(LoginStateChanged)会自动切页,用户无需重开。
 """
@@ -46,17 +48,24 @@ class LoginDialog(QDialog):
         parent: QWidget | None = None,
         *,
         phone: str | None = None,
+        code_only: bool = False,
+        initial_state: str | None = None,
     ) -> None:
         """建 modal dialog + 自动按当前 LoginState 选页(手机号 / 验证码 / 2FA)。
 
-        2.0.8 FR-01:`phone` 由设置页「账户凭证」直接传入 — 非空时在手机号
-        页自动提交,用户不再看到「输入手机号」这一步。None / 空串保持旧行为
-        (展示手机号输入页),兼容主界面直接点登录的用法。
+        - `code_only=True`:设置页「登录」专用。验证码已由设置页在弹窗前请求
+          成功,本对话框直接从 `initial_state`(通常 code_required)对应的页
+          开始,不展示手机号页、也不自动提交手机号。避免用户看到「弹了手机号
+          框、像没拿到号」的错觉。
+        - `code_only=False`(默认):保留 2.0.8 兼容行为。`phone` 非空时在手机号
+          页自动提交;None / 空串展示手输页(主界面直接点登录的用法)。
         """
         super().__init__(parent)
         self.app = app
         self.loop = loop
         self._initial_phone = (phone or "").strip()
+        self._code_only = code_only
+        self._initial_state = (initial_state or "").strip() or "code_required"
         self.setWindowTitle(self.tr("Telegram 登录"))
         self.setModal(True)
         self._expected_state: str = ""
@@ -164,6 +173,11 @@ class LoginDialog(QDialog):
             self._render(e.state, e.detail)
 
         self.app.bus.subscribe(LoginStateChanged, _on)
+        if self._code_only:
+            # 设置页路径:验证码已请求成功,直接渲染目标页。不读 client 当前
+            # 状态(可能滞后一拍把用户踢回手机号页),也不自动提交手机号。
+            self._render(self._initial_state, "")
+            return
         # 初次拉当前状态
         try:
             state = app_get_state(self.app)
@@ -185,6 +199,15 @@ class LoginDialog(QDialog):
             self._submit_phone()
 
     def _render(self, state: str, detail: str = "") -> None:
+        if self._code_only and state in (
+            "phone_required",
+            "closed",
+            "uninit",
+            "unknown",
+        ):
+            # 发码成功后状态偶发抖动回退到「待手机号」档 —— 用户已经过了这
+            # 一步,保持当前验证码页,不倒退(否则又变回「像没拿到号」)。
+            return
         self._expected_state = state
         if state == "code_required":
             self.status_label.setText(self.tr("Telegram 验证码"))

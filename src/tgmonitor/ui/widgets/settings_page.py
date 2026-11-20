@@ -26,6 +26,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -41,7 +42,11 @@ from PySide6.QtWidgets import (
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.ops_gate import READY_STATE
-from tgmonitor.core.settings_store import EditableSettings, update_env_with_settings
+from tgmonitor.core.settings_store import (
+    EditableSettings,
+    update_env_credentials,
+    update_env_with_settings,
+)
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.widgets.form_section import (
     ActionDef,
@@ -59,6 +64,18 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# 发码成功后这些状态都该弹「后续凭证」对话框(验证码 / 2FA / 邮箱 / 注册),
+# 由 LoginDialog 按 state 选页;其余状态(如 phone_required)视为失败。
+_AUTH_DIALOG_STATES = frozenset(
+    {
+        "code_required",
+        "password_required",
+        "email_required",
+        "email_code_required",
+        "registration_required",
+    }
+)
+
 
 class SettingsPage(QWidget):
     """整页设置。在 QStackedWidget 中作为一页使用。
@@ -66,6 +83,11 @@ class SettingsPage(QWidget):
     构造后自动从 app.settings 加载当前值。
     UI 改动不实时生效 — 用户点「保存并应用」才写盘并热重载(v2.0.7 FR-09)。
     """
+
+    # run_coro 的回调可能跑在后台 loop 线程 —— 只 emit,由 Qt 排到主线程槽
+    # 里再弹窗 / exec 对话框,避免跨线程碰 widget(项目既有跨线程约定)。
+    code_request_ok = Signal(str)  # payload = "state|detail"
+    login_failed = Signal(str)
 
     def __init__(
         self,
@@ -92,6 +114,8 @@ class SettingsPage(QWidget):
 
         self._build()
         self._load_from_settings()
+        self.code_request_ok.connect(self._open_auth_dialog)
+        self.login_failed.connect(self._show_login_failed)
         # 初始按 core 真实状态设置入口可见性;桩环境 client.state 非字符串
         # 时退化为未登录(不把 MagicMock 当状态字符串显示)。
         initial_state = getattr(self._app.client, "state", None)
@@ -270,24 +294,111 @@ class SettingsPage(QWidget):
         self.btn_logout.setEnabled(logged_in)
 
     def _on_login_clicked(self) -> None:
-        """设置页「登录」— 直接用「账户凭证」里的手机号发起登录。
+        """设置页「登录」— 校验/保存凭证 → 请求验证码 → 只弹验证码框。
 
-        2.0.8 FR-01:不再弹「输入手机号」页。读本页手机号输入框(用户改了
-        还没保存也能用),交给 LoginDialog 自动提交;验证码 / 2FA / 邮箱
-        等后续步骤仍在该对话框内按 LoginStateChanged 就地切换。
+        2.1.2 重构:发验证码从 `LoginDialog` 构造里挪到本方法。旧实现先弹
+        「输入手机号」页再自动提交,用户看到的就是「弹了手机号框、像没拿到
+        号」。新路径(与用户期望一致):
+
+          1. 读当场填写的 API ID / API Hash / Phone(可能尚未点保存并应用)
+          2. 校验通过后把这 3 个凭据写盘 .env + 同步内存 settings
+          3. `run_coro` 调 `auth.submit_phone(phone)` 请求验证码
+          4. 成功 → `code_request_ok` signal → 主线程弹「仅验证码」对话框
+          5. 失败 → `login_failed` signal → 主线程 QMessageBox 明确提示
+
+        注意:这里只保存账户凭据,不连带提交其它分组未点「保存并应用」的
+        改动(数据库 / 对象存储 / 策略等),故走 `update_env_credentials`。
         """
+        api_id = int(self.in_api_id.value())
+        api_hash = self.in_api_hash.text().strip()
+        phone = self.in_phone.text().strip()
+
+        err = self._validate_login_credentials(api_id, api_hash, phone)
+        if err:
+            QMessageBox.warning(self, self.tr("无法登录"), err)
+            return
+
+        try:
+            update_env_credentials(self._env_path, api_id=api_id, api_hash=api_hash, phone=phone)
+        except OSError as exc:
+            QMessageBox.critical(self, self.tr("凭据保存失败"), str(exc))
+            return
+        # 原地更新内存 settings:auth / client 等持有同一对象引用,预检立即
+        # 用新凭据(已构造的 Telethon client 的 api_id/hash 是构造期固化的,
+        # 若用户改了这两项,仍需重启应用才对真连接生效)。
+        current = self._app.settings
+        current.api_id = api_id
+        current.api_hash = api_hash
+        current.phone = phone
+
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText(self.tr("发送中"))
+
+        async def _send_code() -> tuple[str, str | None]:
+            return await self._app.auth.submit_phone(phone)
+
+        def _on_sent(result: tuple[str, str | None]) -> None:
+            self._restore_login_button()
+            state, detail = result
+            if state == "error":
+                self.login_failed.emit(detail or self.tr("获取验证码失败"))
+                return
+            if state in _AUTH_DIALOG_STATES:
+                self.code_request_ok.emit(f"{state}|{detail or ''}")
+                return
+            # 非预期状态(如仍停在 phone_required —— 常见于占位 client):
+            # 不弹空验证码框,明确告诉用户请求没有成功。
+            self.login_failed.emit(detail or self.tr(f"获取验证码失败(状态: {state})"))
+
+        def _on_send_error(exc: BaseException) -> None:
+            self._restore_login_button()
+            self.login_failed.emit(str(exc))
+
+        run_coro(
+            self._loop,
+            _send_code(),
+            on_success=_on_sent,
+            on_error=_on_send_error,
+            error_label="login_send_code",
+        )
+
+    @staticmethod
+    def _validate_login_credentials(api_id: int, api_hash: str, phone: str) -> str:
+        """返回第一条错误消息;空串 = 校验通过。
+
+        与 `AuthService._check_credentials` / `_missing_credentials` 同一套规则,
+        但在 UI 层同步执行,便于点登录时先提示用户、不发起无效网络请求。
+        """
+        if api_id <= 0:
+            return "TG_API_ID 未配置:请打开 设置… 填写正整数"
+        if len(api_hash) < 16:
+            return "TG_API_HASH 未配置或过短(需 ≥ 16 位):请打开 设置… 填写"
+        if not phone.startswith("+"):
+            return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
+        return ""
+
+    def _restore_login_button(self) -> None:
+        """发码请求结束后恢复登录按钮(可见性仍由 set_login_state 控制)。"""
+        self.btn_login.setText(self.tr("登录"))
+        self.btn_login.setEnabled(True)
+
+    def _open_auth_dialog(self, payload: str) -> None:
+        """发码成功 → 主线程弹只含验证码的对话框(后续 2FA/邮箱按状态切页)。"""
+        state = payload.partition("|")[0]
         from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
 
-        phone = self.in_phone.text().strip()
-        if not phone:
-            QMessageBox.warning(
-                self,
-                self.tr("无法登录"),
-                self.tr("请先在「账户凭证」中填写手机号。"),
-            )
-            return
-        dlg = LoginDialog(self._app, self._loop, self.window(), phone=phone)
+        dlg = LoginDialog(
+            self._app,
+            self._loop,
+            self.window(),
+            code_only=True,
+            initial_state=state,
+        )
         dlg.exec()
+
+    def _show_login_failed(self, msg: str) -> None:
+        """发码失败 → 主线程明确提示,用户可改凭据后重试。"""
+        QMessageBox.warning(self, self.tr("登录失败"), msg)
 
     def _on_logout_clicked(self) -> None:
         """设置页「登出」— 复用 app.auth.logout()。"""
