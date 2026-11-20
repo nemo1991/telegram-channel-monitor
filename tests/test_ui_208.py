@@ -154,13 +154,12 @@ def test_message_manager_page_wired_in_nav(qapp, qloop, tmp_path) -> None:
 
 
 def test_message_manager_query_passes_filters_to_core(qapp, qloop, tmp_path) -> None:
-    """筛选栏条件原样透传给 core:关键词 / 收藏 / 标签 / 日期 / limit。"""
+    """筛选栏条件原样透传给 core:关键词 / 日期预设 / 全量 limit=None。"""
     win = build_real_main_window(qloop, tmp_path)
     mm = win.message_manager
     mm.edit_search.setText("hello")
-    mm.chk_favorite.setChecked(True)
-    mm.chk_tagged.setChecked(True)
-    mm.chk_date.setChecked(True)
+    idx = mm.cmb_date.findData("7d")
+    mm.cmb_date.setCurrentIndex(idx)
 
     msgs = [
         make_message(channel_id=100, msg_id=7, text="hello world", tags=["tag"], is_favorite=True)
@@ -175,11 +174,13 @@ def test_message_manager_query_passes_filters_to_core(qapp, qloop, tmp_path) -> 
     assert len(calls) == 1
     kwargs = calls[0].kwargs
     assert kwargs["search"] == "hello"
-    assert kwargs["favorite_only"] is True
-    assert kwargs["tag_only"] is True
     assert kwargs["include_unmonitored"] is True
-    assert kwargs["limit"] == 500
+    assert kwargs["limit"] is None  # v2.0.9:全量查询,UI 本地分页
     assert kwargs["date_from"] is not None and kwargs["date_to"] is not None
+    # v2.0.9:收藏/标签/置顶筛选已移除 —— 不再透传这三个参数
+    assert "favorite_only" not in kwargs
+    assert "tag_only" not in kwargs
+    assert "pinned_only" not in kwargs
     assert mm.table.item(0, 3).text() == "hello world"
     win.close()
 
@@ -208,11 +209,100 @@ def test_message_manager_row_selection_shows_detail(qapp, qloop, tmp_path) -> No
     )
     mm._apply_messages([msg])
     assert mm.table.rowCount() == 1
+    assert mm.table.columnCount() == 4  # v2.0.9:已删「标记」列
     mm.table.selectRow(0)
     detail = mm.detail.toPlainText()
     assert "完整正文 content" in detail
     assert "alpha" in detail
     assert "备注文本" in detail
     assert "pic.jpg" in detail
-    assert "★" in mm.table.item(0, 4).text()
+    win.close()
+
+
+# ---- v2.0.9:左栏二次修正 / 消息页筛选与分页 ----
+
+
+def test_nav_v209_colors_and_pill(qapp, qloop, tmp_path) -> None:
+    """idle 纯白、hover 与 active 同蓝系(色差小)、选中态圆角背景。"""
+    from tgmonitor.ui.nav_bar import _LIGHT
+
+    assert QColor(_LIGHT["inactive_fg"]).lightness() == 255  # 纯白
+    # hover 与 active 同色系:色相接近(都落在蓝色区间 200~230),色差小
+    h_hue = QColor(_LIGHT["hover_bg"]).hue()
+    a_hue = QColor(_LIGHT["active_bg"]).hue()
+    assert h_hue >= 0 and a_hue >= 0
+    assert abs(h_hue - a_hue) <= 10
+    assert QColor(_LIGHT["hover_bg"]).lightness() < QColor(_LIGHT["active_bg"]).lightness()
+    assert int(_LIGHT["pill_radius"]) >= 6  # 圆角胶囊
+
+    win = build_real_main_window(qloop, tmp_path)
+    active = win.nav._buttons[0]
+    assert "border-radius" in active._bg.styleSheet()
+    assert _LIGHT["active_bg"].lower() in active._bg.styleSheet().lower()
+    win.close()
+
+
+def test_message_date_custom_toggles_date_edits(qapp, qloop, tmp_path) -> None:
+    """日期预设:默认两个日期框隐藏,选「自定义…」才显示。"""
+    win = build_real_main_window(qloop, tmp_path)
+    mm = win.message_manager
+    assert [mm.cmb_date.itemData(i) for i in range(mm.cmb_date.count())] == [
+        "all",
+        "today",
+        "7d",
+        "30d",
+        "custom",
+    ]
+    # 用 isHidden() 判显式显隐 —— 窗口未 show 时 isVisible() 恒为 False
+    assert mm.date_from.isHidden() and mm.date_to.isHidden()
+    idx = mm.cmb_date.findData("custom")
+    mm.cmb_date.setCurrentIndex(idx)
+    QApplication.processEvents()
+    assert not mm.date_from.isHidden() and not mm.date_to.isHidden()
+    # 自定义区间透传给 core
+    start, end = mm._selected_dates()
+    assert start is not None and end is not None and start < end
+    mm.cmb_date.setCurrentIndex(0)
+    assert mm._selected_dates() == (None, None)
+    win.close()
+
+
+def test_message_filters_and_query_buttons_uniform(qapp, qloop, tmp_path) -> None:
+    """v2.0.9:标注筛选已移除;查询/重置按钮同尺寸。"""
+    win = build_real_main_window(qloop, tmp_path)
+    mm = win.message_manager
+    assert not hasattr(mm, "chk_favorite")
+    assert not hasattr(mm, "chk_tagged")
+    assert not hasattr(mm, "chk_pinned")
+    assert mm.btn_query.size() == mm.btn_reset.size()
+    win.close()
+
+
+def test_message_pagination_over_all_rows(qapp, qloop, tmp_path) -> None:
+    """全量结果按每页 50 条切片,上一页/下一页可翻,总数来自全量。"""
+    from tgmonitor.ui.widgets.message_manager_widget import _PAGE_SIZE
+
+    win = build_real_main_window(qloop, tmp_path)
+    mm = win.message_manager
+    msgs = [make_message(channel_id=100, msg_id=i, text=f"msg-{i}") for i in range(_PAGE_SIZE + 5)]
+    mm._apply_messages(msgs)
+
+    assert mm.table.rowCount() == _PAGE_SIZE
+    assert mm.lbl_page.text() == "1 / 2"
+    assert "共 55 条消息" in mm.lbl_status.text()
+    assert not mm.btn_prev.isEnabled() and mm.btn_next.isEnabled()
+
+    mm._on_page_next()
+    assert mm.lbl_page.text() == "2 / 2"
+    assert mm.table.rowCount() == 5
+    assert mm.btn_prev.isEnabled() and not mm.btn_next.isEnabled()
+
+    mm._on_page_prev()
+    assert mm.lbl_page.text() == "1 / 2"
+    assert mm.table.rowCount() == _PAGE_SIZE
+
+    # 查询重置回第一页
+    mm._page = 1
+    mm._apply_messages(msgs)
+    assert mm._page == 0
     win.close()

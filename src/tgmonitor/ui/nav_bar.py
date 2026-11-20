@@ -32,6 +32,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QFrame,
     QLabel,
     QVBoxLayout,
     QWidget,
@@ -67,18 +68,23 @@ def _nav_items() -> list[tuple[str, str]]:
 
 # ---- 配色 token(直接 hex,固定样式,本文件自包含) ----
 #
-# 2.0.8:nav 自身底色显式刷深色(nav_bg),idle 前景提亮到 #dfe3f0,
-# 保证 idle / hover / active 三态与底色都有清晰对比:
-#   active(蓝底白字)> hover(中蓝灰)> idle(深底亮灰字)
+# 2.0.9 二次修正:
+#   - idle 前景改「纯白 + 高对比」—— 2.0.8 的 #dfe3f0 在深色底上仍被用户
+#     判为「太浅」(浅灰白视觉上发虚)。纯白 #ffffff 是亮度上限,配 2px
+#     描边图标在深底上最实、最清晰。
+#   - hover 与 active 收敛为**同一蓝色系**(hover=#4a7fd4 是 active=#5b9cf5
+#     的暗一档),避免 2.0.8 的「深蓝灰 hover → 亮蓝 active」跳变突兀。
+#   - 选中/悬浮态走 QSS 圆角胶囊(8px),去掉方方正正的直角块。
 _LIGHT = {
     "nav_bg": "#1e2433",  # 导航条底色(深色锚点,与右侧 #f5f6fa 强区隔)
     "active_bg": "#5b9cf5",  # accent 实色 — 强对比
-    "hover_bg": "#343c56",  # 比 nav_bg 亮一阶
+    "hover_bg": "#4a7fd4",  # 2.0.9:active 同色系暗一档,缩小 hover/active 色差
     "idle_bg": "transparent",
     "active_fg": "#ffffff",
-    "inactive_fg": "#dfe3f0",  # 2.0.8 提亮(#b0b5c8 在深色底上仍偏暗)
+    "inactive_fg": "#ffffff",  # 2.0.9:纯白,深色底上最高对比,不再发虚
     "accent": "#5b9cf5",
     "accent_soft": "rgba(91,156,245,0.22)",
+    "pill_radius": "8",  # 2.0.9:选中/悬浮圆角半径(px)
 }
 
 
@@ -102,6 +108,18 @@ class _NavButton(QWidget):
         # 去掉旧 3px 透明左边框后文字标签 72px 正好铺满内容区,不再被裁切。
         self.setFixedSize(72, 68)
         self.setCursor(Qt.PointingHandCursor)
+        self.setObjectName("navBtn")
+
+        # 2.0.9:圆角背景层 —— 在按钮内缩 3px 放 QFrame,由 QSS 画圆角胶囊。
+        # 不用按钮自身 QSS/palette 填背景的原因:
+        #   - QSS `background` 在 QWidget 上跨平台不稳(macOS offscreen /
+        #     Wayland 可能不生效),QFrame 对 border-radius 支持更可靠;
+        #   - 内缩 3px + 8px 圆角 → 选中态是柔和圆角块,不再是贴边直角方块。
+        self._bg = QFrame(self)
+        self._bg.setObjectName("navBtnBg")
+        self._bg.setGeometry(3, 3, 66, 62)
+        self._bg.setStyleSheet("background: transparent; border: none;")
+        self._bg.lower()  # 始终在图标/文字之下
 
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(0, 8, 0, 6)
@@ -135,23 +153,20 @@ class _NavButton(QWidget):
             icon = tinted_action_icon(self._icon_name, QColor(p["inactive_fg"]))
         self._ico_label.setPixmap(icon.pixmap(24, 24))  # 28px 容器内居中,四周 2px padding 防裁切
 
-        # ---- 背景:active / hover / idle 三态清晰分层 ----
-        # **重要**:除 QSS 外,再用 setAutoFillBackground + QPalette 兜底。
-        # 在某些 Qt 平台(macOS offscreen、Wayland)QSS 的 `background` 在
-        # QWidget 上可能不生效;走 palette 是 Qt 最稳的路径,跟平台无关。
+        # ---- 背景:圆角胶囊层(active / hover / idle) ----
+        # 2.0.9:hover 收敛到 active 同色系暗蓝,色差小、过渡自然;
+        # 圆角 8px 消除「方方正正」的突兀感。idle 透明(nav 深色底自证)。
         if self._active:
-            bg = QColor(p["active_bg"])
+            bg_hex = p["active_bg"]
         elif self._hovering:
-            bg = QColor(p["hover_bg"])
+            bg_hex = p["hover_bg"]
         else:
-            bg = Qt.transparent
+            bg_hex = "transparent"
+        radius = p["pill_radius"]
+        self._bg.setStyleSheet(
+            f"QFrame#navBtnBg {{ background: {bg_hex}; border: none; border-radius: {radius}px; }}"
+        )
         fg = QColor(p["active_fg"] if self._active else p["inactive_fg"])
-
-        # ---- Palette:背景色(最稳) ----
-        pal = self.palette()
-        pal.setColor(self.backgroundRole(), bg)
-        self.setAutoFillBackground(True)
-        self.setPalette(pal)
 
         # 2.0.8:原先这里给所有态设 3px 透明左边框占位防抖,但文字标签
         # 固定 64px 宽 > 61px 内容区 → 图标/文字左侧被裁。现去掉边框,
