@@ -17,7 +17,10 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton  # noqa: E4
 
 from tests.fixtures._factories import make_message  # noqa: E402
 from tests.fixtures._real_window import build_real_main_window  # noqa: E402
+from tgmonitor.core.auth_service import AuthService  # noqa: E402
 from tgmonitor.core.config import Settings  # noqa: E402
+from tgmonitor.core.events import EventBus  # noqa: E402
+from tgmonitor.core.telegram.fake_client import FakeTelegramClient  # noqa: E402
 from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: E402
 from tgmonitor.ui.widgets.message_manager_widget import (  # noqa: E402
     MessageManagerWidget,
@@ -79,16 +82,27 @@ def test_settings_login_passes_credential_phone(qapp, tmp_path) -> None:
 
 
 def test_login_dialog_auto_submits_credential_phone(qapp, qloop) -> None:
-    """传入手机号后自动提交,不再停在手机号输入页。"""
+    """传入手机号后自动提交到真实 client,发出验证码(不再 mock submit_phone)。
+
+    2.0.8 曾把 submit_phone mock 掉,掩盖了「_check_credentials 校验已保存的
+    settings.phone 而非传入值」的 bug —— 设置页填的手机号没保存时,首次登录
+    根本不发验证码。此守卫走真实 AuthService + FakeClient,settings.phone 留空
+    模拟「刚填、没保存」,断言 client 真的进入 code_required。
+    """
+    bus = EventBus()
+    client = FakeTelegramClient()
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    auth = AuthService(bus=bus, client=client, settings=settings)
+
     app = MagicMock()
-    app.settings.phone = ""
-    app.client.state = "phone_required"
-    app.auth.submit_phone = AsyncMock(return_value=("code_required", None))
+    app.settings = settings
+    app.client = client
+    app.auth = auth
+    app.bus = bus
+
     dlg = LoginDialog(app=app, loop=qloop, phone="+8613800000000")
-    _wait_until(lambda: app.auth.submit_phone.called)
-    # 用 called 而非 awaited:coroutine 在 main thread 创建时即登记 call,
-    # await 发生在共享 loop 线程,断言 await_count 有竞态。
-    app.auth.submit_phone.assert_called_once_with("+8613800000000")
+    _wait_until(lambda: client.state == "code_required")
+    assert dlg.stack.currentIndex() == 1  # 切到验证码页
     dlg.deleteLater()
 
 

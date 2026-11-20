@@ -100,3 +100,24 @@ async def test_submit_email_client_exception_returns_error(auth_service) -> None
     assert state == "error"
     assert "net" in detail
     assert any(s.source == "submit_email" for s in seen)
+
+
+async def test_submit_phone_uses_passed_phone_not_saved_settings(auth_service) -> None:
+    """2.1.1:设置页填的手机号未保存进 settings 时仍能发出验证码。
+
+    登录入口走「填了就能登录」,校验必须用当场提交的 phone;此前用已保存的
+    settings.phone(= "")校验会误判未配置,根本不调用 client 发验证码。
+    """
+    auth, _ = auth_service
+    auth._settings.phone = ""  # 模拟设置页刚填、尚未保存
+    state, _ = await auth.submit_phone("+8613800000000")
+    assert state == "code_required"
+
+
+async def test_submit_phone_with_empty_passed_phone_still_rejected(auth_service) -> None:
+    """边界:传入空手机号仍被拦截(不绕过校验)。"""
+    auth, _ = auth_service
+    auth._settings.phone = "+8613900000000"  # 已保存一个合法号
+    state, detail = await auth.submit_phone("")
+    assert state == "error"
+    assert "TG_PHONE" in detail

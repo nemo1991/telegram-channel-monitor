@@ -53,14 +53,22 @@ class AuthService:
         await self._bus.publish(ErrorOccurred(**kwargs))
         return "error", msg
 
-    def _check_credentials(self) -> str | None:
-        """若凭据未配置,返回错误消息(供 UI 展示);否则返回 None。"""
+    def _check_credentials(self, phone: str | None = None) -> str | None:
+        """若凭据未配置,返回错误消息(供 UI 展示);否则返回 None。
+
+        `phone` 为调用方当场提交的手机号(设置页输入框里的值,可能还没保存进
+        settings)。2.0.8 设置页「登录」设计成「填了就能登录、不必先保存」,
+        因此提交路径必须用这个当场值校验 —— 否则首次配置时 settings.phone
+        仍为空,会把合法输入误判成「未配置」而根本不调用 client 发验证码。
+        None 时回退 settings.phone(兼容不带 phone 的调用方)。
+        """
         s = self._settings
         if s.api_id <= 0:
             return "TG_API_ID 未配置:请打开 设置… 填写"
         if not s.api_hash or len(s.api_hash) < 16:
             return "TG_API_HASH 未配置或过短:请打开 设置… 填写"
-        if not s.phone.startswith("+"):
+        check_phone = phone.strip() if phone is not None else s.phone
+        if not check_phone.startswith("+"):
             return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
         return None
 
@@ -74,7 +82,9 @@ class AuthService:
 
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """用户点「登录」按钮 — 提交手机号 + 触发发送验证码。"""
-        err = self._check_credentials()
+        # 用当场提交的 phone 校验(设置页输入框的值),而非已保存的 settings.phone
+        # —— 后者在首次配置时为 "",会把合法手机号误判为「未配置」而不发验证码。
+        err = self._check_credentials(phone)
         if err:
             return await self._fail("submit_phone", err)
         try:
