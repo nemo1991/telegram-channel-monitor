@@ -20,6 +20,7 @@ from tests.fixtures._real_window import build_real_main_window  # noqa: E402
 from tgmonitor.core.auth_service import AuthService  # noqa: E402
 from tgmonitor.core.config import Settings  # noqa: E402
 from tgmonitor.core.events import EventBus  # noqa: E402
+from tgmonitor.core.settings_store import parse_env_file  # noqa: E402
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient  # noqa: E402
 from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: E402
 from tgmonitor.ui.widgets.message_manager_widget import (  # noqa: E402
@@ -71,14 +72,121 @@ def test_login_logout_live_in_session_row_and_default_removed(qapp, tmp_path) ->
     page.deleteLater()
 
 
-def test_settings_login_passes_credential_phone(qapp, tmp_path) -> None:
-    """点登录:填在凭证表单里的手机号直接交给 LoginDialog。"""
-    page = _settings_page(qapp, tmp_path, phone="+8613900000000")
+def test_settings_login_saves_credentials_and_requests_code(qapp, qloop, tmp_path) -> None:
+    """点登录:校验 → 保存 3 个凭据 → 真发验证码 → 只弹验证码对话框。"""
+    bus = EventBus()
+    client = FakeTelegramClient()
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    auth = AuthService(bus=bus, client=client, settings=settings)
+    app = MagicMock()
+    app.settings = settings
+    app.client = client
+    app.auth = auth
+    app.bus = bus
+
+    page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
+    page.in_api_id.setValue(4242)
+    page.in_api_hash.setText("y" * 32)
+    page.in_phone.setText("+8613900000000")
+
     with patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls:
         page.btn_login.click()
-    dlg_cls.assert_called_once()
-    assert dlg_cls.call_args.kwargs["phone"] == "+8613900000000"
+        _wait_until(lambda: dlg_cls.called)
+
+    # 3 个凭据写盘（保形；其它分组未保存的改动不被连带提交）
+    pairs = parse_env_file(tmp_path / ".env").pairs
+    assert pairs["TG_API_ID"] == "4242"
+    assert pairs["TG_API_HASH"] == "y" * 32
+    assert pairs["TG_PHONE"] == "+8613900000000"
+    # 内存 settings 同步，auth 预检立即用新凭据
+    assert (settings.api_id, settings.api_hash, settings.phone) == (
+        4242,
+        "y" * 32,
+        "+8613900000000",
+    )
+    # 真的走到 code_required —— 发码成功
+    assert client.state == "code_required"
+    # 弹的是「仅验证码」对话框，不再把手机号传进去
+    assert dlg_cls.call_args.kwargs["code_only"] is True
+    assert dlg_cls.call_args.kwargs["initial_state"] == "code_required"
+    assert "phone" not in dlg_cls.call_args.kwargs
     page.deleteLater()
+
+
+def test_settings_login_rejects_invalid_credentials_before_network(qapp, qloop, tmp_path) -> None:
+    """校验失败:不写盘、不发码、不弹对话框。"""
+    app = MagicMock()
+    app.settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    app.client.state = "uninit"
+    app.auth.submit_phone = AsyncMock()
+    page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
+    page.in_api_id.setValue(0)
+    page.in_api_hash.setText("short")
+    page.in_phone.setText("no-plus-prefix")
+
+    with (
+        patch("tgmonitor.ui.widgets.settings_page.QMessageBox.warning") as warn,
+        patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls,
+    ):
+        page.btn_login.click()
+    assert warn.called
+    assert "TG_API_ID" in str(warn.call_args)
+    app.auth.submit_phone.assert_not_awaited()
+    dlg_cls.assert_not_called()
+    assert not (tmp_path / ".env").exists()
+    page.deleteLater()
+
+
+def test_settings_login_failure_shows_error_and_restores_button(qapp, qloop, tmp_path) -> None:
+    """client 抛异常 → 主线程明确提示，按钮恢复可重试。"""
+    bus = EventBus()
+    client = FakeTelegramClient()
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    auth = AuthService(bus=bus, client=client, settings=settings)
+    auth.submit_phone = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("网络不可达")
+    )
+    app = MagicMock()
+    app.settings = settings
+    app.client = client
+    app.auth = auth
+    app.bus = bus
+
+    page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
+    page.in_phone.setText("+8613800000000")
+    with (
+        patch("tgmonitor.ui.widgets.settings_page.QMessageBox.warning") as warn,
+        patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls,
+    ):
+        page.btn_login.click()
+        _wait_until(lambda: warn.called)
+    assert "网络不可达" in str(warn.call_args)
+    dlg_cls.assert_not_called()
+    assert page.btn_login.isEnabled()
+    assert page.btn_login.text() == "登录"
+    page.deleteLater()
+
+
+def test_login_dialog_code_only_starts_on_code_page(qapp, qloop) -> None:
+    """code_only 模式:直接从验证码页开始,不自动发码、不显示手机号页。"""
+    bus = EventBus()
+    client = FakeTelegramClient()
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="+8613800000000")
+    auth = AuthService(bus=bus, client=client, settings=settings)
+    app = MagicMock()
+    app.settings = settings
+    app.client = client
+    app.auth = auth
+    app.bus = bus
+
+    dlg = LoginDialog(app=app, loop=qloop, code_only=True, initial_state="code_required")
+    assert dlg.stack.currentIndex() == 1
+    assert dlg.status_label.text() == "Telegram 验证码"
+    # 没有自动请求验证码（设置页已在弹窗前请求过）
+    assert client.state == "phone_required"
+    auth.submit_phone = AsyncMock()  # type: ignore[method-assign]
+    auth.submit_phone.assert_not_awaited()
+    dlg.deleteLater()
 
 
 def test_login_dialog_auto_submits_credential_phone(qapp, qloop) -> None:

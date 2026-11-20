@@ -10,6 +10,7 @@ B 类守护文件(`test_status_bar_layout.py` / `test_live_readonly_2002.py`)不
 from __future__ import annotations
 
 import os
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -130,12 +131,21 @@ def test_header_bar_is_title_only(qapp: QApplication) -> None:
     header.deleteLater()
 
 
-def _settings_page(tmp_path, *, app: MagicMock | None = None) -> tuple[SettingsPage, MagicMock]:
+def _settings_page(
+    tmp_path, *, app: MagicMock | None = None, loop=None
+) -> tuple[SettingsPage, MagicMock]:
     from tgmonitor.core.config import Settings
 
     mock_app = app or MagicMock()
     mock_app.settings = Settings.for_test()
-    return SettingsPage(app=mock_app, loop=MagicMock(), env_path=tmp_path / ".env"), mock_app
+    return (
+        SettingsPage(
+            app=mock_app,
+            loop=loop if loop is not None else MagicMock(),
+            env_path=tmp_path / ".env",
+        ),
+        mock_app,
+    )
 
 
 def test_settings_page_has_login_logout_entries(qapp, tmp_path) -> None:
@@ -201,12 +211,18 @@ def test_settings_page_login_state_switch(
     page.deleteLater()
 
 
-def test_settings_page_login_opens_login_dialog(qapp, tmp_path) -> None:
-    """D3:设置页登录按钮弹 LoginDialog(内部自动推进验证码/2FA)。"""
-    page, mock_app = _settings_page(tmp_path)
+def test_settings_page_login_opens_login_dialog(qapp, qloop, tmp_path) -> None:
+    """D3(2.1.2 更新):点登录先请求验证码,成功后弹「仅验证码」对话框。"""
+    page, mock_app = _settings_page(tmp_path, loop=qloop)
+    mock_app.auth.submit_phone = AsyncMock(return_value=("code_required", None))
     with patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls:
         page.btn_login.click()
-        dlg_cls.assert_called_once()
+        deadline = time.monotonic() + 3.0
+        while not dlg_cls.called and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.02)
+    dlg_cls.assert_called_once()
+    assert dlg_cls.call_args.kwargs["code_only"] is True
     page.deleteLater()
 
 
