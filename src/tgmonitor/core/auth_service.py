@@ -53,7 +53,9 @@ class AuthService:
         await self._bus.publish(ErrorOccurred(**kwargs))
         return "error", msg
 
-    def _check_credentials(self, phone: str | None = None) -> str | None:
+    def _check_credentials(
+        self, phone: str | None = None, *, require_phone: bool = True
+    ) -> str | None:
         """若凭据未配置,返回错误消息(供 UI 展示);否则返回 None。
 
         `phone` 为调用方当场提交的手机号(设置页输入框里的值,可能还没保存进
@@ -61,16 +63,38 @@ class AuthService:
         因此提交路径必须用这个当场值校验 —— 否则首次配置时 settings.phone
         仍为空,会把合法输入误判成「未配置」而根本不调用 client 发验证码。
         None 时回退 settings.phone(兼容不带 phone 的调用方)。
+
+        `require_phone=False` 供二维码登录:只依赖 api_id/api_hash,不需要
+        手机号(扫码由已登录的 Telegram App 授权)。
         """
         s = self._settings
         if s.api_id <= 0:
             return "TG_API_ID 未配置:请打开 设置… 填写"
         if not s.api_hash or len(s.api_hash) < 16:
             return "TG_API_HASH 未配置或过短:请打开 设置… 填写"
+        if not require_phone:
+            return None
         check_phone = phone.strip() if phone is not None else s.phone
         if not check_phone.startswith("+"):
             return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
         return None
+
+    async def start_qr_login(self) -> tuple[str, str | None]:
+        """二维码登录第一步:校验 api 凭据 → 生成二维码 URL(无需手机号)。"""
+        err = self._check_credentials(require_phone=False)
+        if err:
+            return await self._fail("start_qr_login", err)
+        try:
+            return await self._client.start_qr_login()
+        except Exception as e:  # noqa: BLE001
+            return await self._fail("start_qr_login", e)
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        """二维码登录第二步:等待扫码;成功转成 ready。"""
+        try:
+            return await self._client.wait_qr_login()
+        except Exception as e:  # noqa: BLE001
+            return await self._fail("wait_qr_login", e)
 
     async def get_login_state(self) -> str:
         """当前登录状态机值(透传 client.state,不缓存)。"""

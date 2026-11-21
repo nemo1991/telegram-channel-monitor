@@ -70,6 +70,14 @@ class UnconfiguredTelegramClient(TelegramClient):
         """返 `phone_required` + 引导文案(与应用状态机一致,不发错误事件)。"""
         return self._state, "未配置 Telegram 凭据,请打开 设置 → 账户 填写"
 
+    async def start_qr_login(self) -> tuple[str, str | None]:
+        """无凭据兜底:返 `error` + 引导文案(AuthService 会先拦截)。"""
+        return "error", "未配置 Telegram 凭据,请打开 设置 → 账户 填写 API ID / API Hash"
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        """无凭据兜底:error(UI 不应走到)。"""
+        return "error", "未配置 Telegram 凭据"
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """凭据缺失,兜底返 `phone_required`(AuthService 会先拦截)。"""
         return self._state, None

@@ -22,6 +22,19 @@ class TelegramClient(Protocol):
         """应用启动入口。返回 (state, detail)。state ∈ {ready, phone_required, error, ...}。"""
         ...
 
+    async def start_qr_login(self) -> tuple[str, str | None]:
+        """生成二维码登录 URL。成功 → `("qr_required", qr_url)`;失败 → `("error", detail)`。
+
+        QR 登录不需要手机号,适合收不到短信/App 验证码的场景。URL 含一次性
+        token,只通过返回值交给 UI 渲染二维码。
+        """
+        ...
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        """在二维码展示期间持续等待扫码:成功 → `("ready", detail)`,
+        超时/失败 → `("error", detail)`。必须在 `start_qr_login()` 后调用。"""
+        ...
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """提交手机号 — 进入 `code_required`。返回 (state, detail)。"""
         ...

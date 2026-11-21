@@ -88,6 +88,7 @@ class SettingsPage(QWidget):
     # 里再弹窗 / exec 对话框,避免跨线程碰 widget(项目既有跨线程约定)。
     code_request_ok = Signal(str)  # payload = "state|detail"
     login_failed = Signal(str)
+    qr_request_ok = Signal(str)  # payload = 二维码 URL(tg://login?token=…)
 
     def __init__(
         self,
@@ -116,6 +117,7 @@ class SettingsPage(QWidget):
         self._load_from_settings()
         self.code_request_ok.connect(self._open_auth_dialog)
         self.login_failed.connect(self._show_login_failed)
+        self.qr_request_ok.connect(self._open_qr_dialog)
         # 初始按 core 真实状态设置入口可见性;桩环境 client.state 非字符串
         # 时退化为未登录(不把 MagicMock 当状态字符串显示)。
         initial_state = getattr(self._app.client, "state", None)
@@ -245,6 +247,10 @@ class SettingsPage(QWidget):
         self.btn_login = QPushButton(self.tr("登录"))
         self.btn_login.setObjectName("settingsLoginBtn")
         self.btn_login.clicked.connect(self._on_login_clicked)
+        # 二维码登录:与验证码登录并列,不依赖手机号/短信渠道。
+        self.btn_qr_login = QPushButton(self.tr("二维码登录"))
+        self.btn_qr_login.setObjectName("settingsQrLoginBtn")
+        self.btn_qr_login.clicked.connect(self._on_qr_login_clicked)
         self.btn_logout = QPushButton(self.tr("登出"))
         self.btn_logout.setObjectName("settingsLogoutBtn")
         self.btn_logout.clicked.connect(self._on_logout_clicked)
@@ -255,6 +261,7 @@ class SettingsPage(QWidget):
         session_row = session_row_w.layout()
         assert isinstance(session_row, QHBoxLayout)  # path_field 用 QHBoxLayout
         session_row.addWidget(self.btn_login)
+        session_row.addWidget(self.btn_qr_login)
         session_row.addWidget(self.btn_logout)
 
     def _build_channel_monitor(self, root: QVBoxLayout) -> None:
@@ -290,6 +297,8 @@ class SettingsPage(QWidget):
         logged_in = state == READY_STATE
         self.btn_login.setVisible(not logged_in)
         self.btn_login.setEnabled(not logged_in)
+        self.btn_qr_login.setVisible(not logged_in)
+        self.btn_qr_login.setEnabled(not logged_in)
         self.btn_logout.setVisible(logged_in)
         self.btn_logout.setEnabled(logged_in)
 
@@ -312,14 +321,6 @@ class SettingsPage(QWidget):
         api_id = int(self.in_api_id.value())
         api_hash = self.in_api_hash.text().strip()
         phone = self.in_phone.text().strip()
-
-        # [TEMP-DIAG] 临时诊断:设置页当场输入、即将保存/发送的凭据(明文)
-        log.warning(
-            "[TEMP-DIAG] settings_login_clicked api_id=%r api_hash=%r phone=%r",
-            api_id,
-            api_hash,
-            phone,
-        )
 
         err = self._validate_login_credentials(api_id, api_hash, phone)
         if err:
@@ -370,6 +371,64 @@ class SettingsPage(QWidget):
             error_label="login_send_code",
         )
 
+    def _on_qr_login_clicked(self) -> None:
+        """设置页「二维码登录」— 只校验/保存 api 凭据 → 生成二维码 → 弹扫码框。
+
+        与「登录」(验证码)入口并列,但不校验手机号、不发短信:靠已登录的
+        Telegram App 扫码授权。凭据同样写盘(只这 2 个 key,手机号保留原值)。
+        """
+        api_id = int(self.in_api_id.value())
+        api_hash = self.in_api_hash.text().strip()
+
+        err = self._validate_login_credentials(api_id, api_hash, self.in_phone.text())
+        if err and "TG_PHONE" in err:
+            # 二维码不需要手机号:忽略只针对手机号的校验错误
+            err = ""
+        if err:
+            QMessageBox.warning(self, self.tr("无法二维码登录"), err)
+            return
+
+        try:
+            update_env_credentials(
+                self._env_path,
+                api_id=api_id,
+                api_hash=api_hash,
+                phone=self._app.settings.phone,
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, self.tr("凭据保存失败"), str(exc))
+            return
+        current = self._app.settings
+        current.api_id = api_id
+        current.api_hash = api_hash
+
+        self.btn_qr_login.setEnabled(False)
+        self.btn_qr_login.setText(self.tr("生成中"))
+
+        def _on_generated(result: tuple[str, str | None]) -> None:
+            self.btn_qr_login.setText(self.tr("二维码登录"))
+            self.btn_qr_login.setEnabled(True)
+            state, detail = result
+            if state == "error":
+                self.login_failed.emit(detail or self.tr("生成二维码失败"))
+            elif state == "qr_required" and detail:
+                self.qr_request_ok.emit(detail)
+            else:
+                self.login_failed.emit(detail or self.tr(f"生成二维码失败(状态: {state})"))
+
+        def _on_error(exc: BaseException) -> None:
+            self.btn_qr_login.setText(self.tr("二维码登录"))
+            self.btn_qr_login.setEnabled(True)
+            self.login_failed.emit(str(exc))
+
+        run_coro(
+            self._loop,
+            self._app.auth.start_qr_login(),
+            on_success=_on_generated,
+            on_error=_on_error,
+            error_label="login_qr_generate",
+        )
+
     @staticmethod
     def _validate_login_credentials(api_id: int, api_hash: str, phone: str) -> str:
         """返回第一条错误消息;空串 = 校验通过。
@@ -408,6 +467,21 @@ class SettingsPage(QWidget):
             initial_detail=detail,
         )
         dlg.exec()
+
+    def _open_qr_dialog(self, url: str) -> None:
+        """二维码生成成功 → 主线程弹扫码对话框(登录成功自动关闭)。"""
+        from tgmonitor.ui.widgets.qr_login_dialog import QrLoginDialog  # noqa: PLC0415
+
+        dlg = QrLoginDialog(self._app, self._loop, url, self.window())
+        dlg.exec()
+        # 扫码成功后 core 状态转 ready —— 走 EventBus → AppStateController
+        # 自动刷新入口显隐;这里兜底手动同步一次(exec 返回时可能事件已到)。
+        try:
+            state = self._app.client.state
+            if isinstance(state, str):
+                self.set_login_state(state)
+        except Exception:  # noqa: BLE001
+            log.debug("sync login state after QR dialog failed", exc_info=True)
 
     def _show_login_failed(self, msg: str) -> None:
         """发码失败 → 主线程明确提示,用户可改凭据后重试。"""
