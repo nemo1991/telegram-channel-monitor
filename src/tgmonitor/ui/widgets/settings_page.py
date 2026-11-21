@@ -313,6 +313,14 @@ class SettingsPage(QWidget):
         api_hash = self.in_api_hash.text().strip()
         phone = self.in_phone.text().strip()
 
+        # [TEMP-DIAG] 临时诊断:设置页当场输入、即将保存/发送的凭据(明文)
+        log.warning(
+            "[TEMP-DIAG] settings_login_clicked api_id=%r api_hash=%r phone=%r",
+            api_id,
+            api_hash,
+            phone,
+        )
+
         err = self._validate_login_credentials(api_id, api_hash, phone)
         if err:
             QMessageBox.warning(self, self.tr("无法登录"), err)
