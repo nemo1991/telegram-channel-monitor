@@ -34,13 +34,12 @@ from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
 
 def _window_settings(base: Path) -> Settings:
-    """MainWindow 测试专用 Settings — phone="+8612345" + 3 paths 在 base 下。
+    """MainWindow 测试专用 Settings — 3 paths 在 base 下。
 
-    11 处相同 4 行样板(td/tmp_path 都用 phone="+8612345" + 3 paths),
+    11 处相同 3 行样板(td/tmp_path 都用 3 paths),
     收敛到 1 行调用 — PR cleanup 2026-09-18。
     """
     return Settings.for_test(
-        phone="+8612345",
         session_dir=base / "s",
         db_root=base / "m",
         objectstore_root=base / "o",

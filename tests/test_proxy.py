@@ -126,7 +126,7 @@ class TestSettingsProxyRoundTrip:
         assert e.proxy == "socks5://abc@host:9050"
 
     def test_editable_to_settings_strips_empty(self) -> None:
-        e = EditableSettings(api_id=1, api_hash="x" * 16, phone="+100", proxy="  ")
+        e = EditableSettings(api_id=1, api_hash="x" * 16, proxy="  ")
         out = e.to_settings()
         assert out.proxy is None
 
@@ -136,7 +136,6 @@ class TestSettingsProxyRoundTrip:
         env_path.write_text("# placeholder\nTG_DATA_ROOT=./data\n", encoding="utf-8")
         s = Settings.for_test(
             api_id=12345,
-            phone="+10000000000",
             proxy="socks5://u:p@127.0.0.1:1080",
             objectstore_backend=ObjectStoreBackend.FOLDER,
         )
@@ -175,9 +174,7 @@ def test_proxy_tuple_passed_to_telethon_via_factory(
         return m
 
     monkeypatch.setattr(tc, "TelegramClient", _fake_ctor)
-    s = Settings.for_test(
-        phone="+100", proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session"
-    )
+    s = Settings.for_test(proxy="socks5://u:p@127.0.0.1:1080", session_dir=tmp_path / "session")
     client = build_telegram_client(s, use_fake=False, event_bus=None)
     assert isinstance(client, tc.TelethonTelegramClient)
     client._build_client()
@@ -209,7 +206,7 @@ def test_factory_no_proxy_passes_none(tmp_path: Path, monkeypatch: pytest.Monkey
         return m
 
     monkeypatch.setattr(tc, "TelegramClient", _fake_ctor)
-    s = Settings.for_test(phone="+10000000000", proxy=None, session_dir=tmp_path / "session")
+    s = Settings.for_test(proxy=None, session_dir=tmp_path / "session")
     client = build_telegram_client(s, use_fake=False, event_bus=None)
     client._build_client()
     assert captured["proxy"] is None

@@ -73,7 +73,8 @@ class Settings(BaseSettings):
     # 全部可选,启动时不要求 .env 已就绪(让用户能先打开设置对话框填好再启动监听)
     api_id: int = Field(default=0, description="Telegram API ID")
     api_hash: str = Field(default="", description="Telegram API hash")
-    phone: str = Field(default="", description="登录手机号(含国家区号)")
+    # 2026-11-21:登录只走二维码扫码,phone 字段已删除。旧 .env 里残留的
+    # TG_PHONE 由 pydantic `extra="ignore"` 静默忽略,不会导致启动失败。
     session_dir: Path = Field(default_factory=lambda: _user_data_dir() / "session")
 
     # 可选代理(目前只支持 SOCKS5)。
@@ -150,7 +151,7 @@ class Settings(BaseSettings):
 
         默认值:
         - `_env_file=None`(不读 .env)
-        - api_id=1, api_hash="x"*32, phone="+10000000000"
+        - api_id=1, api_hash="x"*32
         - session_dir / data_root / db_root / objectstore_root 用 tempfile.mkdtemp
         - media_policy=METADATA / db_backend=SQLITE / objectstore_backend=LOCAL
           (v2.0.0 默认 SQLite,离线可跑;测试若需真连 PG 应
@@ -170,7 +171,6 @@ class Settings(BaseSettings):
             _env_file=None,  # noqa: SLF001 — pydantic private kwarg
             api_id=1,
             api_hash="x" * 32,
-            phone="+10000000000",
             session_dir=base / "session",
             data_root=base,
             db_root=base / "messages",  # legacy: 删 JSONL 后无 consumer,仅兼容旧 .env
@@ -193,7 +193,6 @@ class Settings(BaseSettings):
             _env_file=str(env_file),  # noqa: SLF001
             api_id=1,
             api_hash="x" * 32,
-            phone="+10000000000",
         )
         defaults.update(overrides)
         s = cls(**defaults)

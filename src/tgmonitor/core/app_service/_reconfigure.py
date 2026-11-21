@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 async def reconfigure(app: AppService, new_settings: Settings) -> None:
     """用新 settings 重建 storage / objects(不重建 TelegramClient)。
 
-    Telegram 凭据(api_id/api_hash/phone)若变化,needs_relogin=True(UI 引导登出登入);
+    Telegram 凭据(api_id/api_hash)若变化,needs_relogin=True(UI 引导重新扫码登录);
     proxy / session_dir 若变化,needs_restart=True(TelegramClient 构造参数,运行时
     不重建,UI 提示需重启生效 — 2026-08-18,此前纯代理/会话目录变更 diff 判
     无变化直接 return,UI 却弹「已保存并热重载」,属假成功)。

@@ -2,7 +2,7 @@
 
 2026-11-21:手机号+验证码登录链移除后,登录方式只有二维码扫码。
 覆盖:
-- 凭据预检:api_id / api_hash 必填(手机号不再校验)
+- 凭据预检:api_id / api_hash 必填
 - 委托语义:start_qr_login / wait_qr_login 转给 client
 - 错误路径:client 抛异常 → 返回 ('error', msg) + 发 ErrorOccurred
 - 登录态查询 / 登出透传
@@ -65,7 +65,6 @@ async def test_start_qr_login_without_api_hash_returns_error(auth_service) -> No
 async def test_qr_login_does_not_require_phone(auth_service) -> None:
     """二维码登录不校验手机号 —— 没填手机号也能生成二维码。"""
     auth, _ = auth_service
-    auth._settings.phone = ""
     state, _ = await auth.start_qr_login()
     assert state == "qr_required"
 

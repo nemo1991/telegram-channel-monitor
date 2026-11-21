@@ -26,7 +26,11 @@ def env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_legacy_jsonl_backend_falls_back_to_sqlite(env_file: Path) -> None:
-    """v1.x 遗留 TG_DB_BACKEND=jsonl → 回退 SQLITE,凭据等合法字段保留。"""
+    """v1.x 遗留 TG_DB_BACKEND=jsonl → 回退 SQLITE,凭据等合法字段保留。
+
+    旧 .env 里的 TG_PHONE 由 pydantic `extra="ignore"` 静默忽略(字段已删),
+    不产生 warning、不影响其它字段加载。
+    """
     original = (
         "TG_DB_BACKEND=jsonl\n"
         "TG_API_ID=12345\n"
@@ -39,7 +43,7 @@ def test_legacy_jsonl_backend_falls_back_to_sqlite(env_file: Path) -> None:
 
     assert s.db_backend is DBBackend.SQLITE
     assert s.api_id == 12345
-    assert s.phone == "+8613800000000"
+    assert not hasattr(s, "phone")  # phone 字段已删除
     assert len(warnings) == 1
     assert "TG_DB_BACKEND" in warnings[0]
     assert "jsonl" in warnings[0]
@@ -73,7 +77,6 @@ def test_multiple_invalid_fields_all_reset(env_file: Path) -> None:
     assert s.media_policy is MediaPolicy.THUMBNAIL
     assert s.sync_chat_delay_ms == 500
     assert s.api_id == 0
-    assert s.phone == "+8613800000000"
     assert len(warnings) == 3
     joined = "\n".join(warnings)
     for key in ("TG_MEDIA_POLICY", "TG_SYNC_CHAT_DELAY_MS", "TG_API_ID"):

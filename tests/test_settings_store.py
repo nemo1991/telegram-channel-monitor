@@ -22,7 +22,7 @@ def test_parse_env_with_comments(tmp_path: Path):
         "\n"
         "TG_API_ID=123\n"
         "TG_API_HASH=abc\n"
-        'TG_PHONE="+86 138"\n'
+        "TG_DB_DSN=postgresql://old\n"
         "TG_DB_BACKEND=postgres\n"
         "\n"
         "# bottom comment\n",
@@ -31,7 +31,7 @@ def test_parse_env_with_comments(tmp_path: Path):
     env = parse_env_file(p)
     assert env.pairs["TG_API_ID"] == "123"
     assert env.pairs["TG_API_HASH"] == "abc"
-    assert env.pairs["TG_PHONE"] == "+86 138"
+    assert env.pairs["TG_DB_DSN"] == "postgresql://old"
     # 注释与空行保留
     assert any("# top comment" in ln for ln in env.raw_lines)
     assert "" in env.raw_lines
@@ -69,7 +69,6 @@ def test_update_env_with_settings(tmp_path: Path):
     s = Settings.for_test(
         api_id=42,
         api_hash="new-hash",
-        phone="+1234",
         objectstore_backend=ObjectStoreBackend.FOLDER,
         objectstore_root=Path("./data/sharded"),
         media_policy=MediaPolicy.FULL,
@@ -81,7 +80,9 @@ def test_update_env_with_settings(tmp_path: Path):
     # 关键字段被覆盖
     assert "TG_API_ID=42" in text
     assert "TG_API_HASH=new-hash" in text
-    assert "TG_PHONE=+1234" in text
+    # 旧 .env 里的 TG_PHONE 行保形保留(seed 里有),但 settings_to_pairs 不再产出它
+    assert "TG_PHONE=+1" in text
+    assert "TG_PHONE" not in settings_to_pairs(s)
     # for_test 继承类默认 SQLITE,覆盖 seed postgres
     assert "TG_DB_BACKEND=sqlite" in text
     assert "TG_OBJECTSTORE_BACKEND=folder" in text
@@ -89,22 +90,17 @@ def test_update_env_with_settings(tmp_path: Path):
 
 
 def test_editable_settings_validate():
-    e = EditableSettings(api_id=0, api_hash="", phone="+1")
+    e = EditableSettings(api_id=0, api_hash="")
     errs = e.validate()
     assert any("API_ID" in x for x in errs)
     assert any("API_HASH" in x for x in errs)
 
-    e = EditableSettings(api_id=1, api_hash="abcdef0123456789", phone="+8613800000000")
-    assert e.validate() == []
-
-    # 二维码登录不需要手机号:phone 为空也通过校验
-    e = EditableSettings(api_id=1, api_hash="abcdef0123456789", phone="")
+    e = EditableSettings(api_id=1, api_hash="abcdef0123456789")
     assert e.validate() == []
 
     e = EditableSettings(
         api_id=1,
         api_hash="abcdef0123456789",
-        phone="8613800000000",
         db_backend="nosuch",
         objectstore_backend="local",
         media_policy="thumbnail",
@@ -117,7 +113,6 @@ def test_editable_to_settings_roundtrip():
     e = EditableSettings(
         api_id=1,
         api_hash="h" * 32,
-        phone="+1",
         session_dir="./s",
         db_backend="postgres",
         db_dsn="",
@@ -150,7 +145,6 @@ def _settings(**kw) -> Settings:
     base = dict(
         api_id=1,
         api_hash="a" * 32,
-        phone="+1",
         session_dir=Path("/tmp/s"),
         db_backend=DBBackend.POSTGRES,
         db_dsn="",
@@ -228,7 +222,6 @@ def test_editable_sqlite_path_roundtrip():
     e = EditableSettings(
         api_id=1,
         api_hash="h" * 32,
-        phone="+1",
         db_backend="sqlite",
         sqlite_path="/custom/dir/my.db",
     )
@@ -242,7 +235,7 @@ def test_editable_sqlite_path_empty_falls_back_to_default():
     """空 sqlite_path → to_settings 兜底 platform-native 默认路径。"""
     from tgmonitor.core.config import _user_data_dir
 
-    e = EditableSettings(api_id=1, api_hash="h" * 32, phone="+1", sqlite_path="")
+    e = EditableSettings(api_id=1, api_hash="h" * 32, sqlite_path="")
     assert e.to_settings().sqlite_path == _user_data_dir() / "tgmonitor.db"
 
 

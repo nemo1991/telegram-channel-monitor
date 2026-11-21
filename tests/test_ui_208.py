@@ -28,9 +28,9 @@ from tgmonitor.ui.widgets.message_manager_widget import (  # noqa: E402
 from tgmonitor.ui.widgets.settings_page import SettingsPage  # noqa: E402
 
 
-def _settings_page(qapp, tmp_path, *, phone: str = "+8613800000000") -> SettingsPage:
+def _settings_page(qapp, tmp_path) -> SettingsPage:
     app = MagicMock()
-    app.settings = Settings.for_test(phone=phone)
+    app.settings = Settings.for_test()
     app.client.state = "uninit"
     return SettingsPage(app=app, loop=MagicMock(), env_path=tmp_path / ".env")
 
@@ -70,7 +70,7 @@ def test_settings_qr_login_saves_credentials_and_requests_qr(qapp, qloop, tmp_pa
     """点二维码登录:校验 → 保存 api 凭据 → 真调 start_qr_login → 弹扫码框。"""
     bus = EventBus()
     client = FakeTelegramClient()
-    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32)
     auth = AuthService(bus=bus, client=client, settings=settings)
     app = MagicMock()
     app.settings = settings
@@ -86,11 +86,11 @@ def test_settings_qr_login_saves_credentials_and_requests_qr(qapp, qloop, tmp_pa
         page.btn_qr_login.click()
         _wait_until(lambda: dlg_cls.called)
 
-    # api 凭据写盘;手机号保留原值(二维码登录不需要手机号)
+    # 只写 api 凭据,不再产出 TG_PHONE
     pairs = parse_env_file(tmp_path / ".env").pairs
     assert pairs["TG_API_ID"] == "4242"
     assert pairs["TG_API_HASH"] == "y" * 32
-    assert pairs["TG_PHONE"] == ""
+    assert "TG_PHONE" not in pairs
     assert client.state == "qr_required"  # 真走到二维码待扫码
     assert dlg_cls.call_args.args[2] == "tg://login?token=fake-test-token"
     page.deleteLater()
@@ -99,7 +99,7 @@ def test_settings_qr_login_saves_credentials_and_requests_qr(qapp, qloop, tmp_pa
 def test_settings_qr_login_rejects_invalid_api_credentials(qapp, qloop, tmp_path) -> None:
     """api 凭据校验失败:不写盘、不生成二维码、不弹框。"""
     app = MagicMock()
-    app.settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    app.settings = Settings.for_test(api_id=1, api_hash="x" * 32)
     app.client.state = "uninit"
     app.auth.start_qr_login = AsyncMock()
     page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
