@@ -9,10 +9,10 @@
 2026-11-18 v2.0.6:独立频道页撤销,ChannelWidget 单实例迁入本页
 「监听频道管理」分组(不走 FormSection,白名单进 core 存储不写 .env)。
 2026-11-21:手机号+验证码登录因下发渠道问题在本版本移除,登录方式只保留
-二维码扫码(QrLoginDialog);phone 字段仍作账户凭证展示/存储,但不再用于登录。
+二维码扫码(QrLoginDialog);phone 字段及 .env 的 TG_PHONE 一并删除。
 
 7 个分组(前 6 个走 FormSection,监听频道为自定义 QGroupBox):
-  1. 账户凭证       — API ID / Hash / Phone / Session 目录 + 二维码登录/登出入口
+  1. 账户凭证       — API ID / Hash / Session 目录 + 二维码登录/登出入口
   2. 监听频道管理   — 已加入 / 已监听双栏 + 搜索 + 全量同步(2.0.6 迁入)
   3. 网络代理       — SOCKS5 URL + 测试连接
   4. 消息存储       — DB 后端 + DSN / 目录
@@ -195,12 +195,6 @@ class SettingsPage(QWidget):
                     placeholder=self.tr("32 位 hash · my.telegram.org"),
                 ),
                 FieldDef(
-                    key="phone",
-                    kind=FieldKind.TEXT,
-                    label=self.tr("手机号:"),
-                    placeholder="+8613800000000",
-                ),
-                FieldDef(
                     key="session_dir",
                     kind=FieldKind.PATH,
                     label=self.tr("Session 目录:"),
@@ -220,7 +214,6 @@ class SettingsPage(QWidget):
         # 保留直接属性引用(测试 + 上层 _on_* 用)
         self.in_api_id = s._widgets["api_id"]
         self.in_api_hash = s._widgets["api_hash"]
-        self.in_phone = s._widgets["phone"]
         self.in_session_dir = s._widgets["session_dir"]
 
         # 2026-11-19 v2.0.8 FR-01:登录/登出入口放到「Session 目录」行的
@@ -286,9 +279,8 @@ class SettingsPage(QWidget):
     def _on_qr_login_clicked(self) -> None:
         """设置页「二维码登录」— 只校验/保存 api 凭据 → 生成二维码 → 弹扫码框。
 
-        本版本唯一的登录方式:不校验手机号、不发短信/验证码,靠已登录的
-        Telegram App 扫码授权。凭据同样写盘(api_id/api_hash 这 2 个 key,
-        手机号保留原值)。
+        本版本唯一的登录方式:靠已登录的 Telegram App 扫码授权,凭据写盘
+        api_id/api_hash 这 2 个 key。
         """
         api_id = int(self.in_api_id.value())
         api_hash = self.in_api_hash.text().strip()
@@ -303,7 +295,6 @@ class SettingsPage(QWidget):
                 self._env_path,
                 api_id=api_id,
                 api_hash=api_hash,
-                phone=self._app.settings.phone,
             )
         except OSError as exc:
             QMessageBox.critical(self, self.tr("凭据保存失败"), str(exc))
@@ -664,7 +655,6 @@ class SettingsPage(QWidget):
         return EditableSettings(
             api_id=int(collected.get("api_id", 0)),
             api_hash=str(collected.get("api_hash", "")).strip(),
-            phone=str(collected.get("phone", "")).strip(),
             session_dir=str(collected.get("session_dir", "")).strip() or str(ud / "session"),
             db_backend=collected.get("db_backend", DBBackend.SQLITE),
             db_dsn=str(collected.get("db_dsn", "")).strip(),
@@ -700,7 +690,6 @@ class SettingsPage(QWidget):
             # account
             "api_id": s.api_id,
             "api_hash": s.api_hash,
-            "phone": s.phone,
             "session_dir": str(s.session_dir),
             # proxy
             "proxy": s.proxy or "",

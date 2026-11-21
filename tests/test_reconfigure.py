@@ -85,7 +85,7 @@ async def test_reconfigure_objectstore_local_to_folder(tmp_path: Path):
 
 
 async def test_reconfigure_credentials_triggers_relogin(tmp_path: Path):
-    s1 = _settings(tmp_path, api_id=1, api_hash="a" * 32, phone="+1")
+    s1 = _settings(tmp_path, api_id=1, api_hash="a" * 32)
     s1.ensure_dirs()
     bus = EventBus()
     app = AppService(

@@ -31,7 +31,7 @@ def make_test_settings(**overrides) -> Settings:
     """PR 1a:测试用 Settings 工厂 — 消 43 处 `# type: ignore[call-arg]`。
 
     默认值:
-    - api_id=1, api_hash="x"*32, phone="+10000000000"
+    - api_id=1, api_hash="x"*32
     - session_dir / objectstore_root / data_root 用 `tempfile.mkdtemp` 分配
       (caller 不需要 pytest `tmp_path` 注入)
     - media_policy=METADATA
@@ -46,7 +46,6 @@ def make_test_settings(**overrides) -> Settings:
         _env_file=None,  # noqa: SLF001 — pydantic private kwarg,跳过 .env
         api_id=1,
         api_hash="x" * 32,
-        phone="+10000000000",
         session_dir=base / "session",
         objectstore_root=base / "media",
         data_root=base,

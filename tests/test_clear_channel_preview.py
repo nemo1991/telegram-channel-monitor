@@ -72,7 +72,6 @@ async def svc(tmp_path):
     from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
     settings = Settings.for_test(
-        phone="+10000000000",
         session_dir=tmp_path / "session",
         objectstore_root=tmp_path / "media",
         data_root=tmp_path,

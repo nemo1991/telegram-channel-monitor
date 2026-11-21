@@ -108,7 +108,7 @@ v2.0.0 把 745 行 god facade 拆为**按域服务**。`AppService` 只保留三
 
 | 域服务 | 职责 |
 |---|---|
-| `app.auth` `AuthService` | 登录鉴权(`get_login_state` / `submit_phone/code/password/email/…` / `logout`) |
+| `app.auth` `AuthService` | 登录鉴权(`get_login_state` / `start_qr_login` / `wait_qr_login` / `logout`) |
 | `app.channels` `ChannelService` | 订阅 / 退订 / 白名单 |
 | `app.messages` `MessageService` | 消息查询 / 收藏 / 标签 / 备注 / 单删 |
 | `app.media` `MediaService` | 媒体列表 / CRUD / 打开 / retry / reconcile |
@@ -117,8 +117,8 @@ v2.0.0 把 745 行 god facade 拆为**按域服务**。`AppService` 只保留三
 
 ```python
 # UI 侧使用
-state = await app.auth.submit_phone("+86...")
-state = await app.auth.submit_code("12345")
+state, qr_url = await app.auth.start_qr_login()  # 扫码登录,无需手机号
+state = await app.auth.wait_qr_login()
 await app.channels.subscribe(channel)
 async for _ in app.export(req):
     ...  # 进度心跳
@@ -138,8 +138,8 @@ setter 传播给各域服务。
 `TelegramClient` 接口(节选):
 
 ```
-鉴权: start() / submit_phone / submit_code / submit_password /
-      submit_email / submit_email_code / submit_registration / logout / stop / close
+鉴权: start() / start_qr_login / wait_qr_login / logout / stop / close
+      (登录只走二维码扫码,手机号/验证码/2FA 链已移除)
 状态: state(property) / me(property)
 频道: list_joined_channels() / join_channel(identifier) / get_channel_metadata(id)
 历史: iter_chat_history(channel_id, before_msg_id=…, limit=…)  (只向旧方向翻页)

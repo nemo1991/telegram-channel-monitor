@@ -104,7 +104,7 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
             "启动失败",
             f"应用初始化失败:\n\n{err_type}: {err_msg}\n\n"
             "常见原因:\n"
-            "  • .env 缺失 / TG_API_ID / TG_API_HASH / TG_PHONE 没填\n"
+            "  • .env 缺失 / TG_API_ID / TG_API_HASH 没填\n"
             "  • Telegram session 文件损坏(删除数据目录下 session/ 重试)\n"
             "  • SOCKS5 代理不可达(检查 URL + 网络)\n\n"
             "详细日志请查看下方路径:",

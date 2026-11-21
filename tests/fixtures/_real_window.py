@@ -35,7 +35,6 @@ def build_real_main_window(
 ) -> MainWindow:
     """构造并 show() 一个真实 MainWindow,尺寸固定便于几何断言。"""
     settings = Settings.for_test(
-        phone="+8612345",
         session_dir=base / "s",
         db_root=base / "m",
         objectstore_root=base / "o",

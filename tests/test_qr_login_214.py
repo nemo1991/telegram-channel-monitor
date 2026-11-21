@@ -51,7 +51,7 @@ async def test_auth_qr_login_does_not_require_phone() -> None:
     """二维码路径只校验 api 凭据 —— 首次配置手机号为空也能生成二维码。"""
     bus = EventBus()
     client = FakeTelegramClient()
-    settings = Settings.for_test(api_id=123, api_hash="a" * 32, phone="")
+    settings = Settings.for_test(api_id=123, api_hash="a" * 32)
     auth = AuthService(bus=bus, client=client, settings=settings)
 
     state, url = await auth.start_qr_login()
@@ -79,7 +79,7 @@ async def test_auth_qr_login_rejects_bad_api_credentials() -> None:
 async def test_auth_wait_qr_login_promotes_to_ready() -> None:
     bus = EventBus()
     client = FakeTelegramClient()
-    settings = Settings.for_test(api_id=123, api_hash="a" * 32, phone="")
+    settings = Settings.for_test(api_id=123, api_hash="a" * 32)
     auth = AuthService(bus=bus, client=client, settings=settings)
     await auth.start_qr_login()
 
@@ -192,10 +192,10 @@ def test_settings_has_qr_login_button(qapp, tmp_path) -> None:
 
 
 def test_settings_qr_login_saves_creds_and_opens_qr_dialog(qapp, qloop, tmp_path) -> None:
-    """点二维码登录:保存 api 凭据(手机号保留)→ 弹扫码框,不弹手机号框。"""
+    """点二维码登录:保存 api 凭据 → 弹扫码框。"""
     bus = EventBus()
     client = FakeTelegramClient()
-    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="+8613800000000")
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32)
     app = MagicMock()
     app.settings = settings
     app.client = client
@@ -204,7 +204,6 @@ def test_settings_qr_login_saves_creds_and_opens_qr_dialog(qapp, qloop, tmp_path
     page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
     page.in_api_id.setValue(4242)
     page.in_api_hash.setText("y" * 32)
-    # 手机号输入框清空 —— QR 不应因此失败,且不应该覆盖已保存的手机号
 
     with patch("tgmonitor.ui.widgets.qr_login_dialog.QrLoginDialog") as dlg_cls:
         page.btn_qr_login.click()
@@ -213,7 +212,7 @@ def test_settings_qr_login_saves_creds_and_opens_qr_dialog(qapp, qloop, tmp_path
     pairs = parse_env_file(tmp_path / ".env").pairs
     assert pairs["TG_API_ID"] == "4242"
     assert pairs["TG_API_HASH"] == "y" * 32
-    assert pairs["TG_PHONE"] == "+8613800000000"  # 保留已保存值
+    assert "TG_PHONE" not in pairs  # 新写盘不再产出手机号
     assert client.state == "qr_required"
     assert dlg_cls.call_args.args[2].startswith("tg://login?token=")
     page.deleteLater()
@@ -267,7 +266,6 @@ def test_qr_dialog_renders_code_and_closes_on_ready(qapp, qloop) -> None:
         return "ready", None
 
     mock_app = MagicMock()
-    mock_app.settings.phone = ""
     mock_app.client.state = "qr_required"
     mock_app.auth.wait_qr_login = AsyncMock(side_effect=_wait)
     mock_app.auth.start_qr_login = AsyncMock(return_value=("qr_required", "tg://login?token=X"))
@@ -290,7 +288,6 @@ def test_qr_dialog_refresh_cancels_old_wait(qapp, qloop) -> None:
         return "ready", None
 
     mock_app = MagicMock()
-    mock_app.settings.phone = ""
     mock_app.client.state = "qr_required"
     mock_app.auth.wait_qr_login = AsyncMock(side_effect=_wait)
     mock_app.auth.start_qr_login = AsyncMock(return_value=("qr_required", "tg://login?token=NEW"))

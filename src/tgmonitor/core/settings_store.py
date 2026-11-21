@@ -103,7 +103,6 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
     return {
         "TG_API_ID": str(s.api_id),
         "TG_API_HASH": s.api_hash,
-        "TG_PHONE": s.phone,
         "TG_SESSION_DIR": str(s.session_dir),
         "TG_PROXY": s.proxy or "",
         "TG_DB_BACKEND": s.db_backend.value,
@@ -135,18 +134,18 @@ def update_env_with_settings(env_path: Path, settings: Settings) -> None:
     write_env_file(env, env_path)
 
 
-def update_env_credentials(env_path: Path, *, api_id: int, api_hash: str, phone: str) -> None:
-    """只把 3 个 Telegram 凭据写入 .env(保形更新其余 key)。
+def update_env_credentials(env_path: Path, *, api_id: int, api_hash: str) -> None:
+    """只把 2 个 Telegram 凭据写入 .env(保形更新其余 key)。
 
-    供设置页「登录」使用:用户点登录时应把当场填写的 API ID / Hash / Phone
+    供设置页「二维码登录」使用:用户点登录时把当场填写的 API ID / Hash
     落盘,但**不该**连带提交其它分组尚未点「保存并应用」的改动(数据库 /
     对象存储 / 策略等)。`update_env_with_settings` 会重写全部 TG_* 字段,
-    这里只动这 3 个 key,语义与按钮职责对齐。
+    这里只动这 2 个 key,语义与按钮职责对齐。登录已不依赖手机号,故不写
+    TG_PHONE(旧 .env 里若残留该行,保形更新会原样保留,但不再被读取)。
     """
     env = parse_env_file(env_path)
     env.pairs["TG_API_ID"] = str(api_id)
     env.pairs["TG_API_HASH"] = api_hash
-    env.pairs["TG_PHONE"] = phone
     write_env_file(env, env_path)
 
 
@@ -175,7 +174,6 @@ class EditableSettings:
 
     api_id: int = 0
     api_hash: str = ""
-    phone: str = ""
     session_dir: str = "./data/session"
 
     db_backend: str = "sqlite"  # DBBackend.value
@@ -215,7 +213,6 @@ class EditableSettings:
         return cls(
             api_id=s.api_id,
             api_hash=s.api_hash,
-            phone=s.phone,
             session_dir=str(s.session_dir),
             db_backend=s.db_backend.value,
             db_dsn=s.db_dsn,
@@ -241,7 +238,7 @@ class EditableSettings:
     def validate(self) -> list[str]:
         """校验 UI 输入,返错误消息列表(空 = 全部合法)。
 
-        登录只走二维码扫码(无需手机号),phone 不再作为必填凭证校验。
+        登录只走二维码扫码,只需 api_id / api_hash;无手机号字段。
         """
         errs: list[str] = []
         if self.api_id <= 0:
@@ -270,7 +267,6 @@ class EditableSettings:
         return Settings(
             api_id=self.api_id,
             api_hash=self.api_hash,
-            phone=self.phone,
             session_dir=Path(self.session_dir),
             db_backend=DBBackend(self.db_backend),
             db_dsn=self.db_dsn,
@@ -338,7 +334,7 @@ class SettingsDiff:
     """两个 Settings 之间的差异 — `AppService.reconfigure` 用。
 
     字段:
-      needs_relogin: api_id / api_hash / phone 之一变化(Telegram 凭据)
+      needs_relogin: api_id / api_hash 之一变化(Telegram 凭据)
       storage_changed: db_backend / db_dsn / sqlite_path 之一变化
         (db_root 字段已删,不再列入 diff)
       objects_changed: objectstore_* 字段之一变化
@@ -370,9 +366,7 @@ def diff_settings(old: Settings, new: Settings) -> SettingsDiff:
     单纯比较字段值,不构造任何资源;`reconfigure` 据此决定是否重建
     storage / objects / 是否需要重登。
     """
-    needs_relogin = (
-        old.api_id != new.api_id or old.api_hash != new.api_hash or old.phone != new.phone
-    )
+    needs_relogin = old.api_id != new.api_id or old.api_hash != new.api_hash
     storage_changed = (
         old.db_backend != new.db_backend
         or old.db_dsn != new.db_dsn

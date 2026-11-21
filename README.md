@@ -47,10 +47,10 @@ uv run tgmonitor
 ```env
 TG_API_ID=123456
 TG_API_HASH=abcdef0123456789abcdef0123456789
-TG_PHONE=+8613800000000
 ```
 
-启动后:左栏「账户」填凭据并登录,「频道」双击订阅 / 退订,右侧实时消息流。
+启动后:设置页「账户凭证」填 API ID / Hash → 点「二维码登录」用手机 Telegram App 扫码;
+左栏「频道」双击订阅 / 退订,右侧实时消息流。
 国内网络需代理:设置 → 网络代理,填 `socks5://user:pass@host:port` → 测试连接 → 保存并应用。
 
 ---
@@ -59,8 +59,7 @@ TG_PHONE=+8613800000000
 
 | 变量 | 说明 |
 |---|---|
-| `TG_API_ID` / `TG_API_HASH` | Telegram 应用凭据([my.telegram.org](https://my.telegram.org/apps)) |
-| `TG_PHONE` | 登录手机号(含国家区号) |
+| `TG_API_ID` / `TG_API_HASH` | Telegram 应用凭据([my.telegram.org](https://my.telegram.org/apps)),二维码登录用 |
 | `TG_DB_BACKEND` | `sqlite`(默认) \| `postgres` |
 | `TG_SQLITE_PATH` | SQLite 数据库文件路径(默认:数据目录下 `tgmonitor.db`) |
 | `TG_DB_DSN` | PostgreSQL 连接串(`postgres` 后端用) |

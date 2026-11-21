@@ -1,8 +1,8 @@
 """UnconfiguredTelegramClient — 凭据未配置时的占位实现。
 
-工厂(`factory.build_telegram_client`)在检测到 `TG_API_ID` / `TG_API_HASH` /
-`TG_PHONE` 缺失时返回本占位类,**不**构造真 `TelethonTelegramClient` — 让应用
-在没有凭据时也能正常启动进 UI,用户在 设置 → 账户 填好凭据、重启后即可监听。
+工厂(`factory.build_telegram_client`)在检测到 `TG_API_ID` / `TG_API_HASH`
+缺失时返回本占位类,**不**构造真 `TelethonTelegramClient` — 让应用
+在没有凭据时也能正常启动进 UI,用户在 设置 → 账户 填好凭据、重启后即可扫码登录。
 
 行为契约:
   - `state` 恒为 `"phone_required"`(UI 显示"未登录"引导,不弹启动失败窗)
