@@ -10,7 +10,6 @@ B 类守护文件(`test_status_bar_layout.py` / `test_live_readonly_2002.py`)不
 from __future__ import annotations
 
 import os
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -149,19 +148,20 @@ def _settings_page(
 
 
 def test_settings_page_has_login_logout_entries(qapp, tmp_path) -> None:
-    """D3:账户凭证分组提供登录/登出入口。"""
+    """D3:账户凭证分组提供二维码登录/登出入口(本版本唯一登录方式)。"""
     page, _ = _settings_page(tmp_path)
-    assert page.btn_login is not None
+    assert page.btn_qr_login is not None
     assert page.btn_logout is not None
+    assert not hasattr(page, "btn_login")
     page.deleteLater()
 
 
 def test_auth_buttons_live_inside_credentials_group(qapp, tmp_path) -> None:
-    """v2.0.4 FR-02:登录/登出入口归属「账户凭证」分组内部,不在块外。"""
+    """v2.0.4 FR-02:二维码登录/登出入口归属「账户凭证」分组内部,不在块外。"""
     from PySide6.QtWidgets import QGroupBox
 
     page, _ = _settings_page(tmp_path)
-    assert page.btn_login.parent() is not None
+    assert page.btn_qr_login.parent() is not None
     assert page.btn_logout.parent() is not None
 
     def ancestors(widget):
@@ -176,8 +176,8 @@ def test_auth_buttons_live_inside_credentials_group(qapp, tmp_path) -> None:
         if isinstance(w, QGroupBox) and "账户凭证" in w.title()
     ]
     assert credentials, "登出按钮不在『账户凭证』分组内"
-    # 登录按钮共享同一归属
-    assert any(w in credentials for w in ancestors(page.btn_login))
+    # 二维码登录按钮共享同一归属
+    assert any(w in credentials for w in ancestors(page.btn_qr_login))
     page.deleteLater()
 
 
@@ -186,43 +186,29 @@ def test_settings_page_initial_state_from_client(qapp, tmp_path) -> None:
     _page, mock_app = _settings_page(tmp_path)
     mock_app.client = SimpleNamespace(state="ready")
     page = SettingsPage(app=mock_app, loop=MagicMock(), env_path=tmp_path / ".env2")
-    assert page.btn_login.isHidden() is True
+    assert page.btn_qr_login.isHidden() is True
     assert page.btn_logout.isHidden() is False
     page.deleteLater()
 
 
 @pytest.mark.parametrize(
-    ("state", "login_visible", "logout_visible"),
+    ("state", "qr_visible", "logout_visible"),
     [
         ("ready", False, True),
         ("uninit", True, False),
         ("phone_required", True, False),
+        ("qr_required", True, False),
         ("error", True, False),
     ],
 )
 def test_settings_page_login_state_switch(
-    qapp, tmp_path, state: str, login_visible: bool, logout_visible: bool
+    qapp, tmp_path, state: str, qr_visible: bool, logout_visible: bool
 ) -> None:
     """D3:设置页入口随登录态切换,头栏不再承担该职责。"""
     page, _ = _settings_page(tmp_path)
     page.set_login_state(state)
-    assert page.btn_login.isHidden() is not login_visible
+    assert page.btn_qr_login.isHidden() is not qr_visible
     assert page.btn_logout.isHidden() is not logout_visible
-    page.deleteLater()
-
-
-def test_settings_page_login_opens_login_dialog(qapp, qloop, tmp_path) -> None:
-    """D3(2.1.2 更新):点登录先请求验证码,成功后弹「仅验证码」对话框。"""
-    page, mock_app = _settings_page(tmp_path, loop=qloop)
-    mock_app.auth.submit_phone = AsyncMock(return_value=("code_required", None))
-    with patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls:
-        page.btn_login.click()
-        deadline = time.monotonic() + 3.0
-        while not dlg_cls.called and time.monotonic() < deadline:
-            QApplication.processEvents()
-            time.sleep(0.02)
-    dlg_cls.assert_called_once()
-    assert dlg_cls.call_args.kwargs["code_only"] is True
     page.deleteLater()
 
 

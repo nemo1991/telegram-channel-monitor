@@ -90,84 +90,21 @@ class FakeTelegramClient(TelegramClient):
         self._pinned_log: dict[int, list[int]] = {}
         self._reactions_log: list[tuple[int, int, str, bool]] = []
 
-    # ---- 鉴权 ----
-    async def login(self, phone: str) -> str:
-        """旧版 Protocol 接口 — 保留向后兼容,内部转发到 `submit_phone`.
-
-        返回 `submit_phone` 的 state 部分,丢掉 detail(旧接口只承诺 state)。
-        """
-        state, _detail = await self.submit_phone(phone)
-        return state
-
+    # ---- 鉴权(二维码扫码 — 本版本唯一登录方式)----
     async def start_qr_login(self) -> tuple[str, str | None]:
         """Fake 二维码登录:返回测试 token URL,切到 `qr_required`。"""
         self._state = "qr_required"
         return self._state, "tg://login?token=fake-test-token"
 
     async def wait_qr_login(self) -> tuple[str, str | None]:
-        """Fake 扫码成功 → `ready`(与 submit_code 走同一套 me 注入)。"""
+        """Fake 扫码成功 → `ready` + 注入 me。"""
         self._state = "ready"
         self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state, None
-
-    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """切到 `code_required`;Fake 不发真 SMS。"""
-        self._state = "code_required"
         return self._state, None
 
     async def start(self) -> tuple[str, str | None]:
         """Fake 已经"启动"了 — 直接返当前 state(无网络)。"""
         # Fake 已经"启动"了 — 直接返回状态
-        return self._state, None
-
-    async def submit_code(self, code: str) -> tuple[str, str | None]:
-        """`code="00000"` 走 2FA 分支;其它进 `ready`。
-
-        测试约定:00000 = 模拟触发 2FA。
-        """
-        if code == "00000":
-            self._state = "password_required"
-        else:
-            self._state = "ready"
-            self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state, None
-
-    async def submit_password(self, password: str) -> tuple[str, str | None]:
-        """Fake 2FA 永远成功 → `ready`。"""
-        self._state = "ready"
-        self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state, None
-
-    async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:Fake email 提交 → `email_code_required`(模拟
-        已有账号)或 `registration_required`(模拟新账号)。
-
-        测试约定:含 `+new` 子串 → `registration_required`(模拟新用户),
-        否则 → `email_code_required`(模拟已存在账号)。
-        """
-        if "+new" in email:
-            self._state = "registration_required"
-        else:
-            self._state = "email_code_required"
-        return self._state, None
-
-    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:Fake 邮箱验证码永远成功 → `ready`。"""
-        self._state = "ready"
-        self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
-        return self._state, None
-
-    async def submit_registration(
-        self, first_name: str, last_name: str = ""
-    ) -> tuple[str, str | None]:
-        """2026-08-27 v1.4.0 PR #13:Fake 注册永远成功 → `ready`。"""
-        self._state = "ready"
-        self._me = {
-            "id": 1,
-            "username": "fake_new",
-            "first_name": first_name or "Fake",
-            "last_name": last_name or "",
-        }
         return self._state, None
 
     async def logout(self) -> None:

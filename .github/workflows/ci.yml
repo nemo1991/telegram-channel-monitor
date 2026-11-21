@@ -107,9 +107,10 @@ jobs:
           QT_LOGGING_RULES: "*.warning=false"
           TG_WIN32_PAINT_PROBE: "1"
         shell: bash
-        # 2026-11-16 v2.0.2:顶部搜索功能移除,test_search_bar.py 已删除,
-        # 从 probe 列表同步去掉(否则 pytest exit 4: file not found)。
-        run: uv run python -m pytest -v --tb=short tests/test_status_bar.py tests/test_login_dialog.py
+        # 2026-11-16 v2.0.2:顶部搜索功能移除,test_search_bar.py 已删除;
+        # 2026-11-21:手机号+验证码登录移除,test_login_dialog.py 已删除,
+        # 均从 probe 列表同步去掉(否则 pytest exit 4: file not found)。
+        run: uv run python -m pytest -v --tb=short tests/test_status_bar.py
 
   coverage:
     # 覆盖率是纯观测指标(不设阈值、暂无 codecov),同一份代码三平台各收一份

@@ -35,34 +35,6 @@ class TelegramClient(Protocol):
         超时/失败 → `("error", detail)`。必须在 `start_qr_login()` 后调用。"""
         ...
 
-    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """提交手机号 — 进入 `code_required`。返回 (state, detail)。"""
-        ...
-
-    async def submit_code(self, code: str) -> tuple[str, str | None]:
-        """提交验证码。返回 (state, detail)。错误时**不**改顶层状态,
-        改通过 `AuthErrorOccurred` 事件通知 UI。"""
-        ...
-
-    async def submit_password(self, password: str) -> tuple[str, str | None]:
-        """提交 2FA 密码。返回 (state, detail)。"""
-        ...
-
-    async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """`email_required` 时提交邮箱地址。推进到 `email_code_required`
-        (已有账号)或 `registration_required`(新账号)。"""
-        ...
-
-    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
-        """`email_code_required` 时提交邮箱验证码 → 通常推到 `ready`。"""
-        ...
-
-    async def submit_registration(
-        self, first_name: str, last_name: str = ""
-    ) -> tuple[str, str | None]:
-        """`registration_required` 时注册新账号;成功 → `ready`。"""
-        ...
-
     async def logout(self) -> None:
         """登出 — 清掉 session;caller 重建 client。"""
         ...
@@ -83,8 +55,10 @@ class TelegramClient(Protocol):
 
     @property
     def state(self) -> str:
-        """当前顶层状态(`uninit` / `phone_required` / `code_required` /
-        `password_required` / `ready` / `error` / `closing`)。
+        """当前顶层状态。
+
+        登录相关取值:`uninit` / `phone_required`(未登录,通用占位状态) /
+        `qr_required`(二维码待扫码) / `ready` / `error` / `closing`。
         """
         ...
 

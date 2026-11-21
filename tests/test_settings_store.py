@@ -97,6 +97,10 @@ def test_editable_settings_validate():
     e = EditableSettings(api_id=1, api_hash="abcdef0123456789", phone="+8613800000000")
     assert e.validate() == []
 
+    # 二维码登录不需要手机号:phone 为空也通过校验
+    e = EditableSettings(api_id=1, api_hash="abcdef0123456789", phone="")
+    assert e.validate() == []
+
     e = EditableSettings(
         api_id=1,
         api_hash="abcdef0123456789",

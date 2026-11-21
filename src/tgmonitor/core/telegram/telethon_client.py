@@ -3,10 +3,11 @@
 
 实现 `client.TelegramClient` Protocol 全量方法。与 TDLib 版的关键差异:
 
-# 鉴权:请求/响应,无队列
-TDLib 是状态机推送 + 输入队列(`_code_queue` 等);Telethon 是显式 RPC:
-`send_code_request` / `sign_in` / `CheckPasswordRequest`。每个 `submit_*`
-直接发请求、按返回 / 异常推进 `_state`,不需要后台 authorize loop。
+# 鉴权:二维码扫码(唯一登录方式)
+2026-11-21 移除手机号+验证码登录链(下发渠道不可控导致收不到码)。登录只走
+`qr_login()` → `QRLogin.wait()`:生成二维码 → 已登录的 Telegram App 扫码
+授权 → `_on_login_success()` 转 ready。无需手机号/短信/验证码,也就不需要
+TDLib 式的状态机输入队列(`_code_queue` 等)。
 
 # 连接状态:watchdog 合成
 Telethon 没有 TDLib 的 `updateConnectionState` 推送。用一个 5s 轮询
@@ -73,56 +74,6 @@ from tgmonitor.core.telegram.telethon_messages import (
 log = logging.getLogger(__name__)
 
 
-def _mask_phone(phone: str) -> str:
-    """手机号脱敏用于日志/UI:保留国家区号 + 后 4 位,中间星号。
-
-    国家码按 `+` 后前 2 位近似(`+86` 中国 / `+1` 美加),后 4 位保留供核对。
-    `+8613800000000` → `+86****0000`;短串(如 `+12345`)退化成 `+12*45`;
-    空串返回 `****`。只为可读性,不用于鉴权/存储。
-    """
-    s = (phone or "").strip()
-    if not s:
-        return "****"
-    plus = "+" if s.startswith("+") else ""
-    digits = s.lstrip("+")
-    if len(digits) <= 4:
-        # 短串:只留首尾各一位,中间星号,至少 3 颗
-        return plus + (digits[:1] + "***" + digits[-1:] if digits else "****")
-    return plus + digits[:2] + "****" + digits[-4:]
-
-
-def _sent_code_channel(t: object) -> str:
-    """把 Telethon `SentCode.type` 归一成人类可读的下发渠道文案。
-
-    Telegram 会按账号状态把验证码发到 官方 App / 短信 / 电话 等不同渠道,
-    旧代码把所有非 email 的类型一律塞进 `code_required` 且不说明渠道,用户
-    只看到「请输入验证码」却不知道去哪找码。这里给出明确提示。
-    """
-    if isinstance(t, types.auth.SentCodeTypeApp):
-        return "Telegram App(在已登录的官方 App 内查看)"
-    if isinstance(
-        t,
-        (
-            types.auth.SentCodeTypeSms,
-            types.auth.SentCodeTypeSmsWord,
-            types.auth.SentCodeTypeSmsPhrase,
-            types.auth.SentCodeTypeFirebaseSms,
-            types.auth.SentCodeTypeFragmentSms,
-        ),
-    ):
-        return "短信"
-    if isinstance(
-        t,
-        (
-            types.auth.SentCodeTypeCall,
-            types.auth.SentCodeTypeFlashCall,
-            types.auth.SentCodeTypeMissedCall,
-        ),
-    ):
-        return "电话"
-    return "Telegram"
-
-
 class _TelethonUpdateStream(UpdateStream):
     """Telethon update handler → asyncio.Queue → UI。
 
@@ -170,7 +121,7 @@ class TelethonTelegramClient:
     设计原则(与 TDLib 版对齐):
       - `_set_state` 是**唯一**写 `self._state` 的入口;`_state_event` 同步 set,
         `_wait_for_state` 等它推进。
-      - `submit_*` 错误经 `AuthErrorOccurred` 事件通知 UI,**不**改顶层状态
+      - 鉴权错误经 `AuthErrorOccurred` 事件通知 UI,**不**改顶层状态
         (让用户原地重试);顶层 `error` 只给启动失败 / 网络不可达。
       - `_check_alive()` 是事务性方法的 entry guard;best-effort 方法
         (`list_joined_channels`)自己 catch `ClientClosingError` 返占位。
@@ -215,11 +166,7 @@ class TelethonTelegramClient:
         self._state_detail: str = ""
         self._state_event = asyncio.Event()
 
-        # 鉴权流程暂存(request/response 模式,无队列)。
-        self._phone: str = ""
-        self._phone_code_hash: str = ""
-        self._email_flow: str = ""  # "login"(已有账号邮箱验证) | "setup"(新设邮箱)
-        # 二维码登录会话(await qr_login() 拿 url → wait 持续等扫码)。与手机号流程互斥。
+        # 二维码登录会话(await qr_login() 拿 url → wait 持续等扫码)。
         self._qr_login: QRLogin | None = None
 
     # ============================================================
@@ -463,17 +410,16 @@ class TelethonTelegramClient:
             pass
 
     # ============================================================
-    # 鉴权(request/response)
+    # 鉴权(二维码扫码 — 本版本唯一登录方式)
     # ============================================================
 
     async def start_qr_login(self) -> tuple[str, str | None]:
         """生成二维码登录 URL — 无需手机号,靠已登录的 Telegram App 扫码授权。
 
-        与 `submit_phone` 的差异:
-          - 不需要 TG_PHONE(只依赖 client 构造期的 api_id/api_hash)
-          - 不经过短信/App 下发渠道,码不会"发不到"
-          - URL 含一次性 token,**只走返回值给 UI 渲染**,不写进 detail
-            (detail 会进日志)以免 token 落盘
+        - 不需要 TG_PHONE(只依赖 client 构造期的 api_id/api_hash)
+        - 不经过短信/App 下发渠道,码不会"发不到"
+        - URL 含一次性 token,**只走返回值给 UI 渲染**,不写进 detail
+          (detail 会进日志)以免 token 落盘
 
         二维码有有效期(Telegram 通常 30 分钟);过期直接再次 `start_qr_login()`
         换新 token。
@@ -527,164 +473,8 @@ class TelethonTelegramClient:
         await self._on_login_success()
         return self._state, self._state_detail
 
-    async def submit_phone(self, phone: str) -> tuple[str, str | None]:
-        """提交手机号 → send_code_request → 按 SentCode.type 分流。
-
-        401(is_user_authorized 把死 session 误判为"未授权")→ 删 session 重试一次。
-        其它错误 → AuthErrorOccurred,不改顶层状态。
-        """
-        self._check_alive()
-        assert self._client is not None
-        self._phone = phone
-        try:
-            sent = await self._client.send_code_request(phone)
-        except errors.UnauthorizedError:
-            await self._reset_session()
-            assert self._client is not None
-            try:
-                sent = await self._client.send_code_request(phone)
-            except Exception as e:  # noqa: BLE001
-                self._auth_error("phone", e)
-                return self._state, self._state_detail
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("phone", e)
-            return self._state, self._state_detail
-        self._phone_code_hash = sent.phone_code_hash
-        return self._inspect_sent_code(sent)
-
-    def _inspect_sent_code(self, sent: types.auth.SentCode) -> tuple[str, str | None]:
-        """按 SentCode.type 决定下一状态(email 验证 / 设邮箱 / 普通验证码)。
-
-        2.1.3:无论落到哪一档,detail 都带上「下发渠道 + 脱敏手机号」——
-        `_set_state` 会把 detail 写进日志,UI 也会把它显示在验证码页标题,
-        用户能立刻看出验证码发到了官方 App / 短信 / 电话中的哪一处。
-        """
-        t = sent.type
-        channel = _sent_code_channel(t)
-        masked = _mask_phone(self._phone)
-        where = f"验证码已发至 {channel} · {masked}"
-        if isinstance(t, types.auth.SentCodeTypeEmailCode):
-            self._email_flow = "login"
-            self._set_state(
-                "email_code_required",
-                detail=f"{where} 邮箱 {t.email_pattern or ''}",
-            )
-        elif isinstance(t, types.auth.SentCodeTypeSetUpEmailRequired):
-            self._email_flow = "setup"
-            self._set_state("email_required", detail=where)
-        else:
-            self._set_state("code_required", detail=where)
-        return self._state, self._state_detail
-
-    async def submit_code(self, code: str) -> tuple[str, str | None]:
-        """提交验证码 → sign_in。2FA → password_required;未注册 → registration_required。"""
-        self._check_alive()
-        assert self._client is not None
-        try:
-            await self._client.sign_in(self._phone, code, phone_code_hash=self._phone_code_hash)
-        except errors.SessionPasswordNeededError:
-            self._set_state("password_required")
-        except errors.PhoneNumberUnoccupiedError:
-            self._set_state("registration_required")
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("code", e)
-        else:
-            await self._on_login_success()
-        return self._state, self._state_detail
-
-    async def submit_password(self, password: str) -> tuple[str, str | None]:
-        """提交 2FA 密码 → sign_in(password=)(内部走 CheckPasswordRequest)。"""
-        self._check_alive()
-        assert self._client is not None
-        try:
-            await self._client.sign_in(password=password)
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("password", e)
-        else:
-            await self._on_login_success()
-        return self._state, self._state_detail
-
-    async def submit_email(self, email: str) -> tuple[str, str | None]:
-        """`email_required`(新设邮箱)时提交邮箱 → 发邮箱验证码 → email_code_required。"""
-        self._check_alive()
-        assert self._client is not None
-        try:
-            await self._client(
-                functions.account.SendVerifyEmailCodeRequest(
-                    purpose=types.EmailVerifyPurposeLoginSetup(
-                        phone_number=self._phone,
-                        phone_code_hash=self._phone_code_hash,
-                    ),
-                    email=email,
-                )
-            )
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("email", e)
-        else:
-            self._email_flow = "setup"
-            self._set_state("email_code_required")
-        return self._state, self._state_detail
-
-    async def submit_email_code(self, code: str) -> tuple[str, str | None]:
-        """提交邮箱验证码。login 流 → sign_in;setup 流 → VerifyEmailRequest → 新 SentCode。"""
-        self._check_alive()
-        assert self._client is not None
-        try:
-            if self._email_flow == "login":
-                await self._client.sign_in(self._phone, code, phone_code_hash=self._phone_code_hash)
-                await self._on_login_success()
-            else:
-                result = await self._client(
-                    functions.account.VerifyEmailRequest(
-                        purpose=types.EmailVerifyPurposeLoginSetup(
-                            phone_number=self._phone,
-                            phone_code_hash=self._phone_code_hash,
-                        ),
-                        verification=types.EmailVerificationCode(code=code),
-                    )
-                )
-                if isinstance(result, types.account.EmailVerifiedLogin):
-                    self._phone_code_hash = result.sent_code.phone_code_hash
-                    self._inspect_sent_code(result.sent_code)
-                else:
-                    self._set_state("code_required")
-        except errors.SessionPasswordNeededError:
-            self._set_state("password_required")
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("email_code", e)
-        return self._state, self._state_detail
-
-    async def submit_registration(
-        self, first_name: str, last_name: str = ""
-    ) -> tuple[str, str | None]:
-        """注册新账号 — 裸 auth.SignUpRequest(库 sign_up() 被 ValueError 阻断,#4050)。"""
-        self._check_alive()
-        assert self._client is not None
-        try:
-            result = await self._client(
-                functions.auth.SignUpRequest(
-                    phone_number=self._phone,
-                    phone_code_hash=self._phone_code_hash,
-                    first_name=first_name,
-                    last_name=last_name,
-                )
-            )
-        except Exception as e:  # noqa: BLE001
-            self._auth_error("registration", e)
-        else:
-            user = getattr(result, "user", None)
-            if user is not None:
-                self._me = {
-                    "id": user.id,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                }
-            self._set_state("ready")
-            self._start_watchdog()
-        return self._state, self._state_detail
-
     async def logout(self) -> None:
-        """登出 — log_out() + 删 session + 重建 client + connect → phone_required。
+        """登出 — log_out() + 删 session + 重建 client + connect → phone_required(未登录)。
 
         Telethon `log_out()` 后 `session=None`,旧 client 不可复用,必须重建。
         """
@@ -703,13 +493,10 @@ class TelethonTelegramClient:
                     pass
         self._delete_session_files()
         self._me = None
-        self._phone = ""
-        self._phone_code_hash = ""
-        self._email_flow = ""
         self._client = self._build_client()
         try:
             await self._client.connect()
-            self._set_state("phone_required", detail="已登出,请重新登录")
+            self._set_state("phone_required", detail="已登出,请用二维码重新登录")
         except Exception as e:  # noqa: BLE001
             self._set_state("error", detail=_extract_error_detail(e))
 

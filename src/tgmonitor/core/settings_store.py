@@ -239,14 +239,15 @@ class EditableSettings:
         )
 
     def validate(self) -> list[str]:
-        """校验 UI 输入,返错误消息列表(空 = 全部合法)。"""
+        """校验 UI 输入,返错误消息列表(空 = 全部合法)。
+
+        登录只走二维码扫码(无需手机号),phone 不再作为必填凭证校验。
+        """
         errs: list[str] = []
         if self.api_id <= 0:
             errs.append("TG_API_ID 必须为正整数")
         if not self.api_hash or len(self.api_hash) < 16:
             errs.append("TG_API_HASH 长度应 ≥ 16")
-        if not self.phone.startswith("+"):
-            errs.append("TG_PHONE 必须以 + 开头(含国家区号)")
         if self.db_backend not in {b.value for b in DBBackend}:
             errs.append(f"TG_DB_BACKEND 非法: {self.db_backend}")
         if self.objectstore_backend not in {b.value for b in ObjectStoreBackend}:
