@@ -99,6 +99,17 @@ class FakeTelegramClient(TelegramClient):
         state, _detail = await self.submit_phone(phone)
         return state
 
+    async def start_qr_login(self) -> tuple[str, str | None]:
+        """Fake 二维码登录:返回测试 token URL,切到 `qr_required`。"""
+        self._state = "qr_required"
+        return self._state, "tg://login?token=fake-test-token"
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        """Fake 扫码成功 → `ready`(与 submit_code 走同一套 me 注入)。"""
+        self._state = "ready"
+        self._me = {"id": 1, "username": "fake", "first_name": "Fake"}
+        return self._state, None
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """切到 `code_required`;Fake 不发真 SMS。"""
         self._state = "code_required"

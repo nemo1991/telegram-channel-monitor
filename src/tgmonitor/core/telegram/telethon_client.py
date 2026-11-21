@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from telethon import TelegramClient, errors, events, functions, types, utils
+from telethon.tl.custom.qrlogin import QRLogin
 
 from tgmonitor import __version__
 from tgmonitor.core.config import Settings
@@ -218,6 +219,8 @@ class TelethonTelegramClient:
         self._phone: str = ""
         self._phone_code_hash: str = ""
         self._email_flow: str = ""  # "login"(已有账号邮箱验证) | "setup"(新设邮箱)
+        # 二维码登录会话(recreate 拿 url → wait 持续等扫码)。与手机号流程互斥。
+        self._qr_login: QRLogin | None = None
 
     # ============================================================
     # 状态管理:唯一写路径
@@ -298,13 +301,6 @@ class TelethonTelegramClient:
     def _build_client(self) -> TelegramClient:
         """构造 Telethon client + 注册全部 update handler。"""
         self._settings.session_dir.mkdir(parents=True, exist_ok=True)
-        # [TEMP-DIAG] 临时诊断:client 构造期固化的凭据(真连接实际用的就是这组)
-        log.warning(
-            "[TEMP-DIAG] _build_client api_id=%r api_hash=%r session=%s",
-            self._settings.api_id,
-            self._settings.api_hash,
-            self._session_path,
-        )
         client = TelegramClient(
             str(self._session_path),
             self._settings.api_id,
@@ -470,6 +466,65 @@ class TelethonTelegramClient:
     # 鉴权(request/response)
     # ============================================================
 
+    async def start_qr_login(self) -> tuple[str, str | None]:
+        """生成二维码登录 URL — 无需手机号,靠已登录的 Telegram App 扫码授权。
+
+        与 `submit_phone` 的差异:
+          - 不需要 TG_PHONE(只依赖 client 构造期的 api_id/api_hash)
+          - 不经过短信/App 下发渠道,码不会"发不到"
+          - URL 含一次性 token,**只走返回值给 UI 渲染**,不写进 detail
+            (detail 会进日志)以免 token 落盘
+
+        二维码有有效期(Telegram 通常 30 分钟);过期用 `recreate_qr_login()`
+        换新,或直接再次 `start_qr_login()`。
+        """
+        self._check_alive()
+        assert self._client is not None
+        try:
+            # QR 需要 client 已连接(ExportLoginTokenRequest 是网络调用)。
+            # bootstrap 后已连接;stop()/冷启动未连时补一次 connect。
+            if not self._client.is_connected():
+                await self._client.connect()
+            qr = self._client.qr_login()
+            await qr.recreate()
+            self._qr_login = qr
+            self._set_state("qr_required", detail="请用 Telegram App 扫码授权")
+            # URL 含 token,只经返回值给 UI,不进 _set_state detail / 日志。
+            return self._state, qr.url
+        except Exception as e:  # noqa: BLE001
+            self._qr_login = None
+            self._auth_error("start_qr_login", e)
+            return "error", _extract_error_detail(e)
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        """在二维码展示期间持续等待扫码 — 成功走既有 ready 推进路径。
+
+        Telethon `QRLogin.wait()` 内部监听 `UpdateLoginToken`,扫码后完成
+        session 保存;这里接 `_on_login_success()` 拉 me / 转 ready / 起 watchdog。
+        Telethon 按二维码过期时间自动截止;到点抛 TimeoutError → 返回 error,
+        UI 提示刷新二维码。
+        """
+        self._check_alive()
+        qr = self._qr_login
+        if qr is None:
+            return "error", "二维码尚未生成,请先点击「二维码登录」"
+        try:
+            await qr.wait()
+        except TimeoutError:
+            self._qr_login = None
+            return "error", "二维码已过期,请刷新后重新扫码"
+        except asyncio.CancelledError:
+            # UI 取消 / 关闭弹窗 → 清会话,异常上抛让调用方的 run_coro 收尾。
+            self._qr_login = None
+            raise
+        except Exception as e:  # noqa: BLE001
+            self._qr_login = None
+            self._auth_error("wait_qr_login", e)
+            return "error", _extract_error_detail(e)
+        self._qr_login = None
+        await self._on_login_success()
+        return self._state, self._state_detail
+
     async def submit_phone(self, phone: str) -> tuple[str, str | None]:
         """提交手机号 → send_code_request → 按 SentCode.type 分流。
 
@@ -479,14 +534,6 @@ class TelethonTelegramClient:
         self._check_alive()
         assert self._client is not None
         self._phone = phone
-        # [TEMP-DIAG] 临时诊断:发码时真正传给 Telegram 的手机号 + 当前 settings 凭据
-        # (对比 _build_client 那组:若不同说明设置页改了凭据但未重启,client 仍用旧的)
-        log.warning(
-            "[TEMP-DIAG] submit_phone phone=%r settings.api_id=%r settings.api_hash=%r",
-            phone,
-            self._settings.api_id,
-            self._settings.api_hash,
-        )
         try:
             sent = await self._client.send_code_request(phone)
         except errors.UnauthorizedError:
@@ -501,12 +548,6 @@ class TelethonTelegramClient:
             self._auth_error("phone", e)
             return self._state, self._state_detail
         self._phone_code_hash = sent.phone_code_hash
-        # [TEMP-DIAG] 临时诊断:Telegram 实际下发的渠道类型(原始对象)
-        log.warning(
-            "[TEMP-DIAG] send_code_request OK sent.type=%r phone_code_hash=%r",
-            sent.type,
-            sent.phone_code_hash,
-        )
         return self._inspect_sent_code(sent)
 
     def _inspect_sent_code(self, sent: types.auth.SentCode) -> tuple[str, str | None]:

@@ -60,10 +60,13 @@ def test_login_logout_live_in_session_row_and_default_removed(qapp, tmp_path) ->
     buttons = [layout.itemAt(i).widget() for i in range(layout.count())]
     buttons = [w for w in buttons if isinstance(w, QPushButton)]
     assert page.btn_login in buttons
+    assert page.btn_qr_login in buttons
     assert page.btn_logout in buttons
-    assert [w.text() for w in buttons if w is not page.btn_login and w is not page.btn_logout] == [
-        "浏览…"
-    ]
+    assert [
+        w.text()
+        for w in buttons
+        if w is not page.btn_login and w is not page.btn_qr_login and w is not page.btn_logout
+    ] == ["浏览…"]
 
     # 凭证分组内不应再出现「默认」按钮
     texts = [b.text() for b in page._account_gb.findChildren(QPushButton)]
