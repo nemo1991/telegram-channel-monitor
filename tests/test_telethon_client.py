@@ -42,7 +42,11 @@ from tgmonitor.core.telegram.errors import (
     TelegramNotConfiguredError,
     TelegramRateLimitError,
 )
-from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient
+from tgmonitor.core.telegram.telethon_client import (
+    TelethonTelegramClient,
+    _mask_phone,
+    _sent_code_channel,
+)
 from tgmonitor.core.telegram.telethon_messages import encode_file_id
 
 _DATE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -222,9 +226,39 @@ async def test_start_proxy_unreachable_error(wrapper, monkeypatch) -> None:
 async def test_submit_phone_code_required(wrapper) -> None:
     w, mock = wrapper
     mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeApp(length=5))
-    state, _ = await w.submit_phone("+10000000000")
+    state, detail = await w.submit_phone("+8613800000000")
     assert state == "code_required"
     assert w._phone_code_hash == "hash123"
+    # 2.1.3:detail 带下发渠道 + 脱敏手机号,进日志也进弹窗标题
+    assert detail is not None
+    assert "Telegram App" in detail
+    assert "+86****0000" in detail
+    assert "13800000000" not in detail  # 全号不出现在日志/UI
+
+
+def test_mask_phone() -> None:
+    assert _mask_phone("+8613800000000") == "+86****0000"
+    assert _mask_phone(" +8613800000000 ") == "+86****0000"
+    assert _mask_phone("+12345") == "+12****2345"  # 5 位以上:国码2 + **** + 后4
+    assert _mask_phone("+1234") == "+1***4"  # 短串:留首尾
+    assert _mask_phone("") == "****"
+
+
+def test_sent_code_channel_variants() -> None:
+    assert "App" in _sent_code_channel(types.auth.SentCodeTypeApp(length=5))
+    assert _sent_code_channel(types.auth.SentCodeTypeSms(length=5)) == "短信"
+    assert _sent_code_channel(types.auth.SentCodeTypeSmsWord(beginning="x")) == "短信"
+    assert _sent_code_channel(types.auth.SentCodeTypeCall(length=5)) == "电话"
+    assert _sent_code_channel(object()) == "Telegram"
+
+
+async def test_submit_phone_sms_detail(wrapper) -> None:
+    """短信渠道 → detail 明确写「短信」,不是笼统的 Telegram。"""
+    w, mock = wrapper
+    mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeSms(length=5))
+    state, detail = await w.submit_phone("+8613800000000")
+    assert state == "code_required"
+    assert detail is not None and "短信" in detail
 
 
 async def test_submit_phone_email_code_login(wrapper) -> None:

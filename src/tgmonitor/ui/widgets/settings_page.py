@@ -383,8 +383,12 @@ class SettingsPage(QWidget):
         self.btn_login.setEnabled(True)
 
     def _open_auth_dialog(self, payload: str) -> None:
-        """发码成功 → 主线程弹只含验证码的对话框(后续 2FA/邮箱按状态切页)。"""
-        state = payload.partition("|")[0]
+        """发码成功 → 主线程弹只含验证码的对话框(后续 2FA/邮箱按状态切页)。
+
+        payload = `state|detail`,detail 含「下发渠道 + 脱敏手机号」,透传给
+        弹窗显示在验证码页,用户能看出码发到了官方 App / 短信 / 电话哪一处。
+        """
+        state, _, detail = payload.partition("|")
         from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
 
         dlg = LoginDialog(
@@ -393,6 +397,7 @@ class SettingsPage(QWidget):
             self.window(),
             code_only=True,
             initial_state=state,
+            initial_detail=detail,
         )
         dlg.exec()
 
