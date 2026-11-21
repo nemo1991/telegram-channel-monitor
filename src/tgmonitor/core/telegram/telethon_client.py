@@ -219,7 +219,7 @@ class TelethonTelegramClient:
         self._phone: str = ""
         self._phone_code_hash: str = ""
         self._email_flow: str = ""  # "login"(已有账号邮箱验证) | "setup"(新设邮箱)
-        # 二维码登录会话(recreate 拿 url → wait 持续等扫码)。与手机号流程互斥。
+        # 二维码登录会话(await qr_login() 拿 url → wait 持续等扫码)。与手机号流程互斥。
         self._qr_login: QRLogin | None = None
 
     # ============================================================
@@ -475,8 +475,8 @@ class TelethonTelegramClient:
           - URL 含一次性 token,**只走返回值给 UI 渲染**,不写进 detail
             (detail 会进日志)以免 token 落盘
 
-        二维码有有效期(Telegram 通常 30 分钟);过期用 `recreate_qr_login()`
-        换新,或直接再次 `start_qr_login()`。
+        二维码有有效期(Telegram 通常 30 分钟);过期直接再次 `start_qr_login()`
+        换新 token。
         """
         self._check_alive()
         assert self._client is not None
@@ -485,8 +485,10 @@ class TelethonTelegramClient:
             # bootstrap 后已连接;stop()/冷启动未连时补一次 connect。
             if not self._client.is_connected():
                 await self._client.connect()
-            qr = self._client.qr_login()
-            await qr.recreate()
+            # Telethon 的 qr_login() 是 coroutine,内部已 await recreate() 生成
+            # token/url。必须 await 拿到 QRLogin 对象;漏 await 会在 coroutine
+            # 上找 recreate 报 AttributeError(且 coroutine 永不 await 告警)。
+            qr = await self._client.qr_login()
             self._qr_login = qr
             self._set_state("qr_required", detail="请用 Telegram App 扫码授权")
             # URL 含 token,只经返回值给 UI,不进 _set_state detail / 日志。
