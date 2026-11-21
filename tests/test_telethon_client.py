@@ -2,8 +2,7 @@
 
 覆盖:
 - 凭据守卫 / 状态机唯一写路径
-- 鉴权 request/response:start / submit_phone / code / password / email /
-  email_code / registration / logout(含 401 重置 session)
+- 鉴权:二维码扫码(start_qr_login / wait_qr_login)/ start / logout
 - lifecycle:stop / close / _check_alive
 - 频道:list_joined_channels(best-effort)/ get_channel_metadata / join_channel
 - iter_chat_history:ChatUnavailableError / FloodWaitError → TelegramRateLimitError
@@ -42,11 +41,7 @@ from tgmonitor.core.telegram.errors import (
     TelegramNotConfiguredError,
     TelegramRateLimitError,
 )
-from tgmonitor.core.telegram.telethon_client import (
-    TelethonTelegramClient,
-    _mask_phone,
-    _sent_code_channel,
-)
+from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient
 from tgmonitor.core.telegram.telethon_messages import encode_file_id
 
 _DATE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -73,8 +68,7 @@ def _make_mock_client() -> MagicMock:
     c.disconnect = AsyncMock()
     c.is_user_authorized = AsyncMock(return_value=False)
     c.get_me = AsyncMock(return_value=SimpleNamespace(id=1, username="me", first_name="Me"))
-    c.send_code_request = AsyncMock()
-    c.sign_in = AsyncMock()
+    c.qr_login = AsyncMock()
     c.log_out = AsyncMock()
     c.is_connected = MagicMock(return_value=True)
     c.get_entity = AsyncMock()
@@ -124,10 +118,6 @@ def _channel(cid: int = 123, **kw) -> types.Channel:
     )
     base.update(kw)
     return types.Channel(**base)
-
-
-def _sent_code(type_obj) -> types.auth.SentCode:
-    return types.auth.SentCode(type=type_obj, phone_code_hash="hash123")
 
 
 # ---- 凭据守卫 / 初始状态 ----
@@ -220,205 +210,96 @@ async def test_start_proxy_unreachable_error(wrapper, monkeypatch) -> None:
     assert "代理" in detail
 
 
-# ---- submit_phone ----
+# ---- 二维码登录(唯一登录方式)----
 
 
-async def test_submit_phone_code_required(wrapper) -> None:
+def _fake_qr_login(url: str = "tg://login?token=secret") -> MagicMock:
+    """模拟 Telethon QRLogin:await qr_login() 返回对象,url + wait()。"""
+    qr = MagicMock()
+    qr.url = url
+    qr.wait = AsyncMock()
+    return qr
+
+
+async def test_start_qr_login_awaits_and_returns_url(wrapper, bus) -> None:
+    """必须先 await client.qr_login() 拿 QRLogin,再取 url;token 不进 detail。"""
     w, mock = wrapper
-    mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeApp(length=5))
-    state, detail = await w.submit_phone("+8613800000000")
-    assert state == "code_required"
-    assert w._phone_code_hash == "hash123"
-    # 2.1.3:detail 带下发渠道 + 脱敏手机号,进日志也进弹窗标题
-    assert detail is not None
-    assert "Telegram App" in detail
-    assert "+86****0000" in detail
-    assert "13800000000" not in detail  # 全号不出现在日志/UI
+    qr = _fake_qr_login()
+    mock.qr_login.return_value = qr
+    # 冷启动未连接 → start_qr_login 内部补 connect
+    mock.is_connected.return_value = False
 
+    state, url = await w.start_qr_login()
+    assert state == "qr_required"
+    assert url == "tg://login?token=secret"
+    mock.qr_login.assert_awaited_once()  # 漏 await 曾致真机 AttributeError(回归守卫)
+    mock.connect.assert_awaited()
+    # token 只经返回值给 UI,不进 _state_detail(会进日志)
+    assert "token" not in (w._state_detail or "")
 
-def test_mask_phone() -> None:
-    assert _mask_phone("+8613800000000") == "+86****0000"
-    assert _mask_phone(" +8613800000000 ") == "+86****0000"
-    assert _mask_phone("+12345") == "+12****2345"  # 5 位以上:国码2 + **** + 后4
-    assert _mask_phone("+1234") == "+1***4"  # 短串:留首尾
-    assert _mask_phone("") == "****"
+    seen: list[LoginStateChanged] = []
 
+    async def _capture(e: LoginStateChanged) -> None:
+        seen.append(e)
 
-def test_sent_code_channel_variants() -> None:
-    assert "App" in _sent_code_channel(types.auth.SentCodeTypeApp(length=5))
-    assert _sent_code_channel(types.auth.SentCodeTypeSms(length=5)) == "短信"
-    assert _sent_code_channel(types.auth.SentCodeTypeSmsWord(beginning="x")) == "短信"
-    assert _sent_code_channel(types.auth.SentCodeTypeCall(length=5)) == "电话"
-    assert _sent_code_channel(object()) == "Telegram"
-
-
-async def test_submit_phone_sms_detail(wrapper) -> None:
-    """短信渠道 → detail 明确写「短信」,不是笼统的 Telegram。"""
-    w, mock = wrapper
-    mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeSms(length=5))
-    state, detail = await w.submit_phone("+8613800000000")
-    assert state == "code_required"
-    assert detail is not None and "短信" in detail
-
-
-async def test_submit_phone_email_code_login(wrapper) -> None:
-    w, mock = wrapper
-    mock.send_code_request.return_value = _sent_code(
-        types.auth.SentCodeTypeEmailCode(email_pattern="a***@b.com", length=5)
-    )
-    state, _ = await w.submit_phone("+10000000000")
-    assert state == "email_code_required"
-    assert w._email_flow == "login"
-
-
-async def test_submit_phone_setup_email(wrapper) -> None:
-    w, mock = wrapper
-    mock.send_code_request.return_value = _sent_code(types.auth.SentCodeTypeSetUpEmailRequired())
-    state, _ = await w.submit_phone("+10000000000")
-    assert state == "email_required"
-    assert w._email_flow == "setup"
-
-
-async def test_submit_phone_error_emits_auth_error(wrapper, bus) -> None:
-    w, mock = wrapper
-    mock.send_code_request.side_effect = errors.PhoneNumberInvalidError(request=None)
-    received: list[AuthErrorOccurred] = []
-    bus.subscribe(AuthErrorOccurred, lambda e: _collect(received, e))
-    state, _ = await w.submit_phone("bad")
-    assert state == "uninit"  # 顶层状态不变
+    bus.subscribe(LoginStateChanged, _capture)
+    await w.start_qr_login()
     await bus.flush()
-    assert len(received) == 1
-    assert received[0].source == "phone"
+    assert all("token" not in (e.detail or "") for e in seen)
 
 
-async def test_submit_phone_401_resets_and_retries(wrapper) -> None:
+async def test_wait_qr_login_success_reaches_ready(wrapper, bus) -> None:
+    """扫码成功 → QRLogin.wait() 完成后拉 me / 转 ready。"""
     w, mock = wrapper
-    mock.send_code_request.side_effect = [
-        errors.UnauthorizedError(request=None, message="AUTH_KEY_UNREGISTERED"),
-        _sent_code(types.auth.SentCodeTypeApp(length=5)),
-    ]
-    state, _ = await w.submit_phone("+10000000000")
-    assert state == "code_required"
-    assert mock.send_code_request.await_count == 2
+    qr = _fake_qr_login()
+    mock.qr_login.return_value = qr
+    await w.start_qr_login()
 
-
-# ---- submit_code ----
-
-
-async def test_submit_code_success_ready(wrapper) -> None:
-    w, mock = wrapper
-    w._phone = "+10000000000"
-    w._phone_code_hash = "hash123"
-    state, _ = await w.submit_code("12345")
+    state, _ = await w.wait_qr_login()
     assert state == "ready"
-    mock.sign_in.assert_awaited_once()
+    assert w.me is not None
+    assert w.me["id"] == 1
+    qr.wait.assert_awaited_once()
 
 
-async def test_submit_code_2fa_password_required(wrapper) -> None:
+async def test_wait_qr_login_timeout_returns_error(wrapper) -> None:
+    """二维码过期 → error + 提示刷新,可再次 start_qr_login。"""
     w, mock = wrapper
-    mock.sign_in.side_effect = errors.SessionPasswordNeededError(request=None)
-    state, _ = await w.submit_code("12345")
-    assert state == "password_required"
+    qr = _fake_qr_login()
+    qr.wait.side_effect = TimeoutError()
+    mock.qr_login.return_value = qr
+    await w.start_qr_login()
+
+    state, detail = await w.wait_qr_login()
+    assert state == "error"
+    assert "过期" in detail
+    assert w._qr_login is None
 
 
-async def test_submit_code_unoccupied_registration(wrapper) -> None:
+async def test_wait_qr_login_without_start_returns_error(wrapper) -> None:
+    """未生成二维码就等待 → error(防御)。"""
+    w, _ = wrapper
+    state, detail = await w.wait_qr_login()
+    assert state == "error"
+    assert "二维码" in detail
+
+
+async def test_start_qr_login_error_emits_auth_error(wrapper, bus) -> None:
+    """二维码生成失败 → 发 AuthErrorOccurred,不改顶层状态为 error 之外处。"""
     w, mock = wrapper
-    mock.sign_in.side_effect = errors.PhoneNumberUnoccupiedError(request=None)
-    state, _ = await w.submit_code("12345")
-    assert state == "registration_required"
+    seen: list[AuthErrorOccurred] = []
 
+    async def _capture(e: AuthErrorOccurred) -> None:
+        seen.append(e)
 
-async def test_submit_code_invalid_stays(wrapper, bus) -> None:
-    w, mock = wrapper
-    w._state = "code_required"
-    mock.sign_in.side_effect = errors.PhoneCodeInvalidError(request=None)
-    received: list[AuthErrorOccurred] = []
-    bus.subscribe(AuthErrorOccurred, lambda e: _collect(received, e))
-    state, _ = await w.submit_code("wrong")
-    assert state == "code_required"
+    bus.subscribe(AuthErrorOccurred, _capture)
+    mock.qr_login.side_effect = RuntimeError("network down")
+
+    state, detail = await w.start_qr_login()
     await bus.flush()
-    assert received[0].source == "code"
-
-
-# ---- submit_password ----
-
-
-async def test_submit_password_success(wrapper) -> None:
-    w, mock = wrapper
-    state, _ = await w.submit_password("pw")
-    assert state == "ready"
-    mock.sign_in.assert_awaited_once_with(password="pw")
-
-
-async def test_submit_password_wrong_stays(wrapper, bus) -> None:
-    w, mock = wrapper
-    w._state = "password_required"
-    mock.sign_in.side_effect = errors.PasswordHashInvalidError(request=None)
-    received: list[AuthErrorOccurred] = []
-    bus.subscribe(AuthErrorOccurred, lambda e: _collect(received, e))
-    state, _ = await w.submit_password("bad")
-    assert state == "password_required"
-    await bus.flush()
-    assert received[0].source == "password"
-
-
-# ---- submit_email / email_code ----
-
-
-async def test_submit_email_setup_flow(wrapper) -> None:
-    w, mock = wrapper
-    w._phone = "+10000000000"
-    w._phone_code_hash = "hash123"
-    state, _ = await w.submit_email("a@b.com")
-    assert state == "email_code_required"
-    assert w._email_flow == "setup"
-    req = mock.call_args[0][0]
-    assert isinstance(req, functions.account.SendVerifyEmailCodeRequest)
-    assert req.email == "a@b.com"
-
-
-async def test_submit_email_code_login_flow_signs_in(wrapper) -> None:
-    w, mock = wrapper
-    w._email_flow = "login"
-    w._phone = "+10000000000"
-    w._phone_code_hash = "hash123"
-    state, _ = await w.submit_email_code("99999")
-    assert state == "ready"
-    mock.sign_in.assert_awaited_once()
-
-
-async def test_submit_email_code_setup_flow_verifies(wrapper) -> None:
-    w, mock = wrapper
-    w._email_flow = "setup"
-    w._phone = "+10000000000"
-    w._phone_code_hash = "hash123"
-    mock.side_effect.return_value = types.account.EmailVerifiedLogin(
-        email="a@b.com",
-        sent_code=_sent_code(types.auth.SentCodeTypeApp(length=5)),
-    )
-    state, _ = await w.submit_email_code("99999")
-    assert state == "code_required"
-    assert w._phone_code_hash == "hash123"
-    req = mock.call_args[0][0]
-    assert isinstance(req, functions.account.VerifyEmailRequest)
-
-
-# ---- submit_registration ----
-
-
-async def test_submit_registration_ready(wrapper) -> None:
-    w, mock = wrapper
-    w._phone = "+10000000000"
-    w._phone_code_hash = "hash123"
-    mock.side_effect.return_value = SimpleNamespace(
-        user=SimpleNamespace(id=2, username="new", first_name="New")
-    )
-    state, _ = await w.submit_registration("New", "User")
-    assert state == "ready"
-    assert w.me["id"] == 2
-    req = mock.call_args[0][0]
-    assert isinstance(req, functions.auth.SignUpRequest)
-    assert req.first_name == "New"
+    assert state == "error"
+    assert "network down" in detail
+    assert any(s.source == "start_qr_login" for s in seen)
 
 
 # ---- logout ----
@@ -445,7 +326,7 @@ async def test_close_sets_closing_and_guard(wrapper) -> None:
     with pytest.raises(ClientClosingError):
         w._check_alive()
     with pytest.raises(ClientClosingError):
-        await w.submit_phone("+1")
+        await w.start_qr_login()
 
 
 async def test_stop_keeps_client_resets_state(wrapper) -> None:

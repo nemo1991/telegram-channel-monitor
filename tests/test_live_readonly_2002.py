@@ -35,8 +35,9 @@ def test_header_has_no_search_bar(qapp, qloop, tmp_path):
         assert not hasattr(win.header, name), f"HeaderBar 不应再持有 {name}"
     # 新落点真实装配存在(防「代码删了但接线漏改」)
     assert win.status_bar.findChild(_UnifiedStateLabel) is not None
-    assert hasattr(win.settings_page, "btn_login")
+    assert hasattr(win.settings_page, "btn_qr_login")
     assert hasattr(win.settings_page, "btn_logout")
+    assert not hasattr(win.settings_page, "btn_login")  # 手机号登录已移除
 
 
 def test_live_view_is_single_selection_and_no_selection_toolbar(qapp, qloop, tmp_path):

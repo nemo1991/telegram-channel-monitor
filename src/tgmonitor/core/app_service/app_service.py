@@ -28,7 +28,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
     objects = build_object_store(settings); await objects.connect()
     client = build_telegram_client(settings)
     app = AppService(bus, client, storage, objects, settings, monitor=monitor)
-    # UI 启动时: app.bootstrap() / app.auth.submit_phone(...) / app.start_monitor()
+    # UI 启动时: app.bootstrap() / app.auth.start_qr_login() / app.start_monitor()
 
 热重载:调用 `reconfigure(new_settings)` 可切换 storage / objects(无需重启 app);
        TelegramClient / session / 鉴权状态变更需要登出再登入,UI 应引导。

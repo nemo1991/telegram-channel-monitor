@@ -1,9 +1,8 @@
 # mypy: disable-error-code="attr-defined"
 """QrLoginDialog — 二维码登录对话框(Telegram App 扫码授权)。
 
-与 `LoginDialog`(手机号/验证码/2FA)并列的新登录方式:不依赖手机号,也就
-不受"验证码发到哪个渠道、收不到码"困扰 —— 已登录的 Telegram App 扫这个
-二维码即可完成授权。
+本版本唯一的登录方式:不依赖手机号,也就不受"验证码发到哪个渠道、收不到码"
+困扰 —— 已登录的 Telegram App 扫这个二维码即可完成授权。
 
 流程:
   1. 设置页点「二维码登录」→ core `start_qr_login()` 生成 `tg://login?token=…`

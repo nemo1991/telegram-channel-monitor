@@ -1,8 +1,9 @@
 """TelegramClient 工厂 — 根据 config 选择实现。
 
-- **凭据缺失**(`TG_API_ID` / `TG_API_HASH` / `TG_PHONE` 未配置)→ 返回
+- **凭据缺失**(`TG_API_ID` / `TG_API_HASH` 未配置)→ 返回
   `UnconfiguredTelegramClient` 占位实现:应用能正常启动进 UI,显示"未登录"
-  引导,用户在 设置 → 账户 填好凭据后重启即可监听。
+  引导,用户在 设置 → 账户 填好凭据后重启即可扫码登录并监听。
+  (登录只走二维码扫码,不需要手机号。)
 - `use_fake=True` → 显式返回 Fake(测试用)。
 - 其余情况构造真 `TelethonTelegramClient`;构造失败**不**静默 fallback
   (历史 bug #22:吞异常返回 Fake 导致"无后端也能 ready"),

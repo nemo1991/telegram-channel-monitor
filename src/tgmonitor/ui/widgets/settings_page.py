@@ -5,12 +5,14 @@
 以 QScrollArea 内分组排列,底部固定「保存并应用」按钮(v2.0.7 FR-09)。
 
 2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「账户凭证」
-分组,底层仍是 LoginDialog / app.auth.logout();头栏退化为纯标题。
+分组,头栏退化为纯标题。
 2026-11-18 v2.0.6:独立频道页撤销,ChannelWidget 单实例迁入本页
 「监听频道管理」分组(不走 FormSection,白名单进 core 存储不写 .env)。
+2026-11-21:手机号+验证码登录因下发渠道问题在本版本移除,登录方式只保留
+二维码扫码(QrLoginDialog);phone 字段仍作账户凭证展示/存储,但不再用于登录。
 
 7 个分组(前 6 个走 FormSection,监听频道为自定义 QGroupBox):
-  1. 账户凭证       — API ID / Hash / Phone / Session 目录 + 登录/登出入口
+  1. 账户凭证       — API ID / Hash / Phone / Session 目录 + 二维码登录/登出入口
   2. 监听频道管理   — 已加入 / 已监听双栏 + 搜索 + 全量同步(2.0.6 迁入)
   3. 网络代理       — SOCKS5 URL + 测试连接
   4. 消息存储       — DB 后端 + DSN / 目录
@@ -64,18 +66,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# 发码成功后这些状态都该弹「后续凭证」对话框(验证码 / 2FA / 邮箱 / 注册),
-# 由 LoginDialog 按 state 选页;其余状态(如 phone_required)视为失败。
-_AUTH_DIALOG_STATES = frozenset(
-    {
-        "code_required",
-        "password_required",
-        "email_required",
-        "email_code_required",
-        "registration_required",
-    }
-)
-
 
 class SettingsPage(QWidget):
     """整页设置。在 QStackedWidget 中作为一页使用。
@@ -86,7 +76,6 @@ class SettingsPage(QWidget):
 
     # run_coro 的回调可能跑在后台 loop 线程 —— 只 emit,由 Qt 排到主线程槽
     # 里再弹窗 / exec 对话框,避免跨线程碰 widget(项目既有跨线程约定)。
-    code_request_ok = Signal(str)  # payload = "state|detail"
     login_failed = Signal(str)
     qr_request_ok = Signal(str)  # payload = 二维码 URL(tg://login?token=…)
 
@@ -115,7 +104,6 @@ class SettingsPage(QWidget):
 
         self._build()
         self._load_from_settings()
-        self.code_request_ok.connect(self._open_auth_dialog)
         self.login_failed.connect(self._show_login_failed)
         self.qr_request_ok.connect(self._open_qr_dialog)
         # 初始按 core 真实状态设置入口可见性;桩环境 client.state 非字符串
@@ -217,8 +205,8 @@ class SettingsPage(QWidget):
                     kind=FieldKind.PATH,
                     label=self.tr("Session 目录:"),
                     placeholder=str(_user_data_dir() / "session"),
-                    # 2.0.8:删除「默认」按钮 —— 该行的位置让给登录/登出入口
-                    # (见 _build_account 末尾 auth_row 注入)。
+                    # 2.0.8:删除「默认」按钮 —— 该行的位置让给二维码登录/登出入口
+                    # (见 _build_account 末尾按钮注入)。
                 ),
             ),
         )
@@ -236,18 +224,14 @@ class SettingsPage(QWidget):
         self.in_session_dir = s._widgets["session_dir"]
 
         # 2026-11-19 v2.0.8 FR-01:登录/登出入口放到「Session 目录」行的
-        # 「默认」按钮位置 —— 原 2.0.3/2.0.4 是凭证分组底部独立一行(带 stretch),
-        # 现改为直接注入 path_field 行内的 QHBoxLayout(浏览…之后)。
+        # 「默认」按钮位置 —— 直接注入 path_field 行内的 QHBoxLayout(浏览…之后)。
+        # 2026-11-21:登录只保留二维码扫码一种方式,删掉手机号+验证码「登录」按钮。
         # 两个按钮常驻(由 set_login_state 控制显隐),不经 FormSection ——
         # 它们不参与 _collect()/保存到 .env。
         #
         # 注意:path_field 的 `_widgets["session_dir"]` 是内层 QLineEdit,
         # 其 parent 是承载 [edit | 浏览…] 的 row_w。取该 row_w 的 QHBoxLayout
         # 追加即可,不需要额外 addLayout 到分组底部。
-        self.btn_login = QPushButton(self.tr("登录"))
-        self.btn_login.setObjectName("settingsLoginBtn")
-        self.btn_login.clicked.connect(self._on_login_clicked)
-        # 二维码登录:与验证码登录并列,不依赖手机号/短信渠道。
         self.btn_qr_login = QPushButton(self.tr("二维码登录"))
         self.btn_qr_login.setObjectName("settingsQrLoginBtn")
         self.btn_qr_login.clicked.connect(self._on_qr_login_clicked)
@@ -260,7 +244,6 @@ class SettingsPage(QWidget):
         assert session_row_w is not None  # path_field 必把 edit 收进 row_w
         session_row = session_row_w.layout()
         assert isinstance(session_row, QHBoxLayout)  # path_field 用 QHBoxLayout
-        session_row.addWidget(self.btn_login)
         session_row.addWidget(self.btn_qr_login)
         session_row.addWidget(self.btn_logout)
 
@@ -295,95 +278,22 @@ class SettingsPage(QWidget):
         对接;真正的执行安全仍由 core 域服务入口保证。
         """
         logged_in = state == READY_STATE
-        self.btn_login.setVisible(not logged_in)
-        self.btn_login.setEnabled(not logged_in)
         self.btn_qr_login.setVisible(not logged_in)
         self.btn_qr_login.setEnabled(not logged_in)
         self.btn_logout.setVisible(logged_in)
         self.btn_logout.setEnabled(logged_in)
 
-    def _on_login_clicked(self) -> None:
-        """设置页「登录」— 校验/保存凭证 → 请求验证码 → 只弹验证码框。
-
-        2.1.2 重构:发验证码从 `LoginDialog` 构造里挪到本方法。旧实现先弹
-        「输入手机号」页再自动提交,用户看到的就是「弹了手机号框、像没拿到
-        号」。新路径(与用户期望一致):
-
-          1. 读当场填写的 API ID / API Hash / Phone(可能尚未点保存并应用)
-          2. 校验通过后把这 3 个凭据写盘 .env + 同步内存 settings
-          3. `run_coro` 调 `auth.submit_phone(phone)` 请求验证码
-          4. 成功 → `code_request_ok` signal → 主线程弹「仅验证码」对话框
-          5. 失败 → `login_failed` signal → 主线程 QMessageBox 明确提示
-
-        注意:这里只保存账户凭据,不连带提交其它分组未点「保存并应用」的
-        改动(数据库 / 对象存储 / 策略等),故走 `update_env_credentials`。
-        """
-        api_id = int(self.in_api_id.value())
-        api_hash = self.in_api_hash.text().strip()
-        phone = self.in_phone.text().strip()
-
-        err = self._validate_login_credentials(api_id, api_hash, phone)
-        if err:
-            QMessageBox.warning(self, self.tr("无法登录"), err)
-            return
-
-        try:
-            update_env_credentials(self._env_path, api_id=api_id, api_hash=api_hash, phone=phone)
-        except OSError as exc:
-            QMessageBox.critical(self, self.tr("凭据保存失败"), str(exc))
-            return
-        # 原地更新内存 settings:auth / client 等持有同一对象引用,预检立即
-        # 用新凭据(已构造的 Telethon client 的 api_id/hash 是构造期固化的,
-        # 若用户改了这两项,仍需重启应用才对真连接生效)。
-        current = self._app.settings
-        current.api_id = api_id
-        current.api_hash = api_hash
-        current.phone = phone
-
-        self.btn_login.setEnabled(False)
-        self.btn_login.setText(self.tr("发送中"))
-
-        async def _send_code() -> tuple[str, str | None]:
-            return await self._app.auth.submit_phone(phone)
-
-        def _on_sent(result: tuple[str, str | None]) -> None:
-            self._restore_login_button()
-            state, detail = result
-            if state == "error":
-                self.login_failed.emit(detail or self.tr("获取验证码失败"))
-                return
-            if state in _AUTH_DIALOG_STATES:
-                self.code_request_ok.emit(f"{state}|{detail or ''}")
-                return
-            # 非预期状态(如仍停在 phone_required —— 常见于占位 client):
-            # 不弹空验证码框,明确告诉用户请求没有成功。
-            self.login_failed.emit(detail or self.tr(f"获取验证码失败(状态: {state})"))
-
-        def _on_send_error(exc: BaseException) -> None:
-            self._restore_login_button()
-            self.login_failed.emit(str(exc))
-
-        run_coro(
-            self._loop,
-            _send_code(),
-            on_success=_on_sent,
-            on_error=_on_send_error,
-            error_label="login_send_code",
-        )
-
     def _on_qr_login_clicked(self) -> None:
         """设置页「二维码登录」— 只校验/保存 api 凭据 → 生成二维码 → 弹扫码框。
 
-        与「登录」(验证码)入口并列,但不校验手机号、不发短信:靠已登录的
-        Telegram App 扫码授权。凭据同样写盘(只这 2 个 key,手机号保留原值)。
+        本版本唯一的登录方式:不校验手机号、不发短信/验证码,靠已登录的
+        Telegram App 扫码授权。凭据同样写盘(api_id/api_hash 这 2 个 key,
+        手机号保留原值)。
         """
         api_id = int(self.in_api_id.value())
         api_hash = self.in_api_hash.text().strip()
 
-        err = self._validate_login_credentials(api_id, api_hash, self.in_phone.text())
-        if err and "TG_PHONE" in err:
-            # 二维码不需要手机号:忽略只针对手机号的校验错误
-            err = ""
+        err = self._validate_login_credentials(api_id, api_hash)
         if err:
             QMessageBox.warning(self, self.tr("无法二维码登录"), err)
             return
@@ -430,43 +340,18 @@ class SettingsPage(QWidget):
         )
 
     @staticmethod
-    def _validate_login_credentials(api_id: int, api_hash: str, phone: str) -> str:
+    def _validate_login_credentials(api_id: int, api_hash: str) -> str:
         """返回第一条错误消息;空串 = 校验通过。
 
-        与 `AuthService._check_credentials` / `_missing_credentials` 同一套规则,
-        但在 UI 层同步执行,便于点登录时先提示用户、不发起无效网络请求。
+        二维码登录只依赖 api_id/api_hash,与 `AuthService._check_credentials`
+        / `_missing_credentials` 同一套规则;在 UI 层同步执行,便于点登录时
+        先提示用户、不发起无效网络请求。
         """
         if api_id <= 0:
             return "TG_API_ID 未配置:请打开 设置… 填写正整数"
         if len(api_hash) < 16:
             return "TG_API_HASH 未配置或过短(需 ≥ 16 位):请打开 设置… 填写"
-        if not phone.startswith("+"):
-            return "TG_PHONE 未配置(需 + 国家区号):请打开 设置… 填写"
         return ""
-
-    def _restore_login_button(self) -> None:
-        """发码请求结束后恢复登录按钮(可见性仍由 set_login_state 控制)。"""
-        self.btn_login.setText(self.tr("登录"))
-        self.btn_login.setEnabled(True)
-
-    def _open_auth_dialog(self, payload: str) -> None:
-        """发码成功 → 主线程弹只含验证码的对话框(后续 2FA/邮箱按状态切页)。
-
-        payload = `state|detail`,detail 含「下发渠道 + 脱敏手机号」,透传给
-        弹窗显示在验证码页,用户能看出码发到了官方 App / 短信 / 电话哪一处。
-        """
-        state, _, detail = payload.partition("|")
-        from tgmonitor.ui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
-
-        dlg = LoginDialog(
-            self._app,
-            self._loop,
-            self.window(),
-            code_only=True,
-            initial_state=state,
-            initial_detail=detail,
-        )
-        dlg.exec()
 
     def _open_qr_dialog(self, url: str) -> None:
         """二维码生成成功 → 主线程弹扫码对话框(登录成功自动关闭)。"""

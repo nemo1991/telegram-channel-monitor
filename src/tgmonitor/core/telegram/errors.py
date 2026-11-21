@@ -75,10 +75,10 @@ class ChatUnavailableError(Exception):
 def _missing_credentials(settings: Settings) -> list[str]:
     """返回缺失的 Telegram 凭据项名(空列表 = 完整)。
 
-    判定条件与 `AuthService._check_credentials` 保持一致:
+    登录只走二维码扫码(无需手机号),判定条件与 `AuthService._check_credentials`
+    保持一致:
       - `api_id > 0`
       - `api_hash` 非空且长度 ≥ 16(my.telegram.org 给的 hash 长度)
-      - `phone` 以 `+` 开头(需国家区号)
     供真 client 构造前抛 `TelegramNotConfiguredError` 用。
     """
     missing: list[str] = []
@@ -86,13 +86,11 @@ def _missing_credentials(settings: Settings) -> list[str]:
         missing.append("TG_API_ID")
     if not settings.api_hash or len(settings.api_hash) < 16:
         missing.append("TG_API_HASH")
-    if not settings.phone.startswith("+"):
-        missing.append("TG_PHONE(需 + 国家区号)")
     return missing
 
 
 class TelegramNotConfiguredError(RuntimeError):
-    """Telegram 凭据(api_id / api_hash / phone)未配置 — 构造 client 前的守卫异常。
+    """Telegram 凭据(api_id / api_hash)未配置 — 构造 client 前的守卫异常。
 
     在真 client `__init__` 里、底层库 parameters 校验之前抛出,把裸
     `ValidationError`(如 `api_id: 0`)换成用户可读的中文消息 — 由 `app.py`
@@ -102,7 +100,5 @@ class TelegramNotConfiguredError(RuntimeError):
     def __init__(self, message: str = "") -> None:
         """`message` 默认给通用提示;调用方传拼接好的缺失项。"""
         super().__init__(
-            message
-            or "未配置 Telegram 凭据(TG_API_ID / TG_API_HASH / TG_PHONE),"
-            "请先在 .env 或 设置… 中填写"
+            message or "未配置 Telegram 凭据(TG_API_ID / TG_API_HASH),请先在 .env 或 设置… 中填写"
         )

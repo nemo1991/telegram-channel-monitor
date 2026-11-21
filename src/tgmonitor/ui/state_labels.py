@@ -22,18 +22,19 @@ from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication
 
-# 12 个登录状态 — 上游 client.start() 返回值 + 状态机过渡。
-# 完整流程:uninit → phone_required → code_required
-#           → password_required → ready
-# 稀有分支:WaitEmailAddress → email_required → email_code_required
-#           WaitRegistration → registration_required
-#           ready → logging_out → closed
-# 错误:任意状态 → error →  待手动 close
+# 登录状态 — 上游 client.start() 返回值 + 状态机过渡。
+# 2026-11-21 起登录只走二维码扫码,现行流程:
+#   uninit → phone_required(未登录) → qr_required(待扫码) → ready
+#   ready → logging_out → closed
+# 错误:任意状态 → error → 待手动 close
 # 关闭:任意状态 → closing → closed
+# 历史状态(code_required / password_required / email_* / registration_required)
+# 随手机号登录链一起移除运行路径,映射保留仅为旧事件/外部数据兼容显示。
 STATE_DOT: dict[str, str] = {
     "ready": "●",
     "error": "×",
     "phone_required": "…",
+    "qr_required": "▣",
     "code_required": "…",
     "email_required": "…",
     "email_code_required": "…",
@@ -59,6 +60,7 @@ STATE_COLOR_BUCKET: dict[str, str] = {
     "ready": "ready",
     "error": "error",
     "phone_required": "pending",
+    "qr_required": "pending",
     "code_required": "pending",
     "email_required": "pending",
     "email_code_required": "pending",
@@ -80,6 +82,7 @@ STATE_LABEL_SRC: dict[str, str] = {
     "ready": "已登录",
     "error": "错误",
     "phone_required": "未登录",
+    "qr_required": "待扫码登录",
     "code_required": "需验证码",
     "email_required": "需邮箱地址",
     "email_code_required": "需邮箱验证码",
@@ -95,7 +98,8 @@ STATE_LABEL_SRC: dict[str, str] = {
 STATE_HINT_SRC: dict[str, str] = {
     "ready": "实时接收订阅频道的新消息",
     "error": "点击设置 → 账户 检查凭据 / 重启",
-    "phone_required": "点击设置 → 账户 填写 API ID / Hash / 手机号",
+    "phone_required": "点击设置 → 账户 填写 API ID / Hash 后用二维码登录",
+    "qr_required": "请用 Telegram App 扫描设置页弹出的二维码",
     "code_required": "弹窗已出 — 输入 Telegram 验证码",
     "email_required": "弹窗已出 — 输入绑定的邮箱地址",
     "email_code_required": "弹窗已出 — 输入邮箱收到的验证码",
