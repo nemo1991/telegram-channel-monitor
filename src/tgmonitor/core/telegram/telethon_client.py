@@ -72,6 +72,56 @@ from tgmonitor.core.telegram.telethon_messages import (
 log = logging.getLogger(__name__)
 
 
+def _mask_phone(phone: str) -> str:
+    """手机号脱敏用于日志/UI:保留国家区号 + 后 4 位,中间星号。
+
+    国家码按 `+` 后前 2 位近似(`+86` 中国 / `+1` 美加),后 4 位保留供核对。
+    `+8613800000000` → `+86****0000`;短串(如 `+12345`)退化成 `+12*45`;
+    空串返回 `****`。只为可读性,不用于鉴权/存储。
+    """
+    s = (phone or "").strip()
+    if not s:
+        return "****"
+    plus = "+" if s.startswith("+") else ""
+    digits = s.lstrip("+")
+    if len(digits) <= 4:
+        # 短串:只留首尾各一位,中间星号,至少 3 颗
+        return plus + (digits[:1] + "***" + digits[-1:] if digits else "****")
+    return plus + digits[:2] + "****" + digits[-4:]
+
+
+def _sent_code_channel(t: object) -> str:
+    """把 Telethon `SentCode.type` 归一成人类可读的下发渠道文案。
+
+    Telegram 会按账号状态把验证码发到 官方 App / 短信 / 电话 等不同渠道,
+    旧代码把所有非 email 的类型一律塞进 `code_required` 且不说明渠道,用户
+    只看到「请输入验证码」却不知道去哪找码。这里给出明确提示。
+    """
+    if isinstance(t, types.auth.SentCodeTypeApp):
+        return "Telegram App(在已登录的官方 App 内查看)"
+    if isinstance(
+        t,
+        (
+            types.auth.SentCodeTypeSms,
+            types.auth.SentCodeTypeSmsWord,
+            types.auth.SentCodeTypeSmsPhrase,
+            types.auth.SentCodeTypeFirebaseSms,
+            types.auth.SentCodeTypeFragmentSms,
+        ),
+    ):
+        return "短信"
+    if isinstance(
+        t,
+        (
+            types.auth.SentCodeTypeCall,
+            types.auth.SentCodeTypeFlashCall,
+            types.auth.SentCodeTypeMissedCall,
+        ),
+    ):
+        return "电话"
+    return "Telegram"
+
+
 class _TelethonUpdateStream(UpdateStream):
     """Telethon update handler → asyncio.Queue → UI。
 
@@ -439,19 +489,27 @@ class TelethonTelegramClient:
         return self._inspect_sent_code(sent)
 
     def _inspect_sent_code(self, sent: types.auth.SentCode) -> tuple[str, str | None]:
-        """按 SentCode.type 决定下一状态(email 验证 / 设邮箱 / 普通验证码)。"""
+        """按 SentCode.type 决定下一状态(email 验证 / 设邮箱 / 普通验证码)。
+
+        2.1.3:无论落到哪一档,detail 都带上「下发渠道 + 脱敏手机号」——
+        `_set_state` 会把 detail 写进日志,UI 也会把它显示在验证码页标题,
+        用户能立刻看出验证码发到了官方 App / 短信 / 电话中的哪一处。
+        """
         t = sent.type
+        channel = _sent_code_channel(t)
+        masked = _mask_phone(self._phone)
+        where = f"验证码已发至 {channel} · {masked}"
         if isinstance(t, types.auth.SentCodeTypeEmailCode):
             self._email_flow = "login"
             self._set_state(
                 "email_code_required",
-                detail=f"验证码已发送至邮箱 {t.email_pattern or ''}",
+                detail=f"{where} 邮箱 {t.email_pattern or ''}",
             )
         elif isinstance(t, types.auth.SentCodeTypeSetUpEmailRequired):
             self._email_flow = "setup"
-            self._set_state("email_required")
+            self._set_state("email_required", detail=where)
         else:
-            self._set_state("code_required")
+            self._set_state("code_required", detail=where)
         return self._state, self._state_detail
 
     async def submit_code(self, code: str) -> tuple[str, str | None]:

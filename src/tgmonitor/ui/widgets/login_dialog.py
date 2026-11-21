@@ -50,6 +50,7 @@ class LoginDialog(QDialog):
         phone: str | None = None,
         code_only: bool = False,
         initial_state: str | None = None,
+        initial_detail: str | None = None,
     ) -> None:
         """建 modal dialog + 自动按当前 LoginState 选页(手机号 / 验证码 / 2FA)。
 
@@ -66,6 +67,7 @@ class LoginDialog(QDialog):
         self._initial_phone = (phone or "").strip()
         self._code_only = code_only
         self._initial_state = (initial_state or "").strip() or "code_required"
+        self._initial_detail = (initial_detail or "").strip()
         self.setWindowTitle(self.tr("Telegram 登录"))
         self.setModal(True)
         self._expected_state: str = ""
@@ -81,6 +83,7 @@ class LoginDialog(QDialog):
 
         self.status_label = QLabel("…")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
 
         self.stack = QStackedWidget()
@@ -176,7 +179,8 @@ class LoginDialog(QDialog):
         if self._code_only:
             # 设置页路径:验证码已请求成功,直接渲染目标页。不读 client 当前
             # 状态(可能滞后一拍把用户踢回手机号页),也不自动提交手机号。
-            self._render(self._initial_state, "")
+            # 带上设置页透传的下发渠道 + 脱敏手机号,显示在验证码页标题。
+            self._render(self._initial_state, self._initial_detail)
             return
         # 初次拉当前状态
         try:
@@ -210,7 +214,10 @@ class LoginDialog(QDialog):
             return
         self._expected_state = state
         if state == "code_required":
-            self.status_label.setText(self.tr("Telegram 验证码"))
+            # 有下发渠道信息时附加到标题(官方 App / 短信 / 电话 + 脱敏手机号),
+            # 无 detail(如主界面直接登录的旧路径)时保持原文案。
+            title = self.tr("Telegram 验证码")
+            self.status_label.setText(f"{title}\n{detail}" if detail else title)
             self.stack.setCurrentIndex(1)
             self.in_code.setFocus()
         elif state == "password_required":

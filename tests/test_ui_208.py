@@ -181,12 +181,62 @@ def test_login_dialog_code_only_starts_on_code_page(qapp, qloop) -> None:
 
     dlg = LoginDialog(app=app, loop=qloop, code_only=True, initial_state="code_required")
     assert dlg.stack.currentIndex() == 1
-    assert dlg.status_label.text() == "Telegram 验证码"
+    assert dlg.status_label.text() == "Telegram 验证码"  # 无 detail 时保持原文案
     # 没有自动请求验证码（设置页已在弹窗前请求过）
     assert client.state == "phone_required"
     auth.submit_phone = AsyncMock()  # type: ignore[method-assign]
     auth.submit_phone.assert_not_awaited()
     dlg.deleteLater()
+
+
+def test_login_dialog_code_only_shows_delivery_channel(qapp, qloop) -> None:
+    """2.1.3:设置页透传的「渠道 + 脱敏号」显示在验证码页标题。"""
+    app = MagicMock()
+    app.settings = Settings.for_test(phone="+8613800000000")
+    app.client.state = "code_required"
+    app.bus = EventBus()
+
+    detail = "验证码已发至 Telegram App(在已登录的官方 App 内查看) · +86****0000"
+    dlg = LoginDialog(
+        app=app,
+        loop=qloop,
+        code_only=True,
+        initial_state="code_required",
+        initial_detail=detail,
+    )
+    assert dlg.stack.currentIndex() == 1
+    text = dlg.status_label.text()
+    assert "Telegram 验证码" in text
+    assert "Telegram App" in text
+    assert "+86****0000" in text
+    assert dlg.status_label.wordWrap()
+    dlg.deleteLater()
+
+
+def test_settings_login_passes_detail_to_dialog(qapp, qloop, tmp_path) -> None:
+    """设置页把发码结果的 detail 透传给弹窗(渠道信息不在设置页丢失)。"""
+    bus = EventBus()
+    client = FakeTelegramClient()
+    settings = Settings.for_test(api_id=1, api_hash="x" * 32, phone="")
+    auth = AuthService(bus=bus, client=client, settings=settings)
+    auth.submit_phone = AsyncMock(  # type: ignore[method-assign]
+        return_value=("code_required", "验证码已发至 短信 · +86****0000")
+    )
+    app = MagicMock()
+    app.settings = settings
+    app.client = client
+    app.auth = auth
+    app.bus = bus
+
+    page = SettingsPage(app=app, loop=qloop, env_path=tmp_path / ".env")
+    page.in_api_id.setValue(4242)
+    page.in_api_hash.setText("y" * 32)
+    page.in_phone.setText("+8613800000000")
+    with patch("tgmonitor.ui.widgets.login_dialog.LoginDialog") as dlg_cls:
+        page.btn_login.click()
+        _wait_until(lambda: dlg_cls.called)
+    assert dlg_cls.call_args.kwargs["initial_detail"] == "验证码已发至 短信 · +86****0000"
+    page.deleteLater()
 
 
 def test_login_dialog_auto_submits_credential_phone(qapp, qloop) -> None:
