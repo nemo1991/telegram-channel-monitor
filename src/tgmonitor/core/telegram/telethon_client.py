@@ -298,6 +298,13 @@ class TelethonTelegramClient:
     def _build_client(self) -> TelegramClient:
         """构造 Telethon client + 注册全部 update handler。"""
         self._settings.session_dir.mkdir(parents=True, exist_ok=True)
+        # [TEMP-DIAG] 临时诊断:client 构造期固化的凭据(真连接实际用的就是这组)
+        log.warning(
+            "[TEMP-DIAG] _build_client api_id=%r api_hash=%r session=%s",
+            self._settings.api_id,
+            self._settings.api_hash,
+            self._session_path,
+        )
         client = TelegramClient(
             str(self._session_path),
             self._settings.api_id,
@@ -472,6 +479,14 @@ class TelethonTelegramClient:
         self._check_alive()
         assert self._client is not None
         self._phone = phone
+        # [TEMP-DIAG] 临时诊断:发码时真正传给 Telegram 的手机号 + 当前 settings 凭据
+        # (对比 _build_client 那组:若不同说明设置页改了凭据但未重启,client 仍用旧的)
+        log.warning(
+            "[TEMP-DIAG] submit_phone phone=%r settings.api_id=%r settings.api_hash=%r",
+            phone,
+            self._settings.api_id,
+            self._settings.api_hash,
+        )
         try:
             sent = await self._client.send_code_request(phone)
         except errors.UnauthorizedError:
@@ -486,6 +501,12 @@ class TelethonTelegramClient:
             self._auth_error("phone", e)
             return self._state, self._state_detail
         self._phone_code_hash = sent.phone_code_hash
+        # [TEMP-DIAG] 临时诊断:Telegram 实际下发的渠道类型(原始对象)
+        log.warning(
+            "[TEMP-DIAG] send_code_request OK sent.type=%r phone_code_hash=%r",
+            sent.type,
+            sent.phone_code_hash,
+        )
         return self._inspect_sent_code(sent)
 
     def _inspect_sent_code(self, sent: types.auth.SentCode) -> tuple[str, str | None]:
