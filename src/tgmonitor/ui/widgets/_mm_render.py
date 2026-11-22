@@ -179,41 +179,52 @@ class RenderMixin(_Base):
     # ---- 渲染 ----
 
     def _render_list(self) -> None:
-        """清空 list → 按 rows 重建 item + 自绘 widget;更新 status label。"""
-        self._reset_list_for_render()
+        """清空 list → 按 rows 重建 item + 自绘 widget;更新 status label。
 
-        total_bytes = 0
-        count_done = 0
-        count_failed = 0
+        2026-11-22 修:整个重建过程屏蔽 `itemSelectionChanged`。`list.clear()`
+        会同步发选中变化,此时 `_rows` 已是新数据、`_last_keys` 还是旧索引,
+        `_on_selection_changed → _find_row_by_key` 拿旧 key 的索引越界崩溃。
+        渲染完一次性解屏蔽,由末尾的 `_on_selection_changed()` 统一刷新按钮态。
+        """
+        self.list.blockSignals(True)
+        try:
+            self._reset_list_for_render()
 
-        for msg, idx, med in self._rows:
-            key = _RowKey(msg.channel_id, msg.telegram_msg_id, idx)
-            self._last_keys.append(key)
-            item = QListWidgetItem()
-            # 行高 = 自绘 widget 高度(后面 setSizeHint 调)
-            item.setSizeHint(self._row_widget_size_hint())
-            self.list.addItem(item)
-            row_w = self._build_row_widget(msg, idx, med, key)
-            self.list.setItemWidget(item, row_w)
+            total_bytes = 0
+            count_done = 0
+            count_failed = 0
 
-            if med.download_status == MediaDownloadStatus.DONE:
-                count_done += 1
-                if med.file_size:
-                    total_bytes += med.file_size
-            elif med.download_status == MediaDownloadStatus.FAILED:
-                count_failed += 1
+            for msg, idx, med in self._rows:
+                key = _RowKey(msg.channel_id, msg.telegram_msg_id, idx)
+                self._last_keys.append(key)
+                item = QListWidgetItem()
+                # 行高 = 自绘 widget 高度(后面 setSizeHint 调)
+                item.setSizeHint(self._row_widget_size_hint())
+                self.list.addItem(item)
+                row_w = self._build_row_widget(msg, idx, med, key)
+                self.list.setItemWidget(item, row_w)
 
-        # 更新 footer 状态
-        total = len(self._rows)
-        self.lbl_status.setText(
-            self._tr_status_row().format(
-                total=total,
-                done=count_done,
-                failed=count_failed,
-                size=_format_size(total_bytes) if total_bytes else "0B",
+                if med.download_status == MediaDownloadStatus.DONE:
+                    count_done += 1
+                    if med.file_size:
+                        total_bytes += med.file_size
+                elif med.download_status == MediaDownloadStatus.FAILED:
+                    count_failed += 1
+
+            # 更新 footer 状态
+            total = len(self._rows)
+            self.lbl_status.setText(
+                self._tr_status_row().format(
+                    total=total,
+                    done=count_done,
+                    failed=count_failed,
+                    size=_format_size(total_bytes) if total_bytes else "0B",
+                )
             )
-        )
-        # 选中变化 → enable/disable toolbar
+        finally:
+            self.list.blockSignals(False)
+
+        # 选中变化 → enable/disable toolbar(屏蔽期间的信号在这里补一次)
         self._on_selection_changed()
 
         # 缩略图加载(2026-08-25 PR #1):只有 PHOTO/VIDEO + DONE 才值得加载;
@@ -228,17 +239,18 @@ class RenderMixin(_Base):
         widget 不会立即析构,可能在 viewport 残留幽灵行。对齐频道页 `_clear_rows`
         (`channel_widget.py:348-355`)先对 itemWidget 调 `deleteLater()`。
         """
+        # 2026-11-22 修:先清索引再 `list.clear()` —— clear 同步触发
+        # itemSelectionChanged,若信号屏蔽被别处绕过,空 _last_keys 也不会
+        # 让旧 key 索引落到新 _rows 上。
+        self._last_keys: list[_RowKey] = []
+        self._thumb_labels.clear()  # 旧 label 全部失效
+        self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
         for i in range(self.list.count()):
             old_item = self.list.item(i)
             old_widget = self.list.itemWidget(old_item) if old_item is not None else None
             if old_widget is not None:
                 old_widget.deleteLater()
         self.list.clear()
-        # 局部标注:mypy 在 mixin 里看不到 facade `__init__` 的字段声明,
-        # 空 list 赋值必须自带类型(2026-10-20 plan-batch10-δ)
-        self._last_keys: list[_RowKey] = []
-        self._thumb_labels.clear()  # 旧 label 全部失效
-        self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
 
     def _maybe_load_all_thumbs(self) -> None:
         """2026-08-25 PR #1:每行触发缩略图处理(LRU 命中即时 setPixmap,miss 异步)。"""
@@ -412,8 +424,15 @@ class RenderMixin(_Base):
         elif med.download_status == MediaDownloadStatus.DONE:
             lbl_status.setStyleSheet("color: #27ae60;")
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
-            # 2026-09-01 v1.5.1 PR #B3:下载中状态颜色,跟 PENDING 区分
             lbl_status.setStyleSheet("color: #2980b9;")
+            lbl_status.setToolTip(self._tr_downloading_hint())
+        elif med.download_status == MediaDownloadStatus.PENDING:
+            # 2026-11-22:灰字「未下载」+ 说明,区别于「正在下」的 ⏳。
+            hint = self._tr_pending_hint()
+            if med.download_error:
+                hint = f"{hint}（{med.download_error}）"
+            lbl_status.setStyleSheet("color: #8a8d92;")
+            lbl_status.setToolTip(hint)
         self._status_labels[key] = lbl_status
         hbox.addWidget(lbl_status)
 

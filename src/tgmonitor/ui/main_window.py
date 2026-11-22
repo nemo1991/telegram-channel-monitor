@@ -274,6 +274,13 @@ class MainWindow(QMainWindow):
         self.media_manager.batch_delete_requested.connect(
             self._media_actions_ctrl.on_media_batch_delete
         )
+        # 2026-11-22 用户选型:批量下载 PENDING(所选 / 当前筛选全部)
+        self.media_manager.batch_download_requested.connect(
+            self._media_actions_ctrl.on_media_batch_download
+        )
+        self.media_manager.download_all_pending_requested.connect(
+            self._media_actions_ctrl.on_media_download_all_pending
+        )
         self.media_manager.prune_requested.connect(self._media_actions_ctrl.on_media_prune)
         # 2026-08-25 PR #4:按频道批量删除 — 二次确认后调 vm.delete_by_channel
         self.media_manager.clear_channel_requested.connect(

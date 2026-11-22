@@ -185,6 +185,25 @@ class MediaService:
         """
         await _os_actions.download_media(self, channel_id, telegram_msg_id, media_idx)
 
+    async def download_all_pending(
+        self,
+        *,
+        channel_id: int | None = None,
+        search: str = "",
+        media_type: MediaType | None = None,
+    ) -> int:
+        """批量下载筛选视图的全部 PENDING 原文件(2026-11-22 用户选型)。
+
+        thin delegate → `_media_os_actions.download_all_pending`。
+        返回实际发起的下载数;逐条失败转 FAILED,不中断批次。
+        """
+        return await _os_actions.download_all_pending(
+            self,
+            channel_id=channel_id,
+            search=search,
+            media_type=media_type,
+        )
+
     async def retry_media(
         self,
         channel_id: int,

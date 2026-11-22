@@ -83,8 +83,21 @@ class MediaActionsController:
         )
 
     # ============================================================
-    # 批量操作(retry / delete / prune / clear channel)
+    # 批量操作(retry / delete / download / prune / clear channel)
     # ============================================================
+
+    def on_media_batch_download(self, keys: list) -> None:
+        """2026-11-22:批量下载选中 PENDING — 直接转给 VM(逐条复用首下守卫)。"""
+        self._ctx.vm.download_media_batch(keys)
+
+    def on_media_download_all_pending(self) -> None:
+        """2026-11-22:下载当前筛选视图全部 PENDING — 透传 filter。"""
+        f = self._ctx.media_manager.current_filters()
+        self._ctx.vm.download_all_pending(
+            channel_id=f["channel_id"],
+            search=f["search"],
+            media_type=f["media_type"],
+        )
 
     def on_media_batch_retry(self, keys: list) -> None:
         """批量 retry — keys 是 widget 内部的 _RowKey 列表(对象)。"""

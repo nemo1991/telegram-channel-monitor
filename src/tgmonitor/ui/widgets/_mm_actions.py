@@ -3,10 +3,10 @@
 
 `MediaManagerWidget` 拆 3 mixin + facade 的**第三步**:抽交互动作域。
 
-- 11 method:`_selected_keys` / `_on_selection_changed` / `_find_row_by_key`
-  / `_on_select_all` / `_on_batch_retry` / `_on_batch_delete`
+- 13 method:`_selected_keys` / `_on_selection_changed` / `_find_row_by_key`
+  / `_on_select_all` / `_on_batch_retry` / `_on_batch_download` / `_on_batch_delete`
   / `_on_clear_channel` / `_on_export_csv` / `_on_export_zip`
-  / `on_channel_cleared` / `_row_is_failed`
+  / `on_channel_cleared` / `_row_is_failed` / `_row_is_pending`
 
 
 MRO:`class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin,
@@ -57,20 +57,31 @@ class ActionsMixin(_Base):
         sel = self._selected_keys()
         has_sel = bool(sel)
         has_failed = False
+        has_pending = False
         for k in sel:
             row = self._find_row_by_key(k)
             if row is None:
                 continue
-            if row[2].download_status == MediaDownloadStatus.FAILED:
+            status = row[2].download_status
+            if status == MediaDownloadStatus.FAILED:
                 has_failed = True
+            elif status == MediaDownloadStatus.PENDING:
+                has_pending = True
+            if has_failed and has_pending:
                 break
         self.btn_retry_sel.setEnabled(has_sel and has_failed)
+        self.btn_download_sel.setEnabled(has_sel and has_pending)
         self.btn_delete_sel.setEnabled(has_sel)
 
     def _find_row_by_key(self, key: _RowKey) -> tuple[MessageDTO, int, MediaDTO] | None:
         for i, k in enumerate(self._last_keys):
             if k == key:
-                return self._rows[i]
+                # 2026-11-22 修:重渲中间态 `_last_keys`(旧) 与 `_rows`(新)
+                # 长度可能不一致(list.clear 同步触发 itemSelectionChanged)。
+                # 旧 key 的索引落在新 _rows 之外 → 视为「该行已不在视图」。
+                if i < len(self._rows):
+                    return self._rows[i]
+                return None
         return None
 
     def _on_select_all(self) -> None:
@@ -80,6 +91,12 @@ class ActionsMixin(_Base):
         keys = [k for k in self._selected_keys() if self._row_is_failed(k)]
         if keys:
             self.batch_retry_requested.emit(keys)
+
+    def _on_batch_download(self) -> None:
+        """2026-11-22 用户选型:下载选中行里的 PENDING(其余状态忽略)。"""
+        keys = [k for k in self._selected_keys() if self._row_is_pending(k)]
+        if keys:
+            self.batch_download_requested.emit(keys)
 
     def _on_batch_delete(self) -> None:
         keys = self._selected_keys()
@@ -150,3 +167,7 @@ class ActionsMixin(_Base):
     def _row_is_failed(self, key: _RowKey) -> bool:
         r = self._find_row_by_key(key)
         return r is not None and r[2].download_status == MediaDownloadStatus.FAILED
+
+    def _row_is_pending(self, key: _RowKey) -> bool:
+        r = self._find_row_by_key(key)
+        return r is not None and r[2].download_status == MediaDownloadStatus.PENDING

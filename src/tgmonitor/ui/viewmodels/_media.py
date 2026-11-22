@@ -2,14 +2,15 @@
 """MediaMixin — Media Manager 事件转发 + UI 入口方法集合 — 2026-10-20 plan-batch9-ε。
 
 `MonitorViewModel` 拆 5 mixin + BusMixin 第五步(2026-10-20
-plan-batch9-ε):media 域 = 5 handler + 10 method + 10 signal —
+plan-batch9-ε):media 域 = 5 handler + 13 method + 10 signal —
 最大块,触发 plan-batch6 media_service 875→329 / plan-batch9
 message_view 1028→318 的同一条拆分线。
 
 - 5 handler:`_on_media_downloaded` / `_on_media_download_progress` /
   `_on_media_retried` / `_on_media_deleted` /
   `_on_media_reconcile_done`
-- 10 method:`load_media_list` / `delete_media` / `delete_media_batch` /
+- 13 method:`load_media_list` / `delete_media` / `delete_media_batch` /
+  `download_media` / `download_media_batch` / `download_all_pending` /
   `retry_media` / `open_media` / `reconcile_orphans` /
   `preview_delete_by_channel` / `delete_by_channel` / `load_thumbnail` /
   `load_media_bytes`(async,Lightbox 专用)
@@ -78,7 +79,8 @@ class MediaMixin(_Base):
     """Media Manager 事件转发 + UI 入口 — 2026-10-20 plan-batch9-ε。
 
     公开 API 1:1 保留原 `MonitorViewModel` media 域:
-    - 10 method:`load_media_list` / `delete_media` / `delete_media_batch` /
+    - 13 method:`load_media_list` / `delete_media` / `delete_media_batch` /
+      `download_media` / `download_media_batch` / `download_all_pending` /
       `retry_media` / `open_media` / `reconcile_orphans` /
       `preview_delete_by_channel` / `delete_by_channel` / `load_thumbnail` /
       `load_media_bytes`
@@ -251,6 +253,37 @@ class MediaMixin(_Base):
             await self.app.media.download_media(channel_id, telegram_msg_id, media_idx)
 
         run_coro(self.loop, _go(), error_label="download_media")
+
+    def download_media_batch(self, keys: list[object]) -> None:
+        """批量下载选中的 PENDING 媒体(2026-11-22)。
+
+        keys 是 widget 的 `_RowKey` 对象,这里只按 duck typing 取三元组;
+        每条走 `app.media.download_media` 的守卫(非 PENDING 静默跳过)。
+        """
+        triples = [(int(k.channel_id), int(k.telegram_msg_id), int(k.media_idx)) for k in keys]
+
+        async def _go() -> None:
+            for cid, mid, idx in triples:
+                await self.app.media.download_media(cid, mid, idx)
+
+        run_coro(self.loop, _go(), error_label="download_media_batch")
+
+    def download_all_pending(
+        self,
+        channel_id: int | None = None,
+        search: str = "",
+        media_type: MediaType | None = None,
+    ) -> None:
+        """批量下载当前筛选视图的全部 PENDING(2026-11-22 用户选型)。"""
+
+        async def _go() -> None:
+            await self.app.media.download_all_pending(
+                channel_id=channel_id,
+                search=search,
+                media_type=media_type,
+            )
+
+        run_coro(self.loop, _go(), error_label="download_all_pending")
 
     def retry_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """单条 retry — 后台 fire app.media.retry_media。"""
