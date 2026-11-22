@@ -288,6 +288,7 @@ class PostgresRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey = SortKey.DATE,
@@ -300,6 +301,7 @@ class PostgresRepository(StorageRepository):
             status=status,
             media_type=media_type,
             search=search,
+            undownloaded=undownloaded,
             limit=limit,
             offset=offset,
             sort=sort,
@@ -313,6 +315,7 @@ class PostgresRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
     ) -> int:
         """与 list_media 同 filter — thin delegate → `_media_pg`."""
         return await _media.count_media(
@@ -321,6 +324,7 @@ class PostgresRepository(StorageRepository):
             status=status,
             media_type=media_type,
             search=search,
+            undownloaded=undownloaded,
         )
 
     async def count_media_by_object_key(self, object_key: str) -> int:

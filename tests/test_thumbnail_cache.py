@@ -171,7 +171,7 @@ def test_cache_key_thumb_returns_none_for_pending() -> None:
     t = _thumb(
         object_key="thumb/x.jpg",
         object_backend="local",
-        download_status=MediaDownloadStatus.PENDING,
+        download_status=None,
     )
     assert cache_key_for(t) is None
 
@@ -190,7 +190,7 @@ def test_cache_key_returns_none_for_pending() -> None:
     med = _photo(
         object_key="media/x.jpg",
         object_backend="local",
-        download_status=MediaDownloadStatus.PENDING,
+        download_status=None,
     )
     assert cache_key_for(med) is None
 

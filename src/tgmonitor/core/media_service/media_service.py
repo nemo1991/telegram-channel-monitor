@@ -121,6 +121,7 @@ class MediaService:
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey = SortKey.DATE,
@@ -129,6 +130,7 @@ class MediaService:
         """2026-08-25 v1.3.0 PR #3/PR #6 — 转发 storage.list_media + count_media。
 
         2026-10-15 plan-batch6-1.2:thin delegate → `core.media_service._media_crud`。
+        2026-11-22 `undownloaded=True` 筛未下载媒体(原 PENDING 档)。
         """
         return await _crud.list_media(
             self,
@@ -136,6 +138,7 @@ class MediaService:
             status=status,
             media_type=media_type,
             search=search,
+            undownloaded=undownloaded,
             limit=limit,
             offset=offset,
             sort=sort,
@@ -179,7 +182,7 @@ class MediaService:
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        """下载 PENDING media 原文件(force=False)— 2026-11-22 v2.0.9 FR-06。
+        """下载未下载 media 原文件(force=False)— 2026-11-22 v2.0.9 FR-06。
 
         thin delegate → `core.media_service._media_os_actions.download_media`。
         """
@@ -192,7 +195,7 @@ class MediaService:
         search: str = "",
         media_type: MediaType | None = None,
     ) -> int:
-        """批量下载筛选视图的全部 PENDING 原文件(2026-11-22 用户选型)。
+        """批量下载筛选视图的全部未下载原文件(2026-11-22 用户选型)。
 
         thin delegate → `_media_os_actions.download_all_pending`。
         返回实际发起的下载数;逐条失败转 FAILED,不中断批次。

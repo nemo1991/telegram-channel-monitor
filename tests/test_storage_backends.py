@@ -100,7 +100,7 @@ async def _seed_main_messages(repo: StorageRepository) -> None:
             channel_id=300,
             msg_id=5,
             date=datetime(2026, 1, 4, 10),
-            media=[_video(0, MediaDownloadStatus.PENDING, None, "pending.mp4")],
+            media=[_video(0, None, None, "pending.mp4")],
         )
     )
 
@@ -382,7 +382,8 @@ async def test_list_media_sort_by_status_asc(seeded_repo):
         sort=SortKey.STATUS,
         sort_dir=SortDir.ASC,
     )
-    statuses = [r[2].download_status.value for r in rows]
+    # 2026-11-22:未下载(None)排序键沿用物理值 'pending'。
+    statuses = [r[2].download_status.value if r[2].download_status else "pending" for r in rows]
     # 字典序 ASC:done<failed<pending
     assert statuses == sorted(statuses)
     assert rows[0][2].download_status == MediaDownloadStatus.DONE

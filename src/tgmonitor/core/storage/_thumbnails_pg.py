@@ -95,7 +95,7 @@ async def save_thumbnail(self: PostgresRepository, thumb: ThumbnailDTO) -> None:
             thumb.width,
             thumb.height,
             thumb.sha256,
-            thumb.download_status.value,
+            _media._status_to_db(thumb.download_status),
             thumb.download_error,
             thumb.telegram_thumb_file_id,
         )

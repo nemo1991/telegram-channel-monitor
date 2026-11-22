@@ -44,6 +44,7 @@ async def list_media(
     status: MediaDownloadStatus | None = None,
     media_type: MediaType | None = None,
     search: str = "",
+    undownloaded: bool = False,
     limit: int = 1000,
     offset: int = 0,
     sort: SortKey = SortKey.DATE,
@@ -65,6 +66,7 @@ async def list_media(
         status=status,
         media_type=media_type,
         search=search,
+        undownloaded=undownloaded,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -75,6 +77,7 @@ async def list_media(
         status=status,
         media_type=media_type,
         search=search,
+        undownloaded=undownloaded,
     )
     return rows, total
 

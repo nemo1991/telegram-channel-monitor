@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING
 from tgmonitor.core.config import MediaPolicy
 from tgmonitor.core.dto import (
     ChannelSyncResult,
-    MediaDownloadStatus,
     SyncOptions,
     SyncResult,
 )
@@ -357,7 +356,7 @@ class ChannelSyncService:
                 if m.media and self.downloader is not None and effective_policy == MediaPolicy.FULL:
                     needs_resave = False
                     for idx, med in enumerate(m.media):
-                        if med.download_status != MediaDownloadStatus.PENDING:
+                        if med.download_status is not None:
                             continue
                         updated = await self.downloader.download_one(
                             msg_pk=m.id,

@@ -75,16 +75,23 @@ class MediaType(str, Enum):
 class MediaDownloadStatus(str, Enum):
     """媒体下载状态 — 用户可观察:「对象存储里没有文件」时能看出是正在下 / 失败。
 
-    - `PENDING`    : 未安排下载(元数据策略 / 旧数据 / 无 downloader)
+    2026-11-22:「未下载」不再是枚举状态,由 `download_status is None` 表达
+    (元数据策略 / 旧数据 / 无 downloader)。枚举只保留**已经启动过下载**的三态:
+
     - `DOWNLOADING`: 下载中(已入队或正在下;应用重启后视为可重新下载)
     - `DONE`       : 下载成功,`object_key` / `object_backend` 已填
     - `FAILED`     : 下载失败或被跳过,`download_error` 有原因
     """
 
-    PENDING = "pending"
     DOWNLOADING = "downloading"
     DONE = "done"
     FAILED = "failed"
+
+
+# 状态筛选哨兵:Media Manager 状态下拉的「未下载」档用此值作 data,
+# controller 识别后翻成 `list_media(undownloaded=True)`。枚举已删 PENDING,
+# 而 status=None 已被「全部状态」占用,故用独立 str 值避免歧义。
+UNDOWNLOADED_FILTER = "undownloaded"
 
 
 class SortKey(str, Enum):
@@ -144,7 +151,9 @@ class MediaDTO:
     object_backend: str | None = None  # 'local' | 's3'
 
     # 下载状态(异步下载队列写入;持久化到各仓储)
-    download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
+    # 2026-11-22:None=未下载原文件(默认轻量档 / 旧数据 / 无 downloader)。
+    # 只有启动过下载才写三态枚举(DOWNLOADING / DONE / FAILED)。
+    download_status: MediaDownloadStatus | None = None
     download_error: str | None = None  # FAILED 时的原因(超限 / 超时 / 存储写入失败…)
 
     # Sticker 专属 — 关联的 emoji 字符(如 "表情");其它 type 始终 None
@@ -179,8 +188,8 @@ class ThumbnailDTO:
     width: int | None = None
     height: int | None = None
     sha256: str | None = None
-    # 下载状态
-    download_status: MediaDownloadStatus = MediaDownloadStatus.PENDING
+    # 下载状态(None=未下载缩略图;下载后才写 DONE/FAILED)
+    download_status: MediaDownloadStatus | None = None
     download_error: str | None = None
     # TG 端缩略图 file.id(按需重下用)
     telegram_thumb_file_id: str | None = None

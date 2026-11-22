@@ -426,7 +426,7 @@ class RenderMixin(_Base):
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
             lbl_status.setStyleSheet("color: #2980b9;")
             lbl_status.setToolTip(self._tr_downloading_hint())
-        elif med.download_status == MediaDownloadStatus.PENDING:
+        elif med.download_status is None:
             # 2026-11-22:灰字「未下载」+ 说明,区别于「正在下」的 ⏳。
             hint = self._tr_pending_hint()
             if med.download_error:
@@ -475,7 +475,7 @@ class RenderMixin(_Base):
 
         状态规则(常驻图标在渲染时按 med 状态设 enabled;菜单项在弹出前按当前行
         重算,不跨行缓存):
-        - 下载:PENDING 可点(FR-06;PR-2 只 emit,PR-5 接线 VM)
+        - 下载:未下载(None)可点(FR-06;PR-2 只 emit,PR-5 接线 VM)
         - 打开 / Reveal / Copy:DONE 可点
         - 重试:FAILED 可点
         - Delete:总是可点
@@ -507,7 +507,7 @@ class RenderMixin(_Base):
                 "mediaActionDownload",
                 "media_download",
                 "下载原文件",
-                status == MediaDownloadStatus.PENDING,
+                status is None,
                 emit_download,
             )
         )

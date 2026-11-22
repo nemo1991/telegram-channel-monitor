@@ -404,6 +404,7 @@ class InMemoryRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey = SortKey.DATE,
@@ -427,7 +428,9 @@ class InMemoryRepository(StorageRepository):
         rows: list[tuple[MessageDTO, int, MediaDTO]] = []
         for msg in msgs:
             for idx, med in enumerate(msg.media):
-                if status is not None and med.download_status != status:
+                if undownloaded and med.download_status is not None:
+                    continue
+                if not undownloaded and status is not None and med.download_status != status:
                     continue
                 if media_type is not None and med.type != media_type:
                     continue
@@ -446,6 +449,7 @@ class InMemoryRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
     ) -> int:
         """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,但不带 sort/limit/offset,数总数。"""
         msgs = await self.list_messages(
@@ -456,7 +460,9 @@ class InMemoryRepository(StorageRepository):
         rows: list[tuple[MessageDTO, int, MediaDTO]] = []
         for msg in msgs:
             for idx, med in enumerate(msg.media):
-                if status is not None and med.download_status != status:
+                if undownloaded and med.download_status is not None:
+                    continue
+                if not undownloaded and status is not None and med.download_status != status:
                     continue
                 if media_type is not None and med.type != media_type:
                     continue
@@ -508,7 +514,8 @@ class InMemoryRepository(StorageRepository):
             if sort == SortKey.SIZE:
                 return (med.file_size or 0,)
             if sort == SortKey.STATUS:
-                return med.download_status.value
+                # 2026-11-22:未下载(None)沿用物理值 'pending' 排序,与 SQL 后端一致。
+                return med.download_status.value if med.download_status else "pending"
             return (msg.date, -int(msg.id), idx)
 
         return sorted(rows, key=_key)

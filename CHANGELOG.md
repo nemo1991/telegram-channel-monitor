@@ -8,8 +8,12 @@
 ## [2.0.9] - 2026-11-22
 
 主题:**UI 测试瘦身 + 媒体页行操作重构 + 媒体按需下载**。默认档只取元数据与
-缩略图、不下原文件;新增「同步时下载媒体本身」开关与 PENDING 手动下载入口。
-无 schema 变更、无需重新登录;改下载开关后需重启生效。
+缩略图、不下原文件;新增「同步时下载媒体本身」开关与手动下载入口。无 schema
+变更、无需重新登录;改下载开关后需重启生效。
+
+媒体下载状态去掉 PENDING 一态:「未下载」由 `download_status=None` 表达,
+枚举只留 DOWNLOADING / DONE / FAILED。历史库里的 `pending` 字符串在读层
+统一转成 None,不改 schema;重试的中间态由 PENDING 改为 DOWNLOADING。
 
 ### 新增
 
@@ -21,7 +25,7 @@
   `download_thumb` 把缩略图落 `thumbnails` 表、可在媒体页/消息页预览;原文件仍
   以 PENDING 落库。FULL 档缩略图只由下载 worker 下一次(不重复),缩略图落库
   排在消息落库之后以满足外键约束,下载失败仅记录日志、不阻断消息。
-- **PENDING 媒体手动下载**:媒体页行尾新增「下载」图标,对 PENDING 媒体以
+- **未下载媒体手动下载**:媒体页行尾新增「下载」图标,对未下载媒体以
   `force=False` 首次下载原文件(有字节则复用、不重复下);FAILED 媒体继续走
   「重试」(`force=True` 重下损坏文件),两者语义分开。DONE 媒体两者均禁用。
 
@@ -56,11 +60,14 @@
 - **重渲选中态崩溃**:`list.clear()` 同步触发 `itemSelectionChanged` 时,`_rows`
   已是新数据而 `_last_keys` 还是旧索引,`_find_row_by_key` 用旧索引取值抛
   `IndexError`。渲染期间屏蔽选中信号、重置时先清索引、查找加边界守卫三层防护。
-- **PENDING 媒体处理**:PENDING 是默认档「只存元数据」的正常状态,原与
-  DOWNLOADING 同为 ⏳ 易误认卡住 —— 改显「未下载」灰字 + tooltip 说明。新增
-  底部「下载所选」/「下载全部待下」批量入口(走筛选视图、逐条复用首下守卫)。
-  修无 downloader 时先写 DOWNLOADING 再静默返回导致永久卡死的 bug:保持
-  PENDING 并把原因写进 tooltip。
+- **未下载媒体处理**:原 PENDING 状态与 DOWNLOADING 同为 ⏳ 易误认卡住 ——
+  改显「未下载」灰字 + tooltip 说明。新增底部「下载所选」/「下载全部待下」
+  批量入口(走筛选视图、逐条复用首下守卫)。修无 downloader 时先写 DOWNLOADING
+  再静默返回导致永久卡死的 bug:保持未下载状态并把原因写进 tooltip。
+- **移除 PENDING 状态**:`MediaDownloadStatus` 从四态减为三态,「未下载」改用
+  `download_status is None`。存储层仍把未下载写成物理值 `pending`(Schema 不变),
+  读层统一转回 None;状态下拉新增「未下载」档筛选,重试中间态直接转 DOWNLOADING。
+  CSV 导出的未下载状态写 `undownloaded`。
 
 ## [2.0.8] - 2026-11-22
 

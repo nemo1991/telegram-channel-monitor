@@ -58,7 +58,7 @@ def _photo(object_key: str | None = "media/p.jpg", fid: str | None = None) -> Me
         file_size=1024,
         object_key=object_key,
         object_backend="local",
-        download_status=MediaDownloadStatus.DONE if object_key else MediaDownloadStatus.PENDING,
+        download_status=MediaDownloadStatus.DONE if object_key else None,
         telegram_file_id=fid,
     )
 

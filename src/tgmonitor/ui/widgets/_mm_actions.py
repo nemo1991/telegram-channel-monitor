@@ -65,7 +65,7 @@ class ActionsMixin(_Base):
             status = row[2].download_status
             if status == MediaDownloadStatus.FAILED:
                 has_failed = True
-            elif status == MediaDownloadStatus.PENDING:
+            elif status is None:
                 has_pending = True
             if has_failed and has_pending:
                 break
@@ -93,7 +93,7 @@ class ActionsMixin(_Base):
             self.batch_retry_requested.emit(keys)
 
     def _on_batch_download(self) -> None:
-        """2026-11-22 用户选型:下载选中行里的 PENDING(其余状态忽略)。"""
+        """2026-11-22 用户选型:下载选中行里的未下载媒体(其余状态忽略)。"""
         keys = [k for k in self._selected_keys() if self._row_is_pending(k)]
         if keys:
             self.batch_download_requested.emit(keys)
@@ -170,4 +170,4 @@ class ActionsMixin(_Base):
 
     def _row_is_pending(self, key: _RowKey) -> bool:
         r = self._find_row_by_key(key)
-        return r is not None and r[2].download_status == MediaDownloadStatus.PENDING
+        return r is not None and r[2].download_status is None

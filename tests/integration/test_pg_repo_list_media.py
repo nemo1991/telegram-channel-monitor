@@ -140,7 +140,7 @@ async def test_list_media_with_status_filter(
                 _photo("ok1", status=MediaDownloadStatus.DONE),
                 _photo("fail1", status=MediaDownloadStatus.FAILED),
                 _photo("ok2", status=MediaDownloadStatus.DONE),
-                _photo("pend1", status=MediaDownloadStatus.PENDING),
+                _photo("pend1", status=None),
             ],
         )
     )

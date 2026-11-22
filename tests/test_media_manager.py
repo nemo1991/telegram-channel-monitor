@@ -1033,10 +1033,10 @@ async def test_download_without_downloader_keeps_pending(
 
     m = await storage.get_message(100, 20)
     assert m is not None
-    assert m.media[0].download_status is MediaDownloadStatus.PENDING
+    assert m.media[0].download_status is None
     assert m.media[0].download_error and "下载器" in m.media[0].download_error
     assert len(events) == 1 and events[0].media is not None
-    assert events[0].media.download_status is MediaDownloadStatus.PENDING
+    assert events[0].media.download_status is None
 
 
 async def test_download_all_pending_batch(app: AppService, storage: StorageRepository) -> None:
@@ -1090,4 +1090,4 @@ async def test_download_all_pending_respects_channel_filter(
 
     assert n == 1 and calls == ["f40"]
     m = await storage.get_message(200, 41)
-    assert m is not None and m.media[0].download_status is MediaDownloadStatus.PENDING
+    assert m is not None and m.media[0].download_status is None

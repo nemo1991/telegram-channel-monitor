@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import (
+    UNDOWNLOADED_FILTER,
     ChannelDTO,
     MediaDownloadStatus,
     MediaDTO,
@@ -124,7 +125,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     # C++ 32 位 int,真实 Telegram chat_id 会让 shiboken OverflowError 污染
     # slot 的 error indicator,首个 Qt 调用(如 render_pixmap 的 QPixmap())
     # 随即 SystemError;详见 ChannelListCard.item_double_clicked 的注释。
-    # 2026-11-22 v2.0.9 FR-06:下载 PENDING 媒体原文件,同签名;PR-5 接线到 VM。
+    # 2026-11-22 v2.0.9 FR-06:下载未下载媒体原文件,同签名;PR-5 接线到 VM。
     download_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     open_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     retry_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
@@ -139,7 +140,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     # 批量操作 — payload 是 list[_RowKey]
     batch_retry_requested = Signal(list)
     batch_delete_requested = Signal(list)
-    # 2026-11-22 用户选型:批量下载 PENDING(所选 / 当前筛选全部)
+    # 2026-11-22 用户选型:批量下载未下载(所选 / 当前筛选全部)
     batch_download_requested = Signal(list)
     download_all_pending_requested = Signal()
 
@@ -258,10 +259,13 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         return cmb
 
     def _build_status_filter(self) -> QComboBox:
-        """顶部 Status ▼ — index 0 = None 占位,后续枚举所有 MediaDownloadStatus。"""
+        """顶部 Status ▼ — index 0 = None 占位,「未下载」+ 三个已启动下载态。"""
         cmb = QComboBox()
         cmb.setMinimumWidth(120)
         cmb.addItem(self.tr("全部状态"), None)
+        # 2026-11-22:枚举删 PENDING 后,「未下载」档用哨兵 data 表达,
+        # controller 翻成 undownloaded=True 筛 download_status is None。
+        cmb.addItem(self.tr("未下载"), UNDOWNLOADED_FILTER)
         for st in MediaDownloadStatus:
             cmb.addItem(st.value, st)
         self.cmb_status = cmb
@@ -391,7 +395,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self.btn_delete_sel.clicked.connect(self._on_batch_delete)
         actions.addWidget(self.btn_delete_sel)
 
-        # 2026-11-22 用户选型:批量下载选中的 PENDING(仅 PENDING 可下)
+        # 2026-11-22 用户选型:批量下载选中的未下载(仅未下载可下)
         self.btn_download_sel = QPushButton(self.tr("下载所选"))
         self.btn_download_sel.setCursor(Qt.PointingHandCursor)
         self.btn_download_sel.setEnabled(False)
@@ -440,7 +444,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         )
         actions.addWidget(self.chk_zip_thumbs)
 
-        # 2026-11-22 用户选型:一键下完当前筛选视图的全部 PENDING
+        # 2026-11-22 用户选型:一键下完当前筛选视图的全部未下载
         self.btn_download_all = QPushButton(self.tr("下载全部待下"))
         self.btn_download_all.setCursor(Qt.PointingHandCursor)
         self.btn_download_all.setToolTip(self.tr("下载当前筛选视图里全部未下载的媒体原文件"))
@@ -518,9 +522,9 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         return self.tr("错误: {err}")
 
     def _tr_pending_hint(self) -> str:
-        """PENDING 状态列 tooltip — 说明这是默认档的正常状态,可手动下载。"""
+        """未下载状态列 tooltip — 说明这是默认档的正常状态,可手动下载。"""
         return self.tr("未下载原文件(默认只存元数据);点行尾下载图标或批量下载")
 
     def _tr_downloading_hint(self) -> str:
-        """DOWNLOADING 状态列 tooltip — 与 PENDING 的「未下载」明确区分。"""
+        """DOWNLOADING 状态列 tooltip — 与「未下载」明确区分。"""
         return self.tr("正在下载原文件…")

@@ -168,7 +168,7 @@ async def test_preview_pending_status_excluded(svc: AppService):
             text="",
             media=[
                 _photo(1024, MediaDownloadStatus.DONE, "media/done.jpg"),
-                _photo(9999, MediaDownloadStatus.PENDING, None),
+                _photo(9999, None, None),
                 _photo(8888, MediaDownloadStatus.FAILED, None),
             ],
         )
