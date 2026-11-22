@@ -27,10 +27,13 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from tgmonitor.core.dto import (  # noqa: E402
+    ChannelDTO,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
     MessageDTO,
+    SortDir,
+    SortKey,
 )
 from tgmonitor.ui.widgets._mm_base import _RowKey  # noqa: E402
 from tgmonitor.ui.widgets.media_manager_widget import (  # noqa: E402
@@ -98,8 +101,10 @@ def _row_buttons(w: MediaManagerWidget) -> list[QToolButton]:
 
 def _row_menu(w: MediaManagerWidget) -> QMenu:
     more = next(b for b in _row_buttons(w) if b.objectName() == "mediaRowMore")
-    menu = more.menu()
-    assert menu is not None, "⋯ 按钮应挂 QMenu"
+    # 2026-11-22:不再 setMenu —— 挂 menu 会让原生样式多画一个下箭头。
+    assert more.menu() is None, "⋯ 不应 setMenu(会多一个原生下箭头)"
+    menu = more.findChild(QMenu, "mediaRowMenu")
+    assert menu is not None, "⋯ 点击弹出的 QMenu 应作为按钮子对象存在"
     return menu
 
 
@@ -326,3 +331,117 @@ def test_menu_action_trigger_emits_correct_args(
     getattr(widget, signal_name).connect(lambda c, m, i: got.append((c, m, i)))
     _row_menu(widget).actions()[action_idx].trigger()
     assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
+
+
+# ---- 2026-11-22 媒体页修复:翻页 / 频道名 ----------------------------------
+
+
+def test_page_nav_are_icon_tool_buttons(widget: MediaManagerWidget) -> None:
+    """翻页箭头为 tinted SVG 图标按钮,不再依赖字体 glyph。"""
+    from PySide6.QtWidgets import QToolButton  # noqa: PLC0415
+
+    for btn, name in ((widget.btn_prev, "mediaPagePrev"), (widget.btn_next, "mediaPageNext")):
+        assert isinstance(btn, QToolButton)
+        assert btn.objectName() == name
+        assert not btn.icon().isNull(), f"{name} 缺图标"
+        assert not btn.text(), f"{name} 不应有字形文本"
+        assert btn.toolTip() in ("上一页", "下一页")
+
+
+def test_current_filters_carry_offset_limit_and_sort(widget: MediaManagerWidget) -> None:
+    """UI 每页 50、当前页 2 → offset=100 / limit=50,sort 也一并导出。"""
+    widget._page = 2
+    widget._total = 137
+    widget.cmb_sort.setCurrentIndex(0)
+    widget.cmb_dir.setCurrentIndex(0)
+    f = widget.current_filters()
+    assert f["offset"] == 100
+    assert f["limit"] == 50
+    assert f["sort"] is SortKey.DATE
+    assert f["sort_dir"] is SortDir.DESC
+
+
+def test_page_clamp_requests_reload(widget: MediaManagerWidget) -> None:
+    """总数变小导致当前页越界 → 钳回合法页并主动 refresh,避免空白页。"""
+    calls: list[int] = []
+    widget.refresh_requested.connect(lambda: calls.append(1))
+    widget._page = 4
+    widget.on_media_loaded(([], 51))  # 只剩 2 页
+    assert widget._page == 1
+    assert widget.lbl_page.text() == "2 / 2"
+    assert len(calls) == 1, f"钳制后应重拉一次: {calls}"
+
+
+def test_refresh_controller_forwards_all_pagination_args() -> None:
+    """回归守卫:controller 不得 drop offset / limit / sort / sort_dir。"""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: PLC0415
+        MediaActionsController,
+    )
+
+    f = {
+        "channel_id": CHANNEL_ID,
+        "status": None,
+        "media_type": None,
+        "search": "",
+        "sort": SortKey.SIZE,
+        "sort_dir": SortDir.ASC,
+        "offset": 150,
+        "limit": 50,
+        "total": 200,
+    }
+    got: dict[str, object] = {}
+
+    def fake_load(**kwargs: object) -> None:
+        got.update(kwargs)
+
+    ctx = SimpleNamespace(
+        media_manager=SimpleNamespace(
+            set_monitored_channels=lambda _channels: None,
+            current_filters=lambda: f,
+        ),
+        vm=SimpleNamespace(load_media_list=fake_load, monitored_channels={}),
+    )
+    MediaActionsController(ctx).on_media_refresh()
+    assert got == {
+        "channel_id": CHANNEL_ID,
+        "status": None,
+        "media_type": None,
+        "search": "",
+        "limit": 50,
+        "offset": 150,
+        "sort": SortKey.SIZE,
+        "sort_dir": SortDir.ASC,
+    }
+
+
+def test_channel_filter_chinese_placeholder_and_title(widget: MediaManagerWidget) -> None:
+    """频道下拉重建后占位仍是中文,列表项以频道名(title)为主。"""
+    channels = [
+        ChannelDTO(id=CHANNEL_ID, title="产品研发交流群", username="dev_room"),
+        ChannelDTO(id=1002, title="行业资讯速递"),
+    ]
+    widget.set_monitored_channels(channels)
+    texts = [widget.cmb_channel.itemText(i) for i in range(widget.cmb_channel.count())]
+    assert texts == ["全部频道", "产品研发交流群", "行业资讯速递"]
+    assert not any(t.startswith("@") for t in texts), "下拉不应只显 @username"
+
+
+def test_row_channel_label_prefers_title(widget: MediaManagerWidget) -> None:
+    """列表「所属频道」列以频道名为主,@username 只进 tooltip。"""
+    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
+
+    ch = ChannelDTO(id=CHANNEL_ID, title="产品研发交流群", username="dev_room")
+    widget.set_monitored_channels([ch])
+    _render(widget, MediaDownloadStatus.DONE)
+    item: QListWidgetItem = widget.list.item(0)
+    row = widget.list.itemWidget(item)
+    assert row is not None
+    texts = [lbl.text() for lbl in row.findChildren(QLabel)]
+    assert "产品研发交流群" in texts
+    assert "@dev_room" not in texts
+    assert any(
+        lbl.text() == "产品研发交流群" and lbl.toolTip() == "@dev_room"
+        for lbl in row.findChildren(QLabel)
+    )

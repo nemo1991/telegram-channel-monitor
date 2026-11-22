@@ -30,6 +30,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from tgmonitor.core.dto import SortDir, SortKey
+from tgmonitor.ui.widgets._mm_base import _channel_name
 
 if TYPE_CHECKING:
     # 2026-10-20 plan-batch10-β:让 mypy 视 FilterMixin 为 QWidget 间接子类,
@@ -84,16 +85,25 @@ class FilterMixin(_Base):
     # ---- 分页(2026-08-25 v1.3.0 PR #6)----
 
     def _render_page_info(self) -> None:
-        """更新 `lbl_page` 文字 + btn_prev/btn_next enabled 状态。"""
+        """更新 `lbl_page` 文字 + btn_prev/btn_next enabled 状态。
+
+        2026-11-22 修:总数变小导致当前页越界时,钳制后必须先 emit refresh
+        用修正后的 offset 重拉,否则本页 rows 属于旧 offset,列表会空白到
+        用户手动刷新。钳制只发生在此分支,不会与 `_on_page_prev/next` 的
+        主动 refresh 叠加。
+        """
         total_pages = (
             max(1, (self._total + self._page_size - 1) // self._page_size) if self._total else 1
         )
         # 当前 page 不能超 total_pages(极端 case:total 变小后,_page 还在旧 max)
-        if self._page >= total_pages:
+        clamped = self._page >= total_pages
+        if clamped:
             self._page = max(0, total_pages - 1)
         self.lbl_page.setText(f"{self._page + 1} / {total_pages}")
         self.btn_prev.setEnabled(self._page > 0)
         self.btn_next.setEnabled(self._page + 1 < total_pages)
+        if clamped:
+            self.refresh_requested.emit()
 
     def _on_page_prev(self) -> None:
         """上一页 — 触发 refresh,VM 会带新 offset。"""
@@ -127,11 +137,12 @@ class FilterMixin(_Base):
         self._monitored_channels = {c.id: c for c in channels}
         self.cmb_channel.blockSignals(True)
         self.cmb_channel.clear()
-        self.cmb_channel.addItem("All channels", None)
-        # 按 title 排序
-        for c in sorted(channels, key=lambda x: (x.title or "").lower()):
-            label = c.display
-            self.cmb_channel.addItem(label, c.id)
+        # 2026-11-22 修:原硬编码 "All channels" 在 VM 推频道列表后把中文占位
+        # 冲掉;统一走 facade 文案访问器。下拉项 title 优先(不再只显 @username)。
+        self.cmb_channel.addItem(self._tr_all_channels(), None)
+        # 按频道名排序
+        for c in sorted(channels, key=lambda x: _channel_name(x).lower()):
+            self.cmb_channel.addItem(_channel_name(c), c.id)
         # 恢复选中
         if cur is not None:
             for i in range(self.cmb_channel.count()):
@@ -157,5 +168,8 @@ class FilterMixin(_Base):
             "sort": sort if isinstance(sort, SortKey) else SortKey.DATE,
             "sort_dir": sort_dir if isinstance(sort_dir, SortDir) else SortDir.DESC,
             "offset": self._page * self._page_size,
+            # 2026-11-22 修:UI 每页 50,VM 默认 limit=1000 —— 不显式透传
+            # limit 会让 page N/M 的 M 按 50 算、实际一页拉 1000 条。
+            "limit": self._page_size,
             "total": self._total,
         }

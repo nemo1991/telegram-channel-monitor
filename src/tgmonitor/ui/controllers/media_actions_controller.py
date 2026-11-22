@@ -74,6 +74,12 @@ class MediaActionsController:
             status=f["status"],
             media_type=f["media_type"],
             search=f["search"],
+            # 2026-11-22 修:原实现只透传 4 个 filter,drop 了 offset/sort/
+            # sort_dir/limit —— 翻页永远拉第一页,排序下拉也点了没反应。
+            limit=f["limit"],
+            offset=f["offset"],
+            sort=f["sort"],
+            sort_dir=f["sort_dir"],
         )
 
     # ============================================================

@@ -34,6 +34,8 @@ Contributors)。
 | `src/tgmonitor/resources/icons/media_open.svg`         | Lucide `external-link` |
 | `src/tgmonitor/resources/icons/media_retry.svg`        | Lucide `rotate-ccw` |
 | `src/tgmonitor/resources/icons/media_more.svg`         | Lucide `ellipsis` |
+| `src/tgmonitor/resources/icons/page_prev.svg`          | Lucide `chevron-left` |
+| `src/tgmonitor/resources/icons/page_next.svg`          | Lucide `chevron-right` |
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
 
