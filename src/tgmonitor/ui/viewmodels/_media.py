@@ -239,6 +239,19 @@ class MediaMixin(_Base):
 
         run_coro(self.loop, _go(), error_label="delete_media_batch")
 
+    def download_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
+        """下载 PENDING media 原文件(2026-11-22 v2.0.9 FR-06)。
+
+        后台 fire app.media.download_media(force=False);core 发 MediaDownloaded
+        事件 → `_on_media_downloaded` 订阅者刷新列表。不在 on_success 碰 widget
+        (run_coro 回调跑在后台 loop 线程,触碰 Qt widget 会 SIGSEGV)。
+        """
+
+        async def _go() -> None:
+            await self.app.media.download_media(channel_id, telegram_msg_id, media_idx)
+
+        run_coro(self.loop, _go(), error_label="download_media")
+
     def retry_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
         """单条 retry — 后台 fire app.media.retry_media。"""
 
