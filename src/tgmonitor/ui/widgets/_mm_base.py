@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaType
+from tgmonitor.core.dto import ChannelDTO, MediaDownloadStatus, MediaType
 
 # ---------- 类型 / emoji 映射 ----------
 
@@ -67,6 +67,16 @@ class _RowKey:
     channel_id: int
     telegram_msg_id: int
     media_idx: int
+
+
+def _channel_name(ch: ChannelDTO) -> str:
+    """频道名优先的展示串 — title 为主,缺失才退 `#id`。
+
+    2026-11-22 修:`ChannelDTO.display` 对公开频道返回 `@username`,在媒体页
+    下拉和「所属频道」列里看不到频道名。这里统一改成 title 优先;完整信息
+    (`@username` / `#id title`)留给 tooltip,不占列表横向空间。
+    """
+    return ch.title.strip() if ch.title else f"#{ch.id}"
 
 
 def _format_size(n: int | None) -> str:

@@ -46,6 +46,7 @@ from tgmonitor.ui.widgets._mm_base import (
     _MEDIA_ICONS,
     _STATUS_TEXT,
     LIGHTBOX_PREVIEWABLE_TYPES,
+    _channel_name,
     _format_size,
     _RowKey,
 )
@@ -370,12 +371,13 @@ class RenderMixin(_Base):
         2026-09-01 v1.5.1 PR #B3:status 列 label 存到 self._status_labels,
         on_download_progress 事件按 _RowKey 定位行 + setText。
         """
-        # channel name(优先 monitored_channels,否则 #channel_id)
+        # 频道名优先(2026-11-22 修);完整 @username / #id 信息放 tooltip,
+        # 不占列表横向空间。未缓存的频道才退 #id。
         ch = self._monitored_channels.get(msg.channel_id)
-        ch_label = ch.display if ch else f"#{msg.channel_id}"
+        ch_label = _channel_name(ch) if ch else f"#{msg.channel_id}"
         lbl_channel = QLabel(ch_label)
         lbl_channel.setFixedWidth(140)
-        lbl_channel.setToolTip(ch_label)
+        lbl_channel.setToolTip(ch.display if ch else ch_label)
         hbox.addWidget(lbl_channel)
 
         # msg id + type
@@ -424,7 +426,7 @@ class RenderMixin(_Base):
         icon_name: str,
         tooltip: str,
         enabled: bool,
-        on_clicked: Callable[[bool], None],
+        on_clicked: Callable[[bool], None] | None = None,
     ) -> QToolButton:
         """常驻行操作图标按钮(QToolButton + tinted 图标 + objectName + tooltip)。
 
@@ -437,7 +439,8 @@ class RenderMixin(_Base):
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.PointingHandCursor)
         btn.setEnabled(enabled)
-        btn.clicked.connect(on_clicked)
+        if on_clicked is not None:
+            btn.clicked.connect(on_clicked)
         return btn
 
     def _build_action_buttons_in_row(
@@ -505,14 +508,12 @@ class RenderMixin(_Base):
         )
 
         # ⋯ 菜单:低频操作 Reveal / Copy / Delete。菜单项 emit 与常驻图标同一组 Signal。
-        def _no_op(_checked: bool = False) -> None:
-            """⋯ 按钮自身不 emit;点击由 setMenu + InstantPopup 弹出菜单处理。"""
-            return None
-
-        btn_more = self._make_row_action_button(
-            "mediaRowMore", "media_more", "更多操作", True, _no_op
-        )
+        # 2026-11-22 修:不再 setMenu —— QToolButton 一旦挂 menu,无论 QSS 怎么
+        # 压 ::menu-button,原生样式仍会在 ⋯ 右侧再画一个下箭头。改成 clicked
+        # 时手动 popup,既只有一个图标,又保留同一份 QMenu(作为 btn 子对象)。
+        btn_more = self._make_row_action_button("mediaRowMore", "media_more", "更多操作", True)
         menu = QMenu(btn_more)
+        menu.setObjectName("mediaRowMenu")
         act_reveal = menu.addAction("在文件管理器中显示")
         act_reveal.triggered.connect(emit_reveal)
         act_copy = menu.addAction("复制文件路径")
@@ -531,8 +532,12 @@ class RenderMixin(_Base):
             act_delete.setEnabled(True)
 
         menu.aboutToShow.connect(_refresh_menu_enabled)
-        btn_more.setMenu(menu)
-        btn_more.setPopupMode(QToolButton.InstantPopup)
+
+        def _show_menu(_checked: bool = False) -> None:
+            """点 ⋯ 直接在按钮下方弹菜单 —— 不挂 setMenu,故无原生下箭头。"""
+            menu.popup(btn_more.mapToGlobal(btn_more.rect().bottomLeft()))
+
+        btn_more.clicked.connect(_show_menu)
         hbox.addWidget(btn_more)
 
     def _apply_row_hover_style(self, w: QWidget) -> None:

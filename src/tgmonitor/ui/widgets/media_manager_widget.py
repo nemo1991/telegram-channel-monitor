@@ -13,7 +13,7 @@
 └────────────────────────────────────────────────────┘
 
 实现要点:
-- 每行是 QListWidgetItem + 自绘 widget(`setItemWidget`)显示 icon + 频道 + 类型 + 状态 + 文件名 + 大小 + 3 个按钮
+- 每行是 QListWidgetItem + 自绘 widget(`setItemWidget`)显示 icon + 频道 + 类型 + 状态 + 文件名 + 大小 + 4 个图标按钮
 - 顶部 3 个 QComboBox + 1 个 QLineEdit(search)+ 1 个 QPushButton(refresh)
 - 底部 4 个 QPushButton + 1 个 QLabel(footer 状态)
 - 所有用户操作 → emit Qt Signal → MainWindow 调 VM
@@ -26,8 +26,10 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +54,7 @@ from tgmonitor.core.dto import (
     SortDir,
     SortKey,
 )
+from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.thumbnail import ThumbnailCache
 from tgmonitor.ui.widgets._mm_actions import ActionsMixin
 
@@ -72,6 +76,9 @@ from tgmonitor.ui.widgets._mm_render import RenderMixin
 __all__ = ["LIGHTBOX_PREVIEWABLE_TYPES", "MediaManagerWidget"]
 
 log = logging.getLogger(__name__)
+
+# 翻页箭头与行尾图标同一色调(统一 action icon 观感)。
+_PAGE_NAV_TINT = QColor("#5b9cf5")
 
 
 # 2026-10-20 plan-batch10-α:`_RowKey` / `_format_size` / `_MEDIA_ICONS` /
@@ -210,7 +217,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         root.addLayout(self._build_toolbar())
 
     def _build_filter_bar(self) -> QHBoxLayout:
-        """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search搜索] [◀ Page N/M ▶] [Refresh]。"""
+        """[Channel ▼] [Type ▼] [Status ▼] [Sort ▼] [Dir ▼] [Search搜索] [‹ Page N/M ›] [Refresh]。"""
         hbox = QHBoxLayout()
         hbox.setSpacing(8)
         hbox.addWidget(self._build_channel_filter())
@@ -230,10 +237,10 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         return hbox
 
     def _build_channel_filter(self) -> QComboBox:
-        """顶部 Channel ▼ — index 0 = None 占位('All Channels')。"""
+        """频道下拉 — index 0 = None 占位(「全部频道」)。"""
         cmb = QComboBox()
         cmb.setMinimumWidth(160)
-        cmb.addItem(self.tr("全部频道"), None)
+        cmb.addItem(self._tr_all_channels(), None)
         self.cmb_channel = cmb
         return cmb
 
@@ -295,13 +302,33 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self.edit_search = edit
         return edit
 
-    def _build_prev_button(self) -> QPushButton:
-        """2026-08-25 v1.3.0 PR #6:分页上一页按钮。"""
-        btn = QPushButton("◀")
+    def _build_page_nav_button(
+        self,
+        object_name: str,
+        icon_name: str,
+        tooltip: str,
+        on_clicked: Callable[[], None],
+    ) -> QToolButton:
+        """翻页箭头 — tinted SVG 图标按钮。
+
+        2026-11-22 修:原 `QPushButton("◀"/"▶")` 依赖字体里的实心三角 glyph,
+        部分平台显示成方块 / 大小不一。改用 Lucide chevron SVG + 与行尾图标
+        同色 tint,跨字体/平台一致,且 QToolButton 原生支持 disabled 态。
+        """
+        btn = QToolButton()
+        btn.setObjectName(object_name)
+        btn.setIcon(tinted_action_icon(icon_name, _PAGE_NAV_TINT))
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setFixedWidth(32)
-        btn.setToolTip(self.tr("上一页"))
-        btn.clicked.connect(self._on_page_prev)
+        btn.setFixedSize(28, 28)
+        btn.setToolTip(self.tr(tooltip))
+        btn.clicked.connect(on_clicked)
+        return btn
+
+    def _build_prev_button(self) -> QToolButton:
+        """上一页箭头(图标按钮,tooltip/信号同旧版)。"""
+        btn = self._build_page_nav_button(
+            "mediaPagePrev", "page_prev", "上一页", self._on_page_prev
+        )
         self.btn_prev = btn
         return btn
 
@@ -313,13 +340,11 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self.lbl_page = lbl
         return lbl
 
-    def _build_next_button(self) -> QPushButton:
-        """2026-08-25 v1.3.0 PR #6:分页下一页按钮。"""
-        btn = QPushButton("▶")
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setFixedWidth(32)
-        btn.setToolTip(self.tr("下一页"))
-        btn.clicked.connect(self._on_page_next)
+    def _build_next_button(self) -> QToolButton:
+        """下一页箭头(图标按钮,tooltip/信号同旧版)。"""
+        btn = self._build_page_nav_button(
+            "mediaPageNext", "page_next", "下一页", self._on_page_next
+        )
         self.btn_next = btn
         return btn
 
@@ -423,6 +448,12 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         return lbl
 
     # ---- 文案访问器(供 mixin 侧取字串)----
+
+    # ---- FilterMixin 用 ----
+
+    def _tr_all_channels(self) -> str:
+        """频道下拉的「全部」占位 — FilterMixin 重建下拉时复用同一中文串。"""
+        return self.tr("全部频道")
 
     # ---- ActionsMixin 用(10-γ)----
 

@@ -612,11 +612,26 @@ QTableWidget#statsTable QHeaderView::section:last {
     margin: 0;
 }
 #mediaActionDownload:hover, #mediaActionOpen:hover, #mediaActionRetry:hover,
-#mediaRowMore:hover, #mediaRowMore::menu-button:hover {
+#mediaRowMore:hover {
     background: #eef4fd;
     border-radius: 4px;
 }
 #mediaActionDownload:disabled, #mediaActionOpen:disabled, #mediaActionRetry:disabled {
+    opacity: 0.45;
+}
+
+/* 媒体页翻页箭头 — 与行尾 action icon 同三态。 */
+#mediaPagePrev, #mediaPageNext {
+    border: none;
+    background: transparent;
+    padding: 2px;
+    margin: 0;
+}
+#mediaPagePrev:hover, #mediaPageNext:hover {
+    background: #eef4fd;
+    border-radius: 4px;
+}
+#mediaPagePrev:disabled, #mediaPageNext:disabled {
     opacity: 0.45;
 }
 
