@@ -7,7 +7,7 @@
 - `_media_bytes` — load_thumbnail_bytes / _read_objectstore_bytes /
   load_media_bytes
 - `_media_os_actions` — open_media / open_media_with_result / reveal_in_folder
-  / _spawn_reveal / copy_media_path / _stage_s3_to_tmp / retry_media
+  / _spawn_reveal / copy_media_path / _stage_s3_to_tmp / download_media / retry_media
 - `_media_reconcile` — reconcile_orphans
 
 `MediaService` 退化为主类 facade,公共 method 1 行 thin delegate,签名

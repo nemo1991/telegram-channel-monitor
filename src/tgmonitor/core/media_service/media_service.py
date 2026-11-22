@@ -173,6 +173,18 @@ class MediaService:
         """
         return await _crud.delete_by_channel(self, channel_id)
 
+    async def download_media(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> None:
+        """下载 PENDING media 原文件(force=False)— 2026-11-22 v2.0.9 FR-06。
+
+        thin delegate → `core.media_service._media_os_actions.download_media`。
+        """
+        await _os_actions.download_media(self, channel_id, telegram_msg_id, media_idx)
+
     async def retry_media(
         self,
         channel_id: int,

@@ -5,7 +5,8 @@
 - `reveal_in_folder` + `_spawn_reveal`(OS 子进程唤起文件管理器)
 - `copy_media_path` — 写剪贴板(Local / Folder / S3 三分支)
 - `_stage_s3_to_tmp` — S3 bytes 写到 tmp 文件
-- `retry_media` — 重下 FAILED media(走 downloader)
+- `download_media` — 下载 PENDING media 原文件(force=False;v2.0.9 FR-06)
+- `retry_media` — 重下 FAILED media(force=True,清旧 bytes)
 
 2026-11-11 v2.0.0 Phase 3:本 module 是 retry / reveal 的唯一实现
 (AppService 侧重复实现已删)。`_spawn_reveal` 是 module-level plain
@@ -326,6 +327,73 @@ async def _stage_s3_to_tmp(ms: MediaService, med: MediaDTO) -> Path:
     return tmp_path
 
 
+# ---------- download_media(PENDING 首次下载) ----------
+
+
+async def download_media(
+    ms: MediaService,
+    channel_id: int,
+    telegram_msg_id: int,
+    media_idx: int,
+) -> None:
+    """下载 PENDING media 的原文件(2026-11-22 v2.0.9 FR-06 / D5=β)。
+
+    与 `retry_media` 的区别:
+    - 状态守卫:PENDING(或 DOWNLOADING 续传)才下;重试只接 FAILED
+    - 不清旧 bytes:首次下载无旧字节;即使有,`download_one(force=False)` 的
+      skip-if-stored 快路径会直接返回 DONE,不产生重复下载
+    - force=False:已有字节直接复用;重试 force=True 强制重下损坏文件
+    - 不发 MediaRetried(那是「重下」语义);成功/失败仍发 MediaDownloaded,
+      VM 据此刷新列表
+    """
+    msg = await ms._storage.get_message(channel_id, telegram_msg_id)
+    if msg is None or media_idx >= len(msg.media):
+        return
+    med = msg.media[media_idx]
+    if med.download_status not in (
+        MediaDownloadStatus.PENDING,
+        MediaDownloadStatus.DOWNLOADING,
+    ):
+        return
+
+    # 标 DOWNLOADING 先落库(用户立刻可见「下载中」,崩溃后重启可续)。
+    new_med = dataclasses.replace(
+        med,
+        download_status=MediaDownloadStatus.DOWNLOADING,
+        download_error=None,
+    )
+    new_media = list(msg.media)
+    new_media[media_idx] = new_med
+    new_msg = dataclasses.replace(msg, media=list(new_media))
+    await ms._storage.update_message(new_msg)
+
+    if ms._downloader is not None:
+        try:
+            updated = await ms._downloader.download_one(
+                msg_pk=msg.id,
+                media=new_med,
+                force=False,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("download media failed: %s", e)
+            updated = dataclasses.replace(
+                new_med,
+                download_status=MediaDownloadStatus.FAILED,
+                download_error=f"下载异常: {e}",
+            )
+        final_media = list(new_msg.media)
+        final_media[media_idx] = updated
+        final_msg = dataclasses.replace(new_msg, media=list(final_media))
+        await ms._storage.update_message(final_msg)
+        await ms._bus.publish(
+            MediaDownloaded(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media=updated,
+            )
+        )
+
+
 # ---------- retry_media ----------
 
 
@@ -413,5 +481,6 @@ __all__ = [
     "_spawn_reveal",
     "copy_media_path",
     "_stage_s3_to_tmp",
+    "download_media",
     "retry_media",
 ]

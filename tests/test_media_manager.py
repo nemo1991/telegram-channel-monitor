@@ -925,3 +925,91 @@ async def test_open_media_invokes_openurl_off_main_thread(
     assert seen[0] != main_tid, (
         f"openUrl 仍在主 loop 跑(fix 未生效),main_tid={main_tid} openUrl_tid={seen[0]}"
     )
+
+
+# ---- 2026-11-22 v2.0.9 FR-06:PENDING 手动下载(force=False) -------------
+
+
+async def test_download_pending_uses_force_false(
+    app: AppService,
+    storage: StorageRepository,
+) -> None:
+    """PENDING media 手动下载 → download_one(force=False),落库转 DONE。"""
+    download_calls: list[tuple] = []
+
+    class _StubDownloader:
+        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+            download_calls.append((msg_pk, media.telegram_file_id, force))
+            return dataclasses.replace(
+                media,
+                object_key=f"media/{media.telegram_file_id}.bin",
+                object_backend="local",
+                download_status=MediaDownloadStatus.DONE,
+            )
+
+    app.downloader = _StubDownloader()  # type: ignore[assignment]
+    await storage.save_message(_msg(100, 2, [_base_media("f2")]))
+    await app.media.download_media(100, 2, 0)
+
+    assert download_calls and download_calls[0][2] is False, "首次下载必须 force=False"
+    m = await storage.get_message(100, 2)
+    assert m is not None
+    assert m.media[0].download_status is MediaDownloadStatus.DONE
+    assert m.media[0].object_key
+
+
+async def test_download_skips_done_and_failed(
+    app: AppService,
+    storage: StorageRepository,
+) -> None:
+    """DONE / FAILED media 调 download_media → no-op(只 PENDING/DOWNLOADING 可下)。"""
+    download_calls: list[tuple] = []
+
+    class _StubDownloader:
+        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+            download_calls.append((msg_pk, force))
+            return media
+
+    app.downloader = _StubDownloader()  # type: ignore[assignment]
+    await storage.save_message(
+        _msg(100, 3, [_done_media("f3", "media/f3.jpg"), _failed_media("f4")])
+    )
+    await app.media.download_media(100, 3, 0)  # DONE
+    await app.media.download_media(100, 3, 1)  # FAILED
+
+    assert download_calls == [], "DONE/FAILED 不应走 download_media"
+
+
+async def test_download_emits_media_downloaded(
+    app: AppService,
+    storage: StorageRepository,
+) -> None:
+    """下载成功/失败仍发 MediaDownloaded(VM 据此刷新列表)。"""
+    received: list[MediaDownloaded] = []
+
+    class _StubDownloader:
+        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+            return dataclasses.replace(
+                media,
+                object_key="media/f5.bin",
+                download_status=MediaDownloadStatus.DONE,
+            )
+
+    app.downloader = _StubDownloader()  # type: ignore[assignment]
+    app.bus.subscribe(MediaDownloaded, lambda e: received.append(e))  # type: ignore[arg-type]
+    await storage.save_message(_msg(100, 5, [_base_media("f5")]))
+    await app.media.download_media(100, 5, 0)
+
+    assert len(received) == 1
+    assert received[0].media is not None
+    assert received[0].media.download_status is MediaDownloadStatus.DONE
+
+
+async def test_download_noop_when_missing_message(
+    app: AppService,
+    storage: StorageRepository,
+) -> None:
+    """消息不存在 / idx 越界 → no-op,不抛。"""
+    await app.media.download_media(999, 999, 0)  # 不崩即过
+    await storage.save_message(_msg(100, 6, [_base_media("f6")]))
+    await app.media.download_media(100, 6, 99)  # idx 越界
