@@ -194,6 +194,13 @@ class EditableSettings:
     objectstore_bucket: str = "tgmonitor"
 
     media_policy: str = "thumbnail"
+    # 2026-11-22 v2.0.9 FR-05(D4=β):UI「同步时下载媒体本身」BOOL 镜像字段。
+    # 只控制是否下载原文件;缩略图属元数据侧、始终保留。
+    # - None(默认)= 未由 UI 设置 → to_settings() 按既有 media_policy 走(向后
+    #   兼容既有直接构造 EditableSettings(media_policy=...) 的调用方/测试);
+    # - True → MediaPolicy.FULL;False → THUMBNAIL(元数据侧)。
+    # from_settings() 总是显式赋值(由 policy == FULL 推导),UI 往返无漂移。
+    media_download_on_sync: bool | None = None
     # 单文件下载上限(MB);0 = 无限制。Settings 里是 bytes,
     # 这里是 MB(UI 显示友好)。
     media_max_mb: int = 200
@@ -225,6 +232,9 @@ class EditableSettings:
             objectstore_secret_key=s.objectstore_secret_key or "",
             objectstore_bucket=s.objectstore_bucket,
             media_policy=s.media_policy.value,
+            # FR-05:只有 FULL 是「媒体本身侧」→ 开关勾选;metadata/thumbnail
+            # 都属元数据侧 → 未勾选(纠正 v1.0 把 thumbnail 误归开的映射)。
+            media_download_on_sync=s.media_policy == MediaPolicy.FULL,
             # Settings 里是 bytes,UI 显示 MB。整除:999_999 bytes 显示 0 MB
             # 不够精细,但跟"无配置 = 200 MB"对齐;用户改 MB 后 × 1024*1024。
             media_max_mb=s.media_max_bytes // (1024 * 1024),
@@ -264,6 +274,15 @@ class EditableSettings:
 
     def to_settings(self) -> Settings:
         """UI 表单 → 完整 Settings(已 validate 过的前提)。"""
+        # FR-05:UI BOOL 开关是 media_policy 的唯一真值源(非 None 时)。
+        # True → FULL(下原文件);False → THUMBNAIL(元数据侧;旧 metadata 值
+        # 借此规范化为默认档)。None = 无 UI 参与,保留既有 media_policy 字段。
+        policy_value = self.media_policy
+        if self.media_download_on_sync is True:
+            policy_value = MediaPolicy.FULL.value
+        elif self.media_download_on_sync is False:
+            # 关侧统一规范化为默认档 thumbnail(含旧 metadata 值)。
+            policy_value = MediaPolicy.THUMBNAIL.value
         return Settings(
             api_id=self.api_id,
             api_hash=self.api_hash,
@@ -282,7 +301,7 @@ class EditableSettings:
             objectstore_bucket=self.objectstore_backend == "s3"
             and self.objectstore_bucket
             or self.objectstore_bucket,
-            media_policy=MediaPolicy(self.media_policy),
+            media_policy=MediaPolicy(policy_value),
             media_max_bytes=self.media_max_mb * 1024 * 1024,
             data_root=Path(self.data_root),
             proxy=(self.proxy.strip() or None),

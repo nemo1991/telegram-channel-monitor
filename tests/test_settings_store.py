@@ -253,3 +253,63 @@ def test_diff_settings_sqlite_path_change():
     d = diff_settings(old, new)
     assert d.storage_changed is True
     assert d.needs_relogin is False
+
+
+# ---- 2026-11-22 v2.0.9 FR-05:下载媒体本身 BOOL 开关映射 ------------------
+
+
+def test_from_settings_bool_only_full_is_on():
+    """只有 FULL 是「媒体本身侧」→ 开关开;metadata/thumbnail 都归关侧。"""
+    for policy, expected in (
+        (MediaPolicy.FULL, True),
+        (MediaPolicy.THUMBNAIL, False),
+        (MediaPolicy.METADATA, False),
+    ):
+        s = _settings(media_policy=policy)
+        e = EditableSettings.from_settings(s)
+        assert e.media_download_on_sync is expected, f"{policy.value} 映射错误"
+        assert e.media_policy == policy.value  # 原值保留(不丢 CLI 兼容值)
+
+
+def test_to_settings_bool_on_writes_full():
+    """开关开 → TG_MEDIA_POLICY=full。"""
+    e = EditableSettings(
+        api_id=1,
+        api_hash="h" * 32,
+        media_download_on_sync=True,
+        media_policy="thumbnail",
+    )
+    assert e.to_settings().media_policy is MediaPolicy.FULL
+
+
+def test_to_settings_bool_off_normalizes_to_thumbnail():
+    """开关关 → thumbnail(元数据侧);旧 metadata/full 值均规范化。"""
+    for old_policy in ("metadata", "thumbnail", "full"):
+        e = EditableSettings(
+            api_id=1,
+            api_hash="h" * 32,
+            media_download_on_sync=False,
+            media_policy=old_policy,
+        )
+        assert e.to_settings().media_policy is MediaPolicy.THUMBNAIL
+
+
+def test_to_settings_none_preserves_legacy_media_policy():
+    """media_download_on_sync=None(无 UI 参与)→ 保留既有 media_policy 字段。"""
+    for policy in ("metadata", "thumbnail", "full"):
+        e = EditableSettings(api_id=1, api_hash="h" * 32, media_policy=policy)
+        assert e.to_settings().media_policy is MediaPolicy(policy)
+
+
+def test_bool_roundtrip_no_drift():
+    """from_settings → to_settings 往返,全三档策略字段无漂移。"""
+    for policy in (MediaPolicy.FULL, MediaPolicy.THUMBNAIL, MediaPolicy.METADATA):
+        s = _settings(media_policy=policy)
+        e = EditableSettings.from_settings(s)
+        out = e.to_settings()
+        # full 保持 full;thumbnail 保持 thumbnail;metadata 规范化到 thumbnail。
+        expected = MediaPolicy.FULL if policy is MediaPolicy.FULL else MediaPolicy.THUMBNAIL
+        assert out.media_policy is expected
+        assert EditableSettings.from_settings(out).media_download_on_sync is (
+            policy is MediaPolicy.FULL
+        )

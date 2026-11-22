@@ -514,11 +514,18 @@ class SettingsPage(QWidget):
         s = FormSection(
             title=self.tr("策略"),
             fields=(
+                # 2026-11-22 v2.0.9 FR-05:三态 media_policy 下拉换成单一 BOOL。
+                # 文案明确「媒体本身=原文件」,缩略图属元数据侧、不受此开关管辖。
                 FieldDef(
-                    key="media_policy",
-                    kind=FieldKind.CHOICE,
-                    label=self.tr("媒体下载:"),
-                    options=tuple(MediaPolicy),
+                    key="media_download_on_sync",
+                    kind=FieldKind.BOOL,
+                    label=self.tr("同步时下载媒体本身"),
+                    default=False,
+                    tooltip=self.tr(
+                        "仅控制是否下载原文件;元数据与缩略图始终保留。"
+                        "关闭时不下原文件,开启后新消息中的媒体原文件将自动下载。"
+                        "修改后重启生效。"
+                    ),
                 ),
                 FieldDef(
                     key="media_max_mb",
@@ -545,7 +552,7 @@ class SettingsPage(QWidget):
         gb = s.build(self)
         root.addWidget(gb)
         self._sections.append(s)
-        self.cmb_media = s._widgets["media_policy"]
+        self.chk_media_download = s._widgets["media_download_on_sync"]
         self.in_media_max = s._widgets["media_max_mb"]
         self.in_data_root = s._widgets["data_root"]
 
@@ -669,7 +676,15 @@ class SettingsPage(QWidget):
             objectstore_access_key=str(collected.get("os_access_key", "")).strip(),
             objectstore_secret_key=str(collected.get("os_secret_key", "")).strip(),
             objectstore_bucket=str(collected.get("os_bucket", "")).strip() or "tgmonitor",
-            media_policy=collected.get("media_policy", MediaPolicy.THUMBNAIL),
+            # FR-05:BOOL 开关是唯一真值源 —— 勾选→full(媒体本身侧),
+            # 未勾选→thumbnail(元数据侧)。to_settings() 会按镜像字段再算一次,
+            # 这里同时填 media_policy 保证直接读 Collected 的调用方也是规范值。
+            media_download_on_sync=bool(collected.get("media_download_on_sync", False)),
+            media_policy=(
+                MediaPolicy.FULL.value
+                if collected.get("media_download_on_sync", False)
+                else MediaPolicy.THUMBNAIL.value
+            ),
             media_max_mb=int(collected.get("media_max_mb", 200)),
             data_root=str(collected.get("data_root", "")).strip() or str(ud),
             proxy=str(collected.get("proxy", "")).strip(),
@@ -707,8 +722,8 @@ class SettingsPage(QWidget):
             "os_access_key": s.objectstore_access_key or "",
             "os_secret_key": s.objectstore_secret_key or "",
             "os_bucket": s.objectstore_bucket or "",
-            # policy
-            "media_policy": s.media_policy,
+            # policy — FR-05:只有 FULL 是「开」,metadata/thumbnail 都是关侧。
+            "media_download_on_sync": s.media_policy == MediaPolicy.FULL,
             "media_max_mb": s.media_max_bytes // (1024 * 1024),
             "data_root": str(s.data_root),
             # sync
