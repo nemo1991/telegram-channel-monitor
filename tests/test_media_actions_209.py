@@ -445,3 +445,174 @@ def test_row_channel_label_prefers_title(widget: MediaManagerWidget) -> None:
         lbl.text() == "产品研发交流群" and lbl.toolTip() == "@dev_room"
         for lbl in row.findChildren(QLabel)
     )
+
+
+# ---- 2026-11-22 重渲选中态 IndexError 守卫 ---------------------------------
+
+
+def test_find_row_by_key_stale_index_returns_none(widget: MediaManagerWidget) -> None:
+    """`_last_keys`(旧) 长于 `_rows`(新) 时,旧 key 不许越界取值。"""
+    med = _media(MediaDownloadStatus.DONE)
+    widget._rows = [(_msg(), MEDIA_IDX, med)]
+    widget._last_keys = [
+        _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX),
+        _RowKey(999, 999, 0),  # 旧行,索引 1 已超出新 _rows
+    ]
+    assert widget._find_row_by_key(_RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)) is widget._rows[0]
+    assert widget._find_row_by_key(_RowKey(999, 999, 0)) is None
+    widget._on_selection_changed()  # 不抛即过
+
+
+def test_rerender_after_select_all_no_index_error(
+    widget: MediaManagerWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """选中 50 行后重渲成 3 行 —— `list.clear()` 的选中变化不得越界。
+
+    PySide6 默认吞掉 slot 里的异常(只打印 traceback),所以这里给
+    `_find_row_by_key` 挂一层捕获器,把异常收进列表再断言为空。
+    """
+    errors: list[Exception] = []
+    orig = widget._find_row_by_key
+
+    def guarded(key: _RowKey) -> object:
+        try:
+            return orig(key)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+            return None
+
+    monkeypatch.setattr(widget, "_find_row_by_key", guarded)
+
+    def many(n: int) -> list[tuple[MessageDTO, int, MediaDTO]]:
+        return [
+            (
+                _msg(msg_id=i),
+                MEDIA_IDX,
+                _media(MediaDownloadStatus.FAILED if i % 2 else MediaDownloadStatus.DONE),
+            )
+            for i in range(n)
+        ]
+
+    widget.on_media_loaded((many(50), 50))
+    widget.list.selectAll()
+    widget.on_media_loaded((many(3), 3))
+    assert errors == [], f"重渲期间发生异常: {errors}"
+    assert len(widget._last_keys) == 3
+    assert not widget.btn_delete_sel.isEnabled(), "重渲后选中集应清空"
+
+
+# ---- 2026-11-22 用户选型:PENDING 批量下载与状态区分 ------------------------
+
+
+def test_status_text_distinguishes_pending_from_downloading(
+    widget: MediaManagerWidget,
+) -> None:
+    """PENDING 显示「未下载」灰字,DOWNLOADING 才是 ⏳,tooltip 也分开。"""
+    from tgmonitor.ui.widgets._mm_base import _STATUS_TEXT  # noqa: PLC0415
+
+    assert _STATUS_TEXT[MediaDownloadStatus.PENDING] == "未下载"
+    assert _STATUS_TEXT[MediaDownloadStatus.DOWNLOADING] == "⏳"
+
+    key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
+    _render(widget, MediaDownloadStatus.PENDING)
+    pending = widget._status_labels[key]
+    assert pending.text() == "未下载"
+    assert "下载" in pending.toolTip() and "未下载" in pending.toolTip()
+
+    _render(widget, MediaDownloadStatus.DOWNLOADING)
+    downloading = widget._status_labels[key]
+    assert downloading.text() == "⏳"
+    assert downloading.toolTip() != pending.toolTip()
+
+
+def test_pending_download_error_shown_in_tooltip(widget: MediaManagerWidget) -> None:
+    """无 downloader 写下的原因必须能在 PENDING tooltip 里看到。"""
+    from dataclasses import replace  # noqa: PLC0415
+
+    med = replace(
+        _media(MediaDownloadStatus.PENDING),
+        download_error="未配置下载器,无法下载原文件",
+    )
+    widget.on_media_loaded(([(_msg(), MEDIA_IDX, med)], 1))
+    lbl = widget._status_labels[_RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
+    assert "未配置下载器" in lbl.toolTip()
+
+
+def test_batch_download_button_enabled_for_pending_only(
+    widget: MediaManagerWidget,
+) -> None:
+    """选中 PENDING → 「下载所选」可用;选中 DONE → 不可用。"""
+    _render(widget, MediaDownloadStatus.PENDING)
+    widget.list.item(0).setSelected(True)
+    assert widget.btn_download_sel.isEnabled()
+    assert not widget.btn_retry_sel.isEnabled()
+
+    _render(widget, MediaDownloadStatus.DONE)
+    widget.list.item(0).setSelected(True)
+    assert not widget.btn_download_sel.isEnabled()
+
+
+def test_batch_download_emits_only_pending_keys(widget: MediaManagerWidget) -> None:
+    """所选含 PENDING + DONE 时,只 emit PENDING 的 key。"""
+    pending = _media(MediaDownloadStatus.PENDING)
+    done = _media(MediaDownloadStatus.DONE)
+    msg = _msg()
+    widget.on_media_loaded(
+        (
+            [
+                (msg, 0, pending),
+                (msg, 1, done),
+            ],
+            2,
+        )
+    )
+    widget.list.selectAll()
+    got: list[list[_RowKey]] = []
+    widget.batch_download_requested.connect(lambda keys: got.append(keys))
+    widget._on_batch_download()
+    assert len(got) == 1
+    assert got[0] == [_RowKey(CHANNEL_ID, MSG_ID, 0)]
+
+
+def test_download_all_button_emits_signal(widget: MediaManagerWidget) -> None:
+    """「下载全部待下」按钮 emit 无参信号。"""
+    calls: list[int] = []
+    widget.download_all_pending_requested.connect(lambda: calls.append(1))
+    widget.btn_download_all.click()
+    assert calls == [1]
+
+
+def test_download_controller_forwards_batch_and_all() -> None:
+    """控制器把批量选中 / 全部 PENDING 转给 VM,不自己重实现下载逻辑。"""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: PLC0415
+        MediaActionsController,
+    )
+
+    got: dict[str, object] = {}
+    ctx = SimpleNamespace(
+        media_manager=SimpleNamespace(
+            current_filters=lambda: {
+                "channel_id": CHANNEL_ID,
+                "search": "photo",
+                "media_type": MediaType.PHOTO,
+            }
+        ),
+        vm=SimpleNamespace(
+            download_media_batch=lambda keys: got.__setitem__("keys", keys),
+            download_all_pending=lambda **kw: got.__setitem__("all", kw),
+        ),
+    )
+    ctrl = MediaActionsController(ctx)
+    key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
+    ctrl.on_media_batch_download([key])
+    ctrl.on_media_download_all_pending()
+    assert got == {
+        "keys": [key],
+        "all": {
+            "channel_id": CHANNEL_ID,
+            "search": "photo",
+            "media_type": MediaType.PHOTO,
+        },
+    }

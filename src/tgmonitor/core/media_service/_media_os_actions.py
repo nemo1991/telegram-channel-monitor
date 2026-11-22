@@ -6,6 +6,7 @@
 - `copy_media_path` — 写剪贴板(Local / Folder / S3 三分支)
 - `_stage_s3_to_tmp` — S3 bytes 写到 tmp 文件
 - `download_media` — 下载 PENDING media 原文件(force=False;v2.0.9 FR-06)
+- `download_all_pending` — 批量下载筛选视图里的 PENDING(2026-11-22 用户选型)
 - `retry_media` — 重下 FAILED media(force=True,清旧 bytes)
 
 2026-11-11 v2.0.0 Phase 3:本 module 是 retry / reveal 的唯一实现
@@ -33,6 +34,7 @@ from tgmonitor.core.dto import (
     CopyResult,
     MediaDownloadStatus,
     MediaDTO,
+    MediaType,
     OpenMediaResult,
     RevealResult,
 )
@@ -356,6 +358,34 @@ async def download_media(
     ):
         return
 
+    # 2026-11-22 修:无 downloader 时保持 PENDING,写原因供 UI tooltip 显示。
+    # 原实现先标 DOWNLOADING 落库、再因 `if ms._downloader is not None`
+    # 静默返回 —— 状态永久卡在 DOWNLOADING,重启也不会 backfill(只有 FULL
+    # 策略会入队),用户点「下载」再点「重试」都救不回来。
+    if ms._downloader is None:
+        stuck = dataclasses.replace(
+            med,
+            download_error="未配置下载器,无法下载原文件",
+        )
+        final_media = list(msg.media)
+        final_media[media_idx] = stuck
+        await ms._storage.update_message(dataclasses.replace(msg, media=final_media))
+        log.warning(
+            "download_media: downloader 未配置,保持 PENDING: %s/%s/%d",
+            channel_id,
+            telegram_msg_id,
+            media_idx,
+        )
+        # 发事件让 UI 重拉一次,以便 tooltip 显示原因(PENDING 不发通知)。
+        await ms._bus.publish(
+            MediaDownloaded(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media=stuck,
+            )
+        )
+        return
+
     # 标 DOWNLOADING 先落库(用户立刻可见「下载中」,崩溃后重启可续)。
     new_med = dataclasses.replace(
         med,
@@ -392,6 +422,44 @@ async def download_media(
                 media=updated,
             )
         )
+
+
+# ---------- download_all_pending(批量 PENDING 首下) ----------
+
+
+async def download_all_pending(
+    ms: MediaService,
+    *,
+    channel_id: int | None = None,
+    search: str = "",
+    media_type: MediaType | None = None,
+) -> int:
+    """批量下载当前筛选视图的全部 PENDING 媒体 — 返回发起下载数。
+
+    2026-11-22 用户选型:历史积压的 PENDING 一次清掉。先分页把所有 key 收齐
+    再逐个下 —— 不能边遍历边下,状态从 PENDING 变 DONE 会让后续 offset 跳过行。
+    每条仍走 `download_media` 的守卫与事件,失败转 FAILED 不会中断批次。
+    """
+    page_size = 500
+    keys: list[tuple[int, int, int]] = []
+    offset = 0
+    while True:
+        rows = await ms._storage.list_media(
+            channel_ids=[channel_id] if channel_id is not None else None,
+            status=MediaDownloadStatus.PENDING,
+            media_type=media_type,
+            search=search,
+            limit=page_size,
+            offset=offset,
+        )
+        keys.extend((msg.channel_id, msg.telegram_msg_id, idx) for msg, idx, _med in rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+
+    for cid, mid, idx in keys:
+        await download_media(ms, cid, mid, idx)
+    return len(keys)
 
 
 # ---------- retry_media ----------
@@ -482,5 +550,6 @@ __all__ = [
     "copy_media_path",
     "_stage_s3_to_tmp",
     "download_media",
+    "download_all_pending",
     "retry_media",
 ]

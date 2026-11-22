@@ -53,6 +53,14 @@
   ⋯ 菜单不再 `setMenu`,只显示省略号图标、不叠加原生下箭头;频道下拉占位统一
   中文「全部频道」,下拉项与列表「所属频道」列改以频道名为首(@username / id
   保留在 tooltip)。
+- **重渲选中态崩溃**:`list.clear()` 同步触发 `itemSelectionChanged` 时,`_rows`
+  已是新数据而 `_last_keys` 还是旧索引,`_find_row_by_key` 用旧索引取值抛
+  `IndexError`。渲染期间屏蔽选中信号、重置时先清索引、查找加边界守卫三层防护。
+- **PENDING 媒体处理**:PENDING 是默认档「只存元数据」的正常状态,原与
+  DOWNLOADING 同为 ⏳ 易误认卡住 —— 改显「未下载」灰字 + tooltip 说明。新增
+  底部「下载所选」/「下载全部待下」批量入口(走筛选视图、逐条复用首下守卫)。
+  修无 downloader 时先写 DOWNLOADING 再静默返回导致永久卡死的 bug:保持
+  PENDING 并把原因写进 tooltip。
 
 ## [2.0.8] - 2026-11-22
 

@@ -101,16 +101,16 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
     | 归属 | 文件 | 内容 |
     |---|---|---|
-    | **facade(本类)** | `media_manager_widget.py` | 15 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` 文案访问器** |
+    | **facade(本类)** | `media_manager_widget.py` | 17 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 22 个 widget 引用)+ **11 个 `_tr_*()` 文案访问器** |
     | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_monitored_channels` |
     | `RenderMixin` | `_mm_render.py` | 16 method — VM 注入 / 缩略图 LRU / 列表重渲 / 行构建 / meta 列 / 行内按钮 / 下载进度 |
-    | `ActionsMixin` | `_mm_actions.py` | 11 method — 选中集 / 批量重试·删除·清频道 / CSV·ZIP 导出 |
+    | `ActionsMixin` | `_mm_actions.py` | 13 method — 选中集 / 批量重试·删除·下载 / 清频道 / CSV·ZIP 导出 |
     | 共享常量 | `_mm_base.py` | `_RowKey` / `_format_size` / `_MEDIA_ICONS` / `_STATUS_TEXT` / `LIGHTBOX_PREVIEWABLE_TYPES` |
 
     ## 三条硬约束
 
     1. **Signal 全留 facade**(偏离 plan-batch9 的「Signal 下沉 mixin」):
-       15 个对 `main_window` 公开契约,留本类让 API 一眼可见(PR-5 前 download 仅定义未 connect)。
+       17 个对 `main_window` 公开契约,留本类让 API 一眼可见。
        Mixin 侧只 `self.<signal>.emit(...)`,不定义也不改 Signal。
     2. **文案访问器留 facade 类体内**:mixin 侧一律调 `self._tr_xxx()`
        取字串,保持 facade 作为对外契约的唯一入口。
@@ -139,6 +139,9 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     # 批量操作 — payload 是 list[_RowKey]
     batch_retry_requested = Signal(list)
     batch_delete_requested = Signal(list)
+    # 2026-11-22 用户选型:批量下载 PENDING(所选 / 当前筛选全部)
+    batch_download_requested = Signal(list)
+    download_all_pending_requested = Signal()
 
     # 顶部刷新 / 底部 prune
     refresh_requested = Signal()
@@ -388,6 +391,14 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self.btn_delete_sel.clicked.connect(self._on_batch_delete)
         actions.addWidget(self.btn_delete_sel)
 
+        # 2026-11-22 用户选型:批量下载选中的 PENDING(仅 PENDING 可下)
+        self.btn_download_sel = QPushButton(self.tr("下载所选"))
+        self.btn_download_sel.setCursor(Qt.PointingHandCursor)
+        self.btn_download_sel.setEnabled(False)
+        self.btn_download_sel.setToolTip(self.tr("下载选中行里尚未下载的媒体原文件"))
+        self.btn_download_sel.clicked.connect(self._on_batch_download)
+        actions.addWidget(self.btn_download_sel)
+
         # 2026-08-25 PR #4:按频道批量删除 — 清空 filter 选中频道的全部 message
         # (含 media + bytes);MainWindow 接到信号二次确认后再调 VM。
         self.btn_clear_channel = QPushButton(self.tr("清空频道"))
@@ -428,6 +439,13 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
             self.tr("打包 ZIP 时,同时拉每条媒体 thumb_key 写入 thumb_<arcname>"),
         )
         actions.addWidget(self.chk_zip_thumbs)
+
+        # 2026-11-22 用户选型:一键下完当前筛选视图的全部 PENDING
+        self.btn_download_all = QPushButton(self.tr("下载全部待下"))
+        self.btn_download_all.setCursor(Qt.PointingHandCursor)
+        self.btn_download_all.setToolTip(self.tr("下载当前筛选视图里全部未下载的媒体原文件"))
+        self.btn_download_all.clicked.connect(self.download_all_pending_requested.emit)
+        actions.addWidget(self.btn_download_all)
 
         actions.addStretch(1)
 
@@ -498,3 +516,11 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     def _tr_error_fmt(self) -> str:
         """FAILED 状态列 tooltip 模板(占位符 `{err}`)。"""
         return self.tr("错误: {err}")
+
+    def _tr_pending_hint(self) -> str:
+        """PENDING 状态列 tooltip — 说明这是默认档的正常状态,可手动下载。"""
+        return self.tr("未下载原文件(默认只存元数据);点行尾下载图标或批量下载")
+
+    def _tr_downloading_hint(self) -> str:
+        """DOWNLOADING 状态列 tooltip — 与 PENDING 的「未下载」明确区分。"""
+        return self.tr("正在下载原文件…")

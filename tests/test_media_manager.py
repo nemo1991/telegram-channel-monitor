@@ -1013,3 +1013,81 @@ async def test_download_noop_when_missing_message(
     await app.media.download_media(999, 999, 0)  # 不崩即过
     await storage.save_message(_msg(100, 6, [_base_media("f6")]))
     await app.media.download_media(100, 6, 99)  # idx 越界
+
+
+# ---- 2026-11-22 用户选型:PENDING 死锁 + 批量下载 -------------------------
+
+
+async def test_download_without_downloader_keeps_pending(
+    app: AppService,
+    storage: StorageRepository,
+    bus: EventBus,
+) -> None:
+    """无 downloader 时保持 PENDING + 写原因,不再静默卡在 DOWNLOADING。"""
+    events: list[MediaDownloaded] = []
+    bus.subscribe(MediaDownloaded, lambda e: events.append(e))  # type: ignore[arg-type]
+    app.downloader = None  # type: ignore[assignment]
+    await storage.save_message(_msg(100, 20, [_base_media("f20")]))
+
+    await app.media.download_media(100, 20, 0)
+
+    m = await storage.get_message(100, 20)
+    assert m is not None
+    assert m.media[0].download_status is MediaDownloadStatus.PENDING
+    assert m.media[0].download_error and "下载器" in m.media[0].download_error
+    assert len(events) == 1 and events[0].media is not None
+    assert events[0].media.download_status is MediaDownloadStatus.PENDING
+
+
+async def test_download_all_pending_batch(app: AppService, storage: StorageRepository) -> None:
+    """批量下载把所有 PENDING 转 DONE,已 DONE 的不重复下。"""
+    calls: list[str] = []
+
+    class _StubDownloader:
+        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+            calls.append(media.telegram_file_id)
+            return dataclasses.replace(
+                media,
+                object_key=f"media/{media.telegram_file_id}.bin",
+                object_backend="local",
+                download_status=MediaDownloadStatus.DONE,
+            )
+
+    app.downloader = _StubDownloader()  # type: ignore[assignment]
+    await storage.save_message(_msg(100, 30, [_base_media("f30"), _base_media("f31")]))
+    await storage.save_message(_msg(100, 31, [_base_media("f32")]))
+    await storage.save_message(_msg(200, 32, [_done_media("f33", "media/f33.jpg")]))
+
+    n = await app.media.download_all_pending()
+
+    assert n == 3
+    assert sorted(calls) == ["f30", "f31", "f32"]
+    m = await storage.get_message(100, 30)
+    assert m is not None and all(x.download_status is MediaDownloadStatus.DONE for x in m.media)
+
+
+async def test_download_all_pending_respects_channel_filter(
+    app: AppService, storage: StorageRepository
+) -> None:
+    """「下载全部」只覆盖当前频道筛选视图。"""
+    calls: list[str] = []
+
+    class _StubDownloader:
+        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+            calls.append(str(media.telegram_file_id))
+            return dataclasses.replace(
+                media,
+                object_key=f"media/{media.telegram_file_id}.bin",
+                object_backend="local",
+                download_status=MediaDownloadStatus.DONE,
+            )
+
+    app.downloader = _StubDownloader()  # type: ignore[assignment]
+    await storage.save_message(_msg(100, 40, [_base_media("f40")]))
+    await storage.save_message(_msg(200, 41, [_base_media("f41")]))
+
+    n = await app.media.download_all_pending(channel_id=100)
+
+    assert n == 1 and calls == ["f40"]
+    m = await storage.get_message(200, 41)
+    assert m is not None and m.media[0].download_status is MediaDownloadStatus.PENDING
