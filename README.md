@@ -66,7 +66,7 @@ TG_API_HASH=abcdef0123456789abcdef0123456789
 | `TG_OBJECTSTORE_BACKEND` | `local` \| `folder`(默认,两级分片) \| `s3` |
 | `TG_OBJECTSTORE_ROOT` | 本地对象存储根目录 |
 | `TG_OBJECTSTORE_*` | S3 endpoint / region / key / bucket |
-| `TG_MEDIA_POLICY` | `metadata` \| `thumbnail`(默认) \| `full`(元数据+缩略图+原文件) |
+| `TG_MEDIA_POLICY` | `thumbnail`(默认,元数据侧:元数据+缩略图、不下原文件) \| `full`(媒体本身侧:额外下载原文件) \| `metadata`(元数据侧子集,CLI 兼容保留);设置页对应「同步时下载媒体本身」开关,改后重启生效 |
 | `TG_PROXY` | SOCKS5 代理,如 `socks5://user:pass@127.0.0.1:1080` |
 
 所有数据与 `.env` 存于 OS 标准用户数据目录,见 [数据目录](#-数据目录)。
