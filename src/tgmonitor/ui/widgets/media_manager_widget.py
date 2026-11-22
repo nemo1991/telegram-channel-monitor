@@ -94,7 +94,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
     | 归属 | 文件 | 内容 |
     |---|---|---|
-    | **facade(本类)** | `media_manager_widget.py` | 14 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` 文案访问器** |
+    | **facade(本类)** | `media_manager_widget.py` | 15 Signal(对外契约,`main_window.py` 按名 connect)+ `__init__` 单点 init(10 个实例字段)+ 15 个静态 chrome `_build_*`(再建 20 个 widget 引用)+ **9 个 `_tr_*()` 文案访问器** |
     | `FilterMixin` | `_mm_filter.py` | 6 method — 筛选联动(300ms debounce)/ 分页导航 / `current_filters` / `set_monitored_channels` |
     | `RenderMixin` | `_mm_render.py` | 16 method — VM 注入 / 缩略图 LRU / 列表重渲 / 行构建 / meta 列 / 行内按钮 / 下载进度 |
     | `ActionsMixin` | `_mm_actions.py` | 11 method — 选中集 / 批量重试·删除·清频道 / CSV·ZIP 导出 |
@@ -103,7 +103,7 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     ## 三条硬约束
 
     1. **Signal 全留 facade**(偏离 plan-batch9 的「Signal 下沉 mixin」):
-       14 个全被 `main_window` connect,是对外公开契约,留本类让 API 一眼可见。
+       15 个对 `main_window` 公开契约,留本类让 API 一眼可见(PR-5 前 download 仅定义未 connect)。
        Mixin 侧只 `self.<signal>.emit(...)`,不定义也不改 Signal。
     2. **文案访问器留 facade 类体内**:mixin 侧一律调 `self._tr_xxx()`
        取字串,保持 facade 作为对外契约的唯一入口。
@@ -117,6 +117,8 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
     # C++ 32 位 int,真实 Telegram chat_id 会让 shiboken OverflowError 污染
     # slot 的 error indicator,首个 Qt 调用(如 render_pixmap 的 QPixmap())
     # 随即 SystemError;详见 ChannelListCard.item_double_clicked 的注释。
+    # 2026-11-22 v2.0.9 FR-06:下载 PENDING 媒体原文件,同签名;PR-5 接线到 VM。
+    download_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     open_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     retry_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
     delete_requested = Signal("qlonglong", int, int)  # type: ignore[arg-type]
