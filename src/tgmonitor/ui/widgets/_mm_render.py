@@ -28,16 +28,19 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
-    QPushButton,
+    QMenu,
     QSizePolicy,
+    QToolButton,
     QWidget,
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType, MessageDTO
+from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.thumbnail import cache_key_for, render_pixmap
 from tgmonitor.ui.widgets._mm_base import (
     _MEDIA_ICONS,
@@ -218,7 +221,17 @@ class RenderMixin(_Base):
         self._maybe_load_all_thumbs()
 
     def _reset_list_for_render(self) -> None:
-        """重渲前清空 list + 三个 row 容器,避免旧 label 跨渲染持有引用。"""
+        """重渲前清空 list + 三个 row 容器,避免旧 label 跨渲染持有引用。
+
+        2026-11-22 v2.0.9 FR-03:`list.clear()` 只移除 item,挂载的 self-drawn
+        widget 不会立即析构,可能在 viewport 残留幽灵行。对齐频道页 `_clear_rows`
+        (`channel_widget.py:348-355`)先对 itemWidget 调 `deleteLater()`。
+        """
+        for i in range(self.list.count()):
+            old_item = self.list.item(i)
+            old_widget = self.list.itemWidget(old_item) if old_item is not None else None
+            if old_widget is not None:
+                old_widget.deleteLater()
         self.list.clear()
         # 局部标注:mypy 在 mixin 里看不到 facade `__init__` 的字段声明,
         # 空 list 赋值必须自带类型(2026-10-20 plan-batch10-δ)
@@ -294,10 +307,14 @@ class RenderMixin(_Base):
         return _handler
 
     def _row_widget_size_hint(self) -> Any:
-        """单行自绘 widget 的 size hint(高度 = 缩略图 40px + 上下 margin)。"""
+        """单行自绘 widget 的 size hint(高度 = 缩略图 40px + 上下 margin)。
+
+        2026-11-22 v2.0.9:宽度 800→760 —— 行尾按钮从 5 个文字压到 4 个图标后
+        不再需要那么宽,窄窗口优先保文件名列(唯一 Expanding 列)。
+        """
         from PySide6.QtCore import QSize
 
-        return QSize(800, 48)
+        return QSize(760, 48)
 
     def _build_row_widget(
         self,
@@ -398,89 +415,125 @@ class RenderMixin(_Base):
         self._status_labels[key] = lbl_status
         hbox.addWidget(lbl_status)
 
+    # 行操作图标统一色调(与频道页 #channelRowAction 同色,见 channel_widget.py:383)。
+    _ROW_ACTION_TINT = QColor("#5b9cf5")
+
+    def _make_row_action_button(
+        self,
+        object_name: str,
+        icon_name: str,
+        tooltip: str,
+        enabled: bool,
+        on_clicked: Callable[[bool], None],
+    ) -> QToolButton:
+        """常驻行操作图标按钮(QToolButton + tinted 图标 + objectName + tooltip)。
+
+        2026-11-22 v2.0.9 FR-03:替换原文字 QPushButton,省横向空间。图标走
+        `tinted_action_icon()` 注入固定色(QSS 无法直接给 QToolButton 图标上色)。
+        """
+        btn = QToolButton()
+        btn.setObjectName(object_name)
+        btn.setIcon(tinted_action_icon(icon_name, self._ROW_ACTION_TINT))
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setEnabled(enabled)
+        btn.clicked.connect(on_clicked)
+        return btn
+
     def _build_action_buttons_in_row(
         self,
         hbox: QHBoxLayout,
         med: MediaDTO,
         key: _RowKey,
     ) -> None:
-        """行内 5 个 action 按钮:Open / Reveal / Copy / Retry / Delete。
+        """行尾操作:3 个高频图标常驻(下载/打开/重试)+ ⋯ 菜单(Reveal/Copy/Delete)。
 
-        - Open / Reveal / Copy:DONE 才可点
-          - 2026-08-27 v1.4.0 PR #16:S3 后端下 Reveal 自动 disable(S3 无本地路径)
-        - Retry:FAILED 才可点
+        2026-11-22 v2.0.9 FR-03(D2=β):原 5 个文字按钮常驻占 ~838px 超 sizeHint,
+        文件名列先被压没。收敛为 4 个 QToolButton 图标(~100px),低频操作进 ⋯ 菜单。
+
+        状态规则(常驻图标在渲染时按 med 状态设 enabled;菜单项在弹出前按当前行
+        重算,不跨行缓存):
+        - 下载:PENDING 可点(FR-06;PR-2 只 emit,PR-5 接线 VM)
+        - 打开 / Reveal / Copy:DONE 可点
+        - 重试:FAILED 可点
         - Delete:总是可点
         """
-        is_done = med.download_status == MediaDownloadStatus.DONE
+        status = med.download_status
+        is_done = status == MediaDownloadStatus.DONE
 
-        # Open
-        btn_open = QPushButton("Open")
-        btn_open.setFixedHeight(26)
-        btn_open.setCursor(Qt.PointingHandCursor)
-        btn_open.setEnabled(is_done)
-        btn_open.clicked.connect(
-            lambda _checked=False, k=key: self.open_requested.emit(
-                k.channel_id,
-                k.telegram_msg_id,
-                k.media_idx,
+        def emit_download(_checked: bool = False, k: _RowKey = key) -> None:
+            self.download_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        def emit_open(_checked: bool = False, k: _RowKey = key) -> None:
+            self.open_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        def emit_retry(_checked: bool = False, k: _RowKey = key) -> None:
+            self.retry_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        def emit_reveal(_checked: bool = False, k: _RowKey = key) -> None:
+            self.reveal_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        def emit_copy(_checked: bool = False, k: _RowKey = key) -> None:
+            self.copy_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        def emit_delete(_checked: bool = False, k: _RowKey = key) -> None:
+            self.delete_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+
+        # 常驻 3 图标
+        hbox.addWidget(
+            self._make_row_action_button(
+                "mediaActionDownload",
+                "media_download",
+                "下载原文件",
+                status == MediaDownloadStatus.PENDING,
+                emit_download,
             )
         )
-        hbox.addWidget(btn_open)
-
-        # Reveal
-        btn_reveal = QPushButton("Reveal")
-        btn_reveal.setFixedHeight(26)
-        btn_reveal.setCursor(Qt.PointingHandCursor)
-        btn_reveal.setEnabled(is_done)
-        btn_reveal.clicked.connect(
-            lambda _checked=False, k=key: self.reveal_requested.emit(
-                k.channel_id,
-                k.telegram_msg_id,
-                k.media_idx,
+        hbox.addWidget(
+            self._make_row_action_button(
+                "mediaActionOpen", "media_open", "打开文件", is_done, emit_open
             )
         )
-        hbox.addWidget(btn_reveal)
-
-        # Copy
-        btn_copy = QPushButton("Copy")
-        btn_copy.setFixedHeight(26)
-        btn_copy.setCursor(Qt.PointingHandCursor)
-        btn_copy.setEnabled(is_done)
-        btn_copy.clicked.connect(
-            lambda _checked=False, k=key: self.copy_requested.emit(
-                k.channel_id,
-                k.telegram_msg_id,
-                k.media_idx,
+        hbox.addWidget(
+            self._make_row_action_button(
+                "mediaActionRetry",
+                "media_retry",
+                "重试下载",
+                status == MediaDownloadStatus.FAILED,
+                emit_retry,
             )
         )
-        hbox.addWidget(btn_copy)
 
-        # Retry
-        btn_retry = QPushButton("Retry")
-        btn_retry.setFixedHeight(26)
-        btn_retry.setCursor(Qt.PointingHandCursor)
-        btn_retry.setEnabled(med.download_status == MediaDownloadStatus.FAILED)
-        btn_retry.clicked.connect(
-            lambda _checked=False, k=key: self.retry_requested.emit(
-                k.channel_id,
-                k.telegram_msg_id,
-                k.media_idx,
-            )
-        )
-        hbox.addWidget(btn_retry)
+        # ⋯ 菜单:低频操作 Reveal / Copy / Delete。菜单项 emit 与常驻图标同一组 Signal。
+        def _no_op(_checked: bool = False) -> None:
+            """⋯ 按钮自身不 emit;点击由 setMenu + InstantPopup 弹出菜单处理。"""
+            return None
 
-        # Delete(总是可点)
-        btn_delete = QPushButton("Delete")
-        btn_delete.setFixedHeight(26)
-        btn_delete.setCursor(Qt.PointingHandCursor)
-        btn_delete.clicked.connect(
-            lambda _checked=False, k=key: self.delete_requested.emit(
-                k.channel_id,
-                k.telegram_msg_id,
-                k.media_idx,
-            )
+        btn_more = self._make_row_action_button(
+            "mediaRowMore", "media_more", "更多操作", True, _no_op
         )
-        hbox.addWidget(btn_delete)
+        menu = QMenu(btn_more)
+        act_reveal = menu.addAction("在文件管理器中显示")
+        act_reveal.triggered.connect(emit_reveal)
+        act_copy = menu.addAction("复制文件路径")
+        act_copy.triggered.connect(emit_copy)
+        act_delete = menu.addAction("删除")
+        act_delete.triggered.connect(emit_delete)
+
+        def _refresh_menu_enabled(k: _RowKey = key) -> None:
+            """弹出前按当前行状态重算 enabled —— 防跨行缓存(RK-06)。"""
+            row = self._find_row_by_key(k)
+            cur_status = row[2].download_status if row is not None else None
+            cur_done = cur_status == MediaDownloadStatus.DONE
+            act_reveal.setEnabled(cur_done)
+            act_copy.setEnabled(cur_done)
+            # Delete 恒可用;下载/打开/重试在常驻图标上,不进菜单。
+            act_delete.setEnabled(True)
+
+        menu.aboutToShow.connect(_refresh_menu_enabled)
+        btn_more.setMenu(menu)
+        btn_more.setPopupMode(QToolButton.InstantPopup)
+        hbox.addWidget(btn_more)
 
     def _apply_row_hover_style(self, w: QWidget) -> None:
         """行 hover 高亮 — QSS 透明底 + hover 浅蓝。"""

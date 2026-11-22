@@ -8,8 +8,8 @@
   菜单项 enabled 规则、_RowKey 定位协议、LIGHTBOX_PREVIEWABLE_TYPES 反向导出。
 - 几何相关用对象树/相对关系而非 `mapToGlobal`（参考 `test_ui_208.py` 范式）。
 
-v2.0.9 分两步：PR-1 建骨架、覆盖**现状**文字按钮契约（保证绿，先立守护网）；
-PR-2 重构为 QToolButton + ⋯ 菜单后，本文件同 PR 更新为新契约。
+PR-2 起：行尾 4 个 QToolButton 图标（下载/打开/重试/⋯）+ ⋯ 的 QMenu
+（Reveal/Copy/Delete），替换原 5 个文字 QPushButton。
 """
 
 from __future__ import annotations
@@ -19,7 +19,12 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QListWidgetItem, QPushButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QListWidgetItem,
+    QMenu,
+    QToolButton,
+)
 
 from tgmonitor.core.dto import (  # noqa: E402
     MediaDownloadStatus,
@@ -37,6 +42,14 @@ from tgmonitor.ui.widgets.media_manager_widget import (  # noqa: E402
 CHANNEL_ID = -1001375475051
 MSG_ID = 42
 MEDIA_IDX = 0
+
+# 行尾常驻按钮的 objectName（FR-03 契约）。
+ACTION_NAMES = (
+    "mediaActionDownload",
+    "mediaActionOpen",
+    "mediaActionRetry",
+    "mediaRowMore",
+)
 
 
 @pytest.fixture
@@ -75,12 +88,19 @@ def _render(w: MediaManagerWidget, status: MediaDownloadStatus) -> None:
     w.on_media_loaded(([(_msg(), MEDIA_IDX, med)], 1))
 
 
-def _row_buttons(w: MediaManagerWidget) -> list[QPushButton]:
+def _row_buttons(w: MediaManagerWidget) -> list[QToolButton]:
     item: QListWidgetItem = w.list.item(0)
     assert item is not None, "row 0 未渲染"
     row = w.list.itemWidget(item)
     assert row is not None
-    return row.findChildren(QPushButton)
+    return row.findChildren(QToolButton)
+
+
+def _row_menu(w: MediaManagerWidget) -> QMenu:
+    more = next(b for b in _row_buttons(w) if b.objectName() == "mediaRowMore")
+    menu = more.menu()
+    assert menu is not None, "⋯ 按钮应挂 QMenu"
+    return menu
 
 
 # ---- 对外契约:Signal 签名与反向导出 -------------------------------------
@@ -89,6 +109,7 @@ def _row_buttons(w: MediaManagerWidget) -> list[QPushButton]:
 @pytest.mark.parametrize(
     "signal_name",
     [
+        "download_requested",  # 2026-11-22 v2.0.9 FR-06 新增
         "open_requested",
         "retry_requested",
         "delete_requested",
@@ -98,17 +119,12 @@ def _row_buttons(w: MediaManagerWidget) -> list[QPushButton]:
     ],
 )
 def test_row_signals_carry_64bit_channel_id(widget: MediaManagerWidget, signal_name: str) -> None:
-    """PR-1 守护:6 个行 Signal 均承载 64 位 channel_id（PR-2 新增 download 同签名）。"""
+    """7 个行 Signal（含新增 download）均承载 64 位 channel_id。"""
     sig = getattr(widget, signal_name)
     got: list[tuple[int, int, int]] = []
     sig.connect(lambda c, m, i: got.append((c, m, i)))
     sig.emit(CHANNEL_ID, MSG_ID, MEDIA_IDX)
     assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
-
-
-def test_download_signal_not_yet_defined_pr1(widget: MediaManagerWidget) -> None:
-    """PR-1 锚点:download_requested 尚未接线（PR-2 起此断言改为存在且同签名）。"""
-    assert not hasattr(widget, "download_requested")
 
 
 def test_lightbox_previewable_types_reexported() -> None:
@@ -164,47 +180,149 @@ def test_progress_unknown_row_silent(widget: MediaManagerWidget) -> None:
     )  # 不崩即过
 
 
-# ---- 行尾按钮契约（PR-1:现状 5 个文字按钮）------------------------------
+# ---- 行尾按钮契约（PR-2:4 个 QToolButton 图标 + ⋯ 菜单）-------------------
 
 
-@pytest.mark.parametrize("label", ["Open", "Reveal", "Copy", "Retry", "Delete"])
-def test_row_has_five_text_action_buttons_pr1(widget: MediaManagerWidget, label: str) -> None:
-    """PR-1 锚点:现状每行 5 个文字 QPushButton（PR-2 重构后更新为图标契约）。"""
+def test_row_has_four_tool_buttons_with_object_names(
+    widget: MediaManagerWidget,
+) -> None:
+    """每行常驻恰好 4 个 QToolButton,每个有非空且唯一的 objectName。"""
     _render(widget, MediaDownloadStatus.DONE)
     buttons = _row_buttons(widget)
-    assert any(b.text() == label for b in buttons), f"缺少按钮: {label}"
+    assert len(buttons) == 4, f"常驻按钮数应为 4: {len(buttons)}"
+    assert all(isinstance(b, QToolButton) for b in buttons)
+    names = [b.objectName() for b in buttons]
+    assert set(names) == set(ACTION_NAMES), f"objectName 不符: {names}"
+    assert len(set(names)) == 4, f"objectName 应唯一: {names}"
 
 
-def test_row_button_enabled_rules_pr1(widget: MediaManagerWidget) -> None:
-    """现状 enabled 规则:Open/Reveal/Copy 仅 DONE、Retry 仅 FAILED、Delete 恒可用。"""
-    by_label = lambda w: {b.text(): b for b in _row_buttons(w)}  # noqa: E731
+def test_row_buttons_have_tooltips(widget: MediaManagerWidget) -> None:
+    """可访问性:每个图标按钮带非空 tooltip。"""
+    _render(widget, MediaDownloadStatus.DONE)
+    for btn in _row_buttons(widget):
+        assert btn.toolTip(), f"{btn.objectName()} 缺 tooltip"
+
+
+def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
+    """重构后原 5 个文字 QPushButton 命中数为 0(防回退)。"""
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
 
     _render(widget, MediaDownloadStatus.DONE)
-    done = by_label(widget)
-    assert done["Open"].isEnabled()
-    assert done["Reveal"].isEnabled()
-    assert done["Copy"].isEnabled()
-    assert not done["Retry"].isEnabled()
-    assert done["Delete"].isEnabled()
-
-    _render(widget, MediaDownloadStatus.FAILED)
-    failed = by_label(widget)
-    assert not failed["Open"].isEnabled()
-    assert failed["Retry"].isEnabled()
-    assert failed["Delete"].isEnabled()
-
-    _render(widget, MediaDownloadStatus.PENDING)
-    pending = by_label(widget)
-    assert not pending["Open"].isEnabled()
-    assert not pending["Retry"].isEnabled()
-    assert pending["Delete"].isEnabled()
+    item: QListWidgetItem = widget.list.item(0)
+    row = widget.list.itemWidget(item)
+    assert row is not None
+    assert row.findChildren(QPushButton) == []
 
 
-def test_row_button_emits_correct_args_pr1(widget: MediaManagerWidget) -> None:
-    """按钮点击 emit (channel_id, telegram_msg_id, media_idx) —— 64 位 id 不溢出。"""
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (
+            MediaDownloadStatus.PENDING,
+            {"mediaActionDownload": True, "mediaActionOpen": False, "mediaActionRetry": False},
+        ),
+        (
+            MediaDownloadStatus.FAILED,
+            {"mediaActionDownload": False, "mediaActionOpen": False, "mediaActionRetry": True},
+        ),
+        (
+            MediaDownloadStatus.DONE,
+            {"mediaActionDownload": False, "mediaActionOpen": True, "mediaActionRetry": False},
+        ),
+        (
+            MediaDownloadStatus.DOWNLOADING,
+            {"mediaActionDownload": False, "mediaActionOpen": False, "mediaActionRetry": False},
+        ),
+    ],
+)
+def test_row_button_enabled_rules(
+    widget: MediaManagerWidget,
+    status: MediaDownloadStatus,
+    expected: dict[str, bool],
+) -> None:
+    """常驻图标 enabled:下载仅 PENDING、打开仅 DONE、重试仅 FAILED。"""
+    _render(widget, status)
+    by_name = {b.objectName(): b for b in _row_buttons(widget)}
+    for name, enabled in expected.items():
+        assert by_name[name].isEnabled() is enabled, (
+            f"{status.value}: {name} enabled={by_name[name].isEnabled()}, 期望 {enabled}"
+        )
+    assert by_name["mediaRowMore"].isEnabled(), "⋯ 菜单入口恒可用"
+
+
+def test_menu_has_three_actions(widget: MediaManagerWidget) -> None:
+    """⋯ 菜单含 Reveal / Copy / Delete 三项,替代原常驻文字按钮。"""
+    _render(widget, MediaDownloadStatus.DONE)
+    menu = _row_menu(widget)
+    texts = [a.text() for a in menu.actions()]
+    assert len(texts) == 3, f"菜单项数应为 3: {texts}"
+    assert any("显示" in t for t in texts)
+    assert any("复制" in t for t in texts)
+    assert any("删除" in t for t in texts)
+
+
+@pytest.mark.parametrize(
+    ("status", "reveal_copy_enabled"),
+    [
+        (MediaDownloadStatus.DONE, True),
+        (MediaDownloadStatus.PENDING, False),
+        (MediaDownloadStatus.FAILED, False),
+    ],
+)
+def test_menu_enabled_recomputed_on_show(
+    widget: MediaManagerWidget,
+    status: MediaDownloadStatus,
+    reveal_copy_enabled: bool,
+) -> None:
+    """⋯ 菜单 aboutToShow 时按当前行状态重算 Reveal/Copy 的 enabled。
+
+    直接 emit aboutToShow（不 show widget、不触发 paint),断言菜单项 enabled
+    随行状态变化——证明不缓存跨行状态（RK-06）。
+    """
+    _render(widget, status)
+    menu = _row_menu(widget)
+    menu.aboutToShow.emit()
+    reveal, copy, delete = menu.actions()
+    assert reveal.isEnabled() is reveal_copy_enabled
+    assert copy.isEnabled() is reveal_copy_enabled
+    assert delete.isEnabled(), "Delete 恒可用"
+
+
+@pytest.mark.parametrize(
+    ("name", "signal_name"),
+    [
+        ("mediaActionDownload", "download_requested"),
+        ("mediaActionOpen", "open_requested"),
+        ("mediaActionRetry", "retry_requested"),
+    ],
+)
+def test_row_button_click_emits_correct_args(
+    widget: MediaManagerWidget, name: str, signal_name: str
+) -> None:
+    """常驻图标 click emit (channel_id, telegram_msg_id, media_idx) —— 64 位不溢出。"""
+    status = {
+        "mediaActionDownload": MediaDownloadStatus.PENDING,
+        "mediaActionOpen": MediaDownloadStatus.DONE,
+        "mediaActionRetry": MediaDownloadStatus.FAILED,
+    }[name]
+    _render(widget, status)
+    got: list[tuple[int, int, int]] = []
+    getattr(widget, signal_name).connect(lambda c, m, i: got.append((c, m, i)))
+    by_name = {b.objectName(): b for b in _row_buttons(widget)}
+    by_name[name].click()
+    assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
+
+
+@pytest.mark.parametrize(
+    ("action_idx", "signal_name"),
+    [(0, "reveal_requested"), (1, "copy_requested"), (2, "delete_requested")],
+)
+def test_menu_action_trigger_emits_correct_args(
+    widget: MediaManagerWidget, action_idx: int, signal_name: str
+) -> None:
+    """菜单项 trigger emit 与常驻图标同一组 Signal,64 位 id 不溢出。"""
     _render(widget, MediaDownloadStatus.DONE)
     got: list[tuple[int, int, int]] = []
-    widget.reveal_requested.connect(lambda c, m, i: got.append((c, m, i)))
-    by_label = {b.text(): b for b in _row_buttons(widget)}
-    by_label["Reveal"].click()
+    getattr(widget, signal_name).connect(lambda c, m, i: got.append((c, m, i)))
+    _row_menu(widget).actions()[action_idx].trigger()
     assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)]

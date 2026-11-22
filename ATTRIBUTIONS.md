@@ -30,6 +30,10 @@ Contributors)。
 | `src/tgmonitor/resources/icons/nav_channels.svg`       | Lucide `list`(3 dot + 3 line) |
 | `src/tgmonitor/resources/icons/plus.svg`               | Lucide `plus` |
 | `src/tgmonitor/resources/icons/minus.svg`              | Lucide `minus` |
+| `src/tgmonitor/resources/icons/media_download.svg`     | Lucide `download` |
+| `src/tgmonitor/resources/icons/media_open.svg`         | Lucide `external-link` |
+| `src/tgmonitor/resources/icons/media_retry.svg`        | Lucide `rotate-ccw` |
+| `src/tgmonitor/resources/icons/media_more.svg`         | Lucide `ellipsis` |
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
 
