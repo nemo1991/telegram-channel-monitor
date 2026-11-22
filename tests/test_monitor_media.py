@@ -540,3 +540,201 @@ async def test_edit_path_when_storage_empty_saves_as_new(monitor, client, bus, s
         assert stored.text == "edit-on-empty"
     finally:
         await monitor.stop()
+
+
+# ============================================================
+# 2026-11-22 v2.0.9 FR-09(D8=β):默认档缩略图下载
+#
+# 用户语义裁决:缩略图属「元数据侧」,默认档(THUMBNAIL)应拿到缩略图,
+# 但不下原文件。接线复用现成 download_thumb + _maybe_download_thumb +
+# thumbnails 表;实现两个陷阱:①FULL 档去重(只 worker 下);②外键时序
+# (save_thumbnail 必须在 save_message 之后)。
+# ============================================================
+
+
+def _media_with_thumb(thumb_fid: str = "thumb-1", file_fid: str = "file-1") -> MediaDTO:
+    """带缩略图定位符的媒体(照片默认有 thumb)。"""
+    return MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="pic.jpg",
+        file_size=11,
+        telegram_file_id=file_fid,
+        thumbnail_telegram_file_id=thumb_fid,
+    )
+
+
+async def test_default_policy_downloads_thumb_not_original(
+    bus, storage, objectstore, settings
+) -> None:
+    """默认档(THUMBNAIL)+ 带 thumb 媒体:下缩略图 1 次、落 thumbnails 表,
+    原文件 download_file 未被调用、media 状态仍 PENDING。"""
+    client = FakeTelegramClient()
+    client.set_download("thumb-1", b"thumb-bytes")
+    thumb_policy = settings.model_copy(update={"media_policy": MediaPolicy.THUMBNAIL})
+    downloader = MediaDownloader(client, storage, objectstore)
+    mon = MonitorService(bus, client, storage, objectstore, thumb_policy, downloader=downloader)
+    mon.set_whitelist([100])
+
+    msg = make_message(
+        channel_id=100,
+        msg_id=10,
+        media=[_media_with_thumb()],
+    )
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        # simulate_incoming 走 bus.fire-and-forget,_handle 异步完成 → 轮询等落库
+        thumb = await wait_for(lambda: storage.get_thumbnail(100, 10, 0))
+        assert thumb is not None, "默认档未落缩略图行"
+        assert thumb.object_key and thumb.object_key.startswith("thumb/")
+        assert await objectstore.exists(thumb.object_key)
+        assert await objectstore.get(thumb.object_key) == b"thumb-bytes"
+        # 原文件未下载:media 仍 PENDING、object_key 为空
+        stored = await storage.get_message(100, 10)
+        assert stored is not None
+        assert stored.media[0].download_status is MediaDownloadStatus.PENDING
+        assert stored.media[0].object_key is None
+    finally:
+        await mon.stop()
+
+
+async def test_default_policy_thumb_save_after_message(
+    bus, storage, objectstore, settings, monkeypatch
+) -> None:
+    """外键时序:save_thumbnail 必须在 save_message 之后调用。
+
+    用 spy 包裹真实 storage 方法记录调用顺序(AsyncMock 不能替代真落库,
+    否则外键约束不被真实触发)。两后端共用同一存储仓接口,此测试覆盖
+    InMemoryRepository;SQLite/PG 的顺序契约由 save_thumbnail 在消息落库后
+    调用本身保证(见 FR-09 陷阱②)。
+    """
+    client = FakeTelegramClient()
+    client.set_download("thumb-1", b"thumb-bytes")
+    thumb_policy = settings.model_copy(update={"media_policy": MediaPolicy.THUMBNAIL})
+    downloader = MediaDownloader(client, storage, objectstore)
+    mon = MonitorService(bus, client, storage, objectstore, thumb_policy, downloader=downloader)
+    mon.set_whitelist([100])
+
+    calls: list[str] = []
+    real_save_message = storage.save_message
+    real_save_thumb = storage.save_thumbnail
+
+    async def _spy_save_message(*args, **kwargs):
+        calls.append("message")
+        return await real_save_message(*args, **kwargs)
+
+    async def _spy_save_thumb(*args, **kwargs):
+        calls.append("thumb")
+        return await real_save_thumb(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "save_message", _spy_save_message)
+    monkeypatch.setattr(storage, "save_thumbnail", _spy_save_thumb)
+
+    msg = make_message(channel_id=100, msg_id=11, media=[_media_with_thumb()])
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        assert await wait_for(lambda: "thumb" in calls), f"缩略图未落库: {calls}"
+        assert "message" in calls and "thumb" in calls
+        assert calls.index("message") < calls.index("thumb"), (
+            f"缩略图落库早于消息落库(外键会失败): {calls}"
+        )
+    finally:
+        await mon.stop()
+
+
+async def test_full_policy_thumb_downloaded_once(
+    bus, storage, objectstore, settings, monkeypatch
+) -> None:
+    """FULL 档:缩略图只下一次(worker 路径),不在 _handle 同步路径重复。"""
+    client = _SlowDownloadClient()
+    client.set_download("thumb-1", b"thumb-bytes")
+    client.set_download("file-1", b"image-bytes")
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    downloader = MediaDownloader(client, storage, objectstore)
+    mon = MonitorService(bus, client, storage, objectstore, full, downloader=downloader)
+    mon.set_whitelist([100])
+
+    thumb_calls = 0
+    real_download_thumb = downloader.download_thumb
+
+    async def _spy_thumb(*args, **kwargs):
+        nonlocal thumb_calls
+        thumb_calls += 1
+        return await real_download_thumb(*args, **kwargs)
+
+    monkeypatch.setattr(downloader, "download_thumb", _spy_thumb)
+
+    edited_evt = asyncio.Event()
+
+    async def _on_downloaded(e: MediaDownloaded) -> None:
+        edited_evt.set()
+
+    bus.subscribe(MediaDownloaded, _on_downloaded)
+
+    msg = make_message(channel_id=100, msg_id=12, media=[_media_with_thumb()])
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        await asyncio.wait_for(edited_evt.wait(), timeout=2.0)
+        assert thumb_calls == 1, f"FULL 档缩略图应只下一次,实际 {thumb_calls}"
+        thumb = await storage.get_thumbnail(100, 12, 0)
+        assert thumb is not None
+    finally:
+        await mon.stop()
+
+
+async def test_default_thumb_failure_does_not_block_message(
+    bus, storage, objectstore, settings, monkeypatch
+) -> None:
+    """缩略图下载失败仅 log,消息仍落库、状态 PENDING,无未捕获异常。"""
+    client = FakeTelegramClient()
+    # 不 set_download("thumb-1") → download_thumb 返回 None / 失败
+    thumb_policy = settings.model_copy(update={"media_policy": MediaPolicy.THUMBNAIL})
+    downloader = MediaDownloader(client, storage, objectstore)
+    mon = MonitorService(bus, client, storage, objectstore, thumb_policy, downloader=downloader)
+    mon.set_whitelist([100])
+
+    msg = make_message(channel_id=100, msg_id=13, media=[_media_with_thumb()])
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)  # 不抛即过
+        stored = await wait_for(lambda: storage.get_message(100, 13))
+        assert stored is not None
+        assert stored.media[0].download_status is MediaDownloadStatus.PENDING
+    finally:
+        await mon.stop()
+
+
+async def test_default_thumb_skips_media_without_thumb_id(
+    bus, storage, objectstore, settings, monkeypatch
+) -> None:
+    """无 thumbnail_telegram_file_id 的媒体(如无 thumb 文档)跳过缩略图下载。"""
+    client = FakeTelegramClient()
+    thumb_policy = settings.model_copy(update={"media_policy": MediaPolicy.THUMBNAIL})
+    downloader = MediaDownloader(client, storage, objectstore)
+    mon = MonitorService(bus, client, storage, objectstore, thumb_policy, downloader=downloader)
+    mon.set_whitelist([100])
+
+    thumb_calls = 0
+    real_download_thumb = downloader.download_thumb
+
+    async def _spy_thumb(*args, **kwargs):
+        nonlocal thumb_calls
+        thumb_calls += 1
+        return await real_download_thumb(*args, **kwargs)
+
+    monkeypatch.setattr(downloader, "download_thumb", _spy_thumb)
+
+    med = _media_with_thumb()
+    med.thumbnail_telegram_file_id = None
+    msg = make_message(channel_id=100, msg_id=14, media=[med])
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        stored = await wait_for(lambda: storage.get_message(100, 14))
+        assert stored is not None
+        assert thumb_calls == 0, "无 thumb id 不应调 download_thumb"
+    finally:
+        await mon.stop()

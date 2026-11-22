@@ -3,8 +3,9 @@
 PR 2 plan 标 PR 5「MonitorService 8 个 0-test 私方法」。本文件覆盖最简
 + 不依赖 network / TDLib 的 3 个:`add_to_whitelist` / `remove_from_whitelist`
 / `update_backends`。其余(`_handle_pin_changed` / `_handle_channel_title_changed`
-/ `_handle_channel_photo_changed` / `_maybe_store_thumb` / `_download_worker`)
+/ `_handle_channel_photo_changed` / `_download_worker`)
 需要 mock client.get_message / 下载队列,后续 PR 5 续 PR 再补。
+(原第 5 个 `_maybe_store_thumb` 空 hook 已于 v2.0.9 FR-09 删除。)
 
 测试目的:
 - 锁住「增量 + 单摘」语义(区别 `set_whitelist` 整体替换)
