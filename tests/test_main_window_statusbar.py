@@ -19,7 +19,6 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
 from PySide6.QtWidgets import QLabel  # noqa: E402
 
 from tgmonitor.ui.main_window import MainWindow  # noqa: E402
@@ -68,19 +67,11 @@ def test_conn_state_label_default(qapp) -> None:
     assert win.status_bar._conn_label.text() == "TG 未连接"
 
 
-@pytest.mark.parametrize(
-    ("state", "expected"),
-    [
-        ("waiting_for_network", "TG 等待网络"),
-        ("connecting", "TG 连接中…"),
-        ("updating", "TG 同步中…"),
-        ("ready", "TG 已连接"),
-        ("unknown", "TG 状态未知"),
-        ("some_new_state", "TG some_new_state"),
-    ],
-)
-def test_conn_state_label_mapping(qapp, state: str, expected: str) -> None:
-    """已知状态映射固定文案,未知状态兜底显示 `TG <state>`。"""
+def test_on_conn_state_delegates_to_status_bar(qapp) -> None:
+    """thin delegate:`MainWindow._on_conn_state` 经 `_app_state_ctrl` 透传到
+    `status_bar.set_connection_state`(本文件独有的守护;状态文案映射表由
+    `test_status_bar.py::test_conn_state_label_mapping` 覆盖,不在此重复)。
+    """
     win = _FakeWindow()
-    MainWindow._on_conn_state(win, state)
-    assert win.status_bar._conn_label.text() == expected
+    MainWindow._on_conn_state(win, "ready")
+    assert win.status_bar._conn_label.text() == "TG 已连接"

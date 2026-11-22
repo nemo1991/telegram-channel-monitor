@@ -170,6 +170,34 @@ def test_activity_label_throttle_different_keys_independent(qapp: QApplication) 
     label.deleteLater()
 
 
+def test_activity_label_persistent_without_timeout(qapp: QApplication) -> None:
+    """timeout_ms=None(默认)→ 持续显示,多次 processEvents 后不被清空。
+
+    从 test_main_window_activity_label.py 迁入(v2.0.9 删重复文件前保留独有断言)。
+    """
+    label = _ActivityLabel()
+    label.show_text("同步 #1: 50/100 (history)")
+    for _ in range(5):
+        qapp.processEvents()
+    assert label.text() == "同步 #1: 50/100 (history)"
+    label.deleteLater()
+
+
+def test_activity_label_throttle_expires_after_interval(qapp: QApplication) -> None:
+    """min_interval_ms 已过 → 同 key 的下一次调用重新生效。
+
+    从 test_main_window_activity_label.py 迁入(v2.0.9 删重复文件前保留独有断言)。
+    把时间戳覆盖到 N ms 之前,模拟"上次调用是很久以前",不依赖真实等待。
+    """
+    import time as _time
+
+    label = _ActivityLabel()
+    label._throttle["message_received"] = _time.monotonic() * 1000.0 - 2000
+    label.throttle("message_received", "+1 #A", min_interval_ms=1500)
+    assert label.text() == "+1 #A"
+    label.deleteLater()
+
+
 # ======================== RIGHT 区子组件 ========================
 
 
