@@ -321,7 +321,7 @@ async def test_find_media_by_file_id_skips_pending(
         _mk_msg(
             channel_id=100,
             msg_id=1,
-            media=[_photo(fid="fid_pending", status=MediaDownloadStatus.PENDING)],
+            media=[_photo(fid="fid_pending", status=None)],
         )
     )
     assert await pg_repo.find_media_by_file_id("fid_pending") is None

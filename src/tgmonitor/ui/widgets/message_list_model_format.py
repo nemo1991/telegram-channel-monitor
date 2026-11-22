@@ -90,7 +90,7 @@ class FormatMixin:
             parts = []
             for med in m.media:
                 label = med.type.value
-                # 下载状态标记:⏳ 下载中 / 失败标记 / ✓ 已下载(PENDING 不加后缀)
+                # 下载状态标记:⏳ 下载中 / 失败标记 / ✓ 已下载(未下载不加后缀)
                 if med.download_status == MediaDownloadStatus.DOWNLOADING:
                     label += "⏳"
                 elif med.download_status == MediaDownloadStatus.FAILED:

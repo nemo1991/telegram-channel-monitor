@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from tgmonitor.core.dto import (  # noqa: E402
+    UNDOWNLOADED_FILTER,
     ChannelDTO,
     MediaDownloadStatus,
     MediaDTO,
@@ -223,7 +224,7 @@ def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
     ("status", "expected"),
     [
         (
-            MediaDownloadStatus.PENDING,
+            None,
             {"mediaActionDownload": True, "mediaActionOpen": False, "mediaActionRetry": False},
         ),
         (
@@ -270,7 +271,7 @@ def test_menu_has_three_actions(widget: MediaManagerWidget) -> None:
     ("status", "reveal_copy_enabled"),
     [
         (MediaDownloadStatus.DONE, True),
-        (MediaDownloadStatus.PENDING, False),
+        (None, False),
         (MediaDownloadStatus.FAILED, False),
     ],
 )
@@ -306,7 +307,7 @@ def test_row_button_click_emits_correct_args(
 ) -> None:
     """常驻图标 click emit (channel_id, telegram_msg_id, media_idx) —— 64 位不溢出。"""
     status = {
-        "mediaActionDownload": MediaDownloadStatus.PENDING,
+        "mediaActionDownload": None,
         "mediaActionOpen": MediaDownloadStatus.DONE,
         "mediaActionRetry": MediaDownloadStatus.FAILED,
     }[name]
@@ -409,6 +410,7 @@ def test_refresh_controller_forwards_all_pagination_args() -> None:
         "status": None,
         "media_type": None,
         "search": "",
+        "undownloaded": False,
         "limit": 50,
         "offset": 150,
         "sort": SortKey.SIZE,
@@ -510,11 +512,11 @@ def test_status_text_distinguishes_pending_from_downloading(
     """PENDING 显示「未下载」灰字,DOWNLOADING 才是 ⏳,tooltip 也分开。"""
     from tgmonitor.ui.widgets._mm_base import _STATUS_TEXT  # noqa: PLC0415
 
-    assert _STATUS_TEXT[MediaDownloadStatus.PENDING] == "未下载"
+    assert _STATUS_TEXT[None] == "未下载"
     assert _STATUS_TEXT[MediaDownloadStatus.DOWNLOADING] == "⏳"
 
     key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
-    _render(widget, MediaDownloadStatus.PENDING)
+    _render(widget, None)
     pending = widget._status_labels[key]
     assert pending.text() == "未下载"
     assert "下载" in pending.toolTip() and "未下载" in pending.toolTip()
@@ -530,7 +532,7 @@ def test_pending_download_error_shown_in_tooltip(widget: MediaManagerWidget) -> 
     from dataclasses import replace  # noqa: PLC0415
 
     med = replace(
-        _media(MediaDownloadStatus.PENDING),
+        _media(None),
         download_error="未配置下载器,无法下载原文件",
     )
     widget.on_media_loaded(([(_msg(), MEDIA_IDX, med)], 1))
@@ -542,7 +544,7 @@ def test_batch_download_button_enabled_for_pending_only(
     widget: MediaManagerWidget,
 ) -> None:
     """选中 PENDING → 「下载所选」可用;选中 DONE → 不可用。"""
-    _render(widget, MediaDownloadStatus.PENDING)
+    _render(widget, None)
     widget.list.item(0).setSelected(True)
     assert widget.btn_download_sel.isEnabled()
     assert not widget.btn_retry_sel.isEnabled()
@@ -554,7 +556,7 @@ def test_batch_download_button_enabled_for_pending_only(
 
 def test_batch_download_emits_only_pending_keys(widget: MediaManagerWidget) -> None:
     """所选含 PENDING + DONE 时,只 emit PENDING 的 key。"""
-    pending = _media(MediaDownloadStatus.PENDING)
+    pending = _media(None)
     done = _media(MediaDownloadStatus.DONE)
     msg = _msg()
     widget.on_media_loaded(
@@ -616,3 +618,54 @@ def test_download_controller_forwards_batch_and_all() -> None:
             "media_type": MediaType.PHOTO,
         },
     }
+
+
+def test_status_filter_has_undownloaded_option(widget: MediaManagerWidget) -> None:
+    """2026-11-22:PENDING 枚举删除后,状态下拉必须有「未下载」哨兵档。"""
+    cmb = widget.cmb_status
+    data = [cmb.itemData(i) for i in range(cmb.count())]
+    assert data[0] is None, "首项仍是「全部状态」(不过滤)"
+    assert UNDOWNLOADED_FILTER in data, "必须有「未下载」档"
+    # 三个已启动下载态仍在,且 PENDING 不再作为枚举被遍历出来。
+    assert set(MediaDownloadStatus) == {
+        MediaDownloadStatus.DOWNLOADING,
+        MediaDownloadStatus.DONE,
+        MediaDownloadStatus.FAILED,
+    }
+    assert set(data[2:]) == set(MediaDownloadStatus)
+
+
+def test_refresh_translates_undownloaded_sentinel() -> None:
+    """状态下拉「未下载」哨兵 → controller 翻成 undownloaded=True。"""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: PLC0415
+        MediaActionsController,
+    )
+
+    got: dict[str, object] = {}
+
+    def fake_load(**kwargs: object) -> None:
+        got.update(kwargs)
+
+    f = {
+        "channel_id": None,
+        "status": UNDOWNLOADED_FILTER,
+        "media_type": None,
+        "search": "",
+        "sort": SortKey.DATE,
+        "sort_dir": SortDir.DESC,
+        "offset": 0,
+        "limit": 50,
+        "total": 0,
+    }
+    ctx = SimpleNamespace(
+        media_manager=SimpleNamespace(
+            set_monitored_channels=lambda _channels: None,
+            current_filters=lambda: f,
+        ),
+        vm=SimpleNamespace(load_media_list=fake_load, monitored_channels={}),
+    )
+    MediaActionsController(ctx).on_media_refresh()
+    assert got["undownloaded"] is True
+    assert got["status"] is None

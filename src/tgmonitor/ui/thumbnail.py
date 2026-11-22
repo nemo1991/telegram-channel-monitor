@@ -78,7 +78,7 @@ def cache_key_for(media: MediaDTO | ThumbnailDTO) -> tuple[str, str] | None:
       (TG 端小缩略图,通常 90×90 JPEG,下载快)
     - MediaDTO 无 thumb 时 fallback 到 `object_key`(原图,大但能显示)
 
-    只接受 DONE 状态 — PENDING/FAILED/DOWNLOADING 时 bytes 还没落地,无图可
+    只接受 DONE 状态 — 未下载/FAILED/DOWNLOADING 时 bytes 还没落地,无图可
     显示;widget 走 emoji fallback 更合适,避免误命中脏数据。
     """
     if media.download_status != MediaDownloadStatus.DONE:

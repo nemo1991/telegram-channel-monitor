@@ -52,10 +52,10 @@ LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
     }
 )
 
-_STATUS_TEXT: dict[MediaDownloadStatus, str] = {
-    # 2026-11-22:原 PENDING 与 DOWNLOADING 都显示 ⏳,用户误以为「卡住」。
-    # PENDING 是默认档的正常状态(原文件未安排下载),明确写「未下载」。
-    MediaDownloadStatus.PENDING: "未下载",
+_STATUS_TEXT: dict[MediaDownloadStatus | None, str] = {
+    # 2026-11-22:未下载(None)与 DOWNLOADING 都曾显示 ⏳,用户误以为「卡住」。
+    # 未下载是默认档的正常状态(原文件未安排下载),明确写「未下载」。
+    None: "未下载",
     MediaDownloadStatus.DOWNLOADING: "⏳",
     MediaDownloadStatus.DONE: "✓",
     MediaDownloadStatus.FAILED: "×",

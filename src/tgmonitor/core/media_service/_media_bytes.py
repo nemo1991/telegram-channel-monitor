@@ -43,7 +43,7 @@ async def load_thumbnail_bytes(
     `channel_id + msg_id + media_idx` 三元组);原图 `object_key` 仅作
     fallback(thumb 表找不到 / FAILED / DNE 时)。
 
-    退化仅在主图已 DONE 时走;PENDING/FAILED 早返 None 让 UI 走 emoji 占位。
+    退化仅在主图已 DONE 时走;未下载/FAILED 早返 None 让 UI 走 emoji 占位。
     `channel_id` 必须由 caller 提供(MediaDTO 自身不持 channel_id,保持
     跨边界薄)。
 

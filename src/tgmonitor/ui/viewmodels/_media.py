@@ -185,6 +185,7 @@ class MediaMixin(_Base):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey | None = None,
@@ -194,6 +195,7 @@ class MediaMixin(_Base):
 
         2026-08-25 v1.3.0 PR #6 新增 sort / sort_dir / offset kwargs;不传
         走默认(DATE DESC,offset=0),向后兼容旧调用方。
+        2026-11-22 `undownloaded=True` 筛未下载媒体(原 PENDING 档)。
         """
 
         async def _go() -> None:
@@ -207,6 +209,7 @@ class MediaMixin(_Base):
                 status=st,
                 media_type=mt,
                 search=search,
+                undownloaded=undownloaded,
                 limit=limit,
                 offset=offset,
                 sort=sk,
@@ -242,7 +245,7 @@ class MediaMixin(_Base):
         run_coro(self.loop, _go(), error_label="delete_media_batch")
 
     def download_media(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
-        """下载 PENDING media 原文件(2026-11-22 v2.0.9 FR-06)。
+        """下载未下载 media 原文件(2026-11-22 v2.0.9 FR-06)。
 
         后台 fire app.media.download_media(force=False);core 发 MediaDownloaded
         事件 → `_on_media_downloaded` 订阅者刷新列表。不在 on_success 碰 widget
@@ -255,10 +258,10 @@ class MediaMixin(_Base):
         run_coro(self.loop, _go(), error_label="download_media")
 
     def download_media_batch(self, keys: list[object]) -> None:
-        """批量下载选中的 PENDING 媒体(2026-11-22)。
+        """批量下载选中的未下载媒体(2026-11-22)。
 
         keys 是 widget 的 `_RowKey` 对象,这里只按 duck typing 取三元组;
-        每条走 `app.media.download_media` 的守卫(非 PENDING 静默跳过)。
+        每条走 `app.media.download_media` 的守卫(非未下载静默跳过)。
         """
         triples = [(int(k.channel_id), int(k.telegram_msg_id), int(k.media_idx)) for k in keys]
 
@@ -274,7 +277,7 @@ class MediaMixin(_Base):
         search: str = "",
         media_type: MediaType | None = None,
     ) -> None:
-        """批量下载当前筛选视图的全部 PENDING(2026-11-22 用户选型)。"""
+        """批量下载当前筛选视图的全部未下载(2026-11-22 用户选型)。"""
 
         async def _go() -> None:
             await self.app.media.download_all_pending(

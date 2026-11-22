@@ -257,7 +257,7 @@ class MonitorService:
             return
 
         # 跨消息 media 去重(2026-08-24):任一先前已 DONE 的同 file_id media →
-        # 拷 object_key / object_backend / file_size,后续 PENDING/DOWNLOADING +
+        # 拷 object_key / object_backend / file_size,后续未下载/DOWNLOADING +
         # `not object_key` 规则看到 object_key 已填自然不入下载队列。
         if msg.media:
             for med in msg.media:
@@ -300,16 +300,12 @@ class MonitorService:
             and queue is not None
         ):
             for idx, med in enumerate(msg.media):
-                # PENDING=新消息;DOWNLOADING=上次运行中断遗留 → 重启后重新下载;
+                # None=新消息(未下载);DOWNLOADING=上次运行中断遗留 → 重启后重新下载;
                 # DONE / FAILED 不再重下(FAILED 让用户看原因,不无限重试)。
                 # 注:跨消息去重(D8 上面那段)已把已下载的 media 标 DONE +
                 # object_key 已填,这里 `not object_key` 自然跳过。
                 if (
-                    med.download_status
-                    in (
-                        MediaDownloadStatus.PENDING,
-                        MediaDownloadStatus.DOWNLOADING,
-                    )
+                    med.download_status in (None, MediaDownloadStatus.DOWNLOADING)
                     and not med.object_key
                 ):
                     med.download_status = MediaDownloadStatus.DOWNLOADING
@@ -458,7 +454,7 @@ class MonitorService:
                 msg.channel_id,
                 msg.telegram_msg_id,
                 idx,
-                updated.download_status.value,
+                updated.download_status.value if updated.download_status else "未下载",
                 updated.object_key or "-",
             )
             try:

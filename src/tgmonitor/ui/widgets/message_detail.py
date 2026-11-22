@@ -321,7 +321,7 @@ class MessageDetail(QScrollArea):
             lines.append(self.tr(f"   尺寸: {med.width} × {med.height}"))
         if med.duration:
             lines.append(self.tr(f"   时长: {med.duration} 秒"))
-        # 下载状态(异步下载队列回写;PENDING 不显示,避免旧数据噪音)
+        # 下载状态(异步下载队列回写;未下载不显示,避免旧数据噪音)
         if med.download_status == MediaDownloadStatus.DONE:
             lines.append(self.tr("   状态: 已下载 ✓"))
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:

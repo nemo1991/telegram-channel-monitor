@@ -15,7 +15,7 @@
 STATUS 走 me.download_status。`list_media` 排序时按 dir 拼子句。
 
 `_media_status`(2026-08-25 PR #3):反序列化 `download_status`,旧库 /
-非法值回退 PENDING — `_thumbnails_pg` 也复用本 module 这一个
+非法/历史 pending 值回退 None — `_thumbnails_pg` 也复用本 module 这一个
 (2026-10-19 plan-batch8-1.5 同步从 facade 搬过来,`_thumbnails_pg`
 顶部 import 同步改为 `from . import _media_pg as _media`)。
 
@@ -72,12 +72,23 @@ _MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
 }
 
 
-def _media_status(value: object | None) -> MediaDownloadStatus:
-    """反序列化 download_status;非法 / 缺失(旧库)回退 pending。"""
+def _media_status(value: object | None) -> MediaDownloadStatus | None:
+    """反序列化 download_status(None=未下载)。
+
+    2026-11-22:历史 DB 里未下载存的是字符串 `'pending'`,枚举已删该值 →
+    与非法 / 缺失(旧库)一并读成 None,不迁移 schema。
+    """
+    if value is None or str(value) == "pending":
+        return None
     try:
         return MediaDownloadStatus(str(value))
     except ValueError:
-        return MediaDownloadStatus.PENDING
+        return None
+
+
+def _status_to_db(value: MediaDownloadStatus | None) -> str:
+    """序列化 download_status — None(未下载)沿用历史物理值 'pending'。"""
+    return value.value if value is not None else "pending"
 
 
 def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
@@ -101,7 +112,7 @@ def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:
         m.object_key,
         m.object_backend,
         m.emoji,
-        m.download_status.value,
+        _status_to_db(m.download_status),
         m.download_error,
     )
 
@@ -161,6 +172,7 @@ async def list_media(
     status: MediaDownloadStatus | None = None,
     media_type: MediaType | None = None,
     search: str = "",
+    undownloaded: bool = False,
     limit: int = 1000,
     offset: int = 0,
     sort: SortKey = SortKey.DATE,
@@ -179,6 +191,7 @@ async def list_media(
         status,
         media_type,
         search,
+        undownloaded,
     )
     sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
     nulls_clause = " NULLS LAST" if nulls_last else ""
@@ -261,6 +274,7 @@ async def count_media(
     status: MediaDownloadStatus | None = None,
     media_type: MediaType | None = None,
     search: str = "",
+    undownloaded: bool = False,
 ) -> int:
     """2026-08-25 v1.3.0 PR #6:与 list_media 同 filter,数总数供分页 UI 用。
 
@@ -273,6 +287,7 @@ async def count_media(
         status,
         media_type,
         search,
+        undownloaded,
     )
     async with self._pool.acquire() as conn:
         return await conn.fetchval(
@@ -287,6 +302,7 @@ def _media_where_clause(
     status: MediaDownloadStatus | None,
     media_type: MediaType | None,
     search: str,
+    undownloaded: bool = False,
 ) -> tuple[str, list[Any], int]:
     """2026-08-25 v1.3.0 PR #6:Postgres `list_media` / `count_media` 共用的 WHERE 拼装。
 
@@ -301,7 +317,10 @@ def _media_where_clause(
         clauses.append(f"m.channel_id = ANY(${idx})")
         params.append(channel_ids)
         idx += 1
-    if status is not None:
+    if undownloaded:
+        # 2026-11-22:未下载在 DB 物理值仍是 'pending'(枚举已删该值)。
+        clauses.append("me.download_status = 'pending'")
+    elif status is not None:
         clauses.append(f"me.download_status = ${idx}")
         params.append(status.value)
         idx += 1

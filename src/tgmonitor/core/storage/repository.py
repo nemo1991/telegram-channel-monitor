@@ -351,6 +351,7 @@ class MediaStore(ABC):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey = SortKey.DATE,
@@ -360,6 +361,9 @@ class MediaStore(ABC):
 
         返回 `(msg, idx, media)` 三元组 list;`idx` 是 media 在 message.media 数组
         中的位置(0-based)。所有 filter 都是 AND 关系,空值视作不过滤。
+
+        2026-11-22 `undownloaded=True` 专筛 `download_status is None` 的媒体
+        (原 PENDING 档)——枚举删 PENDING 后不再有可作为 status 传入的值。
 
         排序:`sort` 选 3 key(`DATE`/`SIZE`/`STATUS`),`sort_dir` 选 `ASC`/`DESC`。
         默认 `DATE DESC`。tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
@@ -377,6 +381,7 @@ class MediaStore(ABC):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
     ) -> int:
         """数媒体 — 与 list_media 用同一组 filter,但不带 sort/limit/offset。
         供分页 UI 显示 "total"。

@@ -306,12 +306,27 @@ def _sql_lower(value: str | None) -> str | None:
     return value.lower() if value is not None else None
 
 
-def _media_status(value: object | None) -> MediaDownloadStatus:
-    """反序列化 download_status;非法 / 缺失回退 pending(与 PG 对齐)。"""
+def _media_status(value: object | None) -> MediaDownloadStatus | None:
+    """反序列化 download_status(None=未下载)。
+
+    2026-11-22:历史 DB 里未下载存的是字符串 `'pending'`,枚举已删该值 →
+    与非法 / 缺失值一并读成 None,不迁移 schema(NOT NULL 列仍写 'pending')。
+    """
+    if value is None or str(value) == "pending":
+        return None
     try:
         return MediaDownloadStatus(str(value))
     except ValueError:
-        return MediaDownloadStatus.PENDING
+        return None
+
+
+def _status_to_db(value: MediaDownloadStatus | None) -> str:
+    """序列化 download_status — None(未下载)沿用历史物理值 'pending'。
+
+    DB 列 NOT NULL,不迁移 schema;枚举已删 PENDING,此处是唯一允许写出
+    'pending' 字面量的地方,读回时由 `_media_status` 转回 None。
+    """
+    return value.value if value is not None else "pending"
 
 
 def _placeholders(n: int) -> str:
@@ -427,7 +442,7 @@ def _media_to_row(message_pk: int, m: MediaDTO) -> tuple[Any, ...]:
         m.object_key,
         m.object_backend,
         m.emoji,
-        m.download_status.value,
+        _status_to_db(m.download_status),
         m.download_error,
     )
 
@@ -437,6 +452,7 @@ def _media_where_clause(
     status: MediaDownloadStatus | None,
     media_type: MediaType | None,
     search: str,
+    undownloaded: bool = False,
 ) -> tuple[str, list[Any]]:
     """list_media / count_media 共用 WHERE 拼装(与 PG 同款,? 占位)。"""
     clauses: list[str] = ["1=1"]
@@ -444,7 +460,10 @@ def _media_where_clause(
     if channel_ids:
         clauses.append(f"m.channel_id IN ({_placeholders(len(channel_ids))})")
         params.extend(channel_ids)
-    if status is not None:
+    if undownloaded:
+        # 2026-11-22:未下载在 DB 物理值仍是 'pending'(枚举已删该值)。
+        clauses.append("me.download_status = 'pending'")
+    elif status is not None:
         clauses.append("me.download_status = ?")
         params.append(status.value)
     if media_type is not None:
@@ -1139,6 +1158,7 @@ class SqliteRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
         limit: int = 1000,
         offset: int = 0,
         sort: SortKey = SortKey.DATE,
@@ -1146,7 +1166,9 @@ class SqliteRepository(StorageRepository):
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
         """与 PG 对齐:ROW_NUMBER 窗口生成 media_idx;tie-break m.id DESC, idx ASC。"""
         assert self._db is not None
-        where_sql, params = _media_where_clause(channel_ids, status, media_type, search)
+        where_sql, params = _media_where_clause(
+            channel_ids, status, media_type, search, undownloaded
+        )
         sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
         nulls_clause = " NULLS LAST" if nulls_last else ""
         sql = (
@@ -1197,9 +1219,12 @@ class SqliteRepository(StorageRepository):
         status: MediaDownloadStatus | None = None,
         media_type: MediaType | None = None,
         search: str = "",
+        undownloaded: bool = False,
     ) -> int:
         assert self._db is not None
-        where_sql, params = _media_where_clause(channel_ids, status, media_type, search)
+        where_sql, params = _media_where_clause(
+            channel_ids, status, media_type, search, undownloaded
+        )
         async with self._lock:
             cur = await self._db.execute(
                 f"SELECT count(*) FROM messages m "
@@ -1268,7 +1293,7 @@ class SqliteRepository(StorageRepository):
                     thumb.width,
                     thumb.height,
                     thumb.sha256,
-                    thumb.download_status.value,
+                    _status_to_db(thumb.download_status),
                     thumb.download_error,
                     thumb.telegram_thumb_file_id,
                 ),

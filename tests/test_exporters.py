@@ -145,7 +145,7 @@ async def test_media_csv_exporter_snapshot(tmp_path):
     """PR #7:MediaListCsvExporter 写 13 列 + 每条 media 一行,列顺序固定。"""
     import csv as csv_mod
 
-    from tgmonitor.core.dto import MediaDownloadStatus, MediaType
+    from tgmonitor.core.dto import MediaType
 
     storage, objects, bus, _ = await _setup(tmp_path)
     svc = ExportService(storage, objects, bus)
@@ -195,7 +195,7 @@ async def test_media_csv_exporter_snapshot(tmp_path):
     assert row["channel_id"] == "200"
     assert row["channel_title"] == "Tech"
     assert row["media_type"] == MediaType.PHOTO.value
-    assert row["download_status"] == MediaDownloadStatus.PENDING.value
+    assert row["download_status"] == "undownloaded"
 
 
 async def test_export_service_run_media_dispatch(tmp_path):

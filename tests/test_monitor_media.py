@@ -593,7 +593,7 @@ async def test_default_policy_downloads_thumb_not_original(
         # 原文件未下载:media 仍 PENDING、object_key 为空
         stored = await storage.get_message(100, 10)
         assert stored is not None
-        assert stored.media[0].download_status is MediaDownloadStatus.PENDING
+        assert stored.media[0].download_status is None
         assert stored.media[0].object_key is None
     finally:
         await mon.stop()
@@ -702,7 +702,7 @@ async def test_default_thumb_failure_does_not_block_message(
         await client.simulate_incoming(msg)  # 不抛即过
         stored = await wait_for(lambda: storage.get_message(100, 13))
         assert stored is not None
-        assert stored.media[0].download_status is MediaDownloadStatus.PENDING
+        assert stored.media[0].download_status is None
     finally:
         await mon.stop()
 

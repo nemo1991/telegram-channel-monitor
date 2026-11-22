@@ -33,6 +33,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from tgmonitor.core.dto import (
+    UNDOWNLOADED_FILTER,
     DeleteChannelPreview,
     ExportFormat,
     ExportRequest,
@@ -69,11 +70,16 @@ class MediaActionsController:
             list(self._ctx.vm.monitored_channels.values())
         )
         f = self._ctx.media_manager.current_filters()
+        # 2026-11-22:状态下拉的「未下载」档用哨兵 data,翻成 undownloaded=True。
+        raw_status = f["status"]
+        undownloaded = raw_status == UNDOWNLOADED_FILTER
+        status = None if undownloaded else raw_status
         self._ctx.vm.load_media_list(
             channel_id=f["channel_id"],
-            status=f["status"],
+            status=status,
             media_type=f["media_type"],
             search=f["search"],
+            undownloaded=undownloaded,
             # 2026-11-22 修:原实现只透传 4 个 filter,drop 了 offset/sort/
             # sort_dir/limit —— 翻页永远拉第一页,排序下拉也点了没反应。
             limit=f["limit"],
@@ -87,11 +93,11 @@ class MediaActionsController:
     # ============================================================
 
     def on_media_batch_download(self, keys: list) -> None:
-        """2026-11-22:批量下载选中 PENDING — 直接转给 VM(逐条复用首下守卫)。"""
+        """2026-11-22:批量下载选中未下载媒体 — 直接转给 VM(逐条复用首下守卫)。"""
         self._ctx.vm.download_media_batch(keys)
 
     def on_media_download_all_pending(self) -> None:
-        """2026-11-22:下载当前筛选视图全部 PENDING — 透传 filter。"""
+        """2026-11-22:下载当前筛选视图全部未下载 — 透传 filter。"""
         f = self._ctx.media_manager.current_filters()
         self._ctx.vm.download_all_pending(
             channel_id=f["channel_id"],
@@ -476,7 +482,7 @@ class MediaActionsController:
         之前 AppService.retry_media 只发 MediaRetried + MediaDownloaded 两个
         事件,Media Manager widget 都没订阅 — 用户点 Retry 后 row 状态不变
         (仍 FAILED),体感「点击无反应」。现在重试发起立刻 refresh widget,
-        row 变 PENDING,状态栏左侧也提示「正在重试…」,视觉上能感知到点了。
+        row 变 DOWNLOADING,状态栏左侧也提示「正在重试…」,视觉上能感知到点了。
         """
         # 状态栏左侧:短促提示。MediaRetried 没带 file_name(MediaDownloaded
         # 才带),无 storage round-trip 拉名字,文案简洁即可。

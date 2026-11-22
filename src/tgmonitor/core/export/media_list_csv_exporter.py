@@ -104,7 +104,12 @@ class MediaListCsvExporter(Exporter):
                         "file_name": _guard_csv_cell(med.file_name or ""),
                         "file_size": med.file_size if med.file_size is not None else "",
                         "mime_type": med.mime_type or "",
-                        "download_status": med.download_status.value,
+                        # 2026-11-22:未下载(None,原 PENDING)写 "undownloaded"。
+                        "download_status": (
+                            med.download_status.value
+                            if med.download_status is not None
+                            else "undownloaded"
+                        ),
                         "download_error": _guard_csv_cell(med.download_error or ""),
                         "object_key": med.object_key or "",
                         "object_backend": med.object_backend or "",

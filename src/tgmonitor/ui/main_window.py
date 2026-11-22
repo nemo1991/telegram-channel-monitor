@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
         # 2026-08-27 v1.4.0 PR #16:Reveal / Copy 按钮 wire。
         self.media_manager.reveal_requested.connect(self._media_actions_ctrl.on_media_reveal)
         self.media_manager.copy_requested.connect(self._media_actions_ctrl.on_media_copy)
-        # 2026-11-22 v2.0.9 FR-06:PENDING 媒体手动下载(force=False),与 retry 分义。
+        # 2026-11-22 v2.0.9 FR-06:未下载媒体手动下载(force=False),与 retry 分义。
         self.media_manager.download_requested.connect(
             lambda cid, mid, idx: self._vm.download_media(cid, mid, idx)
         )
@@ -274,7 +274,7 @@ class MainWindow(QMainWindow):
         self.media_manager.batch_delete_requested.connect(
             self._media_actions_ctrl.on_media_batch_delete
         )
-        # 2026-11-22 用户选型:批量下载 PENDING(所选 / 当前筛选全部)
+        # 2026-11-22 用户选型:批量下载未下载媒体(所选 / 当前筛选全部)
         self.media_manager.batch_download_requested.connect(
             self._media_actions_ctrl.on_media_batch_download
         )
