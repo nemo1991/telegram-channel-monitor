@@ -282,13 +282,11 @@ class MonitorService:
         if len(self._seen_ids) > 10000:
             self._seen_ids.popitem(last=False)
 
-        # 媒体下载策略:
-        #   METADATA  → 跳过 thumb / full
-        #   THUMBNAIL → 走 _maybe_store_thumb(空 hook,留给未来)
-        #   FULL      → thumb + 异步下载原文件(见下)
-        if msg.media and self.settings.media_policy != MediaPolicy.METADATA:
-            for med in msg.media:
-                await self._maybe_store_thumb(med)
+        # 媒体下载策略(2026-11-22 v2.0.9 FR-09):
+        #   METADATA  → 跳过 thumb / full(CLI 兼容的最小元数据档)
+        #   THUMBNAIL → 消息落库后同步下缩略图(见 save_message 之后)
+        #   FULL      → 缩略图 + 原文件由 _download_worker 下(见下)
+        # 缩略图按用户语义裁决属「元数据侧」,默认档(THUMBNAIL)也要拿到。
         # 异步下载:FULL + 已接 downloader 时,需要下载的 media 标 DOWNLOADING,
         # **先落库 + 发 MessageReceived**(用户立刻可见"下载中"),再由
         # `_download_worker` 后台下载,完成后回写状态并发 MediaDownloaded。
@@ -322,6 +320,18 @@ class MonitorService:
         # 是 upsert:InMemoryRepository 是 dict 覆写,sqlite / postgres
         # 各仓也按 (channel_id, telegram_msg_id) 更新)。
         await self.storage.save_message(msg)
+
+        # 2026-11-22 v2.0.9 FR-09(D8=β):默认档(THUMBNAIL,元数据侧)缩略图补齐。
+        # 两个必须遵守的约束:
+        # 1) 外键时序 —— thumbnails 表 REFERENCES messages,必须 save_message
+        #    之后才能 save_thumbnail,否则外键约束失败(PG / SQLite 均如此);
+        # 2) FULL 去重 —— 仅 THUMBNAIL 档走这条同步路径;FULL 档缩略图只由
+        #    _download_worker 下(下方 :466),避免同一媒体下两次。
+        # 失败隔离沿用 _maybe_download_thumb 的 try/except(仅 log,不阻断主流程)。
+        if msg.media and self.settings.media_policy == MediaPolicy.THUMBNAIL:
+            for idx, med in enumerate(msg.media):
+                await self._maybe_download_thumb(msg, idx, med)
+
         self._handled += 1
         log.debug(
             "monitor stored message: channel=%s msg_id=%s (handled=%d)",
@@ -514,10 +524,5 @@ class MonitorService:
     # 2026-08-25 PR #3:删除 `_count_media_with_object_key` — 由
     # `storage.count_media_by_object_key` 替代,后端走 SQL 索引 O(1),
     # InMemory 走顺序扫(与旧实现等价)。
-
-    async def _maybe_store_thumb(self, med: MediaDTO) -> None:
-        """2026-09-29:删(改 MediaDownloader.download_thumb 入独立 thumb/ + 缩略图表)。
-        旧版本是空 hook(thumb bytes 永远没真下);新 thumbnail 由 MediaDownloader
-        在 `_download_worker` 同步下 — 见 download_thumb。
-        """
-        return None
+    # 2026-11-22 v2.0.9 FR-09:删除 `_maybe_store_thumb` 空 hook —— 默认档缩略图
+    # 现走 `_maybe_download_thumb`(上方),FULL 档由 `_download_worker` 下。

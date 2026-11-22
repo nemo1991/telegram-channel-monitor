@@ -1,8 +1,11 @@
 """2026-09-17 PR 5:MonitorService event handler 私方法直测。
 
-PR 5 续 PR:覆盖 5 个 0-test 私方法 — `_handle_pin_changed` /
+PR 5 续 PR:覆盖 4 个 0-test 私方法 — `_handle_pin_changed` /
 `_handle_channel_title_changed` / `_handle_channel_photo_changed` /
-`_maybe_store_thumb` / `_download_worker`。
+`_download_worker`。
+
+2026-11-22 v2.0.9 FR-09:第 5 个私方法 `_maybe_store_thumb`(空 hook)
+已删除,默认档缩略图改走 `_maybe_download_thumb`(契约见 test_monitor_media.py)。
 
 设计:
 - 用 `AsyncMock(spec=StorageRepository)` 拦截 storage 调用,断言参数语义
@@ -209,35 +212,9 @@ async def test_handle_channel_photo_changed_storage_error_emits_error_event() ->
     assert errors[0].source == "monitor.channel_photo"
 
 
-# ============================================================
-# `_maybe_store_thumb` — 当前 no-op,锁定未来扩展点
-# ============================================================
-
-
-async def test_maybe_store_thumb_is_noop() -> None:
-    """`_maybe_store_thumb(med)` 当前是 no-op — 锁住「不抛、不调 storage/objects」。
-
-    未来扩展点(media 携带缩略图 bytes 字段时可在此入 ObjectStore)。
-    """
-    mon, bus, storage, objects = _make_monitor_with_mocks()
-    med = MediaDTO(
-        type=MediaType.PHOTO,
-        mime_type="image/jpeg",
-        file_name="x.jpg",
-        file_size=1024,
-        width=10,
-        height=10,
-        object_key="media/x.jpg",
-        object_backend="local",
-        download_status=MediaDownloadStatus.DONE,
-    )
-
-    # 不抛即可
-    result = await mon._maybe_store_thumb(med)
-    assert result is None
-    # 不调 storage / objects
-    storage.save_message.assert_not_awaited()
-    storage.update_message_pin.assert_not_awaited()
+# 2026-11-22 v2.0.9 FR-09:`_maybe_store_thumb` 空 hook 已删除 —— 默认档缩略图
+# 改走现成的 `_maybe_download_thumb`(见 monitor/service.py)。原 no-op 契约测试
+# 随之删除;新缩略图下载/落库/去重/失败隔离契约见 test_monitor_media.py。
 
 
 # ============================================================
