@@ -92,12 +92,32 @@ class MediaActionsController:
     # 批量操作(retry / delete / download / prune / clear channel)
     # ============================================================
 
+    def on_media_download_one(self, channel_id: int, telegram_msg_id: int, media_idx: int) -> None:
+        """2026-11-23:行内下载 — 状态栏即时提示"正在下载",再去后台下。
+
+        之前点下载核心层不传 progress_callback,整段无事件 → 用户以为没反
+        应。现在 core 补了进度事件(状态列实时刷新),这里再补发起瞬间的
+        状态栏提示,双击/连点也有即时反馈。
+        """
+        self._ctx.status_bar.show_activity(self._tr("正在下载…"), timeout_ms=2000)
+        self._ctx.vm.download_media(channel_id, telegram_msg_id, media_idx)
+
     def on_media_batch_download(self, keys: list) -> None:
-        """2026-11-22:批量下载选中未下载媒体 — 直接转给 VM(逐条复用首下守卫)。"""
+        """2026-11-22:批量下载选中未下载媒体 — 转给 VM(逐条复用首下守卫)。
+
+        2026-11-23:补状态栏即时提示;批量 N 条走 throttle 避免刷屏。
+        """
+        self._ctx.status_bar.throttle_activity(
+            "media_download",
+            self._tr("正在下载…"),
+            min_interval_ms=500,
+            timeout_ms=2000,
+        )
         self._ctx.vm.download_media_batch(keys)
 
     def on_media_download_all_pending(self) -> None:
         """2026-11-22:下载当前筛选视图全部未下载 — 透传 filter。"""
+        self._ctx.status_bar.show_activity(self._tr("正在下载…"), timeout_ms=2000)
         f = self._ctx.media_manager.current_filters()
         self._ctx.vm.download_all_pending(
             channel_id=f["channel_id"],

@@ -47,11 +47,10 @@ CHANNEL_ID = -1001375475051
 MSG_ID = 42
 MEDIA_IDX = 0
 
-# 行尾常驻按钮的 objectName（FR-03 契约）。
+# 行尾常驻按钮的 objectName（FR-03 契约;2026-11-23 合并下载/重试后 3 个）。
 ACTION_NAMES = (
     "mediaActionDownload",
     "mediaActionOpen",
-    "mediaActionRetry",
     "mediaRowMore",
 )
 
@@ -166,8 +165,10 @@ def test_render_populates_status_labels_by_row_key(widget: MediaManagerWidget) -
             total=1024,
         )
     )
-    text = widget._status_labels[key].text()
+    lbl = widget._status_labels[key]
+    text = lbl.text()
     assert "/" in text and "%" in text, f"进度文字未格式化: {text!r}"
+    assert lbl.pixmap().isNull(), "进度文字必须清掉未下载图标,否则 QLabel 只显示图标"
 
 
 def test_progress_unknown_row_silent(widget: MediaManagerWidget) -> None:
@@ -189,17 +190,17 @@ def test_progress_unknown_row_silent(widget: MediaManagerWidget) -> None:
 # ---- 行尾按钮契约（PR-2:4 个 QToolButton 图标 + ⋯ 菜单）-------------------
 
 
-def test_row_has_four_tool_buttons_with_object_names(
+def test_row_has_three_tool_buttons_with_object_names(
     widget: MediaManagerWidget,
 ) -> None:
-    """每行常驻恰好 4 个 QToolButton,每个有非空且唯一的 objectName。"""
+    """每行常驻恰好 3 个 QToolButton(下载/打开/更多),objectName 唯一。"""
     _render(widget, MediaDownloadStatus.DONE)
     buttons = _row_buttons(widget)
-    assert len(buttons) == 4, f"常驻按钮数应为 4: {len(buttons)}"
+    assert len(buttons) == 3, f"常驻按钮数应为 3: {len(buttons)}"
     assert all(isinstance(b, QToolButton) for b in buttons)
     names = [b.objectName() for b in buttons]
     assert set(names) == set(ACTION_NAMES), f"objectName 不符: {names}"
-    assert len(set(names)) == 4, f"objectName 应唯一: {names}"
+    assert len(set(names)) == 3, f"objectName 应唯一: {names}"
 
 
 def test_row_buttons_have_tooltips(widget: MediaManagerWidget) -> None:
@@ -223,21 +224,12 @@ def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (
-            None,
-            {"mediaActionDownload": True, "mediaActionOpen": False, "mediaActionRetry": False},
-        ),
-        (
-            MediaDownloadStatus.FAILED,
-            {"mediaActionDownload": False, "mediaActionOpen": False, "mediaActionRetry": True},
-        ),
-        (
-            MediaDownloadStatus.DONE,
-            {"mediaActionDownload": False, "mediaActionOpen": True, "mediaActionRetry": False},
-        ),
+        (None, {"mediaActionDownload": True, "mediaActionOpen": False}),
+        (MediaDownloadStatus.FAILED, {"mediaActionDownload": True, "mediaActionOpen": False}),
+        (MediaDownloadStatus.DONE, {"mediaActionDownload": False, "mediaActionOpen": True}),
         (
             MediaDownloadStatus.DOWNLOADING,
-            {"mediaActionDownload": True, "mediaActionOpen": False, "mediaActionRetry": False},
+            {"mediaActionDownload": True, "mediaActionOpen": False},
         ),
     ],
 )
@@ -246,25 +238,28 @@ def test_row_button_enabled_rules(
     status: MediaDownloadStatus,
     expected: dict[str, bool],
 ) -> None:
-    """常驻图标 enabled:下载含未下载/DOWNLOADING、打开仅 DONE、重试仅 FAILED。"""
+    """2026-11-23 合并后:下载按钮对未下载/DOWNLOADING/FAILED 全启用,打开仅 DONE。"""
     _render(widget, status)
     by_name = {b.objectName(): b for b in _row_buttons(widget)}
     for name, enabled in expected.items():
         assert by_name[name].isEnabled() is enabled, (
-            f"{status.value}: {name} enabled={by_name[name].isEnabled()}, 期望 {enabled}"
+            f"{status}: {name} enabled={by_name[name].isEnabled()}, 期望 {enabled}"
         )
     assert by_name["mediaRowMore"].isEnabled(), "⋯ 菜单入口恒可用"
 
 
 def test_menu_has_three_actions(widget: MediaManagerWidget) -> None:
-    """⋯ 菜单含 Reveal / Copy / Delete 三项,替代原常驻文字按钮。"""
+    """⋯ 菜单含 Reveal / Copy / Delete 三项 + 删除前一条分隔线。"""
     _render(widget, MediaDownloadStatus.DONE)
     menu = _row_menu(widget)
-    texts = [a.text() for a in menu.actions()]
+    actions = menu.actions()
+    assert any(a.isSeparator() for a in actions), "破坏性操作前应有分隔线"
+    texts = [a.text() for a in actions if not a.isSeparator()]
     assert len(texts) == 3, f"菜单项数应为 3: {texts}"
     assert any("显示" in t for t in texts)
     assert any("复制" in t for t in texts)
     assert any("删除" in t for t in texts)
+    assert all(not a.icon().isNull() for a in actions if not a.isSeparator()), "菜单项应带图标"
 
 
 @pytest.mark.parametrize(
@@ -288,7 +283,7 @@ def test_menu_enabled_recomputed_on_show(
     _render(widget, status)
     menu = _row_menu(widget)
     menu.aboutToShow.emit()
-    reveal, copy, delete = menu.actions()
+    reveal, copy, _sep, delete = menu.actions()
     assert reveal.isEnabled() is reveal_copy_enabled
     assert copy.isEnabled() is reveal_copy_enabled
     assert delete.isEnabled(), "Delete 恒可用"
@@ -299,7 +294,6 @@ def test_menu_enabled_recomputed_on_show(
     [
         ("mediaActionDownload", "download_requested"),
         ("mediaActionOpen", "open_requested"),
-        ("mediaActionRetry", "retry_requested"),
     ],
 )
 def test_row_button_click_emits_correct_args(
@@ -309,7 +303,6 @@ def test_row_button_click_emits_correct_args(
     status = {
         "mediaActionDownload": None,
         "mediaActionOpen": MediaDownloadStatus.DONE,
-        "mediaActionRetry": MediaDownloadStatus.FAILED,
     }[name]
     _render(widget, status)
     got: list[tuple[int, int, int]] = []
@@ -320,8 +313,31 @@ def test_row_button_click_emits_correct_args(
 
 
 @pytest.mark.parametrize(
+    ("status", "signal_name"),
+    [
+        (None, "download_requested"),
+        (MediaDownloadStatus.DOWNLOADING, "download_requested"),
+        (MediaDownloadStatus.FAILED, "retry_requested"),
+    ],
+)
+def test_unified_download_button_dispatches_by_status(
+    widget: MediaManagerWidget, status: MediaDownloadStatus, signal_name: str
+) -> None:
+    """2026-11-23 合并下载/重试:一个按钮按行状态分派首下或重下。"""
+    _render(widget, status)
+    got: list[tuple[int, int, int]] = []
+    for name in ("download_requested", "retry_requested"):
+        getattr(widget, name).connect(
+            lambda c, m, i, n=name: got.append((c, m, i)) if n == signal_name else None
+        )
+    by_name = {b.objectName(): b for b in _row_buttons(widget)}
+    by_name["mediaActionDownload"].click()
+    assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)], f"{status} 应走 {signal_name}"
+
+
+@pytest.mark.parametrize(
     ("action_idx", "signal_name"),
-    [(0, "reveal_requested"), (1, "copy_requested"), (2, "delete_requested")],
+    [(0, "reveal_requested"), (1, "copy_requested"), (3, "delete_requested")],
 )
 def test_menu_action_trigger_emits_correct_args(
     widget: MediaManagerWidget, action_idx: int, signal_name: str
@@ -518,12 +534,15 @@ def test_status_text_no_hourglass_for_undownloaded_and_downloading(
     key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
     _render(widget, None)
     pending = widget._status_labels[key]
-    assert pending.text() == "未下载"
+    # 2026-11-23:未下载/DOWNLOADING 改用灰色云下载图标,文字说明放 tooltip
+    assert not pending.text()
+    assert not pending.pixmap().isNull(), "未下载应显示图标"
     assert "下载" in pending.toolTip() and "未下载" in pending.toolTip()
 
     _render(widget, MediaDownloadStatus.DOWNLOADING)
     downloading = widget._status_labels[key]
-    assert downloading.text() == "未下载"
+    assert not downloading.text()
+    assert not downloading.pixmap().isNull()
     assert downloading.toolTip() == pending.toolTip()
 
 
@@ -597,6 +616,7 @@ def test_download_controller_forwards_batch_and_all() -> None:
     )
 
     got: dict[str, object] = {}
+    activity: list[str] = []
     ctx = SimpleNamespace(
         media_manager=SimpleNamespace(
             current_filters=lambda: {
@@ -604,6 +624,10 @@ def test_download_controller_forwards_batch_and_all() -> None:
                 "search": "photo",
                 "media_type": MediaType.PHOTO,
             }
+        ),
+        status_bar=SimpleNamespace(
+            show_activity=lambda text, **kw: activity.append(text),
+            throttle_activity=lambda key, text, **kw: activity.append(text),
         ),
         vm=SimpleNamespace(
             download_media_batch=lambda keys: got.__setitem__("keys", keys),
@@ -622,6 +646,30 @@ def test_download_controller_forwards_batch_and_all() -> None:
             "media_type": MediaType.PHOTO,
         },
     }
+    assert len(activity) == 2, "批量与全部下载都应发状态栏即时提示"
+    assert all("下载" in a for a in activity)
+
+
+def test_download_one_controller_shows_activity_first() -> None:
+    """2026-11-23:行内下载经 controller,先发状态栏"正在下载"再转 VM。"""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: PLC0415
+        MediaActionsController,
+    )
+
+    calls: list[tuple[str, tuple[int, int, int]]] = []
+
+    ctx = SimpleNamespace(
+        status_bar=SimpleNamespace(
+            show_activity=lambda text, **kw: calls.append(("activity", (0, 0, 0)))
+        ),
+        vm=SimpleNamespace(download_media=lambda c, m, i: calls.append(("vm", (c, m, i)))),
+    )
+    ctrl = MediaActionsController(ctx)
+    ctrl.on_media_download_one(CHANNEL_ID, MSG_ID, MEDIA_IDX)
+    assert [c[0] for c in calls] == ["activity", "vm"]
+    assert calls[1][1] == (CHANNEL_ID, MSG_ID, MEDIA_IDX)
 
 
 def test_status_filter_has_undownloaded_option(widget: MediaManagerWidget) -> None:
