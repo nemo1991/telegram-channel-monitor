@@ -68,6 +68,14 @@
   `download_status is None`。存储层仍把未下载写成物理值 `pending`(Schema 不变),
   读层统一转回 None;状态下拉新增「未下载」档筛选,重试中间态直接转 DOWNLOADING。
   CSV 导出的未下载状态写 `undownloaded`。
+- **卡死的 DOWNLOADING 启动自愈**:下载任务只活在内存队列,进程被关闭后 DB
+  永久残留 `downloading` + 无 `object_key`,UI 画沙漏且下载/重试按钮都禁用。
+  启动时把这类孤儿批量复位为未下载(写回物理值 `pending`、清旧错误),返回
+  复位条数记日志;失败降级为日志不阻断启动。覆盖 SQLite / Postgres / 内存
+  三后端,`reset_stuck_downloads()` 幂等。
+- **取消沙漏显示**:DOWNLOADING 与未下载统一显示灰字「未下载」,媒体页行内/
+  批量下载按钮对两者都放行(兜住自愈前的那一瞬;首下 `force=False`,已落盘的
+  直接复用不重复下)。消息列表附件标签与详情里的 ⏳ 同步去掉。
 
 ## [2.0.8] - 2026-11-22
 

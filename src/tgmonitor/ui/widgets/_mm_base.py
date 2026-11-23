@@ -53,10 +53,11 @@ LIGHTBOX_PREVIEWABLE_TYPES: frozenset[MediaType] = frozenset(
 )
 
 _STATUS_TEXT: dict[MediaDownloadStatus | None, str] = {
-    # 2026-11-22:未下载(None)与 DOWNLOADING 都曾显示 ⏳,用户误以为「卡住」。
-    # 未下载是默认档的正常状态(原文件未安排下载),明确写「未下载」。
+    # 2026-11-23:彻底取消沙漏 —— 未下载(None)与 DOWNLOADING 统一显示「未下载」。
+    # DOWNLOADING 的下载任务只在内存队列,进程关闭后会卡死;启动自愈已把孤儿
+    # 复位为 None,运行期真正下载中由进度文字("X / Y (Z%)")体现,不再画 ⏳。
     None: "未下载",
-    MediaDownloadStatus.DOWNLOADING: "⏳",
+    MediaDownloadStatus.DOWNLOADING: "未下载",
     MediaDownloadStatus.DONE: "✓",
     MediaDownloadStatus.FAILED: "×",
 }

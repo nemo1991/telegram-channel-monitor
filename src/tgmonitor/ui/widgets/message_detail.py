@@ -325,7 +325,7 @@ class MessageDetail(QScrollArea):
         if med.download_status == MediaDownloadStatus.DONE:
             lines.append(self.tr("   状态: 已下载 ✓"))
         elif med.download_status == MediaDownloadStatus.DOWNLOADING:
-            lines.append(self.tr("   状态: 下载中… ⏳"))
+            lines.append(self.tr("   状态: 下载中…"))
         elif med.download_status == MediaDownloadStatus.FAILED:
             lines.append(self.tr("   状态: 下载失败"))
             if med.download_error:

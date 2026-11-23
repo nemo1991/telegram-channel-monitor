@@ -101,6 +101,23 @@ async def bootstrap(
             log.exception("[bootstrap] schema repair failed; refusing to start")
             raise
 
+    # 2026-11-23 v2.0.9 hotfix:启动自愈卡住的 DOWNLOADING —— 下载任务只活在
+    # 内存队列,进程关闭后没人推进,DB 永久残留 downloading + 无 object_key,
+    # UI 画沙漏且下载/重试按钮都禁用。复位为未下载,用户可重新点下载。
+    # 失败不阻断启动(降级为日志),与 objectstore.connect 的容错策略一致。
+    t = time.monotonic()
+    try:
+        stuck = await storage.reset_stuck_downloads()
+        if stuck:
+            log.warning(
+                "[bootstrap] reset %d stuck DOWNLOADING media (no object_key) "
+                "to undownloaded in %.2fs",
+                stuck,
+                time.monotonic() - t,
+            )
+    except Exception:  # noqa: BLE001
+        log.exception("[bootstrap] reset_stuck_downloads failed; continuing startup")
+
     # 2026-11-17 v2.0.4 FR-05:活动持久化订阅者 —— bus + storage 均已就绪,
     # 通配订阅把覆盖的运维事件归一化后落库。订阅者内部吞异常,落库失败不
     # 阻断主流程;formatter 不含 Qt 依赖(core 架构守门)。
