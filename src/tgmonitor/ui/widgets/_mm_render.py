@@ -423,11 +423,13 @@ class RenderMixin(_Base):
                 lbl_status.setToolTip(self._tr_error_fmt().format(err=med.download_error))
         elif med.download_status == MediaDownloadStatus.DONE:
             lbl_status.setStyleSheet("color: #27ae60;")
-        elif med.download_status == MediaDownloadStatus.DOWNLOADING:
-            lbl_status.setStyleSheet("color: #2980b9;")
-            lbl_status.setToolTip(self._tr_downloading_hint())
-        elif med.download_status is None:
-            # 2026-11-22:灰字「未下载」+ 说明,区别于「正在下」的 ⏳。
+        elif med.download_status in (
+            MediaDownloadStatus.DOWNLOADING,
+            None,
+        ):
+            # 2026-11-23:取消沙漏 —— DOWNLOADING 与未下载统一显示灰字「未下载」。
+            # 真正在下载时进度由 on_download_progress 改写该 cell 为 "X / Y (Z%)";
+            # 卡死残留的 DOWNLOADING 由启动自愈复位为 None,二者视觉一致。
             hint = self._tr_pending_hint()
             if med.download_error:
                 hint = f"{hint}（{med.download_error}）"
@@ -475,7 +477,8 @@ class RenderMixin(_Base):
 
         状态规则(常驻图标在渲染时按 med 状态设 enabled;菜单项在弹出前按当前行
         重算,不跨行缓存):
-        - 下载:未下载(None)可点(FR-06;PR-2 只 emit,PR-5 接线 VM)
+        - 下载:未下载(None)或 DOWNLOADING(卡死残留兜底)可点;download_media
+          守卫两者都接受,force=False 下已落盘的直接复用,不会重复下载
         - 打开 / Reveal / Copy:DONE 可点
         - 重试:FAILED 可点
         - Delete:总是可点
@@ -507,7 +510,7 @@ class RenderMixin(_Base):
                 "mediaActionDownload",
                 "media_download",
                 "下载原文件",
-                status is None,
+                status is None or status == MediaDownloadStatus.DOWNLOADING,
                 emit_download,
             )
         )

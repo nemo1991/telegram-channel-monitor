@@ -237,7 +237,7 @@ def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
         ),
         (
             MediaDownloadStatus.DOWNLOADING,
-            {"mediaActionDownload": False, "mediaActionOpen": False, "mediaActionRetry": False},
+            {"mediaActionDownload": True, "mediaActionOpen": False, "mediaActionRetry": False},
         ),
     ],
 )
@@ -246,7 +246,7 @@ def test_row_button_enabled_rules(
     status: MediaDownloadStatus,
     expected: dict[str, bool],
 ) -> None:
-    """常驻图标 enabled:下载仅 PENDING、打开仅 DONE、重试仅 FAILED。"""
+    """常驻图标 enabled:下载含未下载/DOWNLOADING、打开仅 DONE、重试仅 FAILED。"""
     _render(widget, status)
     by_name = {b.objectName(): b for b in _row_buttons(widget)}
     for name, enabled in expected.items():
@@ -506,14 +506,14 @@ def test_rerender_after_select_all_no_index_error(
 # ---- 2026-11-22 用户选型:PENDING 批量下载与状态区分 ------------------------
 
 
-def test_status_text_distinguishes_pending_from_downloading(
+def test_status_text_no_hourglass_for_undownloaded_and_downloading(
     widget: MediaManagerWidget,
 ) -> None:
-    """PENDING 显示「未下载」灰字,DOWNLOADING 才是 ⏳,tooltip 也分开。"""
+    """2026-11-23:取消沙漏 —— 未下载与 DOWNLOADING 统一显示「未下载」。"""
     from tgmonitor.ui.widgets._mm_base import _STATUS_TEXT  # noqa: PLC0415
 
     assert _STATUS_TEXT[None] == "未下载"
-    assert _STATUS_TEXT[MediaDownloadStatus.DOWNLOADING] == "⏳"
+    assert _STATUS_TEXT[MediaDownloadStatus.DOWNLOADING] == "未下载"
 
     key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
     _render(widget, None)
@@ -523,8 +523,8 @@ def test_status_text_distinguishes_pending_from_downloading(
 
     _render(widget, MediaDownloadStatus.DOWNLOADING)
     downloading = widget._status_labels[key]
-    assert downloading.text() == "⏳"
-    assert downloading.toolTip() != pending.toolTip()
+    assert downloading.text() == "未下载"
+    assert downloading.toolTip() == pending.toolTip()
 
 
 def test_pending_download_error_shown_in_tooltip(widget: MediaManagerWidget) -> None:
@@ -543,11 +543,15 @@ def test_pending_download_error_shown_in_tooltip(widget: MediaManagerWidget) -> 
 def test_batch_download_button_enabled_for_pending_only(
     widget: MediaManagerWidget,
 ) -> None:
-    """选中 PENDING → 「下载所选」可用;选中 DONE → 不可用。"""
+    """选中未下载/DOWNLOADING → 「下载所选」可用;选中 DONE → 不可用。"""
     _render(widget, None)
     widget.list.item(0).setSelected(True)
     assert widget.btn_download_sel.isEnabled()
     assert not widget.btn_retry_sel.isEnabled()
+
+    _render(widget, MediaDownloadStatus.DOWNLOADING)
+    widget.list.item(0).setSelected(True)
+    assert widget.btn_download_sel.isEnabled(), "卡死的 DOWNLOADING 也应能批量下载"
 
     _render(widget, MediaDownloadStatus.DONE)
     widget.list.item(0).setSelected(True)

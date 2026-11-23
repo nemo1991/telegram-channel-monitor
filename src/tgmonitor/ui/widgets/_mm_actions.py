@@ -65,7 +65,7 @@ class ActionsMixin(_Base):
             status = row[2].download_status
             if status == MediaDownloadStatus.FAILED:
                 has_failed = True
-            elif status is None:
+            elif status in (None, MediaDownloadStatus.DOWNLOADING):
                 has_pending = True
             if has_failed and has_pending:
                 break
@@ -169,5 +169,9 @@ class ActionsMixin(_Base):
         return r is not None and r[2].download_status == MediaDownloadStatus.FAILED
 
     def _row_is_pending(self, key: _RowKey) -> bool:
+        """可下载行:未下载(None)或卡死的 DOWNLOADING(启动自愈兜底)。"""
         r = self._find_row_by_key(key)
-        return r is not None and r[2].download_status is None
+        return r is not None and r[2].download_status in (
+            None,
+            MediaDownloadStatus.DOWNLOADING,
+        )

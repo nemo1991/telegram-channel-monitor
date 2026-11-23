@@ -335,6 +335,10 @@ class PostgresRepository(StorageRepository):
         """该频道全部 media 数 — thin delegate → `_media_pg`."""
         return await _media.count_media_by_channel(self, channel_id)
 
+    async def reset_stuck_downloads(self) -> int:
+        """启动自愈:卡住的 DOWNLOADING → 未下载 — thin delegate → `_media_pg`."""
+        return await _media.reset_stuck_downloads(self)
+
     # ---- 缩略图(2026-09-29 独立存储,2026-10-16 plan-batch8-1.4) ----
 
     async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:

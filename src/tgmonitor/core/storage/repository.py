@@ -410,6 +410,20 @@ class MediaStore(ABC):
         """
         ...
 
+    @abstractmethod
+    async def reset_stuck_downloads(self) -> int:
+        """启动自愈:把卡在 DOWNLOADING 但无 object_key 的媒体复位为未下载。
+
+        2026-11-23 v2.0.9 hotfix:`DOWNLOADING` 的下载任务只活在内存队列,
+        进程被关闭后没人推进 → DB 永久残留 `downloading` + 无 object_key,
+        UI 画沙漏且下载/重试按钮都禁用。启动时把这些孤儿写回 `'pending'`
+        (未下载的物理值),用户即可重新点下载。返回复位条数(供日志/测试)。
+
+        只动"已启动下载但没落到文件"的行:`object_key` 已填的 DOWNLOADING
+        (理论上不存在)不碰,避免误伤文件已存在、只是状态未回写的极端情况。
+        """
+        ...
+
 
 class ThumbnailStore(ABC):
     """缩略图独立存储。

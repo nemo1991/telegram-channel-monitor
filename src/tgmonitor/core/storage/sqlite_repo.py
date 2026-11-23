@@ -1257,6 +1257,21 @@ class SqliteRepository(StorageRepository):
         assert row is not None
         return row[0]
 
+    async def reset_stuck_downloads(self) -> int:
+        """启动自愈:DOWNLOADING 且无 object_key → pending — 返回复位条数。
+
+        2026-11-23 v2.0.9 hotfix:见 `MediaStore.reset_stuck_downloads` docstring。
+        物理值写回 `'pending'`(未下载),读回时由 `_media_status` → None。
+        """
+        assert self._db is not None
+        async with self._lock:
+            cur = await self._db.execute(
+                "UPDATE media SET download_status = 'pending', download_error = NULL "
+                "WHERE download_status = 'downloading' "
+                "AND (object_key IS NULL OR object_key = '')"
+            )
+            return cur.rowcount
+
     # ---- 缩略图 ----
 
     async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:

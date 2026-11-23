@@ -357,3 +357,19 @@ async def count_media_by_channel(self: PostgresRepository, channel_id: int) -> i
             "JOIN messages m ON me.message_id = m.id WHERE m.channel_id = $1",
             channel_id,
         )
+
+
+async def reset_stuck_downloads(self: PostgresRepository) -> int:
+    """2026-11-23:启动自愈 — DOWNLOADING 且无 object_key → pending。
+
+    见 `MediaStore.reset_stuck_downloads` docstring。`conn.execute` 返回
+    `"UPDATE n"`,解析 n 作为复位条数。
+    """
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE media SET download_status = 'pending', download_error = NULL "
+            "WHERE download_status = 'downloading' "
+            "AND (object_key IS NULL OR object_key = '')"
+        )
+    return int(result.rsplit(" ", 1)[-1])

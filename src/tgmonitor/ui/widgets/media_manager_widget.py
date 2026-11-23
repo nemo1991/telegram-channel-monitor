@@ -6,7 +6,7 @@
 ├────────────────────────────────────────────────────┤
 │  [Image] [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Reveal][Copy][Retry][Delete]
 │  [Video] [Dev]  #msg17 video clip.mp4 5.4MB [Failed] [Open][Reveal][Copy][Retry][Delete]
-│  [Audio] [Music] #msg99 audio song.mp3 800KB ⏳ [Open][Reveal][Copy][Retry][Delete]
+│  [Audio] [Music] #msg99 audio song.mp3 800KB 未下载 [Open][Reveal][Copy][Retry][Delete]
 ├────────────────────────────────────────────────────┤
 │  [Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans]
 │  Storage: 142 MB / 23 files · 1 failed

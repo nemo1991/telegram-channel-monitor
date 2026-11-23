@@ -10,6 +10,7 @@ offset+limit 反向取),`StorageRepository` ABC 完整实现。
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from typing import Any
 
@@ -532,6 +533,25 @@ class InMemoryRepository(StorageRepository):
     async def count_media_by_channel(self, channel_id: int) -> int:
         """2026-08-25 PR #8:该频道全部 media 数(含 PENDING/FAILED)。"""
         return sum(len(m.media) for m in self.messages.values() if m.channel_id == channel_id)
+
+    async def reset_stuck_downloads(self) -> int:
+        """2026-11-23:启动自愈 — DOWNLOADING 且无 object_key → None(未下载)。"""
+        n = 0
+        for key, msg in list(self.messages.items()):
+            new_media: list[MediaDTO] = []
+            changed = False
+            for med in msg.media:
+                if med.download_status == MediaDownloadStatus.DOWNLOADING and not med.object_key:
+                    new_media.append(
+                        dataclasses.replace(med, download_status=None, download_error=None)
+                    )
+                    n += 1
+                    changed = True
+                else:
+                    new_media.append(med)
+            if changed:
+                self.messages[key] = dataclasses.replace(msg, media=new_media)
+        return n
 
     async def update_message_interactions(
         self,
