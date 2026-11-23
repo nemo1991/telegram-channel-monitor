@@ -147,8 +147,30 @@ def test_row_key_locator_protocol() -> None:
     assert hash(key) == hash(_RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX))
 
 
+def test_progress_outline_is_square_not_arc() -> None:
+    """方形环绕守卫:进度线全轴对齐且贴住 40×40 缩略图四边,不再是内切圆弧。"""
+    from PySide6.QtCore import QPointF, QRectF
+
+    from tgmonitor.ui.widgets._mm_render import _ProgressThumb
+
+    rect = QRectF(0, 0, 40, 40)
+    assert _ProgressThumb._progress_segments(rect, 0) == []
+    half = _ProgressThumb._progress_segments(rect, 50)
+    assert half and all(start.x() == end.x() or start.y() == end.y() for start, end in half), (
+        "进度线必须沿矩形边(水平/垂直),不应是圆弧"
+    )
+    full = _ProgressThumb._progress_segments(rect, 100)
+    assert len(full) == 5, f"完整一圈应为 5 段,实际 {len(full)}"
+    assert full[0][0] == full[-1][1] == QPointF(20, 0), "应从顶边中点起止闭合"
+    assert all(0 <= p.x() <= 40 and 0 <= p.y() <= 40 for seg in full for p in seg), (
+        "进度不得越出缩略图外框"
+    )
+    # 25% = 周长 160 的 40:顶边右半 20 + 右边 20 → 落到右边中点。
+    assert _ProgressThumb._progress_segments(rect, 25)[-1][1] == QPointF(40, 20)
+
+
 def test_progress_paints_thumb_ring_not_status_text(widget: MediaManagerWidget) -> None:
-    """2026-11-23:进度画在缩略图外框(_ProgressThumb),状态列文字保持不变。"""
+    """2026-11-23:进度画在缩略图方形外框(_ProgressThumb),状态列文字保持不变。"""
     from tgmonitor.core.events import MediaDownloadProgress
 
     _render(widget, MediaDownloadStatus.DOWNLOADING)
@@ -190,7 +212,7 @@ def test_progress_disables_primary_button(widget: MediaManagerWidget) -> None:
 
 
 def test_unknown_total_progress_shows_zero_ring(widget: MediaManagerWidget) -> None:
-    """total=None(未知大小)→ 环画 0%(可见但在起点),不抛异常。"""
+    """total=None(未知大小)→ 0%(只画底轨道),不抛异常。"""
     from tgmonitor.core.events import MediaDownloadProgress
 
     _render(widget, MediaDownloadStatus.DOWNLOADING)
