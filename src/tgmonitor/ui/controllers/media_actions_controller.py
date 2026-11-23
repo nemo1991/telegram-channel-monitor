@@ -337,7 +337,7 @@ class MediaActionsController:
                     self._ctx.main_window,
                     "Lightbox",
                     self._tr("无法加载预览(可能未下载或 backend 不可用)。\n文件:{name}").format(
-                        name=med.file_name or "(no name)"
+                        name=med.file_name or ""
                     ),
                 )
                 return
