@@ -28,7 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -64,20 +64,37 @@ class _ProgressThumb(QLabel):
 
     进度沿 40×40 缩略图的**矩形外框**绘制(从顶边中点顺时针绕四边),不再用
     内切圆弧 —— 圆弧四角留空,视觉上不像“围绕缩略图”;方形边框贴住四边。
-    浅灰底轨道整圈常驻,蓝色进度按百分比覆盖;下载期间状态列保持原状态显示。
-    未设进度(`progress=None`)时完全不画,与旧 QLabel 无差异。
+    底轨道整圈常驻(颜色足够深,浅蓝选中行上也看得见四边),蓝色进度按百分比
+    覆盖;下载期间状态列保持原状态显示。未设进度(`progress=None`)时完全不画,
+    与旧 QLabel 无差异。
+
+    内容必须比边框小一圈才能被“包住”:`setPixmap` 把图缩到 32×32(框内缘
+    约 36px),文字占位在 `_build_thumb_cell` 里也压到 16px —— 否则 22px 的
+    「视频」两字约 44px 宽会溢出框外,看起来像框没包住缩略图。
 
     `set_progress()` 只存值 + `update()`,真正的绘制在 `paintEvent` 走 QPainter,
     保持 UI 渲染在主线程(进度事件本身已由 VM signal 切回主线程)。
     """
 
     _RING_COLOR = QColor("#5b9cf5")
-    _TRACK_COLOR = QColor("#d6dce5")
+    _TRACK_COLOR = QColor("#9fb0c6")
     _RING_WIDTH = 3
+    _CONTENT_SIZE = 32
 
     def __init__(self, text: str = "") -> None:
         super().__init__(text)
         self._progress: int | None = None
+
+    def setPixmap(self, pixmap: QPixmap | QImage) -> None:  # noqa: N802 — Qt 命名
+        """缩略图缩到 32×32 再显示,给 36px 进度框留出一圈可见边距。"""
+        source = QPixmap.fromImage(pixmap) if isinstance(pixmap, QImage) else pixmap
+        scaled = source.scaled(
+            self._CONTENT_SIZE,
+            self._CONTENT_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        super().setPixmap(scaled)
 
     def set_progress(self, percent: int | None) -> None:
         """设置 0..100 的进度;None = 清除进度描边。"""
@@ -446,7 +463,7 @@ class RenderMixin(_Base):
         thumb = _ProgressThumb(_MEDIA_ICONS.get(med.type, "附件"))
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
-        thumb.setStyleSheet("font-size: 22px;")
+        thumb.setStyleSheet("font-size: 16px;")  # 两字占位 ≲32px,收进进度框内
         self._thumb_labels[key] = thumb
         if (
             med.type in LIGHTBOX_PREVIEWABLE_TYPES
