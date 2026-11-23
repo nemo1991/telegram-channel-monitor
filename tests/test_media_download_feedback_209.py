@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 
 import pytest
@@ -95,3 +96,42 @@ async def test_retry_media_emits_progress(app: AppService, storage: InMemoryRepo
     assert stub.kwargs[0]["force"] is True
     assert len(seen) == 1
     assert (seen[0].channel_id, seen[0].telegram_msg_id, seen[0].media_idx) == (100, 2, 0)
+
+
+class _SlowDownloader:
+    """故意 await 一个 Event,模拟下载进行中 —— 用来测并发 in-flight 守卫。"""
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.gate = asyncio.Event()
+
+    async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
+        self.started += 1
+        await self.gate.wait()  # 卡住,直到测试放行
+        return dataclasses.replace(
+            media,
+            object_key="media/photo.jpg",
+            object_backend="local",
+            download_status=MediaDownloadStatus.DONE,
+        )
+
+
+@pytest.mark.asyncio
+async def test_inflight_guard_rejects_duplicate_download(
+    app: AppService, storage: InMemoryRepository
+) -> None:
+    """2026-11-23:同一媒体并发两次下载,第二次被 in-flight 守卫挡掉(只下一次)。"""
+    slow = _SlowDownloader()
+    app.downloader = slow  # type: ignore[assignment]
+    await storage.save_message(make_message(channel_id=100, msg_id=3, media=[_media()]))
+
+    task1 = asyncio.create_task(app.media.download_media(100, 3, 0))
+    await asyncio.sleep(0)  # 让 task1 进入 download_one 并占住 in-flight
+    task2 = asyncio.create_task(app.media.download_media(100, 3, 0))
+    await asyncio.sleep(0)
+    assert slow.started == 1, f"第二次下载应被守卫挡掉,实际启动 {slow.started} 次"
+
+    slow.gate.set()
+    await asyncio.gather(task1, task2)
+    # 守卫在 finally 释放 —— 异常/完成后同一 key 可再次下载
+    assert app.media._inflight_downloads == set()  # type: ignore[attr-defined]

@@ -147,13 +147,14 @@ def test_row_key_locator_protocol() -> None:
     assert hash(key) == hash(_RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX))
 
 
-def test_render_populates_status_labels_by_row_key(widget: MediaManagerWidget) -> None:
-    """进度协议:渲染行后 _status_labels 按 _RowKey 定位,事件进来可刷新文字。"""
+def test_progress_paints_thumb_ring_not_status_text(widget: MediaManagerWidget) -> None:
+    """2026-11-23:进度画在缩略图外框(_ProgressThumb),状态列文字保持不变。"""
+    from tgmonitor.core.events import MediaDownloadProgress
+
     _render(widget, MediaDownloadStatus.DOWNLOADING)
     key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
-    assert key in widget._status_labels
-
-    from tgmonitor.core.events import MediaDownloadProgress
+    thumb = widget._thumb_labels[key]
+    status_before = widget._status_labels[key].text()
 
     widget.on_download_progress(
         MediaDownloadProgress(
@@ -164,10 +165,46 @@ def test_render_populates_status_labels_by_row_key(widget: MediaManagerWidget) -
             total=1024,
         )
     )
-    lbl = widget._status_labels[key]
-    text = lbl.text()
-    assert "/" in text and "%" in text, f"进度文字未格式化: {text!r}"
-    assert lbl.pixmap().isNull(), "进度文字必须清掉未下载图标,否则 QLabel 只显示图标"
+    assert thumb.progress() == 50, f"缩略图环应为 50%,实际 {thumb.progress()}"
+    assert widget._status_labels[key].text() == status_before, "状态列不应被进度改写"
+
+
+def test_progress_disables_primary_button(widget: MediaManagerWidget) -> None:
+    """2026-11-23:进度事件进来 → 本行主按钮禁用(覆盖批量下载路径)。"""
+    from tgmonitor.core.events import MediaDownloadProgress
+
+    _render(widget, MediaDownloadStatus.DOWNLOADING)
+    btn = widget._primary_buttons[_RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
+    assert btn.isEnabled()
+    widget.on_download_progress(
+        MediaDownloadProgress(
+            channel_id=CHANNEL_ID,
+            telegram_msg_id=MSG_ID,
+            media_idx=MEDIA_IDX,
+            downloaded=256,
+            total=1024,
+        )
+    )
+    assert not btn.isEnabled(), "下载中有进度后主按钮应禁用"
+    assert "下载中" in btn.toolTip()
+
+
+def test_unknown_total_progress_shows_zero_ring(widget: MediaManagerWidget) -> None:
+    """total=None(未知大小)→ 环画 0%(可见但在起点),不抛异常。"""
+    from tgmonitor.core.events import MediaDownloadProgress
+
+    _render(widget, MediaDownloadStatus.DOWNLOADING)
+    key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
+    widget.on_download_progress(
+        MediaDownloadProgress(
+            channel_id=CHANNEL_ID,
+            telegram_msg_id=MSG_ID,
+            media_idx=MEDIA_IDX,
+            downloaded=100,
+            total=None,
+        )
+    )
+    assert widget._thumb_labels[key].progress() == 0
 
 
 def test_progress_unknown_row_silent(widget: MediaManagerWidget) -> None:
@@ -357,8 +394,14 @@ def test_unified_primary_button_dispatches_by_status(
             lambda c, m, i, n=name: got.append((c, m, i)) if n == signal_name else None
         )
     by_name = {b.objectName(): b for b in _row_buttons(widget)}
-    by_name["mediaActionDownload"].click()
+    btn = by_name["mediaActionDownload"]
+    btn.click()
     assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)], f"{status} 应走 {signal_name}"
+    # 2026-11-23:下载/重下点击后即时禁用;预览(DONE)不禁用。
+    if signal_name == "preview_requested":
+        assert btn.isEnabled(), "预览不应禁用按钮"
+    else:
+        assert not btn.isEnabled(), "发起下载后应即时禁用按钮"
 
 
 @pytest.mark.parametrize(

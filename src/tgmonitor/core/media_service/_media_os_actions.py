@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import logging
 import mimetypes
 import os
 import secrets
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tgmonitor.core.dto import (
     CopyResult,
@@ -49,6 +50,44 @@ if TYPE_CHECKING:
 from . import _qt_bridge as _bridge
 
 log = logging.getLogger(__name__)
+
+
+def _guard_inflight(func: Any) -> Any:
+    """下载/重下入口的 in-flight 守卫装饰器(2026-11-23)。
+
+    同一 `(channel_id, telegram_msg_id, media_idx)` 已有下载在跑时,二次调用
+    直接 no-op —— 防双击 / 批量+行内并发写同一 object_key。用 `ms` 上的 set
+    而非模块全局,多 MediaService 实例互不干扰;finally 保证异常也释放。
+
+    兼容旧测试桩:桩没有 `_inflight_downloads` 属性时跳过守卫(行为不变)。
+    """
+
+    @functools.wraps(func)
+    async def wrapper(
+        ms: MediaService,
+        channel_id: int,
+        telegram_msg_id: int,
+        media_idx: int,
+    ) -> Any:
+        inflight: set[tuple[int, int, int]] | None = getattr(ms, "_inflight_downloads", None)
+        if inflight is None:
+            return await func(ms, channel_id, telegram_msg_id, media_idx)
+        key = (channel_id, telegram_msg_id, media_idx)
+        if key in inflight:
+            log.info(
+                "skip duplicate download in flight: %s/%s/%d",
+                channel_id,
+                telegram_msg_id,
+                media_idx,
+            )
+            return None
+        inflight.add(key)
+        try:
+            return await func(ms, channel_id, telegram_msg_id, media_idx)
+        finally:
+            inflight.discard(key)
+
+    return wrapper
 
 
 def _make_progress_callback(
@@ -362,6 +401,7 @@ async def _stage_s3_to_tmp(ms: MediaService, med: MediaDTO) -> Path:
 # ---------- download_media(未下载媒体首次下载) ----------
 
 
+@_guard_inflight
 async def download_media(
     ms: MediaService,
     channel_id: int,
@@ -497,6 +537,7 @@ async def download_all_pending(
 # ---------- retry_media ----------
 
 
+@_guard_inflight
 async def retry_media(
     ms: MediaService,
     channel_id: int,

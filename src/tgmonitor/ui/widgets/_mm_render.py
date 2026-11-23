@@ -28,7 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -57,6 +57,45 @@ else:
     _Base = object
 
 log = logging.getLogger(__name__)
+
+
+class _ProgressThumb(QLabel):
+    """带环形下载进度的缩略图 label —— 2026-11-23 v2.0.9。
+
+    进度画在 40×40 缩略图的**外框弧线**上(不是状态列文字),下载期间状态列
+    保持原状态显示。未设进度(`progress=None`)时完全不画弧,与旧 QLabel 无差异。
+
+    `set_progress()` 只存值 + `update()`,真正的绘制在 `paintEvent` 走 QPainter,
+    保持 UI 渲染在主线程(进度事件本身已由 VM signal 切回主线程)。
+    """
+
+    _RING_COLOR = QColor("#5b9cf5")
+    _RING_WIDTH = 3
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self._progress: int | None = None
+
+    def set_progress(self, percent: int | None) -> None:
+        """设置 0..100 的进度;None = 清除进度弧。"""
+        self._progress = percent
+        self.update()
+
+    def progress(self) -> int | None:
+        return self._progress
+
+    def paintEvent(self, event: object) -> None:  # noqa: N802 — Qt 命名
+        super().paintEvent(event)  # type: ignore[arg-type]
+        if self._progress is None:
+            return
+        painter = QPainter(self)
+        pen = QPen(self._RING_COLOR)
+        pen.setWidth(self._RING_WIDTH)
+        painter.setPen(pen)
+        # drawArc 接收 1/16 度;从 12 点(90°)起,逆时针 span = -pct*5760/100。
+        span = -int(5760 * max(0, min(100, self._progress)) / 100)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        painter.drawArc(rect, 90 * 16, span)
 
 
 class RenderMixin(_Base):
@@ -245,6 +284,7 @@ class RenderMixin(_Base):
         self._last_keys: list[_RowKey] = []
         self._thumb_labels.clear()  # 旧 label 全部失效
         self._status_labels.clear()  # 2026-09-01 v1.5.1 PR #B3:同上
+        self._primary_buttons.clear()  # 2026-11-23:旧主按钮引用全部失效
         for i in range(self.list.count()):
             old_item = self.list.item(i)
             old_widget = self.list.itemWidget(old_item) if old_item is not None else None
@@ -355,7 +395,7 @@ class RenderMixin(_Base):
         设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;非图 / 未下
         载保持默认箭头 + 不响应。
         """
-        thumb = QLabel(_MEDIA_ICONS.get(med.type, "附件"))
+        thumb = _ProgressThumb(_MEDIA_ICONS.get(med.type, "附件"))
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
         thumb.setStyleSheet("font-size: 22px;")
@@ -492,11 +532,24 @@ class RenderMixin(_Base):
         - None/DOWNLOADING → download_requested(首下)
 
         图标 / tooltip 在渲染时按 med 状态设定(DONE=眼睛图标「预览」,其余=下载
-        图标),enabled 恒 True(每个状态都有对应动作)。点击分派查当前行实时状态,
-        不跨行缓存。菜单项在弹出前按当前行重算。
+        图标)。点击分派查当前行实时状态,不跨行缓存。菜单项在弹出前按当前行重算。
+
+        2026-11-23 防重复:点下载/重下后立刻禁用本按钮(不等进度事件),下载中
+        不接受二次点击。完成/失败靠 `MediaDownloaded` 触发的列表重渲自动恢复
+        (DONE→预览,FAILED→下载);core 层 `_guard_inflight` 再挡并发入口。
         """
         status = med.download_status
         is_done = status == MediaDownloadStatus.DONE
+        # 闭包持有主按钮引用(按钮在下方创建后 append),供点击时即时禁用。
+        primary_btn: list[QToolButton] = []
+
+        def _disable_for_download() -> None:
+            """发起下载后即时禁用本行按钮,tooltip 提示进行中。"""
+            if not primary_btn:
+                return
+            btn = primary_btn[0]
+            btn.setEnabled(False)
+            btn.setToolTip("下载中…（完成后自动恢复）")
 
         def emit_primary(_checked: bool = False, k: _RowKey = key) -> None:
             """按当前行实时状态分派 预览 / 重下 / 首下(防跨行缓存)。"""
@@ -506,8 +559,10 @@ class RenderMixin(_Base):
                 self.preview_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
             elif cur == MediaDownloadStatus.FAILED:
                 self.retry_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+                _disable_for_download()
             else:  # None / DOWNLOADING
                 self.download_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+                _disable_for_download()
 
         def emit_reveal(_checked: bool = False, k: _RowKey = key) -> None:
             self.reveal_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
@@ -520,12 +575,20 @@ class RenderMixin(_Base):
 
         # 单一主图标:下载 / 预览互斥,按状态切图标 + tooltip,点击按实时状态分派
         primary_icon = "media_preview" if is_done else "media_download"
-        primary_tip = "预览文件" if is_done else "下载原文件（失败项将重新下载）"
-        hbox.addWidget(
-            self._make_row_action_button(
-                "mediaActionDownload", primary_icon, primary_tip, True, emit_primary
-            )
+        if is_done:
+            primary_tip = "预览文件"
+        elif status == MediaDownloadStatus.DOWNLOADING:
+            # 2026-11-23:残留/中断的 DOWNLOADING(进程崩溃后自愈会复位,
+            # 自愈前点这里可续传)— 明确告知用户中断后可手动重下。
+            primary_tip = "继续下载（中断后可手动重下）"
+        else:
+            primary_tip = "下载原文件（失败项将重新下载）"
+        primary = self._make_row_action_button(
+            "mediaActionDownload", primary_icon, primary_tip, True, emit_primary
         )
+        primary_btn.append(primary)
+        self._primary_buttons[key] = primary
+        hbox.addWidget(primary)
 
         # ⋯ 菜单:低频操作 Reveal / Copy / Delete。菜单项 emit 与常驻图标同一组 Signal。
         # 2026-11-22 修:不再 setMenu —— QToolButton 一旦挂 menu,无论 QSS 怎么
@@ -578,30 +641,32 @@ class RenderMixin(_Base):
     # ---- 内部:进度 ----
 
     def on_download_progress(self, event) -> None:
-        """2026-09-01 v1.5.1 PR #B3:`MediaDownloadProgress` 事件 → 刷新对应 row
-        status 列文字。
+        """2026-11-23 v2.0.9:`MediaDownloadProgress` → 缩略图外框环形进度。
 
-        - 走 `_status_labels.get(key)`(行 widget 已渲染)→ setText
+        进度条围绕缩略图画(`_ProgressThumb.set_progress`),不再写状态列 ——
+        状态列保持原状态显示(未下载云图标 / DONE ✓ / FAILED ×),避免下载期间
+        状态列文字忽长忽短挤占布局。
+
+        - 走 `_thumb_labels.get(key)`(行已渲染)→ set_progress(0..100)
+        - `total=None`(未知大小)→ 画一段不确定进度(用 0%,外框仍可见在下载)
         - 行被 filter 掉 / reload 中 → 静默 skip(`get` 返 None)
-        - 节流:Telegram 客户端 0.5s/次,UI 端不再节流(Qt coalesce 自动批量)
+        - 节流:Telegram 客户端 0.5s/次,UI 端不再节流
         """
         key = _RowKey(
             channel_id=event.channel_id,
             telegram_msg_id=event.telegram_msg_id,
             media_idx=event.media_idx,
         )
-        lbl = self._status_labels.get(key)
-        if lbl is None:
+        thumb = self._thumb_labels.get(key)
+        if thumb is None:
             return
-        # 2026-11-23:未下载状态列现在是图标 — 写进度文字前先清 pixmap,
-        # 否则 QLabel 在 pixmap 模式不显示 text,进度看不见。
-        lbl.setPixmap(QPixmap())
-        # 格式化「已下载 X / Y (Z%)」;`total=None` → "已下载 X / ?"
         d = event.downloaded
         t = event.total
-        if t and t > 0:
-            pct = int(d * 100 // t) if t > 0 else 0
-            text = f"{_format_size(d)}/{_format_size(t)} ({pct}%)"
-        else:
-            text = f"{_format_size(d)}/?"
-        lbl.setText(text)
+        # 未知大小 → 0% 弧(外框可见,表示在进行中)
+        pct = int(d * 100 // t) if t and t > 0 else 0
+        thumb.set_progress(pct)
+        # 批量下载不走行内点击,这里兜底禁用本行按钮(完成/失败重渲自动恢复)。
+        btn = self._primary_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            btn.setEnabled(False)
+            btn.setToolTip("下载中…（完成后自动恢复）")
