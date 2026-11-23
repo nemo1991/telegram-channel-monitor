@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -60,16 +60,19 @@ log = logging.getLogger(__name__)
 
 
 class _ProgressThumb(QLabel):
-    """带环形下载进度的缩略图 label —— 2026-11-23 v2.0.9。
+    """带方形环绕下载进度的缩略图 label —— 2026-11-23 v2.0.9。
 
-    进度画在 40×40 缩略图的**外框弧线**上(不是状态列文字),下载期间状态列
-    保持原状态显示。未设进度(`progress=None`)时完全不画弧,与旧 QLabel 无差异。
+    进度沿 40×40 缩略图的**矩形外框**绘制(从顶边中点顺时针绕四边),不再用
+    内切圆弧 —— 圆弧四角留空,视觉上不像“围绕缩略图”;方形边框贴住四边。
+    浅灰底轨道整圈常驻,蓝色进度按百分比覆盖;下载期间状态列保持原状态显示。
+    未设进度(`progress=None`)时完全不画,与旧 QLabel 无差异。
 
     `set_progress()` 只存值 + `update()`,真正的绘制在 `paintEvent` 走 QPainter,
     保持 UI 渲染在主线程(进度事件本身已由 VM signal 切回主线程)。
     """
 
     _RING_COLOR = QColor("#5b9cf5")
+    _TRACK_COLOR = QColor("#d6dce5")
     _RING_WIDTH = 3
 
     def __init__(self, text: str = "") -> None:
@@ -77,25 +80,70 @@ class _ProgressThumb(QLabel):
         self._progress: int | None = None
 
     def set_progress(self, percent: int | None) -> None:
-        """设置 0..100 的进度;None = 清除进度弧。"""
+        """设置 0..100 的进度;None = 清除进度描边。"""
         self._progress = percent
         self.update()
 
     def progress(self) -> int | None:
         return self._progress
 
+    @staticmethod
+    def _progress_segments(rect: QRectF, percent: int) -> list[tuple[QPointF, QPointF]]:
+        """从顶边中点顺时针沿矩形边框走 `percent`% 周长 → 轴对齐线段列表。
+
+        顶点序列:顶边中点 → 右上 → 右下 → 左下 → 左上 → 顶边中点;
+        每段水平/垂直(方形,非圆弧),总长 = 2*(w+h)。`percent<=0` 返 []。
+        """
+        mid_top = QPointF(rect.center().x(), rect.top())
+        corners = [
+            mid_top,
+            QPointF(rect.right(), rect.top()),
+            QPointF(rect.right(), rect.bottom()),
+            QPointF(rect.left(), rect.bottom()),
+            QPointF(rect.left(), rect.top()),
+            mid_top,
+        ]
+        perimeter = 2.0 * (rect.width() + rect.height())
+        remaining = perimeter * max(0, min(100, percent)) / 100.0
+        segments: list[tuple[QPointF, QPointF]] = []
+        for start, end in zip(corners, corners[1:], strict=False):
+            if remaining <= 0:
+                break
+            dx = end.x() - start.x()
+            dy = end.y() - start.y()
+            seg_len = abs(dx) + abs(dy)
+            if seg_len <= 0:
+                continue
+            if remaining >= seg_len:
+                segments.append((start, end))
+                remaining -= seg_len
+            else:
+                ratio = remaining / seg_len
+                segments.append((start, QPointF(start.x() + ratio * dx, start.y() + ratio * dy)))
+                remaining = 0.0
+        return segments
+
     def paintEvent(self, event: object) -> None:  # noqa: N802 — Qt 命名
         super().paintEvent(event)  # type: ignore[arg-type]
         if self._progress is None:
             return
         painter = QPainter(self)
-        pen = QPen(self._RING_COLOR)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # 边框中心内缩 2px,pen 宽 3 → 覆盖 0.5..3.5px,不越出 40×40 label。
+        rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        pen = QPen(self._TRACK_COLOR)
         pen.setWidth(self._RING_WIDTH)
         painter.setPen(pen)
-        # drawArc 接收 1/16 度;从 12 点(90°)起,逆时针 span = -pct*5760/100。
-        span = -int(5760 * max(0, min(100, self._progress)) / 100)
-        rect = self.rect().adjusted(1, 1, -1, -1)
-        painter.drawArc(rect, 90 * 16, span)
+        painter.drawRect(rect)
+        pct = max(0, min(100, self._progress))
+        if pct <= 0:
+            return
+        pen = QPen(self._RING_COLOR)
+        pen.setWidth(self._RING_WIDTH)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        for start, end in self._progress_segments(rect, pct):
+            painter.drawLine(start, end)
 
 
 class RenderMixin(_Base):
@@ -641,14 +689,14 @@ class RenderMixin(_Base):
     # ---- 内部:进度 ----
 
     def on_download_progress(self, event) -> None:
-        """2026-11-23 v2.0.9:`MediaDownloadProgress` → 缩略图外框环形进度。
+        """2026-11-23 v2.0.9:`MediaDownloadProgress` → 缩略图方形环绕进度。
 
-        进度条围绕缩略图画(`_ProgressThumb.set_progress`),不再写状态列 ——
+        进度条沿缩略图矩形四边绘制(`_ProgressThumb.set_progress`),不再写状态列 ——
         状态列保持原状态显示(未下载云图标 / DONE ✓ / FAILED ×),避免下载期间
         状态列文字忽长忽短挤占布局。
 
         - 走 `_thumb_labels.get(key)`(行已渲染)→ set_progress(0..100)
-        - `total=None`(未知大小)→ 画一段不确定进度(用 0%,外框仍可见在下载)
+        - `total=None`(未知大小)→ 0%,底轨道仍可见表示在进行中
         - 行被 filter 掉 / reload 中 → 静默 skip(`get` 返 None)
         - 节流:Telegram 客户端 0.5s/次,UI 端不再节流
         """
@@ -662,7 +710,7 @@ class RenderMixin(_Base):
             return
         d = event.downloaded
         t = event.total
-        # 未知大小 → 0% 弧(外框可见,表示在进行中)
+        # 未知大小 → 0%(只画底轨道,表示在进行中)
         pct = int(d * 100 // t) if t and t > 0 else 0
         thumb.set_progress(pct)
         # 批量下载不走行内点击,这里兜底禁用本行按钮(完成/失败重渲自动恢复)。
