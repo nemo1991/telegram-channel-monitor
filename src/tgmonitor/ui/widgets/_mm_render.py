@@ -28,7 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -427,14 +427,17 @@ class RenderMixin(_Base):
             MediaDownloadStatus.DOWNLOADING,
             None,
         ):
-            # 2026-11-23:取消沙漏 —— DOWNLOADING 与未下载统一显示灰字「未下载」。
-            # 真正在下载时进度由 on_download_progress 改写该 cell 为 "X / Y (Z%)";
-            # 卡死残留的 DOWNLOADING 由启动自愈复位为 None,二者视觉一致。
+            # 2026-11-23:取消沙漏 + 未下载改图标 —— 两者统一显示灰色云下载箭头,
+            # 文字说明放 tooltip。真正在下载时进度由 on_download_progress 先清
+            # 图标再写 "X / Y (Z%)";卡死残留由启动自愈复位为 None,视觉一致。
             hint = self._tr_pending_hint()
             if med.download_error:
                 hint = f"{hint}（{med.download_error}）"
-            lbl_status.setStyleSheet("color: #8a8d92;")
             lbl_status.setToolTip(hint)
+            lbl_status.setText("")
+            lbl_status.setPixmap(
+                tinted_action_icon("media_pending", QColor("#8a8d92")).pixmap(16, 16)
+            )
         self._status_labels[key] = lbl_status
         hbox.addWidget(lbl_status)
 
@@ -470,30 +473,32 @@ class RenderMixin(_Base):
         med: MediaDTO,
         key: _RowKey,
     ) -> None:
-        """行尾操作:3 个高频图标常驻(下载/打开/重试)+ ⋯ 菜单(Reveal/Copy/Delete)。
+        """行尾操作:2 个图标常驻(下载/打开)+ ⋯ 菜单(Reveal/Copy/Delete)。
 
-        2026-11-22 v2.0.9 FR-03(D2=β):原 5 个文字按钮常驻占 ~838px 超 sizeHint,
-        文件名列先被压没。收敛为 4 个 QToolButton 图标(~100px),低频操作进 ⋯ 菜单。
+        2026-11-23 v2.0.9:用户裁决「下载与重试重复,只留下载」—— 下载按钮
+        按当前行状态分派:未下载/DOWNLOADING 走首下(force=False),FAILED 走
+        重下(retry,force=True)。无需用户分辨两个按钮,消除误点。
 
         状态规则(常驻图标在渲染时按 med 状态设 enabled;菜单项在弹出前按当前行
         重算,不跨行缓存):
-        - 下载:未下载(None)或 DOWNLOADING(卡死残留兜底)可点;download_media
-          守卫两者都接受,force=False 下已落盘的直接复用,不会重复下载
+        - 下载:未下载 / DOWNLOADING / FAILED 可点;DONE 禁用
         - 打开 / Reveal / Copy:DONE 可点
-        - 重试:FAILED 可点
         - Delete:总是可点
         """
         status = med.download_status
         is_done = status == MediaDownloadStatus.DONE
 
         def emit_download(_checked: bool = False, k: _RowKey = key) -> None:
-            self.download_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+            """按当前行实时状态分派首下 / 重试(防跨行缓存)。"""
+            row = self._find_row_by_key(k)
+            cur = row[2].download_status if row is not None else status
+            if cur == MediaDownloadStatus.FAILED:
+                self.retry_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+            elif cur in (None, MediaDownloadStatus.DOWNLOADING):
+                self.download_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
 
         def emit_open(_checked: bool = False, k: _RowKey = key) -> None:
             self.open_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
-
-        def emit_retry(_checked: bool = False, k: _RowKey = key) -> None:
-            self.retry_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
 
         def emit_reveal(_checked: bool = False, k: _RowKey = key) -> None:
             self.reveal_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
@@ -504,28 +509,24 @@ class RenderMixin(_Base):
         def emit_delete(_checked: bool = False, k: _RowKey = key) -> None:
             self.delete_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
 
-        # 常驻 3 图标
+        # 常驻 2 图标(下载 / 打开);重试并入下载按钮,按状态分派
+        can_download = status in (
+            None,
+            MediaDownloadStatus.DOWNLOADING,
+            MediaDownloadStatus.FAILED,
+        )
         hbox.addWidget(
             self._make_row_action_button(
                 "mediaActionDownload",
                 "media_download",
-                "下载原文件",
-                status is None or status == MediaDownloadStatus.DOWNLOADING,
+                "下载原文件（失败项将重新下载）",
+                can_download,
                 emit_download,
             )
         )
         hbox.addWidget(
             self._make_row_action_button(
                 "mediaActionOpen", "media_open", "打开文件", is_done, emit_open
-            )
-        )
-        hbox.addWidget(
-            self._make_row_action_button(
-                "mediaActionRetry",
-                "media_retry",
-                "重试下载",
-                status == MediaDownloadStatus.FAILED,
-                emit_retry,
             )
         )
 
@@ -536,11 +537,19 @@ class RenderMixin(_Base):
         btn_more = self._make_row_action_button("mediaRowMore", "media_more", "更多操作", True)
         menu = QMenu(btn_more)
         menu.setObjectName("mediaRowMenu")
-        act_reveal = menu.addAction("在文件管理器中显示")
+        act_reveal = menu.addAction(
+            tinted_action_icon("media_reveal", self._ROW_ACTION_TINT),
+            "在文件管理器中显示",
+        )
         act_reveal.triggered.connect(emit_reveal)
-        act_copy = menu.addAction("复制文件路径")
+        act_copy = menu.addAction(
+            tinted_action_icon("media_copy", self._ROW_ACTION_TINT),
+            "复制文件路径",
+        )
         act_copy.triggered.connect(emit_copy)
-        act_delete = menu.addAction("删除")
+        # 2026-11-23:删除是破坏性操作 — 分隔线单独成组 + 红色图标标识。
+        menu.addSeparator()
+        act_delete = menu.addAction(tinted_action_icon("media_delete", QColor("#c0392b")), "删除")
         act_delete.triggered.connect(emit_delete)
 
         def _refresh_menu_enabled(k: _RowKey = key) -> None:
@@ -587,6 +596,9 @@ class RenderMixin(_Base):
         lbl = self._status_labels.get(key)
         if lbl is None:
             return
+        # 2026-11-23:未下载状态列现在是图标 — 写进度文字前先清 pixmap,
+        # 否则 QLabel 在 pixmap 模式不显示 text,进度看不见。
+        lbl.setPixmap(QPixmap())
         # 格式化「已下载 X / Y (Z%)」;`total=None` → "已下载 X / ?"
         d = event.downloaded
         t = event.total

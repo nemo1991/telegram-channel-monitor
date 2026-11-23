@@ -38,15 +38,45 @@ from tgmonitor.core.dto import (
     OpenMediaResult,
     RevealResult,
 )
-from tgmonitor.core.events import MediaDownloaded, MediaRetried
+from tgmonitor.core.events import MediaDownloaded, MediaDownloadProgress, MediaRetried
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from tgmonitor.core.media_service.media_service import MediaService
 
 # 2026-10-15 plan-batch6-1.1 模式:走 module attr,monkeypatch 兼容
 from . import _qt_bridge as _bridge
 
 log = logging.getLogger(__name__)
+
+
+def _make_progress_callback(
+    ms: MediaService,
+    channel_id: int,
+    telegram_msg_id: int,
+    media_idx: int,
+) -> Callable[[int, int | None], Awaitable[None]]:
+    """构造进度回调 → 发 `MediaDownloadProgress` 事件给 UI 刷新状态列。
+
+    2026-11-23 v2.0.9:手动下载/重试原先不传 progress_callback —— 整段下载
+    期间 UI 无任何事件,用户点完像「没反应」。这里复用 monitor 下载队列
+    (`service.py:_download_worker`)同一事件契约;节流由 Telegram 客户端的
+    `_make_progress_wrapper` 负责(0.5s/次),此处直接透传。
+    """
+
+    async def _on_progress(downloaded: int, total: int | None) -> None:
+        await ms._bus.publish(
+            MediaDownloadProgress(
+                channel_id=channel_id,
+                telegram_msg_id=telegram_msg_id,
+                media_idx=media_idx,
+                downloaded=downloaded,
+                total=total,
+            )
+        )
+
+    return _on_progress
 
 
 # ---------- open_media / open_media_with_result ----------
@@ -402,6 +432,9 @@ async def download_media(
                 msg_pk=msg.id,
                 media=new_med,
                 force=False,
+                progress_callback=_make_progress_callback(
+                    ms, channel_id, telegram_msg_id, media_idx
+                ),
             )
         except Exception as e:  # noqa: BLE001
             log.exception("download media failed: %s", e)
@@ -521,6 +554,9 @@ async def retry_media(
                 msg_pk=msg.id,
                 media=new_med,
                 force=True,
+                progress_callback=_make_progress_callback(
+                    ms, channel_id, telegram_msg_id, media_idx
+                ),
             )
         except Exception as e:  # noqa: BLE001
             log.exception("retry download failed: %s", e)

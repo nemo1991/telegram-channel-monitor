@@ -246,7 +246,7 @@ async def test_retry_failed_resets_to_pending_and_redownloads(
     download_calls: list[tuple] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             download_calls.append((msg_pk, media.telegram_file_id, force))
             return dataclasses.replace(
                 media,
@@ -295,7 +295,7 @@ async def test_retry_publishes_retried_and_downloaded_events(
     app.bus.subscribe(MediaDownloaded, lambda e: downloaded.append(e))  # type: ignore[arg-type]
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             return dataclasses.replace(
                 media,
                 object_key=f"media/{media.telegram_file_id}.bin",
@@ -938,7 +938,7 @@ async def test_download_pending_uses_force_false(
     download_calls: list[tuple] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             download_calls.append((msg_pk, media.telegram_file_id, force))
             return dataclasses.replace(
                 media,
@@ -966,7 +966,7 @@ async def test_download_skips_done_and_failed(
     download_calls: list[tuple] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             download_calls.append((msg_pk, force))
             return media
 
@@ -988,7 +988,7 @@ async def test_download_emits_media_downloaded(
     received: list[MediaDownloaded] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             return dataclasses.replace(
                 media,
                 object_key="media/f5.bin",
@@ -1044,7 +1044,7 @@ async def test_download_all_pending_batch(app: AppService, storage: StorageRepos
     calls: list[str] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             calls.append(media.telegram_file_id)
             return dataclasses.replace(
                 media,
@@ -1073,7 +1073,7 @@ async def test_download_all_pending_respects_channel_filter(
     calls: list[str] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
             calls.append(str(media.telegram_file_id))
             return dataclasses.replace(
                 media,

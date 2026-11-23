@@ -260,7 +260,7 @@ class MainWindow(QMainWindow):
         self.media_manager.copy_requested.connect(self._media_actions_ctrl.on_media_copy)
         # 2026-11-22 v2.0.9 FR-06:未下载媒体手动下载(force=False),与 retry 分义。
         self.media_manager.download_requested.connect(
-            lambda cid, mid, idx: self._vm.download_media(cid, mid, idx)
+            self._media_actions_ctrl.on_media_download_one
         )
         self.media_manager.retry_requested.connect(
             lambda cid, mid, idx: self._vm.retry_media(cid, mid, idx)
