@@ -107,6 +107,13 @@ class MediaService:
         # MediaReconcileFinished,UI footer 计数闪烁)。锁住一个 in-flight,
         # 二次并发直接 no-op + log skip,避免 race。
         self._reconcile_lock = asyncio.Lock()
+        # 2026-11-23 v2.0.9:手动下载/重下的 in-flight 守卫。key =
+        # (channel_id, telegram_msg_id, media_idx)。行内按钮在 DOWNLOADING
+        # 期间禁用后,仍可能有并发入口(双击、批量 + 行内同时点)落到 core;
+        # 这里再挡一层 —— 同一媒体正在下载时二次请求直接 no-op,避免两份
+        # Telethon 下载写同一 object_key。单 event loop 内 add/discard 原子,
+        # 无需 Lock;finally 保证异常路径也释放。
+        self._inflight_downloads: set[tuple[int, int, int]] = set()
 
     # ---------- 列表 ----------
     # 2026-10-15 plan-batch6-1.2:`list_media` / `delete_media` /

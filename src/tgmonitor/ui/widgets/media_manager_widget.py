@@ -189,6 +189,9 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         # 进来时按 `(channel_id, telegram_msg_id, media_idx)` 定位 row
         # 然后 setText 刷新「已下载 X / Y (Z%)」文字。重渲时清空重建。
         self._status_labels: dict[_RowKey, QLabel] = {}
+        # 2026-11-23:行尾主按钮(下载/预览)映射 — 进度事件进来时禁用本行按钮,
+        # 覆盖批量下载(不走行内点击,没有即时禁用的机会)。重渲时清空重建。
+        self._primary_buttons: dict[_RowKey, QToolButton] = {}
 
         # VM 引用延迟注入:MainWindow 在 init 后调 set_view_model(vm) 把
         # thumbnail_loaded / load_thumbnail 绑进来;widget 不直接 import VM
