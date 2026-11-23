@@ -47,10 +47,9 @@ CHANNEL_ID = -1001375475051
 MSG_ID = 42
 MEDIA_IDX = 0
 
-# 行尾常驻按钮的 objectName（FR-03 契约;2026-11-23 合并下载/重试后 3 个）。
+# 行尾常驻按钮的 objectName（FR-03 契约;2026-11-23 下载/打开合并为 1 个主按钮）。
 ACTION_NAMES = (
     "mediaActionDownload",
-    "mediaActionOpen",
     "mediaRowMore",
 )
 
@@ -187,20 +186,20 @@ def test_progress_unknown_row_silent(widget: MediaManagerWidget) -> None:
     )  # 不崩即过
 
 
-# ---- 行尾按钮契约（PR-2:4 个 QToolButton 图标 + ⋯ 菜单）-------------------
+# ---- 行尾按钮契约（2 个 QToolButton:主按钮 + ⋯ 菜单）----------------------
 
 
-def test_row_has_three_tool_buttons_with_object_names(
+def test_row_has_two_tool_buttons_with_object_names(
     widget: MediaManagerWidget,
 ) -> None:
-    """每行常驻恰好 3 个 QToolButton(下载/打开/更多),objectName 唯一。"""
+    """每行常驻恰好 2 个 QToolButton(下载/预览主按钮 + 更多),objectName 唯一。"""
     _render(widget, MediaDownloadStatus.DONE)
     buttons = _row_buttons(widget)
-    assert len(buttons) == 3, f"常驻按钮数应为 3: {len(buttons)}"
+    assert len(buttons) == 2, f"常驻按钮数应为 2: {len(buttons)}"
     assert all(isinstance(b, QToolButton) for b in buttons)
     names = [b.objectName() for b in buttons]
     assert set(names) == set(ACTION_NAMES), f"objectName 不符: {names}"
-    assert len(set(names)) == 3, f"objectName 应唯一: {names}"
+    assert len(set(names)) == 2, f"objectName 应唯一: {names}"
 
 
 def test_row_buttons_have_tooltips(widget: MediaManagerWidget) -> None:
@@ -208,6 +207,63 @@ def test_row_buttons_have_tooltips(widget: MediaManagerWidget) -> None:
     _render(widget, MediaDownloadStatus.DONE)
     for btn in _row_buttons(widget):
         assert btn.toolTip(), f"{btn.objectName()} 缺 tooltip"
+
+
+def test_primary_button_switches_icon_and_tooltip_by_status(
+    widget: MediaManagerWidget,
+) -> None:
+    """2026-11-23:主按钮 DONE=预览(眼睛图标),其余=下载 —— 图标/tooltip 随状态切。"""
+
+    def primary() -> QToolButton:
+        return next(b for b in _row_buttons(widget) if b.objectName() == "mediaActionDownload")
+
+    _render(widget, MediaDownloadStatus.DONE)
+    done_btn = primary()
+    assert "预览" in done_btn.toolTip()
+    done_icon = done_btn.icon()
+
+    _render(widget, None)
+    dl_btn = primary()
+    assert "下载" in dl_btn.toolTip()
+    assert not dl_btn.icon().isNull()
+    # 两个状态的图标应不同(DONE 眼睛 vs 未下载云下载箭头)
+    assert done_icon.cacheKey() != dl_btn.icon().cacheKey()
+
+
+def test_filename_without_name_is_empty(widget: MediaManagerWidget) -> None:
+    """2026-11-23:无名称文件留空,不显示 "(no name)" 占位。"""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
+
+    med = replace(_media(MediaDownloadStatus.DONE), file_name=None)
+    widget.on_media_loaded(([(_msg(), MEDIA_IDX, med)], 1))
+    item: QListWidgetItem = widget.list.item(0)
+    row = widget.list.itemWidget(item)
+    assert row is not None
+    texts = [lbl.text() for lbl in row.findChildren(QLabel)]
+    assert "(no name)" not in texts
+    assert "no name" not in " ".join(texts).lower()
+
+
+def test_meta_column_shows_chinese_type_and_date(widget: MediaManagerWidget) -> None:
+    """2026-11-23:第 2 列「中文类型 · MM-DD」,完整消息号/时间进 tooltip。"""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
+
+    msg = _msg()
+    msg.date = datetime(2026, 11, 23, 14, 30, tzinfo=UTC)
+    widget.on_media_loaded(([(msg, MEDIA_IDX, _media(MediaDownloadStatus.DONE))], 1))
+    item: QListWidgetItem = widget.list.item(0)
+    row = widget.list.itemWidget(item)
+    assert row is not None
+    labels = row.findChildren(QLabel)
+    assert any(lbl.text() == "图片 · 11-23" for lbl in labels), [lbl.text() for lbl in labels]
+    # 旧格式「#42 photo」不再出现在任何列(文件名列 photo.jpg 是合法的)。
+    assert not any(lbl.text().startswith("#42 ") for lbl in labels)
+    meta = next(lbl for lbl in labels if lbl.text() == "图片 · 11-23")
+    assert "#42" in meta.toolTip() and "2026-11-23" in meta.toolTip()
 
 
 def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
@@ -222,29 +278,17 @@ def test_no_text_push_buttons_in_row(widget: MediaManagerWidget) -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "expected"),
-    [
-        (None, {"mediaActionDownload": True, "mediaActionOpen": False}),
-        (MediaDownloadStatus.FAILED, {"mediaActionDownload": True, "mediaActionOpen": False}),
-        (MediaDownloadStatus.DONE, {"mediaActionDownload": False, "mediaActionOpen": True}),
-        (
-            MediaDownloadStatus.DOWNLOADING,
-            {"mediaActionDownload": True, "mediaActionOpen": False},
-        ),
-    ],
+    "status",
+    [None, MediaDownloadStatus.FAILED, MediaDownloadStatus.DONE, MediaDownloadStatus.DOWNLOADING],
 )
-def test_row_button_enabled_rules(
+def test_row_button_always_enabled(
     widget: MediaManagerWidget,
     status: MediaDownloadStatus,
-    expected: dict[str, bool],
 ) -> None:
-    """2026-11-23 合并后:下载按钮对未下载/DOWNLOADING/FAILED 全启用,打开仅 DONE。"""
+    """2026-11-23:下载/预览合并后主按钮恒可用(每个状态都有对应动作)。"""
     _render(widget, status)
     by_name = {b.objectName(): b for b in _row_buttons(widget)}
-    for name, enabled in expected.items():
-        assert by_name[name].isEnabled() is enabled, (
-            f"{status}: {name} enabled={by_name[name].isEnabled()}, 期望 {enabled}"
-        )
+    assert by_name["mediaActionDownload"].isEnabled(), f"{status}: 主按钮应可用"
     assert by_name["mediaRowMore"].isEnabled(), "⋯ 菜单入口恒可用"
 
 
@@ -290,43 +334,25 @@ def test_menu_enabled_recomputed_on_show(
 
 
 @pytest.mark.parametrize(
-    ("name", "signal_name"),
-    [
-        ("mediaActionDownload", "download_requested"),
-        ("mediaActionOpen", "open_requested"),
-    ],
-)
-def test_row_button_click_emits_correct_args(
-    widget: MediaManagerWidget, name: str, signal_name: str
-) -> None:
-    """常驻图标 click emit (channel_id, telegram_msg_id, media_idx) —— 64 位不溢出。"""
-    status = {
-        "mediaActionDownload": None,
-        "mediaActionOpen": MediaDownloadStatus.DONE,
-    }[name]
-    _render(widget, status)
-    got: list[tuple[int, int, int]] = []
-    getattr(widget, signal_name).connect(lambda c, m, i: got.append((c, m, i)))
-    by_name = {b.objectName(): b for b in _row_buttons(widget)}
-    by_name[name].click()
-    assert got == [(CHANNEL_ID, MSG_ID, MEDIA_IDX)]
-
-
-@pytest.mark.parametrize(
     ("status", "signal_name"),
     [
         (None, "download_requested"),
         (MediaDownloadStatus.DOWNLOADING, "download_requested"),
         (MediaDownloadStatus.FAILED, "retry_requested"),
+        (MediaDownloadStatus.DONE, "preview_requested"),
     ],
 )
-def test_unified_download_button_dispatches_by_status(
+def test_unified_primary_button_dispatches_by_status(
     widget: MediaManagerWidget, status: MediaDownloadStatus, signal_name: str
 ) -> None:
-    """2026-11-23 合并下载/重试:一个按钮按行状态分派首下或重下。"""
+    """2026-11-23:下载/打开合并为一个按钮,按行状态分派首下/重下/预览。
+
+    DONE 走 preview_requested(lightbox)而非 open_requested —— 用户实测「打开
+    按钮无法打开、点缩略图能开」,合并后统一走能用的那条路径。
+    """
     _render(widget, status)
     got: list[tuple[int, int, int]] = []
-    for name in ("download_requested", "retry_requested"):
+    for name in ("download_requested", "retry_requested", "preview_requested", "open_requested"):
         getattr(widget, name).connect(
             lambda c, m, i, n=name: got.append((c, m, i)) if n == signal_name else None
         )

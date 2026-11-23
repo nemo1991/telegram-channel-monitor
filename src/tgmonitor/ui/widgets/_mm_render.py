@@ -336,7 +336,7 @@ class RenderMixin(_Base):
         med: MediaDTO,
         key: _RowKey,
     ) -> QWidget:
-        """单行自绘:[Image] [Channel] #msg42 type filename size status [Open][Retry][Delete]。"""
+        """单行自绘:缩略图 [频道] 类型·日期 文件名 大小 状态 [下载/预览][⋯]。"""
         w = QWidget()
         w.setObjectName("mediaRow")
         hbox = QHBoxLayout(w)
@@ -378,10 +378,12 @@ class RenderMixin(_Base):
         med: MediaDTO,
         key: _RowKey,
     ) -> None:
-        """5 列元数据:channel / msg id+type / filename(扩展) / size / status。
+        """5 列元数据:channel / 类型+日期 / filename(扩展) / size / status。
 
         2026-09-01 v1.5.1 PR #B3:status 列 label 存到 self._status_labels,
         on_download_progress 事件按 _RowKey 定位行 + setText。
+        2026-11-23:第 2 列从「#msg id + 英文类型」改为「中文类型 · MM-DD」,
+        完整消息号 + 时间放 tooltip;文件名缺失时留空(不再写 "(no name)")。
         """
         # 频道名优先(2026-11-22 修);完整 @username / #id 信息放 tooltip,
         # 不占列表横向空间。未缓存的频道才退 #id。
@@ -392,14 +394,21 @@ class RenderMixin(_Base):
         lbl_channel.setToolTip(ch.display if ch else ch_label)
         hbox.addWidget(lbl_channel)
 
-        # msg id + type
-        lbl_msg = QLabel(f"#{msg.telegram_msg_id} {med.type.value}")
-        lbl_msg.setFixedWidth(160)
+        # 类型 + 日期(2026-11-23 用户选型:中文类型 + MM-DD,消息号进 tooltip)
+        type_label = _MEDIA_ICONS.get(med.type, "附件")
+        date_label = msg.date.strftime("%m-%d") if msg.date else ""
+        lbl_msg = QLabel(f"{type_label} · {date_label}")
+        lbl_msg.setFixedWidth(90)
         lbl_msg.setStyleSheet("color: #555;")
+        lbl_msg.setToolTip(
+            f"#{msg.telegram_msg_id} · {type_label} · {msg.date:%Y-%m-%d %H:%M}"
+            if msg.date
+            else f"#{msg.telegram_msg_id} · {type_label}"
+        )
         hbox.addWidget(lbl_msg)
 
-        # filename
-        name = med.file_name or "(no name)"
+        # filename —— 无名称留空,不写占位文案(2026-11-23 用户要求)
+        name = med.file_name or ""
         lbl_name = QLabel(name)
         lbl_name.setToolTip(name)
         lbl_name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -473,32 +482,32 @@ class RenderMixin(_Base):
         med: MediaDTO,
         key: _RowKey,
     ) -> None:
-        """行尾操作:2 个图标常驻(下载/打开)+ ⋯ 菜单(Reveal/Copy/Delete)。
+        """行尾操作:1 个「下载 / 预览」主图标 + ⋯ 菜单(Reveal/Copy/Delete)。
 
-        2026-11-23 v2.0.9:用户裁决「下载与重试重复,只留下载」—— 下载按钮
-        按当前行状态分派:未下载/DOWNLOADING 走首下(force=False),FAILED 走
-        重下(retry,force=True)。无需用户分辨两个按钮,消除误点。
+        2026-11-23 v2.0.9 二轮:用户裁决「下载与打开互斥,合并为一个」——
+        下载与打开不再同时出现。主按钮按当前行实时状态分派三件事:
+        - DONE       → preview_requested(lightbox,和点缩略图同路径;避开 open_url
+                       依赖本地落盘文件/系统关联而「无法打开」的老问题)
+        - FAILED     → retry_requested(force 重下)
+        - None/DOWNLOADING → download_requested(首下)
 
-        状态规则(常驻图标在渲染时按 med 状态设 enabled;菜单项在弹出前按当前行
-        重算,不跨行缓存):
-        - 下载:未下载 / DOWNLOADING / FAILED 可点;DONE 禁用
-        - 打开 / Reveal / Copy:DONE 可点
-        - Delete:总是可点
+        图标 / tooltip 在渲染时按 med 状态设定(DONE=眼睛图标「预览」,其余=下载
+        图标),enabled 恒 True(每个状态都有对应动作)。点击分派查当前行实时状态,
+        不跨行缓存。菜单项在弹出前按当前行重算。
         """
         status = med.download_status
         is_done = status == MediaDownloadStatus.DONE
 
-        def emit_download(_checked: bool = False, k: _RowKey = key) -> None:
-            """按当前行实时状态分派首下 / 重试(防跨行缓存)。"""
+        def emit_primary(_checked: bool = False, k: _RowKey = key) -> None:
+            """按当前行实时状态分派 预览 / 重下 / 首下(防跨行缓存)。"""
             row = self._find_row_by_key(k)
             cur = row[2].download_status if row is not None else status
-            if cur == MediaDownloadStatus.FAILED:
+            if cur == MediaDownloadStatus.DONE:
+                self.preview_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
+            elif cur == MediaDownloadStatus.FAILED:
                 self.retry_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
-            elif cur in (None, MediaDownloadStatus.DOWNLOADING):
+            else:  # None / DOWNLOADING
                 self.download_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
-
-        def emit_open(_checked: bool = False, k: _RowKey = key) -> None:
-            self.open_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
 
         def emit_reveal(_checked: bool = False, k: _RowKey = key) -> None:
             self.reveal_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
@@ -509,24 +518,12 @@ class RenderMixin(_Base):
         def emit_delete(_checked: bool = False, k: _RowKey = key) -> None:
             self.delete_requested.emit(k.channel_id, k.telegram_msg_id, k.media_idx)
 
-        # 常驻 2 图标(下载 / 打开);重试并入下载按钮,按状态分派
-        can_download = status in (
-            None,
-            MediaDownloadStatus.DOWNLOADING,
-            MediaDownloadStatus.FAILED,
-        )
+        # 单一主图标:下载 / 预览互斥,按状态切图标 + tooltip,点击按实时状态分派
+        primary_icon = "media_preview" if is_done else "media_download"
+        primary_tip = "预览文件" if is_done else "下载原文件（失败项将重新下载）"
         hbox.addWidget(
             self._make_row_action_button(
-                "mediaActionDownload",
-                "media_download",
-                "下载原文件（失败项将重新下载）",
-                can_download,
-                emit_download,
-            )
-        )
-        hbox.addWidget(
-            self._make_row_action_button(
-                "mediaActionOpen", "media_open", "打开文件", is_done, emit_open
+                "mediaActionDownload", primary_icon, primary_tip, True, emit_primary
             )
         )
 
@@ -559,7 +556,7 @@ class RenderMixin(_Base):
             cur_done = cur_status == MediaDownloadStatus.DONE
             act_reveal.setEnabled(cur_done)
             act_copy.setEnabled(cur_done)
-            # Delete 恒可用;下载/打开/重试在常驻图标上,不进菜单。
+            # Delete 恒可用;下载/预览(合并主按钮)在常驻图标上,不进菜单。
             act_delete.setEnabled(True)
 
         menu.aboutToShow.connect(_refresh_menu_enabled)

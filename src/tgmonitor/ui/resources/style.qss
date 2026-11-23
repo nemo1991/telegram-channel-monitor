@@ -603,20 +603,19 @@ QTableWidget#statsTable QHeaderView::section:last {
     opacity: 0.45;
 }
 
-/* v2.0.9 FR-03:媒体页行尾图标按钮(下载/打开/重试)与 ⋯ 菜单入口。
-   与 #channelRowAction 同三态写法,窄窗口下 4 个图标合计约 100px。 */
-#mediaActionDownload, #mediaActionOpen, #mediaActionRetry, #mediaRowMore {
+/* v2.0.9:媒体页行尾主图标(下载/预览互斥,一个按钮)+ ⋯ 菜单入口。
+   与 #channelRowAction 同三态写法,窄窗口下 2 个图标合计约 50px。 */
+#mediaActionDownload, #mediaRowMore {
     border: none;
     background: transparent;
     padding: 2px;
     margin: 0;
 }
-#mediaActionDownload:hover, #mediaActionOpen:hover, #mediaActionRetry:hover,
-#mediaRowMore:hover {
+#mediaActionDownload:hover, #mediaRowMore:hover {
     background: #eef4fd;
     border-radius: 4px;
 }
-#mediaActionDownload:disabled, #mediaActionOpen:disabled, #mediaActionRetry:disabled {
+#mediaActionDownload:disabled {
     opacity: 0.45;
 }
 

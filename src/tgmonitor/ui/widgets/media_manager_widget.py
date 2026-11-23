@@ -4,16 +4,16 @@
 ┌────────────────────────────────────────────────────┐
 │  [Channel ▼] [Type ▼] [Status ▼] [Search] [Refresh]
 ├────────────────────────────────────────────────────┤
-│  [Image] [TNews] #msg42 photo pic.jpg 1.2MB ✓ [Open][Reveal][Copy][Retry][Delete]
-│  [Video] [Dev]  #msg17 video clip.mp4 5.4MB [Failed] [Open][Reveal][Copy][Retry][Delete]
-│  [Audio] [Music] #msg99 audio song.mp3 800KB 未下载 [Open][Reveal][Copy][Retry][Delete]
+│  [Image] [TNews] 图片 · 11-23 pic.jpg 1.2MB ✓ [预览][⋯]
+│  [Video] [Dev]  视频 · 11-22 clip.mp4 5.4MB [失败] [下载][⋯]
+│  [Audio] [Music] 音频 · 11-21 song.mp3 800KB 未下载 [下载][⋯]
 ├────────────────────────────────────────────────────┤
 │  [Select All] [Retry Selected] [Delete Selected] [Clear Channel] [Prune Orphans]
 │  Storage: 142 MB / 23 files · 1 failed
 └────────────────────────────────────────────────────┘
 
 实现要点:
-- 每行是 QListWidgetItem + 自绘 widget(`setItemWidget`)显示 icon + 频道 + 类型 + 状态 + 文件名 + 大小 + 4 个图标按钮
+- 每行是 QListWidgetItem + 自绘 widget(`setItemWidget`)显示缩略图 + 频道 + 类型·日期 + 文件名 + 大小 + 状态 + 1 个主图标(下载/预览) + ⋯ 菜单
 - 顶部 3 个 QComboBox + 1 个 QLineEdit(search)+ 1 个 QPushButton(refresh)
 - 底部 4 个 QPushButton + 1 个 QLabel(footer 状态)
 - 所有用户操作 → emit Qt Signal → MainWindow 调 VM
