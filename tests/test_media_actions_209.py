@@ -169,6 +169,24 @@ def test_progress_outline_is_square_not_arc() -> None:
     assert _ProgressThumb._progress_segments(rect, 25)[-1][1] == QPointF(40, 20)
 
 
+def test_progress_frame_wraps_thumb_content() -> None:
+    """内容必须收进进度框内，否则视觉上像「框没包住缩略图」。"""
+    from PySide6.QtGui import QPixmap
+
+    from tgmonitor.ui.widgets._mm_render import _ProgressThumb
+
+    thumb = _ProgressThumb("视频")
+    # 进度框内缘约 36px（40 - 2*2），内容必须更小一圈。
+    assert thumb._CONTENT_SIZE < 36
+    # QLabel 不会自动缩放 pixmap：不重写 setPixmap 的话 64px 缩略图会溢出 40px label。
+    thumb.setPixmap(QPixmap(64, 64))
+    shown = thumb.pixmap()
+    assert shown is not None and not shown.isNull()
+    assert shown.width() <= thumb._CONTENT_SIZE and shown.height() <= thumb._CONTENT_SIZE
+    # 底轨道要足够深，浅蓝选中行上也能看清四条边（旧 #d6dce5 太淡）。
+    assert thumb._TRACK_COLOR.lightness() < 200
+
+
 def test_progress_paints_thumb_ring_not_status_text(widget: MediaManagerWidget) -> None:
     """2026-11-23:进度画在缩略图方形外框(_ProgressThumb),状态列文字保持不变。"""
     from tgmonitor.core.events import MediaDownloadProgress
