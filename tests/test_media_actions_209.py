@@ -678,6 +678,23 @@ def test_rerender_after_select_all_no_index_error(
 # ---- 2026-11-22 用户选型:PENDING 批量下载与状态区分 ------------------------
 
 
+def test_pending_status_icon_is_cloud_not_download_action() -> None:
+    """状态列未下载用纯云形(状态),不与行尾下载按钮共用向下箭头(动作)。"""
+    from importlib import resources  # noqa: PLC0415
+
+    def _svg(name: str) -> str:
+        asset = resources.files("tgmonitor.resources").joinpath(f"icons/{name}.svg")
+        return asset.read_text(encoding="utf-8")
+
+    pending = _svg("media_pending")
+    download = _svg("media_download")
+    assert pending != download
+    # Lucide `cloud` 是单条闭合路径;`cloud-download` / `download` 都另带箭头 path。
+    assert pending.count("<path") == 1
+    assert 'd="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"' in pending
+    assert download.count("<path") > 1
+
+
 def test_status_text_no_hourglass_for_undownloaded_and_downloading(
     widget: MediaManagerWidget,
 ) -> None:
@@ -690,7 +707,7 @@ def test_status_text_no_hourglass_for_undownloaded_and_downloading(
     key = _RowKey(CHANNEL_ID, MSG_ID, MEDIA_IDX)
     _render(widget, None)
     pending = widget._status_labels[key]
-    # 2026-11-23:未下载/DOWNLOADING 改用灰色云下载图标,文字说明放 tooltip
+    # 2026-11-24:未下载/DOWNLOADING 用灰色纯云形状态图标(无下载箭头),文字说明放 tooltip
     assert not pending.text()
     assert not pending.pixmap().isNull(), "未下载应显示图标"
     assert "下载" in pending.toolTip() and "未下载" in pending.toolTip()

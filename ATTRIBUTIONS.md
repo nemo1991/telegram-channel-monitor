@@ -33,7 +33,7 @@ Contributors)。
 | `src/tgmonitor/resources/icons/media_download.svg`     | Lucide `download` |
 | `src/tgmonitor/resources/icons/media_open.svg`         | Lucide `external-link` |
 | `src/tgmonitor/resources/icons/media_retry.svg`        | Lucide `rotate-ccw` |
-| `src/tgmonitor/resources/icons/media_pending.svg`      | Lucide `cloud-download` |
+| `src/tgmonitor/resources/icons/media_pending.svg`      | Lucide `cloud` |
 | `src/tgmonitor/resources/icons/media_preview.svg`      | Lucide `eye` |
 | `src/tgmonitor/resources/icons/media_reveal.svg`       | Lucide `folder-open` |
 | `src/tgmonitor/resources/icons/media_copy.svg`         | Lucide `copy` |
