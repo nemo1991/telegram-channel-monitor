@@ -1,6 +1,6 @@
 """`tgmonitor.ui.viewmodels` — MonitorViewModel 多 mixin 拆分(2026-10-20 plan-batch9-η)。
 
-公开 API:`MonitorViewModel` 唯一类,33 Signal + 17 public method + 3
+公开 API:`MonitorViewModel` 唯一类,32 Signal + 16 public method + 3
 状态字段 1:1 保留原 `viewmodels/monitor_vm.py:MonitorViewModel`(839 LOC
 单类,2026-10-20 拆 5 mixin + BusMixin 收口)。
 

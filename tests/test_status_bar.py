@@ -26,7 +26,7 @@ import os
 import sys
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from tgmonitor.core.events import AuthErrorOccurred, ErrorOccurred  # noqa: E402
 from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
@@ -36,7 +36,6 @@ from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     _ErrorBellButton,
     _ObjectsWarnLabel,
     _PausedLabel,
-    _SelectedChannelLabel,
     _StatsLabel,
     _UnifiedStateLabel,
 )
@@ -60,24 +59,6 @@ windows_qt_paint_skip = pytest.mark.skipif(
 )
 
 # ======================== LEFT 区子组件 ========================
-
-
-def test_selected_channel_label_none_default(qapp: QApplication) -> None:
-    """未设置时显示灰色提示。"""
-    label = _SelectedChannelLabel()
-    assert "(无选中频道)" in label.text()
-    label.deleteLater()
-
-
-def test_selected_channel_label_set_name(qapp: QApplication) -> None:
-    """set_channel(name) → 显示频道名。"""
-    label = _SelectedChannelLabel()
-    label.set_channel("频道 A")
-    assert "频道 A" in label.text()
-    # set None 回到占位
-    label.set_channel(None)
-    assert "(无选中频道)" in label.text()
-    label.deleteLater()
 
 
 def test_stats_label_format(qapp: QApplication) -> None:
@@ -385,10 +366,8 @@ def test_status_bar_construction_with_objects_error(qapp: QApplication) -> None:
 
 
 def test_status_bar_layout_left_right_order(qapp: QApplication) -> None:
-    """D1:LEFT 3 + RIGHT 4 共 7 个子组件,顺序与设计一致。"""
+    """D1:LEFT 2 + RIGHT 4 共 6 个子组件,顺序与设计一致。"""
     sb = _make_status_bar(qapp)
-    children = sb.findChildren(_SelectedChannelLabel)
-    assert len(children) == 1
     children = sb.findChildren(_StatsLabel)
     assert len(children) == 1
     children = sb.findChildren(_ActivityLabel)
@@ -415,12 +394,6 @@ def test_status_bar_setters_delegate(qapp: QApplication) -> None:
     assert paused.isHidden() is False  # type: ignore[union-attr]
     sb.set_paused(False)
     assert paused.isHidden() is True  # type: ignore[union-attr]
-
-    sb.set_selected_channel("频道 X")
-    sel = sb.findChild(_SelectedChannelLabel)
-    assert "频道 X" in sel.text()  # type: ignore[union-attr]
-    sb.set_selected_channel(None)
-    assert "(无选中频道)" in sel.text()  # type: ignore[union-attr]
 
     sb.set_stats(subscribed=5, messages=10)
     stats = sb.findChild(_StatsLabel)
@@ -479,4 +452,12 @@ def test_status_bar_clear_error_log_via_bell(qapp: QApplication) -> None:
     sb.clear_error_log()
     assert bell.isHidden() is True  # type: ignore[union-attr]
     assert sb.get_error_log() == []
+    sb.deleteLater()
+
+
+def test_no_selected_channel_placeholder(qapp: QApplication) -> None:
+    """状态栏不再常驻「(无选中频道)」死占位(全仓无调用方,整条链路已删)。"""
+    sb = _make_status_bar(qapp)
+    assert not hasattr(sb, "set_selected_channel")
+    assert not any("无选中频道" in lbl.text() for lbl in sb.findChildren(QLabel))
     sb.deleteLater()

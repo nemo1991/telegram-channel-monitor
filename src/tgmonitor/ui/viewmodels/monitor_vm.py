@@ -19,8 +19,8 @@ facade 不再持:
   / ExportMixin None / MessagesMixin 0),BusMixin.__init__ 不重复
   赋值(避免 facade init 跨 mixin 写字段违反「字段同 mixin 持有」)
 
-公开 API 1:1 保留:33 Signal(5 mixin 各自类体声明 + 多继承合入
-facade)+ 17 public method(5 mixin 提供)+ 3 状态字段;`main_window +
+公开 API 1:1 保留:32 Signal(5 mixin 各自类体声明 + 多继承合入
+facade)+ 16 public method(5 mixin 提供)+ 3 状态字段;`main_window +
 18 controller + 6 dialog widget` 调用方 0 改动,`tests/fixtures/_fake_app.py`
 + 6 个直接构造 VM 的 test 文件签名兼容验证。
 """
@@ -67,23 +67,21 @@ class MonitorViewModel(
     # (`monitored_channels` / `_export_task` / `_message_count`)由各自 mixin
     # 类体 default 初值兜底。
     #
-    # 33 Signal 分布:
+    # 32 Signal 分布:
     # - ChannelsMixin(1):`channels_changed`
     # - SystemMixin(11):9 facade-level(`login_state` / `conn_state` /
     #   `error` / `settings_changed` / `sync_progress` / `sync_done` /
     #   `quit_requested` / `monitoring_paused` / `monitoring_resumed`)
-    #   + 2 statusbar sub-component(`selected_channel_changed` /
-    #   `backend_label_changed`)
+    #   + 1 statusbar sub-component(`backend_label_changed`)
     # - MessagesMixin(5):`message_received` / `message_edited` /
     #   `message_interactions_changed` / `last_message_received` / `stats_changed`
     #   (2026-11-16 v2.0.2:移除 `message_search_results` — 顶部搜索功能删除)
     # - MediaMixin(10):media 域全部 signal
     # - ExportMixin(6):export 域全部 signal
     #
-    # 17 public method 分布:
+    # 16 public method 分布:
     # - ChannelsMixin(4):`bootstrap_ui` / `refresh_monitored_channels` /
     #   `monitor_channel` / `unmonitor_channel`
-    # - SystemMixin(1):`set_selected_channel`
     # - MessagesMixin(2):`load_recent_messages` / `search_messages`
     # - MediaMixin(10):media 域 10 method
     # - ExportMixin(5):`start_export` / `cancel_current_export` /

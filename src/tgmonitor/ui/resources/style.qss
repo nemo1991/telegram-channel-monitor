@@ -309,7 +309,7 @@ QLabel[role="card-title"] {
     background: #e2e4e9;
 }
 
-/* ===== 主要按钮(保存并应用等) ===== */
+/* ===== 主要按钮(保存等) ===== */
 #primaryBtn {
     padding: 8px 24px;
     border: none;
@@ -536,7 +536,7 @@ QTableWidget#statsTable QHeaderView::section:last {
 
 /* ===== 状态栏(自定义 StatusBar widget,替代 QStatusBar) ===== */
 #customStatusBar {
-    background: #ffffff;
+    background: #f5f6fa;
     border-top: 1px solid #e2e4e9;
     color: #5a5d64;
     font-size: 12px;

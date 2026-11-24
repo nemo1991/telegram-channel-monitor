@@ -1,7 +1,7 @@
 """v2.0.7 FR-08/FR-09 契约 — API ID 无箭头 + 删除「仅保存到 .env」入口。
 
 - APPID 的 QSpinBox 不显示上下箭头,范围与校验不变;
-- 设置页底栏只剩「保存并应用」,core validate_backends 公共 API 保留。
+- 设置页底栏只剩「保存」,core validate_backends 公共 API 保留。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def test_save_env_button_removed(qapp, qloop, tmp_path) -> None:
     assert not hasattr(settings, "_on_save_env")
     buttons = settings.findChildren(QPushButton)
     assert not any("仅保存到" in b.text() for b in buttons)
-    assert len([b for b in buttons if b.text() == "保存并应用"]) == 1
+    assert len([b for b in buttons if b.text() == "保存"]) == 1
     win.close()
 
 

@@ -2,7 +2,7 @@
 """SettingsPage — 整页设置(不再是模态对话框)。
 
 囊括原 settings_dialog.py 的全部配置项 + account_widget.py 的凭据编辑。
-以 QScrollArea 内分组排列,底部固定「保存并应用」按钮(v2.0.7 FR-09)。
+以 QScrollArea 内分组排列,底部固定「保存」按钮(v2.0.7 FR-09)。
 
 2026-11-17 v2.0.3 D3:登录/登出入口从右上 HeaderBar 迁到「账户凭证」
 分组,头栏退化为纯标题。
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -73,7 +74,7 @@ class SettingsPage(QWidget):
     """整页设置。在 QStackedWidget 中作为一页使用。
 
     构造后自动从 app.settings 加载当前值。
-    UI 改动不实时生效 — 用户点「保存并应用」才写盘并热重载(v2.0.7 FR-09)。
+    UI 改动不实时生效 — 用户点「保存」才写盘并热重载(v2.0.7 FR-09)。
     """
 
     # run_coro 的回调可能跑在后台 loop 线程 —— 只 emit,由 Qt 排到主线程槽
@@ -91,7 +92,7 @@ class SettingsPage(QWidget):
     ) -> None:
         """建 6 个 FormSection + 1 个监听分组 + 底部按钮 + 加载当前设置。
 
-        `env_path` 是「保存并应用」写入的 platform-native .env 路径(由 app.py 注入)。
+        `env_path` 是「保存」写入的 platform-native .env 路径(由 app.py 注入)。
         `channel_panel` 是 2.0.6 从频道页迁入的监听频道控件(单实例 reparent,
         MainWindow 仍持引用);不经 FormSection,不参与 collect() 写 .env。
         """
@@ -184,6 +185,9 @@ class SettingsPage(QWidget):
         self._build_policy(form_root)
         self._build_sync(form_root)
 
+        # 尾部 stretch 保留:其它分组按 sizeHint 紧凑排列,余量落到这里。
+        # 监听分组单独带大 stretch(见 _build_channel_monitor),选中时几乎
+        # 吃掉全部余量,只留小段间距到按钮栏。
         form_root.addStretch(1)
         scroll.setWidget(scroll_content)
         detail_layout.addWidget(scroll, 1)
@@ -213,7 +217,7 @@ class SettingsPage(QWidget):
         self._on_os_backend_changed()
 
         # 底部固定按钮 — v2.0.7 FR-09:「仅保存到 .env」删除,
-        # 只保留「保存并应用」(写盘 + 热重载),靠 stretch 推到右下。
+        # 只保留「保存」(写盘 + 热重载),靠 stretch 推到右下。
         # 2026-11-24 v2.0.10 修正:按钮栏挂在 detail_layout(右侧内容区)而非
         # root —— 否则它独占 root 底部一行,把左侧导航压短、末尾露出灰底断层。
         btn_bar = QHBoxLayout()
@@ -221,7 +225,7 @@ class SettingsPage(QWidget):
 
         btn_bar.addStretch(1)
 
-        self.btn_apply = QPushButton(self.tr("保存并应用"))
+        self.btn_apply = QPushButton(self.tr("保存"))
         self.btn_apply.setObjectName("primaryBtn")
         self.btn_apply.clicked.connect(self._on_apply)
         btn_bar.addWidget(self.btn_apply)
@@ -353,10 +357,11 @@ class SettingsPage(QWidget):
         box_layout.setContentsMargins(16, 40, 16, 16)
         box_layout.setSpacing(12)
         box_layout.addWidget(panel, 1)
-        # v2.0.7 FR-06:左右布局后纵向占用减半,最小高度 460→360。
-        # 2026-11-24:360 在实际窗口下留白过多,提到 560 让双栏列表更可用。
+        # 最小高度兜底小窗口;垂直 Expanding + 大 stretch 让选中本组时
+        # 几乎吃掉 form_root 尾部 stretch 之外的全部余量,只留约 40px 到按钮栏。
         box.setMinimumHeight(560)
-        root.addWidget(box)
+        box.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        root.addWidget(box, 100)
         self._channel_gb = box  # 导航注册用(2.0.10)
 
     @property
@@ -839,7 +844,7 @@ class SettingsPage(QWidget):
     # ============================================================
 
     def _on_apply(self) -> None:
-        """保存并应用:后端校验通过后才写 .env + 热重载。"""
+        """保存:后端校验通过后才写 .env + 热重载。"""
         try:
             e = self._collect()
         except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知

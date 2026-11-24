@@ -4,14 +4,22 @@
 - 点选某项:右侧只显示该分组,其余隐藏;
 - 搜索框:按分组标题 / 字段 label / 字段 key 过滤导航项;
 - 当前项被过滤掉时自动跳到首个可见项;
-- 底部「保存并应用」始终可见。
+- 底部「保存」始终可见。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QGroupBox, QLineEdit, QListWidget, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QWidget,
+)
 
 from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.settings_page import SettingsPage
@@ -143,12 +151,52 @@ def test_nav_pane_reaches_page_bottom(qapp, qloop, tmp_path):
     win.close()
 
 
-def test_channel_monitor_group_is_tall_enough(qapp, qloop, tmp_path):
-    """监听频道管理面板最小高度 560,双栏列表有足够纵向空间。"""
+def test_channel_monitor_group_fills_scroll_area(qapp, qloop, tmp_path):
+    """监听频道管理卡片弹性填满滚动区,底部到「保存」只留一小段间距。"""
     win = build_real_main_window(qloop, tmp_path)
+    win.resize(1200, 800)
+    stack = win.findChild(QStackedWidget)
     settings = win.findChild(SettingsPage)
+    assert stack is not None
+    stack.setCurrentWidget(settings)
     assert settings is not None
+    settings.nav_list.setCurrentRow(1)  # 监听频道管理
+    qapp.processEvents()
+    qapp.processEvents()
+
     gb = settings.findChild(QGroupBox, "settingsChannelMonitorGroup")
     assert gb is not None
     assert gb.minimumHeight() >= 560
+    assert gb.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert gb.height() > 620, "高窗口下卡片应吃掉滚动区余量,而非停在最小高度"
+    gap = settings.btn_apply.geometry().top() - gb.geometry().bottom()
+    assert 20 <= gap <= 80, f"卡片底边到保存按钮间距应适中,实际 {gap}px"
+    win.close()
+
+
+def test_other_groups_stay_compact(qapp, qloop, tmp_path):
+    """非监听分组不因尾部 stretch 消失而被拉高(保持 sizeHint 紧凑排列)。"""
+    win = build_real_main_window(qloop, tmp_path)
+    win.resize(1200, 800)
+    stack = win.findChild(QStackedWidget)
+    settings = win.findChild(SettingsPage)
+    assert stack is not None
+    stack.setCurrentWidget(settings)
+    assert settings is not None
+    settings.nav_list.setCurrentRow(0)  # 账户凭证
+    qapp.processEvents()
+    qapp.processEvents()
+
+    visible = [gb for gb in settings.findChildren(QGroupBox) if not gb.isHidden()]
+    assert len(visible) == 1
+    assert visible[0].height() < 300, "账户凭证卡片不应被拉伸到整页高度"
+    win.close()
+
+
+def test_apply_button_label_is_save(qapp, qloop, tmp_path):
+    """底栏按钮文案为「保存」(行为仍是写盘 + 热重载)。"""
+    win = build_real_main_window(qloop, tmp_path)
+    settings = win.findChild(SettingsPage)
+    assert settings is not None
+    assert settings.btn_apply.text() == "保存"
     win.close()

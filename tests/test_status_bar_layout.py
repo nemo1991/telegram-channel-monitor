@@ -9,6 +9,8 @@ geometry 停在 `(0, 0, 100, 30)`,Z-order 又高于 central widget,于是浮在
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from tests.fixtures._real_window import build_real_main_window
 
 
@@ -68,3 +70,12 @@ def test_header_row_removed_frees_content_space(qapp, qloop, tmp_path):
     qapp.processEvents()
     assert win.stack.geometry().top() == 0, "stack 顶边应为 0(原页头 44px 已释放)"
     win.close()
+
+
+def test_status_bar_has_tinted_background() -> None:
+    """状态栏用内容区浅灰底 #f5f6fa,与白色卡片在视觉上分层。"""
+    qss = (Path(__file__).resolve().parents[1] / "src/tgmonitor/ui/resources/style.qss").read_text(
+        encoding="utf-8"
+    )
+    block = qss.split("#customStatusBar {", 1)[1].split("}", 1)[0]
+    assert "background: #f5f6fa;" in block
