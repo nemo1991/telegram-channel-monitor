@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Lucide `cloud-download`,见 ATTRIBUTIONS.md — 状态列「未下载」图标 -->
-  <path d="M12 13v8"/>
-  <path d="m8 17 4 4 4-4"/>
-  <path d="M20.16 11.8A4.4 4.4 0 0 0 18.25 4h-1.3A7 7 0 1 0 4.5 13.2"/>
+  <!-- Lucide `cloud`,见 ATTRIBUTIONS.md — 状态列「未下载」:纯云形(原文件只在远端、
+       本地未落地),无向下箭头,与行尾下载动作图标明确区分。 -->
+  <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
 </svg>

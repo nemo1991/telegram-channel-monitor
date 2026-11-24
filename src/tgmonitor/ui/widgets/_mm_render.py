@@ -577,7 +577,8 @@ class RenderMixin(_Base):
             MediaDownloadStatus.DOWNLOADING,
             None,
         ):
-            # 2026-11-23:取消沙漏 + 未下载改图标 —— 两者统一显示灰色云下载箭头,
+            # 2026-11-24:取消沙漏 + 未下载改图标 —— 两者统一显示灰色纯云形
+            # (原文件只在远端、本地未落地;无向下箭头,与行尾下载动作图标区分),
             # 文字说明放 tooltip。真正在下载时进度由 on_download_progress 先清
             # 图标再写 "X / Y (Z%)";卡死残留由启动自愈复位为 None,视觉一致。
             hint = self._tr_pending_hint()
