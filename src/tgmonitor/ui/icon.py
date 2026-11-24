@@ -65,6 +65,29 @@ def action_icon(name: str) -> QIcon:
     return _svg_icon(f"{_ICONS_DIR}/{name}.svg", sizes=(16, 20, 24))
 
 
+def tinted_action_pixmap(name: str, color: QColor, size: int) -> QPixmap:
+    """把 SVG 直接渲染到目标像素尺寸 —— 需要精确尺寸时用这个。
+
+    `tinted_action_icon()` 只注册 16/20/24 三档位图,`QIcon.pixmap(32, 32)`
+    实际返回 24×24(QIcon 不放大原生位图);再被 `QLabel.setPixmap()` 缩到
+    32×32 就是一次位图放大,线条边缘发虚。本函数用 `QSvgRenderer` 直渲到
+    目标像素,矢量在其中原生绘制,无中间位图缩放。
+
+    与 `tinted_action_icon()` 同样先把 `currentColor` 替换成显式 hex。
+    """
+    raw = _resource_bytes(f"{_ICONS_DIR}/{name}.svg").replace(
+        b"currentColor", color.name().encode("ascii")
+    )
+    renderer = QSvgRenderer(raw)
+    pixmap = QPixmap(QSize(size, size))
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    renderer.render(painter)
+    painter.end()
+    return pixmap
+
+
 def tinted_action_icon(name: str, color: QColor) -> QIcon:
     """带 fg 色的 action icon。**这是项目内推荐入口**。
 
