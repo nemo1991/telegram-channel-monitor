@@ -41,6 +41,14 @@ Contributors)。
 | `src/tgmonitor/resources/icons/media_more.svg`         | Lucide `ellipsis` |
 | `src/tgmonitor/resources/icons/page_prev.svg`          | Lucide `chevron-left` |
 | `src/tgmonitor/resources/icons/page_next.svg`          | Lucide `chevron-right` |
+| `src/tgmonitor/resources/icons/media_type_photo.svg`   | Lucide `image` |
+| `src/tgmonitor/resources/icons/media_type_video.svg`   | Lucide `video` |
+| `src/tgmonitor/resources/icons/media_type_audio.svg`   | Lucide `music` |
+| `src/tgmonitor/resources/icons/media_type_voice.svg`   | Lucide `mic` |
+| `src/tgmonitor/resources/icons/media_type_document.svg`| Lucide `file-text` |
+| `src/tgmonitor/resources/icons/media_type_sticker.svg` | Lucide `smile` |
+| `src/tgmonitor/resources/icons/media_type_animation.svg`| Lucide `images` |
+| `src/tgmonitor/resources/icons/media_type_video_note.svg`| Lucide `circle-play` |
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
 

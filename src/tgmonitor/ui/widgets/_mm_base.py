@@ -33,6 +33,19 @@ _MEDIA_ICONS: dict[MediaType, str] = {
     MediaType.VIDEO_NOTE: "视频留言",
 }
 
+# 2026-11-24:缩略图没下载(或没有真实缩略图)时按类型显示图标,不再重复
+# 第 2 列已有的中文类型文字。值是 resources/icons/<name>.svg 的文件名。
+_MEDIA_TYPE_ICON_NAMES: dict[MediaType, str] = {
+    MediaType.PHOTO: "media_type_photo",
+    MediaType.VIDEO: "media_type_video",
+    MediaType.AUDIO: "media_type_audio",
+    MediaType.VOICE: "media_type_voice",
+    MediaType.DOCUMENT: "media_type_document",
+    MediaType.STICKER: "media_type_sticker",
+    MediaType.ANIMATION: "media_type_animation",
+    MediaType.VIDEO_NOTE: "media_type_video_note",
+}
+
 # 2026-08-31 v1.5.0 PR #A8:Lightbox 预览白名单 — 仅图片类(DONE 状态下)
 # 可点缩略图弹大图;视频/音频/文档走 Open/Reveal,不动 lightbox。
 # STICKER 算图片(WebP),ANIMATION 是 GIF。

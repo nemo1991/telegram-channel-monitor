@@ -44,6 +44,7 @@ from tgmonitor.ui.icon import tinted_action_icon
 from tgmonitor.ui.thumbnail import cache_key_for, render_pixmap
 from tgmonitor.ui.widgets._mm_base import (
     _MEDIA_ICONS,
+    _MEDIA_TYPE_ICON_NAMES,
     _STATUS_TEXT,
     LIGHTBOX_PREVIEWABLE_TYPES,
     _channel_name,
@@ -69,8 +70,8 @@ class _ProgressThumb(QLabel):
     与旧 QLabel 无差异。
 
     内容必须比边框小一圈才能被“包住”:`setPixmap` 把图缩到 32×32(框内缘
-    约 36px),文字占位在 `_build_thumb_cell` 里也压到 16px —— 否则 22px 的
-    「视频」两字约 44px 宽会溢出框外,看起来像框没包住缩略图。
+    约 36px)。2026-11-24 起未下载的占位也走 32×32 类型图标,不再用会
+    溢出边框的中文文字(那正是当初「框没包住缩略图」的成因之一)。
 
     `set_progress()` 只存值 + `update()`,真正的绘制在 `paintEvent` 走 QPainter,
     保持 UI 渲染在主线程(进度事件本身已由 VM signal 切回主线程)。
@@ -161,6 +162,19 @@ class _ProgressThumb(QLabel):
         painter.setPen(pen)
         for start, end in self._progress_segments(rect, pct):
             painter.drawLine(start, end)
+
+
+# 2026-11-24:占位图标走项目统一的 tinted_action_icon(SVG currentColor 替换),
+# 中性灰避免和蓝色下载动作图标混淆;尺寸与真实缩略图一致,真实图加载后直接
+# setPixmap 覆盖。
+_TYPE_ICON_TINT = QColor("#7b8494")
+
+
+def _media_type_icon_pixmap(media_type: MediaType) -> QPixmap:
+    """按媒体类型生成 32×32 占位图标;未知类型退文档图标。"""
+    name = _MEDIA_TYPE_ICON_NAMES.get(media_type, "media_type_document")
+    size = _ProgressThumb._CONTENT_SIZE
+    return tinted_action_icon(name, _TYPE_ICON_TINT).pixmap(size, size)
 
 
 class RenderMixin(_Base):
@@ -474,16 +488,18 @@ class RenderMixin(_Base):
         return w
 
     def _build_thumb_cell(self, hbox: QHBoxLayout, med: MediaDTO, key: _RowKey) -> None:
-        """缩略图列(2026-08-25 PR #1)— 40×40,初始显 emoji,VM 异步加载完后 setPixmap 替换。
+        """缩略图列 — 40×40,默认按类型显示图标;真实缩略图加载后 setPixmap 覆盖。
 
-        2026-08-31 v1.5.0 PR #A8:可点击 — 图片类(photo/animation/sticker) DONE 时
-        设 PointingHandCursor + 接 mousePressEvent 发 preview_requested;非图 / 未下
-        载保持默认箭头 + 不响应。
+        2026-11-24 用户选型:第 2 列已有中文类型文字,缩略图不再重复显示
+        「视频」/「文档」等文字占位,改用对应媒体类型的单色线条图标。
+        2026-08-31 v1.5.0 PR #A8:图片类 DONE 时可点开 lightbox;未下载保持
+        默认箭头 + 不响应。
         """
-        thumb = _ProgressThumb(_MEDIA_ICONS.get(med.type, "附件"))
+        thumb = _ProgressThumb()
         thumb.setFixedSize(40, 40)
         thumb.setAlignment(Qt.AlignCenter)
-        thumb.setStyleSheet("font-size: 16px;")  # 两字占位 ≲32px,收进进度框内
+        thumb.setPixmap(_media_type_icon_pixmap(med.type))
+        thumb.setToolTip(_MEDIA_ICONS.get(med.type, "附件"))
         self._thumb_labels[key] = thumb
         if (
             med.type in LIGHTBOX_PREVIEWABLE_TYPES
