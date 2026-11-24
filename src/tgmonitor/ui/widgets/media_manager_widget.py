@@ -179,6 +179,9 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
         self._total: int = 0
         self._page: int = 0
         self._page_size: int = 50
+        # 2026-11-24:下一次重渲是否从顶部开始。首次渲染 / 筛选 / 翻页为 True;
+        # 下载完成等原地 refresh 为 False(保留当前滚动位置,别跳回首行)。
+        self._reset_scroll_on_render: bool = True
 
         # 缩略图缓存(2026-08-25 PR #1)— 进程内 LRU,200 条
         self._thumb_cache = ThumbnailCache()

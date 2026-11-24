@@ -841,3 +841,112 @@ def test_refresh_translates_undownloaded_sentinel() -> None:
     MediaActionsController(ctx).on_media_refresh()
     assert got["undownloaded"] is True
     assert got["status"] is None
+
+
+# ---- 2026-11-24:下载完成重渲不应把列表滚回首行 -------------------------------
+
+
+class _FakeScrollBar:
+    """只记录 value()/setValue() 的滚动条替身。
+
+    离屏 widget 未 show() 时 QListWidget 的 scroll range 恒为 0,无法直接
+    断言真实滚动值;这里替换滚动条方法,守卫 `_render_list` 的存/取逻辑。
+    """
+
+    def __init__(self) -> None:
+        self.current = 0
+        self.history: list[int] = []
+
+    def value(self) -> int:
+        return self.current
+
+    def setValue(self, value: int) -> None:  # noqa: N802 — Qt 命名
+        self.history.append(value)
+        self.current = value
+
+
+def _many_rows(n: int) -> list[tuple[MessageDTO, int, MediaDTO]]:
+    return [
+        (
+            _msg(msg_id=i),
+            MEDIA_IDX,
+            _media(MediaDownloadStatus.DONE if i % 2 else None),
+        )
+        for i in range(n)
+    ]
+
+
+def test_rerender_preserves_scroll_position(
+    widget: MediaManagerWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """下载完成等原地 refresh 重建整表后,滚动条应回到原位置。"""
+    vbar, hbar = _FakeScrollBar(), _FakeScrollBar()
+    monkeypatch.setattr(widget.list, "verticalScrollBar", lambda: vbar)
+    monkeypatch.setattr(widget.list, "horizontalScrollBar", lambda: hbar)
+
+    rows = _many_rows(50)
+    widget.on_media_loaded((rows, 50))
+    assert vbar.history == [0], "首次渲染显式回到顶部"
+
+    vbar.setValue(240)
+    hbar.setValue(64)
+    vbar.history.clear()
+    hbar.history.clear()
+
+    # 模拟 MediaDownloaded → refresh_requested → on_media_loaded 的同一页重渲。
+    widget.on_media_loaded((rows, 50))
+    assert vbar.history[-1] == 240, "重渲后纵向滚动应保留"
+    assert hbar.history[-1] == 64, "重渲后横向滚动应保留"
+
+
+def test_page_or_filter_change_still_scrolls_to_top(
+    widget: MediaManagerWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """翻页/换筛选是"换数据集",仍应从顶部看起;普通 refresh 才保留位置。"""
+    vbar = _FakeScrollBar()
+    monkeypatch.setattr(widget.list, "verticalScrollBar", lambda: vbar)
+    monkeypatch.setattr(widget.list, "horizontalScrollBar", _FakeScrollBar)
+
+    widget.on_media_loaded((_many_rows(50), 100))
+    vbar.setValue(240)
+    vbar.history.clear()
+
+    widget._on_page_next()  # noqa: SLF001 — 守卫分页显式重置滚动
+    widget.on_media_loaded((_many_rows(50), 100))
+    assert vbar.history[-1] == 0, "翻页后应从首行看起"
+
+    vbar.setValue(180)
+    vbar.history.clear()
+    widget.cmb_type.setCurrentIndex(1)
+    assert widget._reset_scroll_on_render is True  # noqa: SLF001 — 筛选标记
+    widget.on_media_loaded((_many_rows(50), 100))
+    assert vbar.history[-1] == 0, "换筛选后应从首行看起"
+
+
+def test_page_clamp_resets_both_current_and_followup_render(
+    widget: MediaManagerWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """总数变小钳制页码会连发两次刷新 —— 两次都必须从顶部开始。"""
+    vbar = _FakeScrollBar()
+    monkeypatch.setattr(widget.list, "verticalScrollBar", lambda: vbar)
+    monkeypatch.setattr(widget.list, "horizontalScrollBar", _FakeScrollBar)
+
+    widget.on_media_loaded((_many_rows(50), 100))
+    widget._on_page_next()  # noqa: SLF001 — 进入第 2 页
+    widget.on_media_loaded((_many_rows(50), 100))
+    vbar.setValue(240)
+    vbar.history.clear()
+
+    # 总数缩到 1 页 → 页码钳制 + 自动补拉一轮。
+    widget.on_media_loaded((_many_rows(3), 3))
+    assert vbar.history[-1] == 0, "钳制本次应回顶部"
+    vbar.setValue(180)
+    vbar.history.clear()
+    widget.on_media_loaded((_many_rows(3), 3))
+    assert vbar.history[-1] == 0, "补拉那轮也不能保留旧滚动值"
+
+    # 两轮结束后标记已消费,后续普通刷新恢复正常保留。
+    vbar.setValue(60)
+    vbar.history.clear()
+    widget.on_media_loaded((_many_rows(3), 3))
+    assert vbar.history[-1] == 60
