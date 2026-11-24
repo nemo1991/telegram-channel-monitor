@@ -1,6 +1,6 @@
 [project]
 name = "tgmonitor"
-version = "2.1.0"
+version = "2.1.1"
 description = "Telegram 频道监听桌面应用 — UI 与 core 分离,监听/保存/导出 三大组件边界清晰"
 readme = "README.md"
 requires-python = "~=3.13.0"
@@ -49,7 +49,11 @@ Issues = "https://github.com/nemo1991/telegram-channel-monitor/issues"
 Documentation = "https://github.com/nemo1991/telegram-channel-monitor/blob/main/docs/ARCHITECTURE.md"
 
 [project.scripts]
+# 2.1.1:GUI 与 CLI 拆分 — tgmonitor 保留无参数启动 GUI;tgmon / tgmon-cli
+# 是从进程起点就不加载 Qt 的纯 CLI 入口,参数写错只报用法错误、绝不弹 UI。
 tgmonitor = "tgmonitor.__main__:main"
+tgmon = "tgmonitor.cli.main:main_tgmon"
+tgmon-cli = "tgmonitor.cli.main:main_tgmon_cli"
 
 [build-system]
 requires = ["hatchling"]

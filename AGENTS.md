@@ -9,8 +9,8 @@
 **tgmonitor** — Telegram 频道监听桌面应用:监听白名单频道的新消息,自动落库并下载媒体,提供桌面 UI 查看、检索与导出。
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
-- 当前版本 **2.1.0**(以 `pyproject.toml` 为准)。
-- 包管理/构建:uv + hatchling,src 布局,console script 入口 `tgmonitor = tgmonitor.__main__:main`。
+- 当前版本 **2.1.1**(以 `pyproject.toml` 为准)。
+- 包管理/构建:uv + hatchling,src 布局,console script 三个入口:`tgmonitor = tgmonitor.__main__:main`(GUI)、`tgmon` / `tgmon-cli = tgmonitor.cli.main:main_tgmon*`(**纯 CLI**,2.1.1 起)。
 - 桌面打包:PyInstaller(`tgmonitor.spec`)→ Linux AppImage + macOS .app + Windows onedir zip;发布走 GitHub Release + SHA256SUMS。**纯 Python 后端,三平台均无需编译原生引擎**。
 - 许可证 MIT,作者 forcetone;项目注释与文档均用中文,新代码注释随项目习惯用中文。
 
@@ -119,7 +119,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 
 | 路径 | 职责 |
 |---|---|
-| `__main__.py` / `app.py` | 入口。`run()` 是 GUI 组合根:构建 qasync `QEventLoop` 后**单 loop `run_forever` + `ensure_future`**(历史坑:不要用 `run_until_complete`);凭据未配置时 factory 返回占位 client,应用正常启动显示未登录引导;真 client 构造失败弹 QMessageBox;退出码 0/1/130。`__main__.main()` argv 分流:无参数 → `app.run()`;`sync` / `monitor` / `--help` → `cli.main()` |
+| `__main__.py` / `app.py` | 入口。`run()` 是 GUI 组合根:构建 qasync `QEventLoop` 后**单 loop `run_forever` + `ensure_future`**(历史坑:不要用 `run_until_complete`);凭据未配置时 factory 返回占位 client,应用正常启动显示未登录引导;真 client 构造失败弹 QMessageBox;退出码 0/1/130。`__main__.main()` argv 分流:无参数 / `gui` → `app.run()`;`CLI_SUBCOMMANDS` / `--help` / `help` → `cli.main()`;未知首参 → stderr 报错 + 退出码 2(2.1.1 起不再误启 GUI) |
 | `core/runtime.py` | **CLI / GUI 共享 composition root**:`bootstrap()` 与 `shutdown()`(配套清理),`core/` 内禁止 import PySide6 / qasync |
 | `core/config.py` | pydantic-settings 配置,`TG_` 环境变量前缀;`DBBackend` SQLITE(默认)/ POSTGRES |
 | `core/events.py` | EventBus:async pub/sub,订阅者异常被吞掉(不崩主流程)。领域事件如 LoginStateChanged / ConnectionStateChanged / ChannelSubscribed / MessageReceived / MessageEdited / MessageDeleted / MediaDownloaded / ExportDone / BatchDone / ChannelSyncProgress / ErrorOccurred / AuthErrorOccurred / SettingsChanged |
@@ -137,7 +137,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 | `core/storage/` | 7 个按域 ABC(SchemaLifecycle / ChannelStore / MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore)组合成 `StorageRepository`;`sqlite_repo`(默认,aiosqlite WAL)/ `postgres_repo`(asyncpg,+ `_*_pg` 分域 helper)+ 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
 | `core/objectstore/` | base ABC + local_store(平铺)/ folder_store(两级分片)/ s3_store + factory,默认 **FOLDER** |
 | `core/export/` | base 注册表 `EXPORTERS` + `@exporter` 装饰器 + json/csv/markdown/html + 流式导出 service |
-| `cli/` | argparse 子命令(sync / monitor);裸 `asyncio.run()` 事件循环,无 PySide6。CLI 路径在 `__main__.py` argv 分流后调,永不 import `app` |
+| `cli/` | argparse 全部 2.1.1 子命令(含 `help`);裸 `asyncio.run()` 事件循环,无 PySide6。`main.py` 是注册表单一真源(`CLI_SUBCOMMANDS` + `_DISPATCH`);`tgmon` / `tgmon-cli` 直连 `main_tgmon*`,从进程起点就不 import `app` |
 | `ui/` | PySide6 界面:main_window、widgets/、viewmodels/、theme.py、icon.py、nav_bar、ui_assembler;`async_bridge.py` 为跨线程样板(`run_coro`) |
 
 ## 目录结构
@@ -252,7 +252,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 - **新增领域事件**:在 `core/events.py` 定义,EventBus 发布;UI 侧订阅刷新。
 - **新增域操作**:加在对应域服务(auth/channels/messages/media/batch/channel_sync)上,**不要**加回 AppService facade(allowlist 守护测试会拒)。
 - **UI 侧新增跨线程异步调用**:一律走 `ui/async_bridge.py` 的 `run_coro`,不要另起模板。
-- **新增 CLI 子命令**:在 `src/tgmonitor/cli/` 加 `xxx.py`,仿 `sync.py` / `monitor.py` 写 `async def run_xxx(args, *, app=None, monitor=None)`;然后在 `cli/main.py:build_parser()` 加 `sub.add_parser("xxx", …)` + 分支 `if args.cmd == "xxx": return asyncio.run(run_xxx(args))`。`__main__.py` 自动 argv 路由。**约束**:
+- **新增 CLI 子命令**:在 `src/tgmonitor/cli/` 加 `xxx.py`,仿 `sync.py` / `monitor.py` 写 `async def run_xxx(args, *, app=None, monitor=None)`;然后在 `cli/main.py` 三处同步注册表:`build_parser()` 加 `sub.add_parser("xxx", …)`、`CLI_SUBCOMMANDS` 加 `"xxx"`、`_DISPATCH` 加 `"xxx": ("tgmonitor.cli.xxx", "run_xxx")`。`__main__.py` 自动 argv 路由。**约束**:
   - CLI 子包内任何模块禁止 import PySide6 / qasync / `tgmonitor.ui.*`(`tests/test_cli.py::test_cli_does_not_import_qt_or_qasync` 是子进程断言守门,跨 conftest 隔离)
   - CLI 入口走 `core/runtime.py:bootstrap()`,与 GUI 共用 composition root;`run_xxx(args, *, app, monitor)` 入参允许测试注入 fakes,生产路径 `None` → 自动走 bootstrap()
   - 鉴权失败(`state != "ready"`):CLI 没有 phone/code 输入面板,直接退出码 1 + stderr 提示去 GUI 完成登录

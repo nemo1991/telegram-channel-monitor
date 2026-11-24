@@ -49,7 +49,7 @@ def _run_subprocess(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def test_cli_help_exits_zero() -> None:
-    """`python -m tgmonitor --help` 退出码 0,且包含全部 2.1.0 子命令。"""
+    """`python -m tgmonitor --help` 退出码 0,且包含全部 2.1.1 子命令。"""
     r = _run_subprocess(["-m", "tgmonitor", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     for cmd in (
@@ -65,6 +65,7 @@ def test_cli_help_exits_zero() -> None:
         "media",
         "export",
         "config",
+        "help",
     ):
         assert cmd in r.stdout, f"help 缺少子命令 {cmd}"
 
@@ -127,7 +128,7 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
     code = textwrap.dedent("""
         import sys
 
-        # 入口 + 全部 2.1.0 子命令模块都触发 import(模拟 CLI 所有代码路径)
+        # 入口 + 全部 2.1.1 子命令模块都触发 import(模拟 CLI 所有代码路径)
         import importlib
         from tgmonitor.cli.main import CLI_SUBCOMMANDS, build_parser
         from tgmonitor.cli.sync import run_sync
@@ -146,7 +147,7 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
             'channels', 'control', 'messages', 'media', 'export', 'config',
         ):
             importlib.import_module('tgmonitor.cli.' + mod_name)
-        assert len(CLI_SUBCOMMANDS) == 12
+        assert len(CLI_SUBCOMMANDS) == 13
 
         # 关键断言
         leaked = []
@@ -223,6 +224,91 @@ def test_cli_dispatch_default_routes_to_gui() -> None:
         # 默认错误处理:RuntimeError 走 except → 返 1
         if rc != 1:
             raise AssertionError(f'期望退出码 1(GUI 路径错误捕获),实际 {rc}')
+    """)
+    r = _run_subprocess(["-c", code])
+    assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
+
+
+# ============================================================
+# 2.1.1:CLI 独立入口 + 未知参数绝不唤醒 GUI
+# ============================================================
+
+
+def test_help_subcommand_prints_overview() -> None:
+    """`tgmonitor help` 打印帮助总览(等同 --help),退出码 0。"""
+    r = _run_subprocess(["-m", "tgmonitor", "help"])
+    assert r.returncode == 0, f"stderr={r.stderr}"
+    for cmd in ("status", "config", "help"):
+        assert cmd in r.stdout, f"help 总览缺少 {cmd}"
+
+
+def test_unknown_arg_never_launches_gui() -> None:
+    """未知首参 → 退出码 2 + stderr 提示,不 import / 不调用 GUI。"""
+    code = textwrap.dedent("""
+        import sys
+
+        class FakeApp:
+            @staticmethod
+            def run():
+                raise AssertionError('GUI 被错误唤醒')
+
+        sys.modules['tgmonitor.app'] = FakeApp
+        sys.argv = ['tgmonitor', 'stats']
+
+        from tgmonitor.__main__ import main
+
+        rc = main()
+        if rc != 2:
+            raise AssertionError(f'期望退出码 2,实际 {rc}')
+    """)
+    r = _run_subprocess(["-c", code])
+    assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
+    assert "无法识别的参数" in r.stderr
+    assert "tgmon" in r.stderr
+
+
+def test_console_scripts_registered() -> None:
+    """pyproject 注册三个入口:tgmonitor(GUI)+ tgmon / tgmon-cli(纯 CLI)。"""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["scripts"]
+    assert scripts["tgmonitor"] == "tgmonitor.__main__:main"
+    assert scripts["tgmon"] == "tgmonitor.cli.main:main_tgmon"
+    assert scripts["tgmon-cli"] == "tgmonitor.cli.main:main_tgmon_cli"
+
+
+def test_tgmon_entries_are_pure_cli() -> None:
+    """两个新入口 usage 显示各自名字;未知参数由 argparse 拒绝,不加载 app。"""
+    code = textwrap.dedent("""
+        import contextlib
+        import io
+        import sys
+
+        from tgmonitor.cli.main import main_tgmon, main_tgmon_cli
+
+        for entry, prog in ((main_tgmon, 'tgmon'), (main_tgmon_cli, 'tgmon-cli')):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                try:
+                    entry(['--help'])
+                except SystemExit as exc:
+                    assert exc.code == 0, (prog, exc.code)
+                else:
+                    raise AssertionError(f'{prog} --help 未走 argparse 退出')
+            assert f'usage: {prog} ' in buf.getvalue(), (prog, buf.getvalue()[:200])
+
+            # 未知参数 SystemExit(2),且绝不触碰 GUI
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    entry(['bogus'])
+            except SystemExit as exc:
+                assert exc.code == 2, (prog, exc.code)
+            else:
+                raise AssertionError(f'{prog} 未知参数未报错')
+
+        assert 'tgmonitor.app' not in sys.modules
     """)
     r = _run_subprocess(["-c", code])
     assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"

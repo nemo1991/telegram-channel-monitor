@@ -5,6 +5,27 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.1] - 2026-11-24
+
+主题:**CLI 命令独立化** — 修掉「打错 `tgmonitor` 参数就弹桌面窗口」,新增纯
+CLI 命令名与帮助总览入口。
+
+### 新增
+
+- **`tgmon` / `tgmon-cli`**:两个纯 CLI 命令(完全同义),从进程起点就不加载
+  Qt,适合服务器 / SSH / cron / systemd;帮助里的 usage 显示实际输入的命令名。
+- **`help` 子命令**:`tgmon help`(或 `tgmonitor help`)打印帮助总览,等同 `--help`。
+
+### 变更
+
+- **未知参数不再唤醒 GUI**:`tgmonitor` 收到不在命令白名单里的首参时,改为
+  stderr 报错 + 退出码 2,并提示用 `tgmon` / `tgmon-cli help`。无参数 / `gui`
+  仍按原习惯启动桌面界面,2.1.0 的 12 个子命令继续兼容。
+
+### 修复
+
+- 打错命令(如 `tgmonitor stats`)误弹桌面窗口的问题。
+
 ## [2.1.0] - 2026-11-24
 
 主题:**CLI 从两个补漏子命令升级为可替代桌面 UI 大部分功能的完备工具**,支持
