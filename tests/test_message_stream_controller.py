@@ -59,7 +59,6 @@ def _make_ctx(
         media_manager=MagicMock(name="media_manager"),
         dashboard=MagicMock(name="dashboard"),
         channel_panel=MagicMock(name="channel_panel"),
-        header=MagicMock(name="header"),
         status_bar=status_bar,
         nav=MagicMock(name="nav"),
         stack=MagicMock(name="stack"),

@@ -168,7 +168,6 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
         media_manager=win.media_manager,
         dashboard=MagicMock(name="dashboard"),
         channel_panel=MagicMock(name="channel_panel"),
-        header=MagicMock(name="header"),
         status_bar=win.status_bar,
         nav=MagicMock(name="nav"),
         stack=MagicMock(name="stack"),

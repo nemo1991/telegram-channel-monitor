@@ -29,34 +29,8 @@ QMainWindow {
     background: #f5f6fa;
 }
 
-/* ===== 头栏 ===== */
-#headerBar {
-    background: #ffffff;
-    border-bottom: 1px solid #e2e4e9;
-    min-height: 44px;
-}
-#appTitle {
-    font-size: 15px;
-    font-weight: 700;
-    color: #1a1a2e;
-    letter-spacing: 0.3px;
-}
-#headerActionBtn {
-    padding: 4px 14px;
-    border: 1px solid #d0d3da;
-    border-radius: 4px;
-    background: #ffffff;
-    color: #5a5d64;
-    font-size: 12px;
-    font-weight: 500;
-}
-#headerActionBtn:hover {
-    background: #edf0f5;
-    border-color: #b0b4c0;
-}
-#headerActionBtn:pressed {
-    background: #e2e4e9;
-}
+/* 2026-11-24 v2.0.10:页头 HeaderBar 整块移除,原 #headerBar / #appTitle
+ * / #headerActionBtn 规则随组件删除;内容区顶格,窗口标题栏保留品牌名。 */
 
 /* ===== 2026-09-08 v1.7.0:LIVE 多选浮层 + 详情顶部 3 按钮 ===== */
 #selectionToolbar {

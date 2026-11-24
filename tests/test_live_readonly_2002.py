@@ -2,10 +2,10 @@
 
 2026-11-16 v2.0.2:LIVE 页从「可操作消息工作台」收敛为「只读监听状态看板」。
 本文件守护:
-- R-01 顶部搜索移除:HeaderBar 无 SearchBar 实例;
+- R-01 顶部搜索移除:v2.0.10 起页头整块删除;
 - R-02 LIVE 工具条/右键多选移除:无 SelectionToolbar,视图单选模式;
 - R-03 详情只读:无导出/删除按钮,保留复制文本;
-  (2026-11-18 v2.0.5:关闭详情按钮已移除,复制文本上提到 header 行)
+  (2026-11-18 v2.0.5:关闭详情按钮已移除,复制文本上提到详情顶部)
 - F-02 消息口径:MAX_ITEMS == 100(与 load_recent_messages limit 一致)。
 
 用真实窗口(build_real_main_window)而非 mock,防「代码删了但装配漏改」回归。
@@ -20,19 +20,17 @@ from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.message_list_model import MessageListModel
 
 
-def test_header_has_no_search_bar(qapp, qloop, tmp_path):
-    """R-01 + v2.0.3 D3:头栏无 SearchBar,且已退化为纯标题。
+def test_status_and_login_entries_have_new_homes(qapp, qloop, tmp_path):
+    """R-01 + v2.0.3 D3 + v2.0.10:头栏整块移除,状态/登录有新落点。
 
     原「状态徽章 + 登录/登出按钮保留」是 2.0.2 时的 A1 决策;2026-11-17
-    v2.0.3 用户改拍板:登录态并入底部单一状态位,登录/登出入口迁到设置页。
-    本文件保留,只更新断言使同一不变量(头栏不承载这些控件)在新行为下成立。
+    v2.0.3 登录态并入底部单一状态位,登录/登出入口迁到设置页;2026-11-24
+    v2.0.10 页头 HeaderBar 整块删除(44px 让给内容)。
     """
     from tgmonitor.ui.widgets.status_bar import _UnifiedStateLabel
 
     win = build_real_main_window(qloop, tmp_path)
-    assert not hasattr(win.header, "search_bar"), "HeaderBar 不应再持有 search_bar"
-    for name in ("state_dot", "state_label", "btn_action", "btn_logout"):
-        assert not hasattr(win.header, name), f"HeaderBar 不应再持有 {name}"
+    assert not hasattr(win, "header")  # 头栏已整块移除
     # 新落点真实装配存在(防「代码删了但接线漏改」)
     assert win.status_bar.findChild(_UnifiedStateLabel) is not None
     assert hasattr(win.settings_page, "btn_qr_login")
@@ -50,7 +48,7 @@ def test_live_view_is_single_selection_and_no_selection_toolbar(qapp, qloop, tmp
 
 
 def test_message_detail_is_readonly_except_copy(qapp, qloop, tmp_path):
-    """R-03:详情按钮仅「复制文本」(header 右上),无导出/删除/关闭。"""
+    """R-03:详情按钮仅「复制文本」(详情顶部),无导出/删除/关闭。"""
     win = build_real_main_window(qloop, tmp_path)
     win.live_view.set_messages([make_message(msg_id=1, text="只读确认")])
     qapp.processEvents()

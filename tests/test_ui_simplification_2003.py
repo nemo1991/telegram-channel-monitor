@@ -30,7 +30,6 @@ from tgmonitor.core.events import (  # noqa: E402
 from tgmonitor.core.monitor.service import MonitorService  # noqa: E402
 from tgmonitor.ui.controllers.app_state_controller import AppStateController  # noqa: E402
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget  # noqa: E402
-from tgmonitor.ui.widgets.header_bar import HeaderBar  # noqa: E402
 from tgmonitor.ui.widgets.settings_page import SettingsPage  # noqa: E402
 from tgmonitor.ui.widgets.status_bar import StatusBar, _UnifiedStateLabel  # noqa: E402
 
@@ -119,15 +118,6 @@ def test_unified_state_only_one_instance(qapp: QApplication) -> None:
 
 
 # ---------------------------------------------------------------- D3
-
-
-def test_header_bar_is_title_only(qapp: QApplication) -> None:
-    """D3:头栏保留纯标题(品牌锚点),状态与登录/登出按钮全部移除。"""
-    header = HeaderBar()
-    for name in ("state_dot", "state_label", "btn_action", "btn_logout"):
-        assert not hasattr(header, name), f"HeaderBar 不应再持有 {name}"
-    assert not hasattr(header, "update_state")
-    header.deleteLater()
 
 
 def _settings_page(

@@ -4,7 +4,7 @@
 `StatusBar(..., parent=self._mw)` 后**没有** `right_layout.addWidget(...)`。
 parent 只决定对象树,不决定布局 —— 状态栏成了 MainWindow 的直接子 widget,
 geometry 停在 `(0, 0, 100, 30)`,Z-order 又高于 central widget,于是浮在
-顶部。`right_layout` 里只有 HeaderBar + QStackedWidget 两项。
+顶部。`right_layout` 里只有 QStackedWidget + statusBar 两项(v2.0.10 起无头栏)。
 """
 
 from __future__ import annotations
@@ -50,3 +50,21 @@ def test_status_bar_sits_below_content_and_stays_at_bottom(qapp, qloop, tmp_path
     bar2 = win.status_bar.geometry()
     assert bar2.y() > 0, "缩窗后状态栏不能回到窗口顶部"
     assert bar2.y() + bar2.height() <= right.height() + 1, "缩窗后状态栏仍应贴内容区底边"
+
+
+def test_header_row_removed_frees_content_space(qapp, qloop, tmp_path):
+    """v2.0.10:页头整块移除后 stack 顶到内容区 y=0,原 44px 让给内容。"""
+    from PySide6.QtWidgets import QWidget
+
+    win = build_real_main_window(qloop, tmp_path)
+    assert not hasattr(win, "header")
+    assert win.findChild(QWidget, "headerBar") is None
+    assert win.findChild(QWidget, "appTitle") is None
+
+    right = win.status_bar.parent()
+    assert right is not None
+    assert right.layout().indexOf(win.stack) == 0, "stack 应是内容区首项,无头栏占位"
+
+    qapp.processEvents()
+    assert win.stack.geometry().top() == 0, "stack 顶边应为 0(原页头 44px 已释放)"
+    win.close()
