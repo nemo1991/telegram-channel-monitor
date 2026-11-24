@@ -220,9 +220,7 @@ def test_close_on_exit_checkbox_defaults_checked(qapp, qloop, tmp_path) -> None:
     win.close()
 
 
-def test_close_on_exit_uncheck_persists_and_reloads(
-    qapp, qloop, tmp_path, monkeypatch
-) -> None:
+def test_close_on_exit_uncheck_persists_and_reloads(qapp, qloop, tmp_path, monkeypatch) -> None:
     """取消勾选并保存后 .env 必须是 false,重开设置页也要回填 false。
 
     回归 #142:`_collect()` / `_load_from_settings()` 曾漏掉 close_on_exit,
