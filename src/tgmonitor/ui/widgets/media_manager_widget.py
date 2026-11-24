@@ -214,6 +214,11 @@ class MediaManagerWidget(FilterMixin, RenderMixin, ActionsMixin, QWidget):
 
         # 2) 中间 list(自绘 widget item)
         self.list = QListWidget()
+        # v2.0.9:objectName 让 QSS 单独覆盖通用 item 的上下 padding ——
+        # 自绘行 widget 高 48px 已含 4px 上下留白,通用 item 再加 4px padding
+        # + 1px border-bottom 会把 widget 底部裁掉 ~9px,方形进度框底边整条
+        # 落在裁剪区外(用户报「框只包了一半」)。见 style.qss 的 mediaList 规则。
+        self.list.setObjectName("mediaList")
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setUniformItemSizes(False)  # 自绘行高可变
         self.list.setAlternatingRowColors(True)
