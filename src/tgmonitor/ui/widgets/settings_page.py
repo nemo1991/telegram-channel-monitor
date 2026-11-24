@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -101,6 +103,9 @@ class SettingsPage(QWidget):
         self._channel_panel = channel_panel
         # 6 个 FormSection + 持有 self 引用,collect / load 通用循环
         self._sections: list[FormSection] = []
+        # 2026-11-24 v2.0.10 issue #131:左侧分组导航 → 右侧明细切换。
+        # 每项 (标题, 分组 widget, 搜索命中文本);标题/字段标签/key 全入索引。
+        self._nav_entries: list[tuple[str, QWidget, str]] = []
 
         self._build()
         self._load_from_settings()
@@ -123,7 +128,39 @@ class SettingsPage(QWidget):
         # v2.0.7 FR-04:页面级「设置」标题删除(导航已指明当前页),
         # 顶部空间直接给第一张卡片。全局 #pageTitle QSS 规则保留给其它页。
 
-        # 滚动区域
+        # 2026-11-24 v2.0.10 issue #131:左侧分组导航 + 搜索,右侧明细。
+        # 左侧导航只做「显隐切换」——7 个分组仍是原 groupbox,全部留同一
+        # scroll_content 里;不新增 QGroupBox(布局测试硬断言恰好 7 个)。
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        nav_pane = QWidget()
+        nav_pane.setObjectName("settingsNavPane")
+        nav_layout = QVBoxLayout(nav_pane)
+        nav_layout.setContentsMargins(12, 16, 8, 16)
+        nav_layout.setSpacing(10)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("settingsSearchInput")
+        self.search_edit.setPlaceholderText(self.tr("搜索设置项…"))
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._on_search_text)
+        nav_layout.addWidget(self.search_edit)
+
+        self.nav_list = QListWidget()
+        self.nav_list.setObjectName("settingsNav")
+        self.nav_list.currentRowChanged.connect(self._on_nav_row)
+        nav_layout.addWidget(self.nav_list, 1)
+        body.addWidget(nav_pane)
+
+        detail = QWidget()
+        detail.setObjectName("settingsDetailPane")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+
+        # 滚动区域(现挂在右侧 detail 内)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -149,7 +186,24 @@ class SettingsPage(QWidget):
 
         form_root.addStretch(1)
         scroll.setWidget(scroll_content)
-        root.addWidget(scroll, 1)
+        detail_layout.addWidget(scroll, 1)
+        body.addWidget(detail, 1)
+        root.addLayout(body, 1)
+
+        # 导航条目统一登记(顺序 = 视觉顺序):6 个 FormSection + 监听分组。
+        # 监听分组插在第 2 项(账户之后),与 form_root 里的实际排列一致。
+        self._register_form_section(self._sections[0])  # 账户凭证
+        if self._channel_panel is not None:
+            self._register_nav_entry(
+                self._channel_gb.title(),
+                self._channel_gb,
+                "频道 白名单 订阅 监听 同步",
+            )
+        for section in self._sections[1:]:
+            self._register_form_section(section)
+        for title, _, _ in self._nav_entries:
+            self.nav_list.addItem(QListWidgetItem(title))
+        self.nav_list.setCurrentRow(0)  # 默认显示首组「账户凭证」
 
         # 后端字段初始显隐 — 必须在此(scroll.setWidget 已把 scroll_content
         # parent 到 self,find_form_row 才找得到各 groupbox)。build 期调
@@ -171,6 +225,48 @@ class SettingsPage(QWidget):
         btn_bar.addWidget(self.btn_apply)
 
         root.addLayout(btn_bar)
+
+    # ============================================================
+    # 左侧导航 — 分组显隐 + 搜索过滤
+    # ============================================================
+
+    def _register_nav_entry(self, title: str, widget: QWidget, *keywords: str) -> None:
+        """登记一个分组到左侧导航:标题 + 额外关键词(字段标签/key)供搜索。"""
+        haystack = " ".join((title, *keywords)).lower()
+        self._nav_entries.append((title, widget, haystack))
+
+    def _register_form_section(self, section: FormSection) -> None:
+        """FormSection 自动登记:标题 + 各字段 label / key + action label。"""
+        gb = section._groupbox
+        assert gb is not None
+        keywords = [token for field in section.fields for token in (field.label, field.key)]
+        keywords.extend(action.label_idle for action in section.actions)
+        self._register_nav_entry(section.title, gb, *keywords)
+
+    def _on_nav_row(self, row: int) -> None:
+        """切换右侧明细:只显示选中分组,其余 setVisible(False)。
+
+        只切 groupbox 顶层可见性 —— 不动字段行的 `set_visible`(后端互斥显隐
+        由 `_set_field_visible` 独立管理),避免两套显隐逻辑打架。
+        """
+        if row < 0 or row >= len(self._nav_entries):
+            return
+        for idx, (_, widget, _) in enumerate(self._nav_entries):
+            widget.setVisible(idx == row)
+
+    def _on_search_text(self, text: str) -> None:
+        """按关键词过滤导航条目;当前项被过滤掉时自动跳到首个可见项。"""
+        q = text.strip().lower()
+        first_visible = -1
+        current = self.nav_list.currentRow()
+        for row, (_, _, haystack) in enumerate(self._nav_entries):
+            matched = not q or q in haystack
+            self.nav_list.item(row).setHidden(not matched)
+            if matched and first_visible < 0:
+                first_visible = row
+        current_item = self.nav_list.item(current)
+        if q and first_visible >= 0 and current_item is not None and current_item.isHidden():
+            self.nav_list.setCurrentRow(first_visible)
 
     # ============================================================
     # 6 个 FormSection 装配 — 字段描述 + build
@@ -258,6 +354,7 @@ class SettingsPage(QWidget):
         # v2.0.7 FR-06:左右布局后纵向占用减半,最小高度 460→360。
         box.setMinimumHeight(360)
         root.addWidget(box)
+        self._channel_gb = box  # 导航注册用(2.0.10)
 
     @property
     def channel_panel(self) -> ChannelWidget | None:

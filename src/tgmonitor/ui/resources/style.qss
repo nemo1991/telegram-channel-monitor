@@ -819,3 +819,46 @@ QPushButton#errorLogCloseBtn {
 QPushButton#errorLogCloseBtn:hover {
     background: {accentHover};
 }
+
+/* ===== 设置页左侧分组导航(v2.0.10 issue #131) ===== */
+QWidget#settingsNavPane {
+    background: #ffffff;
+    border-right: 1px solid #e2e4e9;
+}
+QLineEdit#settingsSearchInput {
+    background: #f0f1f5;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: #1a1a2e;
+}
+QLineEdit#settingsSearchInput:focus {
+    border: 1px solid {accent};
+    background: #ffffff;
+}
+QListWidget#settingsNav {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+QListWidget#settingsNav::item {
+    min-height: 34px;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 6px;
+    color: #4a4f5c;
+    font-size: 13px;
+}
+QListWidget#settingsNav::item:hover {
+    background: #eef3fb;
+}
+QListWidget#settingsNav::item:selected {
+    background: #dce9fb;
+    color: #1a1a2e;
+    font-weight: 600;
+}
+QWidget#settingsDetailPane {
+    background: #f5f6fa;
+}
