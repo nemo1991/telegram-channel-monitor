@@ -151,21 +151,46 @@ async def test_backfill_silent_when_client_closing(bus, storage, objectstore, se
     assert await storage.count_messages(100) == 0
 
 
-async def test_backfill_unanchored_capped_to_max_page(bus, storage, objectstore, settings):
+async def test_backfill_unanchored_capped_to_max_page(bus, storage, objectstore, settings, caplog):
     """无锚点频道:只预热 `_BACKFILL_MAX_PAGE` 条,不把整段历史拉完。
 
     回归:`max_id=0` 时 `<= 0` 永假,旧实现每轮把整段历史翻完,几万条会撞
     flood wait / 制造长空窗。
     """
+    import logging
+
+    from tgmonitor.core.dto import ChannelDTO
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]})
+    await storage.upsert_channel(ChannelDTO(id=100, title="测试频道"))
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon._BACKFILL_MAX_PAGE = 3  # type: ignore[assignment]
+    mon.set_whitelist([100])
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.backfill"):
+        await mon._backfill_all()
+    msgs = await storage.list_messages([100])
+    assert {m.telegram_msg_id for m in msgs} == {10, 9, 8}
+    # issue #128:hit cap 日志以频道名为主、ID 为辅
+    assert "测试频道 (id=100) hit cap 3" in caplog.text
+
+
+async def test_backfill_log_falls_back_to_hash_id_without_channel_meta(
+    bus, storage, objectstore, settings, caplog
+):
+    """元数据缺失(频道从未落库)→ 日志降级 `#id`,不输出 None / 空名。"""
+    import logging
+
     from tgmonitor.core.monitor.service import MonitorService
 
     client = _BackfillClient({100: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]})
     mon = MonitorService(bus, client, storage, objectstore, settings)
     mon._BACKFILL_MAX_PAGE = 3  # type: ignore[assignment]
     mon.set_whitelist([100])
-    await mon._backfill_all()
-    msgs = await storage.list_messages([100])
-    assert {m.telegram_msg_id for m in msgs} == {10, 9, 8}
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.backfill"):
+        await mon._backfill_all()
+    assert "#100 hit cap 3" in caplog.text
+    assert "None" not in caplog.text
 
 
 async def test_backfill_skipped_when_not_ready(bus, storage, objectstore, settings):
@@ -213,21 +238,26 @@ async def test_backfill_unavailable_channel_warns_once_and_continues(
             ):
                 yield m
 
+    from tgmonitor.core.dto import ChannelDTO
+
     client = _UnavailableClient({100: [5, 4], 101: [3, 2, 1]})
     client.unavailable = {100}
+    await storage.upsert_channel(ChannelDTO(id=100, title="测试频道"))
     mon = MonitorService(bus, client, storage, objectstore, settings)
     mon.set_whitelist([100, 101])
 
-    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.service"):
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.backfill"):
         await mon._backfill_all()
     assert await storage.count_messages(100) == 0  # 不可用频道不落库
     assert "unavailable" in caplog.text  # warning 而非 traceback
     assert "Traceback" not in caplog.text
+    # issue #128:日志以频道名为主、ID 为辅
+    assert "测试频道 (id=100)" in caplog.text
     assert await storage.count_messages(101) == 3  # 同轮其它频道照常补
 
     # 再跑一轮:warning 只打一次,不重复刷
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.service"):
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.monitor.backfill"):
         await mon._backfill_all()
     assert "unavailable" not in caplog.text
 
