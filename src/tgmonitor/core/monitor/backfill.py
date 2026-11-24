@@ -22,9 +22,22 @@ from tgmonitor.core.events import ConnectionStateChanged, ErrorOccurred
 from tgmonitor.core.telegram.errors import ChatUnavailableError, ClientClosingError
 
 if TYPE_CHECKING:
+    from tgmonitor.core.dto import ChannelDTO
     from tgmonitor.core.monitor.service import MonitorService
 
 log = logging.getLogger(__name__)
+
+
+def _channel_label(channel: ChannelDTO | None, channel_id: int) -> str:
+    """补拉日志里的频道标识:名称为主、ID 为辅;元数据缺失时降级 `#id`。
+
+    2026-11-24 v2.0.10 issue #128:旧文案只有裸 `channel -108888881`,排查时
+    还得翻库二次确认是哪个频道。名称取 `ChannelDTO.title`,与 UI 侧
+    `_channel_name` 的优先策略一致;core 不能 import UI,故在此独立实现。
+    """
+    if channel is not None and channel.title.strip():
+        return f"{channel.title.strip()} (id={channel_id})"
+    return f"#{channel_id}"
 
 
 class BackfillRunner:
@@ -43,7 +56,7 @@ class BackfillRunner:
     def __init__(self, svc: MonitorService) -> None:
         self._svc = svc
 
-    async def _backfill(self, channel_id: int) -> None:
+    async def _backfill(self, channel_id: int, channel: ChannelDTO | None = None) -> None:
         """补拉该频道最近消息:Telegram 实时推送只覆盖连接期间,
         断线 / 重启期间的新消息不会重放,这里以周期兜底,顺带覆盖"实时流静默
         死亡"的场景(此时 `request()` 仍可用,消息数据照常入库)。
@@ -52,7 +65,16 @@ class BackfillRunner:
         递减,遇到 `<= 锚点` 即说明其余已覆盖,break。首次(无历史)锚点 = 0,
         只处理最近 `_BACKFILL_MAX_PAGE` 条当启动预热 — **不**让无锚点频道把
         整段历史翻完(每 30s 拉几万条会撞 flood wait,反而制造长空窗)。
+
+        `channel` 由 `_backfill_all` 每轮一次性预取传入(零逐条查库);单频道
+        seam(测试 / 显式调用)未传时回退查一次,查失败不影响补拉本身。
         """
+        if channel is None:
+            try:
+                channel = await self._svc.storage.get_channel(channel_id)
+            except Exception:  # noqa: BLE001 — 元数据查询失败不该打断补拉
+                channel = None
+        label = _channel_label(channel, channel_id)
         try:
             max_id = await self._svc.storage.get_max_telegram_msg_id(channel_id) or 0
             n = 0
@@ -62,8 +84,8 @@ class BackfillRunner:
             ):
                 if n >= self._svc._BACKFILL_MAX_PAGE:
                     log.warning(
-                        "backfill channel %d hit cap %d; 新消息过多，已达本次回填上限",
-                        channel_id,
+                        "backfill channel %s hit cap %d; 新消息过多，已达本次回填上限",
+                        label,
                         self._svc._BACKFILL_MAX_PAGE,
                     )
                     break
@@ -79,9 +101,9 @@ class BackfillRunner:
             # 不再每轮刷 error traceback;恢复可用(下一轮成功)后清掉标记。
             if channel_id not in self._svc._unavailable_channels:
                 self._svc._unavailable_channels.add(channel_id)
-                log.warning("backfill channel %d skipped: %s", channel_id, e)
+                log.warning("backfill channel %s skipped: %s", label, e)
         except Exception:  # noqa: BLE001
-            log.exception("backfill channel %d failed", channel_id)
+            log.exception("backfill channel %s failed", label)
         else:
             # 本轮成功 → 清除不可用标记(若之前被跳过,恢复后可重新 warning)
             self._svc._unavailable_channels.discard(channel_id)
@@ -96,8 +118,14 @@ class BackfillRunner:
         if self._svc.client.state != "ready":
             log.info("backfill skipped: not ready (state=%s)", self._svc.client.state)
             return
+        # issue #128:每轮一次预取频道名,传给各 `_backfill` 打日志用 —
+        # 不逐条查库;storage 查询失败时降级为空表,各频道仍按 #id 打日志。
+        try:
+            channels = {c.id: c for c in await self._svc.storage.list_channels()}
+        except Exception:  # noqa: BLE001 — 元数据预取失败不该打断补拉
+            channels = {}
         for cid in list(self._svc._whitelist):
-            await self._backfill(cid)
+            await self._backfill(cid, channels.get(cid))
 
     async def _backfill_loop(self) -> None:
         """周期补拉主循环:每 `_BACKFILL_INTERVAL` 秒全量扫一轮白名单。"""
