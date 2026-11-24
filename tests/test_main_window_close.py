@@ -60,6 +60,10 @@ class _FakeMainWindow(MainWindow):
         self._truly_quit = False
         self._tray = None  # 无 tray → 不进 minimize-to-tray 分支
         self._tray_first_close_hint_shown = False
+        # v2.0.11:本文件验「同步跑 shutdown callback」兜底路径。默认
+        # close_on_exit=True 会走 qt_app.quit() 提前 return,这里固定关掉,
+        # 让下面断言仍覆盖原路径;新分支由 test_main_window_tray 覆盖。
+        self._close_on_exit = lambda: False
 
 
 # 2026-11-14:删掉本地 `_LoopThread` + function-scope `loop_thread`,统一用

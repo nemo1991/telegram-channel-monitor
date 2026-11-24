@@ -200,3 +200,18 @@ def test_apply_button_label_is_save(qapp, qloop, tmp_path):
     assert settings is not None
     assert settings.btn_apply.text() == "保存"
     win.close()
+
+
+def test_close_on_exit_checkbox_defaults_checked(qapp, qloop, tmp_path) -> None:
+    """v2.0.11:「关闭窗口时退出程序」默认勾选,并在策略分组内。"""
+    win = build_real_main_window(qloop, tmp_path)
+    settings = win.findChild(SettingsPage)
+    assert settings is not None
+    chk = settings.chk_close_on_exit
+    assert chk.isChecked() is True
+    gb = chk.parentWidget()
+    while gb is not None and not isinstance(gb, QGroupBox):
+        gb = gb.parentWidget()
+    assert gb is not None and gb.title() == "策略"
+    assert settings._collect().close_on_exit is True
+    win.close()

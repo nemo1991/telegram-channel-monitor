@@ -41,6 +41,9 @@ class _MinimalMainWindow(MainWindow):
         self._truly_quit = False
         self._tray_first_close_hint_shown = False
         self._shutdown_cb = None
+        # v2.0.11:本文件主要回归「关掉设置 → 隐藏到托盘」,旧用例显式关掉
+        # 新开关;默认开启的退出分支由 test_close_on_exit_* 覆盖。
+        self._close_on_exit = lambda: False
         self.setStatusBar(QStatusBar(self))
         # 2026-10-01 v1.11.x:状态栏改自定义 StatusBar,closeEvent 调
         # `status_bar.show_message(...)`;_MinimalMainWindow 给个 stub 即可
@@ -193,3 +196,46 @@ def test_show_and_raise_restores_window(qapp: QApplication) -> None:
     win._show_and_raise()
     # showNormal 把窗口从最小化恢复;offscreen 下 isMinimized 状态机不稳,
     # 只验证不抛
+
+
+def test_close_on_exit_enabled_quits_instead_of_hiding(qapp: QApplication) -> None:
+    """v2.0.11:设置开启时点 X 走 qt_app.quit(),不再 hide 到托盘。"""
+    win = _MinimalMainWindow()
+    fake_tray = MagicMock()
+    fake_tray.is_active = True
+    win._tray = fake_tray
+    win.show()
+    win._close_on_exit = lambda: True
+
+    event = _make_close_event()
+    mock_quit = MagicMock()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "PySide6.QtWidgets.QApplication.instance",
+            classmethod(lambda cls: MagicMock(quit=mock_quit)),
+        )
+        win.closeEvent(event)
+
+    assert win._truly_quit is True
+    assert mock_quit.called
+    assert event.isAccepted() is True
+    # 不应发「已在后台运行」通知,也不应改首次关闭提示标记
+    assert not win.app.bus.publish_threadsafe.called
+    assert win._tray_first_close_hint_shown is False
+
+
+def test_close_on_exit_disabled_keeps_minimize_to_tray(qapp: QApplication) -> None:
+    """设置关闭时仍保留原行为:hide + ignore + 后台提示。"""
+    win = _MinimalMainWindow()
+    fake_tray = MagicMock()
+    fake_tray.is_active = True
+    win._tray = fake_tray
+    win.show()
+    win._close_on_exit = lambda: False
+
+    event = _make_close_event()
+    win.closeEvent(event)
+
+    assert win.isVisible() is False
+    assert event.isAccepted() is False
+    assert win.app.bus.publish_threadsafe.called

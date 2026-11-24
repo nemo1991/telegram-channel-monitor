@@ -615,10 +615,22 @@ class SettingsPage(QWidget):
         self.cmb_os.currentIndexChanged.connect(self._on_os_backend_changed)
 
     def _build_policy(self, root: QVBoxLayout) -> None:
-        """策略 — 媒体下载策略 + 单文件大小 + 数据根目录。"""
+        """策略 — 关窗行为 + 媒体下载策略 + 单文件大小 + 数据根目录。"""
         s = FormSection(
             title=self.tr("策略"),
             fields=(
+                # 2026-11-24:关窗行为开关。默认勾选 = 点 X 真退出;
+                # 关掉恢复 v1.5.0 起的「隐藏到托盘后台运行」。
+                FieldDef(
+                    key="close_on_exit",
+                    kind=FieldKind.BOOL,
+                    label=self.tr("关闭窗口时退出程序"),
+                    default=True,
+                    tooltip=self.tr(
+                        "勾选时点击窗口关闭按钮会退出应用;取消勾选则只隐藏到托盘,"
+                        "继续后台监听,可从托盘菜单恢复或退出。"
+                    ),
+                ),
                 # 2026-11-22 v2.0.9 FR-05:三态 media_policy 下拉换成单一 BOOL。
                 # 文案明确「媒体本身=原文件」,缩略图属元数据侧、不受此开关管辖。
                 FieldDef(
@@ -657,6 +669,7 @@ class SettingsPage(QWidget):
         gb = s.build(self)
         root.addWidget(gb)
         self._sections.append(s)
+        self.chk_close_on_exit = s._widgets["close_on_exit"]
         self.chk_media_download = s._widgets["media_download_on_sync"]
         self.in_media_max = s._widgets["media_max_mb"]
         self.in_data_root = s._widgets["data_root"]
