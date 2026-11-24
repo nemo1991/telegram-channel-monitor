@@ -187,6 +187,42 @@ def test_progress_frame_wraps_thumb_content() -> None:
     assert thumb._TRACK_COLOR.lightness() < 200
 
 
+def test_media_type_placeholder_icons_registered() -> None:
+    """8 种媒体类型都要有对应图标资源,缩略图占位不再写中文文字。"""
+    from importlib import resources  # noqa: PLC0415
+
+    from tgmonitor.ui.widgets._mm_base import _MEDIA_TYPE_ICON_NAMES  # noqa: PLC0415
+
+    assert set(_MEDIA_TYPE_ICON_NAMES) == set(MediaType)
+    for name in _MEDIA_TYPE_ICON_NAMES.values():
+        asset = resources.files("tgmonitor.resources").joinpath(f"icons/{name}.svg")
+        assert asset.is_file(), f"缺少类型图标: {name}.svg"
+
+
+def test_thumb_placeholder_is_icon_not_text(widget: MediaManagerWidget) -> None:
+    """未下载行的缩略图显示类型图标;中文类型只留在第 2 列。"""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
+
+    from tgmonitor.ui.widgets._mm_base import _MEDIA_ICONS  # noqa: PLC0415
+
+    for i, media_type in enumerate(MediaType):
+        med = replace(_media(None), type=media_type)
+        mid = 100 + i
+        widget.on_media_loaded(([(_msg(msg_id=mid), MEDIA_IDX, med)], 1))
+        key = _RowKey(CHANNEL_ID, mid, MEDIA_IDX)
+        thumb = widget._thumb_labels[key]
+        assert thumb.text() == "", f"{media_type} 缩略图不应再写占位文字"
+        pm = thumb.pixmap()
+        assert pm is not None and not pm.isNull(), f"{media_type} 应显示类型图标"
+        assert pm.width() <= thumb._CONTENT_SIZE and pm.height() <= thumb._CONTENT_SIZE
+        labels = [lab.text() for lab in widget.findChildren(QLabel)]
+        assert any(lab.startswith(_MEDIA_ICONS[media_type]) for lab in labels), (
+            "类型文字仍应保留在第 2 列（如「图片 · 11-24」）"
+        )
+
+
 def test_media_list_item_padding_override_wired(widget: MediaManagerWidget) -> None:
     """mediaList 必须覆盖通用 item 上下 padding,否则进度框底边被 QListWidget 裁掉。"""
     from pathlib import Path
