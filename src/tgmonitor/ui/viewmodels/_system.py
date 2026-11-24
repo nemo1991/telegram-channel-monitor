@@ -3,8 +3,8 @@
 
 `MonitorViewModel` 拆 5 mixin 第三步(2026-10-19
 plan-batch9-γ + 2026-10-19 plan-batch9-δ 归位修正 + 2026-10-20
-plan-batch9-η 收口):system 域 = 9 facade-level signal + 2 statusbar
-sub-component signal + 7 handler + 1 method。
+plan-batch9-η 收口):system 域 = 9 facade-level signal + 1 statusbar
+sub-component signal + 7 handler。
 
 - handler(7):`_on_login_state` / `_on_conn_state` /
   `_on_quit_requested`(含 pause 调 `app.pause_monitor` /
@@ -18,12 +18,10 @@ sub-component signal + 7 handler + 1 method。
     `sync_progress` / `sync_done` / `quit_requested`
   - 2 dead(无人 emit,MainWindow connect chain 仍订阅,留 signal 保持
     `getattr` 不报缺属性):`monitoring_paused` / `monitoring_resumed`
-- 2 status bar sub-component signal(2026-10-19 plan-batch9-δ 归位):
-  `selected_channel_changed` / `backend_label_changed`
-  — 2026-10-01 v1.11.x 状态栏组件化,这 2 个跟系统状态(DB、ObjectStore
-  后端)绑定,留本 mixin
-- method:`set_selected_channel`(emit `selected_channel_changed` 给
-  `_SelectedChannelLabel`)
+- 1 status bar sub-component signal(2026-10-19 plan-batch9-δ 归位):
+  `backend_label_changed` — 跟系统状态(DB、ObjectStore 后端)绑定,留本 mixin
+  (2026-11-24:`selected_channel_changed` 与 `set_selected_channel` 全仓无
+  调用方,状态栏常驻「(无选中频道)」死占位,已一并删除)
 
 **C-η 2026-10-20 收口**:9 facade-level signal 从 `monitor_vm.py`
 下沉到本 mixin(plan §8 #3 「字段与 emit 该字段的 signal 同 mixin 持有」)。
@@ -88,14 +86,13 @@ class SystemMixin(_Base):
     """系统顶层 signal + 状态栏 + 7 handler 集合 — 2026-10-20 plan-batch9-η。
 
     公开 API 1:1 保留原 `MonitorViewModel` system 域:
-    - 1 method:`set_selected_channel`
     - 9 facade-level system signal(2026-10-20 plan-batch9-η 从 facade 下沉):
       `login_state` / `conn_state` / `error` / `settings_changed` /
       `sync_progress` / `sync_done` / `quit_requested`(7 active,本 mixin
       7 handler 内部 emit)+ `monitoring_paused` / `monitoring_resumed`
       (2 dead — `_on_quit_requested` 路径不 emit,MainWindow 仍订阅)
-    - 2 status bar sub-component signal(系统子组件):
-      `selected_channel_changed` / `backend_label_changed`
+    - 1 status bar sub-component signal(系统子组件):
+      `backend_label_changed`
     - 2026-10-19 plan-batch9-δ 归位:`last_message_received` /
       `stats_changed` 2 signal 已搬到 MessagesMixin(语义由
       MessageReceived 触发)
@@ -104,14 +101,12 @@ class SystemMixin(_Base):
       ChannelSyncProgress / ChannelSyncDone
     """
 
-    # 2026-10-01 v1.11.x 状态栏组件化:2 个系统子组件 Qt signal — payload 透传
+    # 2026-10-01 v1.11.x 状态栏组件化:系统子组件 Qt signal — payload 透传
     # (2026-10-19 plan-batch9-γ:从 facade 搬到本 mixin)。
-    # - selected_channel_changed:payload str | None(LIVE 多选切换 / clear)
     # - backend_label_changed:payload str(DB=…,ObjectStore=…)
     # `last_message_received` / `stats_changed` 2 个 messages 域 signal
     # 2026-10-19 plan-batch9-δ 归位到 `_messages.py:MessagesMixin`(由
     # MessageReceived 唯一触发,与 `_message_count` 字段同 mixin)。
-    selected_channel_changed = Signal(object)
     backend_label_changed = Signal(str)
 
     # ---- 9 facade-level system signal(2026-10-20 plan-batch9-η 下沉) ----
@@ -225,13 +220,3 @@ class SystemMixin(_Base):
         self.sync_done.emit(e)
 
     # ---- 1 public method ----
-
-    def set_selected_channel(self, name: str | None) -> None:
-        """2026-10-01 v1.11.x 状态栏组件化:MainWindow 在 LIVE 多选 / 切换选中
-        频道后调本方法,emit `selected_channel_changed` 让 status_bar
-        `_SelectedChannelLabel` 更新显示。
-
-        Args:
-            name: 选中频道标题;None 表示清除选中(切走 / 用户按 Esc)。
-        """
-        self.selected_channel_changed.emit(name)

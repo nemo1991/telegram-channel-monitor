@@ -13,8 +13,7 @@
     `_UnifiedStateLabel`:未 ready 时显示 12 态登录态,ready 时显示
     5 态连接态;不再有两个都叫「状态」、口径还不同的标签。
 
-LEFT 区(stretch:SelectedChannel=0 / Stats=0 / Activity=1):
-    _SelectedChannelLabel  当前选中频道,空时显示灰色提示
+LEFT 区(Stats=0 / Activity=1):
     _StatsLabel            「监听:N 消息:M」
     _ActivityLabel         现有 activity + throttle 逻辑
 
@@ -86,27 +85,6 @@ def _auth_source_kind(source: str) -> str:
 
 
 # ======================== LEFT 区子组件 ========================
-
-
-class _SelectedChannelLabel(QLabel):
-    """LEFT:当前选中频道。无选中时显示灰色提示。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("", parent)
-        self.setObjectName("statusSelectedChannelLabel")
-        self.setMinimumWidth(80)
-        self._render(None)
-
-    def set_channel(self, name: str | None) -> None:
-        self._render(name)
-
-    def _render(self, name: str | None) -> None:
-        if name:
-            self.setText(name)
-            self.setStyleSheet("color: palette(text);")
-        else:
-            self.setText(QCoreApplication.translate("status_bar", "(无选中频道)"))
-            self.setStyleSheet("color: palette(placeholder);")
 
 
 class _StatsLabel(QLabel):
@@ -347,7 +325,6 @@ class StatusBar(QWidget):
         set_login_state(state)              — 12 态登录状态(合并状态位)
         set_connection_state(state)         — 5 态 TG 连接状态(合并状态位)
         set_paused(paused)                  — ⏸ 暂停监听
-        set_selected_channel(name)          — 当前选中频道
         set_stats(*, subscribed, messages)   — 监听频道数 / 消息累计
         show_activity(text, *, timeout_ms)  — 左侧活动指示
         throttle_activity(key, ...)          — 节流版 show_activity
@@ -377,11 +354,9 @@ class StatusBar(QWidget):
         layout.setContentsMargins(12, 2, 12, 2)
         layout.setSpacing(8)
 
-        # LEFT — 3 个子组件,Activity stretch=1 占剩余空间
-        self._selected_channel = _SelectedChannelLabel()
+        # LEFT — 2 个子组件,Activity stretch=1 占剩余空间
         self._stats = _StatsLabel()
         self._activity = _ActivityLabel()
-        layout.addWidget(self._selected_channel)
         layout.addWidget(self._stats)
         layout.addWidget(self._activity, 1)
 
@@ -419,9 +394,6 @@ class StatusBar(QWidget):
 
     def set_paused(self, paused: bool) -> None:
         self._paused.set_visible(paused)
-
-    def set_selected_channel(self, name: str | None) -> None:
-        self._selected_channel.set_channel(name)
 
     def set_stats(self, *, subscribed: int, messages: int) -> None:
         self._stats.set_stats(subscribed, messages)

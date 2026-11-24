@@ -138,7 +138,7 @@ def update_env_credentials(env_path: Path, *, api_id: int, api_hash: str) -> Non
     """只把 2 个 Telegram 凭据写入 .env(保形更新其余 key)。
 
     供设置页「二维码登录」使用:用户点登录时把当场填写的 API ID / Hash
-    落盘,但**不该**连带提交其它分组尚未点「保存并应用」的改动(数据库 /
+    落盘,但**不该**连带提交其它分组尚未点「保存」的改动(数据库 /
     对象存储 / 策略等)。`update_env_with_settings` 会重写全部 TG_* 字段,
     这里只动这 2 个 key,语义与按钮职责对齐。登录已不依赖手机号,故不写
     TG_PHONE(旧 .env 里若残留该行,保形更新会原样保留,但不再被读取)。
