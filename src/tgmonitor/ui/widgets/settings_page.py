@@ -809,6 +809,9 @@ class SettingsPage(QWidget):
             sync_chat_delay_ms=int(collected.get("chat_delay_ms", 500)),
             sync_page_delay_ms=int(collected.get("page_delay_ms", 1000)),
             sync_resume_from_saved=bool(collected.get("resume_from_saved", True)),
+            # 2026-11-24:关窗行为必须走表单 —— 之前漏掉这一项,取消勾选保存
+            # 时仍按 EditableSettings 默认 True 写回 .env,设置永远生效不了。
+            close_on_exit=bool(collected.get("close_on_exit", True)),
         )
 
     def _load_from_settings(self) -> None:
@@ -844,6 +847,9 @@ class SettingsPage(QWidget):
             "media_download_on_sync": s.media_policy == MediaPolicy.FULL,
             "media_max_mb": s.media_max_bytes // (1024 * 1024),
             "data_root": str(s.data_root),
+            # policy — 关窗行为也要回填,否则重开设置页看到的一直是默认勾选,
+            # 再点保存会把 .env 里的 false 悄悄改回 true。
+            "close_on_exit": s.close_on_exit,
             # sync
             "chat_delay_ms": s.sync_chat_delay_ms,
             "page_delay_ms": s.sync_page_delay_ms,
