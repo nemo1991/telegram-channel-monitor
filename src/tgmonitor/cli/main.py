@@ -1,10 +1,13 @@
-"""CLI 入口:argparse 子命令(2.1.0 完备命令体系)。
+"""CLI 入口:argparse 子命令(2.1.0 完备命令体系,2.1.1 独立命令名)。
 
-不动 GUI:`__main__` 识别到 `CLI_SUBCOMMANDS` 中的子命令时调用,任何分支都
-import 不到 PySide6 / qasync / `tgmonitor.ui.*`。
+不动 GUI:`__main__` 识别到 `CLI_SUBCOMMANDS` 中的子命令时调用;2.1.1 起
+console script `tgmon` / `tgmon-cli` 直接指向本模块的 `main_tgmon*` 入口,
+从进程起点就不 import `tgmonitor.app`,任何分支都加载不到 PySide6 / qasync。
 
 `CLI_SUBCOMMANDS` 是命令注册表单一真源 — `__main__.main()` 据此分流,
 新增子命令只需在 `build_parser()` 注册 + 加入该 frozenset。
+
+2.1.1:`help` 子命令打印帮助总览;未知参数由 argparse 报用法错误,绝不回退 GUI。
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ CLI_SUBCOMMANDS: frozenset[str] = frozenset(
         "media",
         "export",
         "config",
+        "help",
     }
 )
 
@@ -69,10 +73,14 @@ _MEDIA_TYPES = [
 ]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """构造 argparse:顶层 + 2.1.0 全部子命令。"""
+def build_parser(prog: str = "tgmonitor") -> argparse.ArgumentParser:
+    """构造 argparse:顶层 + 全部子命令。
+
+    `prog` 由入口函数传入:`tgmonitor` / `tgmon` / `tgmon-cli` 各自显示自己的
+    名字,避免脚本用户看到与实际输入不符的 usage。
+    """
     parser = argparse.ArgumentParser(
-        prog="tgmonitor",
+        prog=prog,
         description="Telegram 频道监听(CLI 模式 — 无 GUI)",
     )
     sub = parser.add_subparsers(dest="cmd", metavar="<cmd>")
@@ -257,6 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_set.add_argument("--yes", action="store_true", help="确认执行")
     cfg_sub.add_parser("validate", help="校验存储 / 对象存储后端可达性")
 
+    # ---- help(2.1.1):打印帮助总览,等同 --help ----
+    sub.add_parser("help", help="显示帮助总览")
+
     return parser
 
 
@@ -277,16 +288,19 @@ _DISPATCH = {
 }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, prog: str = "tgmonitor") -> int:
     """CLI 主入口:解析 argv,路由到子命令实现。
 
     退出码:0 成功 / 1 业务错误(CliError) / 2 用法错误(argparse) /
     130 KeyboardInterrupt。
+
+    `help` 与无子命令都打印帮助总览;未知参数由 argparse 拒绝(退出码 2),
+    不回退 GUI —— 这正是 2.1.1 修掉的「打错命令误唤醒 UI」。
     """
     _ensure_utf8_stdio()
-    parser = build_parser()
+    parser = build_parser(prog=prog)
     args = parser.parse_args(argv)
-    if args.cmd not in _DISPATCH:
+    if args.cmd == "help" or args.cmd not in _DISPATCH:
         parser.print_help()
         return 0
 
@@ -302,6 +316,16 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr, flush=True)
         return 130
+
+
+def main_tgmon(argv: list[str] | None = None) -> int:
+    """`tgmon` console script — 纯 CLI,usage 显示 tgmon。"""
+    return main(argv, prog="tgmon")
+
+
+def main_tgmon_cli(argv: list[str] | None = None) -> int:
+    """`tgmon-cli` console script — 纯 CLI,usage 显示 tgmon-cli。"""
+    return main(argv, prog="tgmon-cli")
 
 
 if __name__ == "__main__":
