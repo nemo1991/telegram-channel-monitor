@@ -21,10 +21,11 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,6 +34,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -158,6 +162,77 @@ def _channel_display_text(ch: ChannelDTO) -> str:
     return base
 
 
+class _ChannelRowDelegate(QStyledItemDelegate):
+    """频道行文字绘制在行尾按钮左侧,超长按宽度省略。
+
+    行 widget 是透明浮层,只承载 `channelRowAction` 按钮;文字仍由 item 的
+    delegate 独占渲染(v2.0.7 去重影契约)。默认 delegate 按整行宽度画文字,
+    长频道名的省略号会压在「+ / −」图标上。本 delegate 保留样式绘制的背景 /
+    选中态 / 图标,只把文字改画到按钮左侧的可用区域。
+    """
+
+    # 行 widget 的 QHBox:右 margin 4 + spacing 4;按钮本身再占 sizeHint 宽度。
+    _ACTION_RESERVE_PADDING = 8
+
+    def __init__(self, view: QListWidget) -> None:
+        super().__init__(view)
+        self._view = view
+
+    def _text_right(self, option: QStyleOptionViewItem, btn: QToolButton) -> int:
+        """行文字右边界:行尾按钮固定在右侧,预留按钮宽 + 右边距 + spacing。
+
+        按钮宽度取 sizeHint —— 首轮绘制时按钮几何尚未归位,不能用瞬时坐标。
+        """
+        return (
+            option.rect.right()
+            - max(btn.width(), btn.sizeHint().width())
+            - self._ACTION_RESERVE_PADDING
+        )
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        item = self._view.item(index.row())
+        widget = self._view.itemWidget(item) if item is not None else None
+        btn = widget.findChild(QToolButton, "channelRowAction") if widget is not None else None
+        text = str(index.data(Qt.DisplayRole) or "")
+        if btn is None or not text:
+            super().paint(painter, option, index)
+            return
+
+        # 直接交给样式画背景 / 选中边框 / 图标。QStyledItemDelegate.paint()
+        # 会从 index 再取一次 DisplayRole 画文字(忽略 option.text),所以这里
+        # 绕开基类实现,用 style.drawControl + 空 text 只画非文字部分。
+        style = option.widget.style() if option.widget is not None else QApplication.style()
+        plain = QStyleOptionViewItem(option)
+        plain.text = ""
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, plain, painter, option.widget)
+
+        # 图标与文字的起始位置交给 Qt 样式算,避免和 QSS padding 脱节。
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, plain, option.widget
+        )
+        icon_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemDecoration, plain, option.widget
+        )
+        if not icon_rect.isEmpty():
+            text_rect.setLeft(max(text_rect.left(), icon_rect.right() + 4))
+
+        text_rect.setRight(min(text_rect.right(), self._text_right(option, btn)))
+        if text_rect.width() <= 0:
+            return
+
+        elided = painter.fontMetrics().elidedText(text, Qt.ElideRight, text_rect.width())
+        painter.save()
+        painter.setFont(plain.font)
+        painter.setPen(plain.palette.color(QPalette.ColorRole.Text))
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+        painter.restore()
+
+
 class ChannelListCard(QWidget):
     """监听管理的左右两栏之一 — 标题 + (可选) action + list + 行尾图标按钮。
 
@@ -237,6 +312,8 @@ class ChannelListCard(QWidget):
         # 为 True，与既有 `_empty_hint.isHidden()` 契约断言语义一致。
         self.lst = QListWidget()
         self.lst.setAlternatingRowColors(True)
+        # 长频道名在行尾按钮左侧省略(默认 delegate 会画到按钮底下)。
+        self.lst.setItemDelegate(_ChannelRowDelegate(self.lst))
         if extended_selection:
             # 多选模式预留（当前两栏均 single；保留参数供未来扩展）
             self.lst.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
