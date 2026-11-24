@@ -55,6 +55,81 @@ TG_API_HASH=abcdef0123456789abcdef0123456789
 
 ---
 
+## 💻 CLI(无 GUI 模式)
+
+2.1.0 起 CLI 具备完整功能,可替代桌面 UI 的大部分操作,适用于服务器 / SSH / cron /
+systemd。CLI 路径不加载 Qt,冷启动快;与 GUI 共用同一套配置与数据库。
+
+```bash
+uv run tgmonitor <command> [options]
+uv run tgmonitor <command> --help      # 查看某命令的完整参数
+```
+
+**会话与状态**
+
+```bash
+uv run tgmonitor status --json                         # 登录/监听状态 + 统计
+uv run tgmonitor login --api-id 123 --api-hash xxxx    # headless 二维码登录(二维码直接打到终端)
+uv run tgmonitor logout --yes                          # 登出(清 session)
+```
+
+> 二维码 URL 含一次性登录 token,默认只渲染成终端二维码打到 stderr;仅在终端可信时
+> 用 `--show-url` 额外打印原文。
+
+**频道 / 监听 / 同步**
+
+```bash
+uv run tgmonitor channels list --source monitored --json   # joined / monitored / subscribed
+uv run tgmonitor channels refresh                           # 从 TG 拉取已加入频道落库
+uv run tgmonitor channels add 100 200 --yes                 # 加入监听白名单
+uv run tgmonitor channels remove 100 --yes                  # 移出监听
+uv run tgmonitor monitor                                    # 前台监听(SIGINT / SIGTERM 干净退出)
+uv run tgmonitor pause / resume --json                     # 暂停 / 恢复监听(写 TG_PAUSED)
+uv run tgmonitor sync 100 200 --resume --media-policy metadata   # 全量同步历史
+```
+
+**消息 / 媒体 / 导出**
+
+```bash
+uv run tgmonitor messages list --channel 100 --search 关键词 --json
+uv run tgmonitor messages get 100 5 --json
+uv run tgmonitor messages favorite 100 5 [--off]
+uv run tgmonitor messages tag 100 5 --tags a,b
+uv run tgmonitor messages note 100 5 --text "备注"
+uv run tgmonitor messages delete 100 5 6 --yes
+
+uv run tgmonitor media list --undownloaded --json              # 输出含 channel/msg/idx 三元组
+uv run tgmonitor media download 100 5 0
+uv run tgmonitor media download-all --yes
+uv run tgmonitor media retry 100 5 0
+uv run tgmonitor media delete 100 5 0 --yes
+uv run tgmonitor media reconcile                                # 孤儿对账(默认 dry-run)
+uv run tgmonitor media reconcile --apply --yes                  # 实际清理
+
+uv run tgmonitor export messages --format html -o out.html --channel 100
+uv run tgmonitor export media --format csv -o media.csv
+```
+
+**配置管理**
+
+```bash
+uv run tgmonitor config show --json              # 有效配置(敏感项打码)
+uv run tgmonitor config get media_policy
+uv run tgmonitor config set sync_chat_delay_ms 750 --yes   # 校验 + 热重载 + 写 .env
+uv run tgmonitor config validate                  # 校验存储 / 对象存储后端可达
+```
+
+**约定**
+
+- 退出码:`0` 成功 / `1` 业务错误(未登录、校验失败等) / `2` 用法错误 / `130` 用户中断;
+  `monitor` 收到 SIGINT 按守护进程约定返回 `0`。
+- stdout 只输出数据(可被重定向或管道消费),进度 / 错误 / 二维码走 stderr。
+- 查询 / 状态命令统一支持 `--json`。
+- 所有写操作(delete / reconcile --apply / config set)必须显式加 `--yes`。
+- 完整设计见 [`docs/PRD-2.1.0-CLI.md`](docs/PRD-2.1.0-CLI.md)。
+
+---
+
 ## ⚙️ 配置(环境变量)
 
 | 变量 | 说明 |

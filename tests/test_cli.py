@@ -49,11 +49,24 @@ def _run_subprocess(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def test_cli_help_exits_zero() -> None:
-    """`python -m tgmonitor --help` 退出码 0,且包含 sync / monitor 子命令。"""
+    """`python -m tgmonitor --help` 退出码 0,且包含全部 2.1.0 子命令。"""
     r = _run_subprocess(["-m", "tgmonitor", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
-    assert "sync" in r.stdout
-    assert "monitor" in r.stdout
+    for cmd in (
+        "sync",
+        "monitor",
+        "status",
+        "login",
+        "logout",
+        "channels",
+        "pause",
+        "resume",
+        "messages",
+        "media",
+        "export",
+        "config",
+    ):
+        assert cmd in r.stdout, f"help 缺少子命令 {cmd}"
 
 
 def test_cli_sync_help() -> None:
@@ -68,6 +81,30 @@ def test_cli_monitor_help() -> None:
     r = _run_subprocess(["-m", "tgmonitor", "monitor", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     assert "--no-resume" in r.stdout
+
+
+def _all_command_helps():
+    """(命令, 期望在 --help 中出现的关键词) — 参数化全量子命令帮助冒烟。"""
+    return [
+        ("status", "--json"),
+        ("login", "--show-url"),
+        ("logout", "--yes"),
+        ("channels", "refresh"),
+        ("pause", "--json"),
+        ("resume", "--json"),
+        ("messages", "favorite"),
+        ("media", "download-all"),
+        ("export", "{messages,media}"),
+        ("config", "validate"),
+    ]
+
+
+def test_all_subcommands_help_exit_zero() -> None:
+    """2.1.0 全部子命令 `--help` 退出码 0,输出含命令关键词。"""
+    for cmd, keyword in _all_command_helps():
+        r = _run_subprocess(["-m", "tgmonitor", cmd, "--help"])
+        assert r.returncode == 0, f"{cmd} --help stderr={r.stderr}"
+        assert keyword in r.stdout, f"{cmd} --help 缺少 {keyword}"
 
 
 # ============================================================
@@ -90,8 +127,9 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
     code = textwrap.dedent("""
         import sys
 
-        # 入口 + 三个子命令模块都触发 import(模拟 CLI 启动后所有代码路径)
-        from tgmonitor.cli.main import build_parser
+        # 入口 + 全部 2.1.0 子命令模块都触发 import(模拟 CLI 所有代码路径)
+        import importlib
+        from tgmonitor.cli.main import CLI_SUBCOMMANDS, build_parser
         from tgmonitor.cli.sync import run_sync
         from tgmonitor.cli.monitor import run_monitor
 
@@ -101,6 +139,14 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
         # 函数引用即触发 — 拿到的是模块本身,如果模块顶 import 了 Qt,
         # 此刻已经泄漏到 sys.modules
         del run_sync, run_monitor, build_parser
+
+        # 遍历全部命令模块(单一真源),确保没有任何一个顶层 import Qt
+        for mod_name in (
+            '_common', 'sync', 'monitor', 'status', 'auth',
+            'channels', 'control', 'messages', 'media', 'export', 'config',
+        ):
+            importlib.import_module('tgmonitor.cli.' + mod_name)
+        assert len(CLI_SUBCOMMANDS) == 12
 
         # 关键断言
         leaked = []

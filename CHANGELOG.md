@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased] — 2.1.0 完备 CLI
+
+主题:**CLI 从两个补漏子命令升级为可替代桌面 UI 大部分功能的完备工具**,支持
+完整 headless(服务器 / SSH / cron / systemd)操作。设计见 `docs/PRD-2.1.0-CLI.md`。
+
+### 新增
+
+- **会话与状态**:`status`(登录/监听状态 + 统计,未登录仍可诊断)、`login`
+  (终端二维码 headless 登录,支持 `--api-id/--api-hash` 传参)、`logout`。
+- **频道管理**:`channels list|refresh|add|remove`;`pause` / `resume` 监听控制。
+- **消息操作**:`messages list|get|favorite|tag|note|delete`。
+- **媒体操作**:`media list|download|download-all|retry|delete|reconcile`
+  (reconcile 默认 dry-run)。
+- **导出与配置**:`export messages|media`(6 格式 + 媒体 CSV/ZIP)、
+  `config show|get|set|validate`(校验 + 热重载 + 保形写 `.env`)。
+- **统一 CLI 约定**:所有查询命令支持 `--json`;退出码统一为 0/1/2/130;
+  stdout 只放数据、进度/错误/二维码走 stderr;破坏性操作强制 `--yes`。
+
+### 架构
+
+- 新增 `cli/_common.py` 收口上下文装配 / 输出 / 错误 / 进度订阅;
+  `__main__` 分流改从 `cli.main.CLI_SUBCOMMANDS` 单一真源读取。
+- CLI 路径严格不加载 PySide6 / qasync,守门测试扩展覆盖全部 11 个命令模块。
+
 ## [2.0.11] - 2026-11-24
 
 主题:**v2.0.10 发版后的设置页 / 状态栏 / 频道行 / 关窗行为修正**。无 schema
