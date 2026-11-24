@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased] — 2.1.0 完备 CLI
+## [2.1.0] - 2026-11-24
 
 主题:**CLI 从两个补漏子命令升级为可替代桌面 UI 大部分功能的完备工具**,支持
 完整 headless(服务器 / SSH / cron / systemd)操作。设计见 `docs/PRD-2.1.0-CLI.md`。
