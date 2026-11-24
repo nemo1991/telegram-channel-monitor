@@ -214,6 +214,8 @@ class SettingsPage(QWidget):
 
         # 底部固定按钮 — v2.0.7 FR-09:「仅保存到 .env」删除,
         # 只保留「保存并应用」(写盘 + 热重载),靠 stretch 推到右下。
+        # 2026-11-24 v2.0.10 修正:按钮栏挂在 detail_layout(右侧内容区)而非
+        # root —— 否则它独占 root 底部一行,把左侧导航压短、末尾露出灰底断层。
         btn_bar = QHBoxLayout()
         btn_bar.setContentsMargins(24, 12, 24, 16)
 
@@ -224,7 +226,7 @@ class SettingsPage(QWidget):
         self.btn_apply.clicked.connect(self._on_apply)
         btn_bar.addWidget(self.btn_apply)
 
-        root.addLayout(btn_bar)
+        detail_layout.addLayout(btn_bar)
 
     # ============================================================
     # 左侧导航 — 分组显隐 + 搜索过滤
@@ -352,7 +354,8 @@ class SettingsPage(QWidget):
         box_layout.setSpacing(12)
         box_layout.addWidget(panel, 1)
         # v2.0.7 FR-06:左右布局后纵向占用减半,最小高度 460→360。
-        box.setMinimumHeight(360)
+        # 2026-11-24:360 在实际窗口下留白过多,提到 560 让双栏列表更可用。
+        box.setMinimumHeight(560)
         root.addWidget(box)
         self._channel_gb = box  # 导航注册用(2.0.10)
 

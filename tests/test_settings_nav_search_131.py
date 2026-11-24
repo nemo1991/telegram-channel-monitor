@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QGroupBox, QLineEdit, QListWidget, QPushButton
+from PySide6.QtWidgets import QGroupBox, QLineEdit, QListWidget, QPushButton, QWidget
 
 from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.settings_page import SettingsPage
@@ -129,3 +129,26 @@ def test_qss_has_nav_selectors() -> None:
         "QWidget#settingsDetailPane",
     ):
         assert selector in qss
+
+
+def test_nav_pane_reaches_page_bottom(qapp, qloop, tmp_path):
+    """左导航白条铺满整页高度,不与底部按钮栏之间留灰底断层。"""
+    win = build_real_main_window(qloop, tmp_path)
+    settings = win.findChild(SettingsPage)
+    assert settings is not None
+    nav_pane = settings.findChild(QWidget, "settingsNavPane")
+    assert nav_pane is not None
+    # 导航面板底边 = 设置页底边(按钮栏已移入右侧 detail,不再独占 root 一行)
+    assert nav_pane.geometry().bottom() == settings.height() - 1
+    win.close()
+
+
+def test_channel_monitor_group_is_tall_enough(qapp, qloop, tmp_path):
+    """监听频道管理面板最小高度 560,双栏列表有足够纵向空间。"""
+    win = build_real_main_window(qloop, tmp_path)
+    settings = win.findChild(SettingsPage)
+    assert settings is not None
+    gb = settings.findChild(QGroupBox, "settingsChannelMonitorGroup")
+    assert gb is not None
+    assert gb.minimumHeight() >= 560
+    win.close()
