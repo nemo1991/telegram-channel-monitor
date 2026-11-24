@@ -60,7 +60,6 @@ from tgmonitor.ui.ui_assembler import UiAssembler
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
@@ -217,7 +216,6 @@ class MainWindow(QMainWindow):
             media_manager=self.media_manager,
             dashboard=self.dashboard,
             channel_panel=self.channel_panel,
-            header=self.header,
             status_bar=self.status_bar,
             nav=self.nav,
             stack=self.stack,
@@ -428,7 +426,6 @@ class MainWindow(QMainWindow):
         # 每个 widget 实际类型在 assembler 内部已 typing 完整。MainWindow 端 cast
         # 一次即可,不必引入 TypedDict(plan-batch3-1.2 决策)。
         self.nav = cast(VerticalNavBar, widgets["nav"])
-        self.header = cast(HeaderBar, widgets["header"])
         self.stack = cast(QStackedWidget, widgets["stack"])
         self.live_view = cast(MessageView, widgets["live_view"])
         self.message_detail = cast(MessageDetail, widgets["message_detail"])

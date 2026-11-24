@@ -39,13 +39,6 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
     mw._truly_quit = False
 
     # 各 widget 桩
-    header = MagicMock(name="header")
-    search_edit = MagicMock(name="search_edit")
-    search_edit.hasFocus = MagicMock(return_value=False)
-    search_bar = MagicMock(name="search_bar")
-    search_bar.edit = search_edit
-    header.search_bar = search_bar
-
     nav = MagicMock(name="nav")
     live_view = MagicMock(name="live_view")
     stack = MagicMock(name="stack")
@@ -62,7 +55,6 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
         name="ctx",
         app=MagicMock(name="app"),
         main_window=mw,
-        header=header,
         nav=nav,
         live_view=live_view,
         stack=stack,
@@ -73,9 +65,6 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
     )
     refs = {
         "mw": mw,
-        "header": header,
-        "search_edit": search_edit,
-        "search_bar": search_bar,
         "nav": nav,
         "live_view": live_view,
         "stack": stack,
@@ -183,20 +172,16 @@ class TestOnGlobalEscape:
 
     def test_search_not_focused_and_already_live_is_noop(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
-        refs["search_edit"].hasFocus = MagicMock(return_value=False)
         refs["stack"].currentIndex = MagicMock(return_value=0)  # DASHBOARD(含实时流)
         ctrl = LifecycleController(ctx)
 
         ctrl.on_global_escape()
 
-        # 没切 tab,没清搜索
         refs["nav"].set_current.assert_not_called()
-        refs["search_bar"].clear.assert_not_called()
         refs["live_view"].set_messages.assert_not_called()
 
     def test_search_not_focused_and_not_live_switches_to_live(self, qapp_session) -> None:
         ctx, refs = _make_ctx(qapp_session)
-        refs["search_edit"].hasFocus = MagicMock(return_value=False)
         refs["stack"].currentIndex = MagicMock(return_value=2)  # MEDIA(v2.0.4 索引;仅验非0页)
         ctrl = LifecycleController(ctx)
 

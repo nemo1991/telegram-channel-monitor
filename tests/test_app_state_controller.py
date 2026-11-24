@@ -30,7 +30,6 @@ from tgmonitor.ui.controllers.app_state_controller import (  # noqa: E402
 def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
     """构造 MainWindowCtx + 暴露常用 mock 引用。"""
     status_bar = MagicMock(name="status_bar")
-    header = MagicMock(name="header")
     tray = MagicMock(name="tray")
     tray.is_active = True
     main_window = MagicMock(name="main_window")
@@ -50,7 +49,6 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
         media_manager=MagicMock(name="media_manager"),
         dashboard=MagicMock(name="dashboard"),
         channel_panel=MagicMock(name="channel_panel"),
-        header=header,
         status_bar=status_bar,
         nav=MagicMock(name="nav"),
         stack=MagicMock(name="stack"),
@@ -60,7 +58,6 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, Any]]:
     )
     refs = {
         "status_bar": status_bar,
-        "header": header,
         "tray": tray,
         "main_window": main_window,
     }

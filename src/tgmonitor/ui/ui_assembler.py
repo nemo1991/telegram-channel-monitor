@@ -54,7 +54,6 @@ from tgmonitor.core.events import QuitRequested
 from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
@@ -92,9 +91,10 @@ class UiAssembler:
 
         2026-11-18 v2.0.6:撤销独立频道页,ChannelWidget 单实例迁入设置页。
         页序:0 大盘(含实时流) / 1 媒体 / 2 设置(含监听频道管理)。
+        2026-11-24 v2.0.10:页头 `HeaderBar` 整块移除,内容区顶格给 stack。
 
         Returns: dict[str, object] — key → widget 引用,key 名跟原 MainWindow
-        属性名一致(nav / header / stack / live_view / message_detail /
+        属性名一致(nav / stack / live_view / message_detail /
         dashboard / channel_panel / media_manager / settings_page / status_bar /
         media_refresh_debounce / central)。
         """
@@ -107,16 +107,12 @@ class UiAssembler:
         nav = VerticalNavBar()
         root.addWidget(nav)
 
-        # ---- 右: 头栏 + 内容 + 状态栏 ----
+        # ---- 右: 内容 + 状态栏(v2.0.10 起无头栏) ----
         right = QWidget()
         right.setObjectName("contentArea")
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
-
-        # 紧凑头栏
-        header = HeaderBar()
-        right_layout.addWidget(header)
 
         # QStackedWidget 内容页
         stack = QStackedWidget()
@@ -209,7 +205,6 @@ class UiAssembler:
         return {
             "central": central,
             "nav": nav,
-            "header": header,
             "stack": stack,
             "live_view": live_view,
             "message_detail": message_detail,

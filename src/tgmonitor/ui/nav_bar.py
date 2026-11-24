@@ -234,8 +234,7 @@ class VerticalNavBar(QWidget):
         vbox.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
         # 顶部 12px 留白 — 替代之前的 Unicode `●` logo(单字符跨字体
-        # # 渲染不一致,看着像占位)。header bar 已有 `appTitle` 文本品牌锚点,
-        # # nav 不再重复。
+        # 渲染不一致,看着像占位)。v2.0.10 起页头已移除,留白保留作视觉呼吸。
         vbox.addSpacing(12)
 
         for idx, (icon_name, label) in enumerate(_nav_items()):

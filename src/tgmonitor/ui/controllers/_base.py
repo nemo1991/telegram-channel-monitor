@@ -39,7 +39,6 @@ from tgmonitor.ui.nav_bar import VerticalNavBar
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 from tgmonitor.ui.widgets.channel_widget import ChannelWidget
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-from tgmonitor.ui.widgets.header_bar import HeaderBar
 from tgmonitor.ui.widgets.media_manager_widget import MediaManagerWidget
 from tgmonitor.ui.widgets.message_detail import MessageDetail
 from tgmonitor.ui.widgets.message_manager_widget import MessageManagerWidget
@@ -88,7 +87,6 @@ class MainWindowCtx:
     media_manager: MediaManagerWidget
     dashboard: DashboardWidget
     channel_panel: ChannelWidget
-    header: HeaderBar
     status_bar: StatusBar
     nav: VerticalNavBar
     stack: QStackedWidget
