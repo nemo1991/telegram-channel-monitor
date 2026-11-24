@@ -354,11 +354,15 @@ class StatusBar(QWidget):
         layout.setContentsMargins(12, 2, 12, 2)
         layout.setSpacing(8)
 
-        # LEFT — 2 个子组件,Activity stretch=1 占剩余空间
+        # LEFT — Stats + 提示区(Activity/Transient 并排,stretch=1 占剩余空间)
         self._stats = _StatsLabel()
         self._activity = _ActivityLabel()
         layout.addWidget(self._stats)
-        layout.addWidget(self._activity, 1)
+        hint_layout = QHBoxLayout()
+        hint_layout.setContentsMargins(0, 0, 0, 0)
+        hint_layout.setSpacing(8)
+        hint_layout.addWidget(self._activity, 1)
+        layout.addLayout(hint_layout, 1)
 
         # RIGHT — 4 个子组件(ObjectsWarn 按需)
         self._objects_warn: _ObjectsWarnLabel | None = None
@@ -372,15 +376,20 @@ class StatusBar(QWidget):
         layout.addWidget(self._paused)
         layout.addWidget(self._bell)
 
-        # transient 消息层 — 自实现 showMessage 协议(替代 QStatusBar.showMessage)
+        # transient 消息层 — 挂进左侧提示区(与 activity 并排),不再游离于布局外。
+        # 原实现 `QLabel("", self)` 没 addWidget,几何停在默认 (0,0,100,30):
+        # 文字中心比布局内标签低约 3px,且和 stats 重叠 —— 登录时
+        # `show_message("登录状态: ready")` 就表现为「ready 偏下」。
         self._transient = QLabel("", self)
         self._transient.setObjectName("statusTransientLabel")
         self._transient.setStyleSheet("color: palette(text); font-style: italic;")
-        # 注意:transient label 不直接 addWidget — 用户通过 show_message/clear_message
-        # 控制文本,内部用一个独立的 QTimer 实现 timeout;widget 自身可见性永远 True。
+        self._transient.setVisible(False)  # 空文本不占位,有消息才显示
+        # 插在 activity 之前、不抢 stretch:临时消息紧跟统计文字按内容宽度显示,
+        # activity 仍占剩余空间把右侧状态位推到最右。
+        hint_layout.insertWidget(0, self._transient)
         self._transient_timer = QTimer(self)
         self._transient_timer.setSingleShot(True)
-        self._transient_timer.timeout.connect(lambda: self._transient.setText(""))
+        self._transient_timer.timeout.connect(self.clear_message)
 
     # ---- 子组件 setter(公开方法)----
 
@@ -416,11 +425,13 @@ class StatusBar(QWidget):
 
     def show_message(self, text: str, timeout_ms: int = 5000) -> None:
         self._transient.setText(text)
+        self._transient.setVisible(bool(text))
         self._transient_timer.start(timeout_ms)
 
     def clear_message(self) -> None:
         self._transient_timer.stop()
         self._transient.setText("")
+        self._transient.setVisible(False)
 
     # ---- 子组件访问器(MainWindow 弹铃铛 dialog 用)----
 

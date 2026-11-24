@@ -411,9 +411,33 @@ def test_status_bar_show_message_and_clear(qapp: QApplication) -> None:
     qapp.processEvents()
     transient = sb._transient
     assert transient.text() == "拉取频道列表…"
+    assert not transient.isHidden(), "有消息时 transient 应显示(加入布局后靠 hidden 控占位)"
     sb.clear_message()
     assert transient.text() == ""
+    assert transient.isHidden(), "清空后应隐藏,避免在布局里留下空位"
     sb.deleteLater()
+
+
+def test_transient_message_aligned_with_stats(qapp, qloop, tmp_path) -> None:
+    """登录提示 transient 与 stats 同一基线、不重叠(回归 ready 偏下)。"""
+    from tests.fixtures._real_window import build_real_main_window
+
+    win = build_real_main_window(qloop, tmp_path)
+    sb = win.status_bar
+    sb.set_stats(subscribed=12, messages=345)
+    sb.show_message("登录状态: ready", 4000)
+    sb.show_activity("已同步 3 个频道")
+    qapp.processEvents()
+
+    stats = sb.findChild(_StatsLabel)
+    transient = sb._transient
+    assert stats is not None
+    assert not transient.isHidden()
+    # 原缺陷:transient 没进布局,默认几何 (0,0,100,30) → 文字中心低约 3px + 与 stats 重叠
+    assert transient.geometry().y() == stats.geometry().y()
+    assert transient.geometry().height() == stats.geometry().height()
+    assert transient.geometry().left() >= stats.geometry().right(), "transient 不应覆盖 stats 文字"
+    win.close()
 
 
 @windows_qt_paint_skip
