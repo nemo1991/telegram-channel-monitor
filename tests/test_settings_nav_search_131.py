@@ -9,12 +9,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QGroupBox,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from tests.fixtures._real_window import build_real_main_window
+from tgmonitor.core.settings_store import read_close_on_exit
 from tgmonitor.ui.widgets.settings_page import SettingsPage
 
 _QSS_PATH = Path(__file__).resolve().parents[1] / "src/tgmonitor/ui/resources/style.qss"
@@ -214,4 +217,39 @@ def test_close_on_exit_checkbox_defaults_checked(qapp, qloop, tmp_path) -> None:
         gb = gb.parentWidget()
     assert gb is not None and gb.title() == "策略"
     assert settings._collect().close_on_exit is True
+    win.close()
+
+
+def test_close_on_exit_uncheck_persists_and_reloads(qapp, qloop, tmp_path, monkeypatch) -> None:
+    """取消勾选并保存后 .env 必须是 false,重开设置页也要回填 false。
+
+    回归 #142:`_collect()` / `_load_from_settings()` 曾漏掉 close_on_exit,
+    勾选框状态既不写盘也不回填,save 一直按默认 True 写回,关窗仍退出。
+    """
+    win = build_real_main_window(qloop, tmp_path)
+    settings = win.findChild(SettingsPage)
+    assert settings is not None
+
+    settings.chk_close_on_exit.setChecked(False)
+    assert settings._collect().close_on_exit is False
+
+    # 把异步保存同步跑完,避免测试弹模态框。
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+
+    def _sync_run(loop, coro, *, on_success=None, **kwargs):
+        result = asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=10)
+        if on_success is not None:
+            on_success(result)
+
+    monkeypatch.setattr("tgmonitor.ui.widgets.settings_page.run_coro", _sync_run)
+    settings.btn_apply.click()
+
+    env_path = tmp_path / ".env"
+    assert env_path.exists()
+    assert read_close_on_exit(env_path) is False
+
+    # 模拟下次启动:Settings 从 .env 还原为 false → 复选框必须跟着取消勾选。
+    win.app.settings = win.app.settings.model_copy(update={"close_on_exit": False})
+    settings._load_from_settings()
+    assert settings.chk_close_on_exit.isChecked() is False
     win.close()
