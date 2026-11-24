@@ -187,6 +187,17 @@ def test_progress_frame_wraps_thumb_content() -> None:
     assert thumb._TRACK_COLOR.lightness() < 200
 
 
+def test_media_list_item_padding_override_wired(widget: MediaManagerWidget) -> None:
+    """mediaList 必须覆盖通用 item 上下 padding,否则进度框底边被 QListWidget 裁掉。"""
+    from pathlib import Path
+
+    assert widget.list.objectName() == "mediaList"
+    qss = Path(__file__).resolve().parents[1] / "src/tgmonitor/ui/resources/style.qss"
+    text = qss.read_text(encoding="utf-8")
+    assert "QListWidget#mediaList::item" in text
+    assert "padding-top: 0px" in text and "padding-bottom: 0px" in text
+
+
 def test_progress_paints_thumb_ring_not_status_text(widget: MediaManagerWidget) -> None:
     """2026-11-23:进度画在缩略图方形外框(_ProgressThumb),状态列文字保持不变。"""
     from tgmonitor.core.events import MediaDownloadProgress

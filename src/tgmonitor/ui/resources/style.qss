@@ -506,6 +506,13 @@ QListWidget::item:selected {
     color: #1a1a2e;
     border-left: 3px solid {accent};
 }
+/* v2.0.9:媒体页自绘行 widget 高 48px 已含上下 4px margin;继承通用 item 的
+   4px 上下 padding + 1px border-bottom 会把它挤进 ~39px 内容区,底部 ~9px
+   被裁 —— 方形进度框底边整条落在裁剪区外,只剩上/左/右三面。单独归零。 */
+QListWidget#mediaList::item {
+    padding-top: 0px;
+    padding-bottom: 0px;
+}
 /* v2.0.5 FR-03:消息流容器观感。2026-11-18 第二轮起,消息流与详情统一装进
  * #liveWrap 圆角容器(见下方 liveWrap 规则),接壤由 splitter handle 画一条
  * 竖直直角缝;因此这里不再单独画边框/圆角,只保留透明底 + 选中/hover 观感。
