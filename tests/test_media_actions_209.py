@@ -216,11 +216,23 @@ def test_thumb_placeholder_is_icon_not_text(widget: MediaManagerWidget) -> None:
         assert thumb.text() == "", f"{media_type} 缩略图不应再写占位文字"
         pm = thumb.pixmap()
         assert pm is not None and not pm.isNull(), f"{media_type} 应显示类型图标"
-        assert pm.width() <= thumb._CONTENT_SIZE and pm.height() <= thumb._CONTENT_SIZE
+        assert pm.width() == thumb._CONTENT_SIZE and pm.height() == thumb._CONTENT_SIZE
         labels = [lab.text() for lab in widget.findChildren(QLabel)]
         assert any(lab.startswith(_MEDIA_ICONS[media_type]) for lab in labels), (
             "类型文字仍应保留在第 2 列（如「图片 · 11-24」）"
         )
+
+
+def test_type_icon_is_native_32px_not_upscaled_from_24() -> None:
+    """占位图标走 SVG 直渲到原生 32×32,不能拿 QIcon 的 24px 位图放大(会发虚)。"""
+    from tgmonitor.ui.widgets._mm_render import _media_type_icon_pixmap  # noqa: PLC0415
+
+    for media_type in MediaType:
+        pm = _media_type_icon_pixmap(media_type)
+        assert pm.width() == 32 and pm.height() == 32, (
+            f"{media_type.name} 图标被放大/缩小过,边缘会失真"
+        )
+        assert not pm.isNull()
 
 
 def test_media_list_item_padding_override_wired(widget: MediaManagerWidget) -> None:

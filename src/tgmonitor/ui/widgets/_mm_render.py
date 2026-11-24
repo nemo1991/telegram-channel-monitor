@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType, MessageDTO
-from tgmonitor.ui.icon import tinted_action_icon
+from tgmonitor.ui.icon import tinted_action_icon, tinted_action_pixmap
 from tgmonitor.ui.thumbnail import cache_key_for, render_pixmap
 from tgmonitor.ui.widgets._mm_base import (
     _MEDIA_ICONS,
@@ -89,6 +89,10 @@ class _ProgressThumb(QLabel):
     def setPixmap(self, pixmap: QPixmap | QImage) -> None:  # noqa: N802 — Qt 命名
         """缩略图缩到 32×32 再显示,给 36px 进度框留出一圈可见边距。"""
         source = QPixmap.fromImage(pixmap) if isinstance(pixmap, QImage) else pixmap
+        if source.width() == self._CONTENT_SIZE and source.height() == self._CONTENT_SIZE:
+            # 已经是目标尺寸就别过 scaled() —— 即使同尺寸重采样也会让线条发虚。
+            super().setPixmap(source)
+            return
         scaled = source.scaled(
             self._CONTENT_SIZE,
             self._CONTENT_SIZE,
@@ -164,17 +168,17 @@ class _ProgressThumb(QLabel):
             painter.drawLine(start, end)
 
 
-# 2026-11-24:占位图标走项目统一的 tinted_action_icon(SVG currentColor 替换),
-# 中性灰避免和蓝色下载动作图标混淆;尺寸与真实缩略图一致,真实图加载后直接
-# setPixmap 覆盖。
+# 2026-11-24:占位图标走 SVG 直渲(tinted_action_pixmap)而非 QIcon.pixmap ——
+# QIcon 只注册 16/20/24 三档,取 32px 会拿到 24×24 位图再被放大,边缘发虚。
+# 中性灰避免和蓝色下载动作图标混淆;真实图加载后直接 setPixmap 覆盖。
 _TYPE_ICON_TINT = QColor("#7b8494")
 
 
 def _media_type_icon_pixmap(media_type: MediaType) -> QPixmap:
-    """按媒体类型生成 32×32 占位图标;未知类型退文档图标。"""
+    """按媒体类型生成原生 32×32 占位图标;未知类型退文档图标。"""
     name = _MEDIA_TYPE_ICON_NAMES.get(media_type, "media_type_document")
     size = _ProgressThumb._CONTENT_SIZE
-    return tinted_action_icon(name, _TYPE_ICON_TINT).pixmap(size, size)
+    return tinted_action_pixmap(name, _TYPE_ICON_TINT, size)
 
 
 class RenderMixin(_Base):
