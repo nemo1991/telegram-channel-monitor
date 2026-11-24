@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, cast
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QStackedWidget,
     QWidget,
@@ -43,6 +44,7 @@ from tgmonitor.core.events import (
     LoginStateChanged,
     NotificationRequested,
 )
+from tgmonitor.core.settings_store import read_close_on_exit
 from tgmonitor.ui.controllers import (
     AppStateController,
     ExportController,
@@ -343,10 +345,22 @@ class MainWindow(QMainWindow):
         """由 `app.py` 在主循环开始时注入 — closeEvent 触发时调起。"""
         self._shutdown_cb = cb
 
-    # ======================== closeEvent (保持原逻辑) ========================
+    def _close_on_exit(self) -> bool:
+        """设置页「关闭窗口时退出程序」— 默认 True。单独抽方法便于测试替换。
+
+        从 .env 实时读(而非 app.settings):只改这一项时 core 的 reconfigure
+        diff 判无变化会提前 return,内存 Settings 仍是旧值。
+        """
+        return read_close_on_exit(getattr(self, "env_path", None))
+
+    # ======================== closeEvent ========================
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        """窗口关闭 — 同步等 async shutdown(≤10s 超时)再放行。
+        """窗口关闭 — 默认真退出;关掉设置后隐藏到托盘。
+
+        设置页「关闭窗口时退出程序」开启(默认)时走 `qt_app.quit()` →
+        `aboutToQuit` 统一清理;关闭且托盘可用时隐藏到托盘。只有托盘不可用
+        或 `_truly_quit=True` 的兜底路径才在本方法里同步等 async shutdown。
 
         2026-09-23 v1.8.x:`run_shutdown_coro_sync` helper 不嵌套 QEventLoop
         exec — macOS 26.x arm64 CI 镜像(`macos-26-arm64` 20260728)嵌套 exec
@@ -361,11 +375,20 @@ class MainWindow(QMainWindow):
         最外层 try/except 兜底 — Qt 的 `closeEvent` 不应让 Python 异常抛回
         主循环,否则会变 "Error calling Python override" 把窗口关成 fail。
         """
-        # 2026-08-30 v1.5.0 PR #A4:首次 close(用户点 X / Alt+F4)默认
-        # 最小化到 tray,不退出。File→Quit / tray「退出」菜单走
-        # `qt_app.quit()` → `aboutToQuit` → 关闭全部窗口(到这一步时
-        # `_truly_quit=True`),这里才走 shutdown。
+        # 2026-11-24:设置页「关闭窗口时退出程序」默认开启 — 点 X / Alt+F4
+        # 走与 File→Quit / tray「退出」相同的 `qt_app.quit()` → `aboutToQuit`
+        # → `_shutdown_then_quit` 单一清理路径。这里**不**再跑下方的同步
+        # shutdown,避免 aboutToQuit 重复清理。
+        # 关掉该设置才恢复 v1.5.0 起的「首次 close 隐藏到 tray」行为。
         if not self._truly_quit:
+            if self._close_on_exit():
+                log.info("closeEvent: close_on_exit enabled → qt_app.quit()")
+                self._truly_quit = True
+                qt_app = QApplication.instance()
+                if qt_app is not None:
+                    qt_app.quit()
+                super().closeEvent(event)
+                return
             if self._tray is not None and self._tray.is_active:
                 self.hide()
                 if not self._tray_first_close_hint_shown:

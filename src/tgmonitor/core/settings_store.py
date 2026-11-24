@@ -121,6 +121,8 @@ def settings_to_pairs(s: Settings) -> dict[str, str]:
         "TG_SYNC_CHAT_DELAY_MS": str(s.sync_chat_delay_ms),
         "TG_SYNC_PAGE_DELAY_MS": str(s.sync_page_delay_ms),
         "TG_SYNC_RESUME_FROM_SAVED": "true" if s.sync_resume_from_saved else "false",
+        # 2026-11-24:关窗行为走设置页「关闭窗口时退出」保存。缺省 true。
+        "TG_CLOSE_ON_EXIT": "true" if s.close_on_exit else "false",
     }
 
 
@@ -163,6 +165,25 @@ def update_env_paused(env_path: Path, paused: bool) -> None:
     env = parse_env_file(env_path)
     env.pairs["TG_PAUSED"] = "true" if paused else "false"
     write_env_file(env, env_path)
+
+
+# 2026-11-24:closeEvent 在退出前直接读 .env(而不是 app.settings)—— 设置页
+# 保存时若只改了本字段,core 的 reconfigure diff 判无变化直接 return,内存
+# Settings 仍是旧值;从 .env 读能保证「保存后立即生效」。
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def read_close_on_exit(env_path: Path | None) -> bool:
+    """读 `TG_CLOSE_ON_EXIT`;env_path 为空 / key 缺失 / 读失败 → True(真退出)。"""
+    if env_path is None:
+        return True
+    try:
+        raw = parse_env_file(env_path).pairs.get("TG_CLOSE_ON_EXIT")
+    except OSError:
+        return True
+    if raw is None:
+        return True
+    return raw.strip().lower() in _TRUE_ENV_VALUES
 
 
 # ---- 可编辑模型(给 UI 用) ----
@@ -214,6 +235,10 @@ class EditableSettings:
     sync_page_delay_ms: int = 1000
     sync_resume_from_saved: bool = True
 
+    # 2026-11-24:UI「关闭窗口时退出」开关。默认 True — 点 X 真退出;
+    # 关掉则恢复 v1.5.0 起的「隐藏到托盘后台运行」。
+    close_on_exit: bool = True
+
     @classmethod
     def from_settings(cls, s: Settings) -> EditableSettings:
         """Settings → EditableSettings(给 UI 编辑用)。bytes/MB 单位转换在这里做。"""
@@ -243,6 +268,7 @@ class EditableSettings:
             sync_chat_delay_ms=s.sync_chat_delay_ms,
             sync_page_delay_ms=s.sync_page_delay_ms,
             sync_resume_from_saved=s.sync_resume_from_saved,
+            close_on_exit=s.close_on_exit,
         )
 
     def validate(self) -> list[str]:
@@ -308,6 +334,7 @@ class EditableSettings:
             sync_chat_delay_ms=self.sync_chat_delay_ms,
             sync_page_delay_ms=self.sync_page_delay_ms,
             sync_resume_from_saved=self.sync_resume_from_saved,
+            close_on_exit=self.close_on_exit,
         )
 
 

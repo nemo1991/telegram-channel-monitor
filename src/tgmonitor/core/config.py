@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     # 正在编辑的其它字段)。
     paused: bool = Field(default=False)
 
+    # 2026-11-24:关闭窗口按钮的行为。True(默认)= 真退出进程(走 aboutToQuit
+    # 清理);False = 隐藏到托盘继续后台运行(点 X 不退出)。.env 字段
+    # `TG_CLOSE_ON_EXIT`。缺省 / 老用户无此 key 时按 True 处理。
+    close_on_exit: bool = Field(default=True)
+
     def ensure_dirs(self) -> None:
         """确保本地目录存在(仅在本地 backend / session 落盘时调用)。
 

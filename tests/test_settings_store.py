@@ -313,3 +313,30 @@ def test_bool_roundtrip_no_drift():
         assert EditableSettings.from_settings(out).media_download_on_sync is (
             policy is MediaPolicy.FULL
         )
+
+
+def test_close_on_exit_defaults_true_and_roundtrips(tmp_path: Path) -> None:
+    """关窗行为默认真退出,且能从 .env 往返读回。"""
+    from tgmonitor.core.settings_store import read_close_on_exit
+
+    s = Settings.for_test()
+    assert s.close_on_exit is True
+    assert read_close_on_exit(None) is True
+    assert read_close_on_exit(tmp_path / "missing.env") is True
+
+    assert settings_to_pairs(s)["TG_CLOSE_ON_EXIT"] == "true"
+    e = EditableSettings.from_settings(s)
+    assert e.close_on_exit is True
+    assert e.to_settings().close_on_exit is True
+
+    s2 = s.model_copy(update={"close_on_exit": False})
+    assert settings_to_pairs(s2)["TG_CLOSE_ON_EXIT"] == "false"
+    assert EditableSettings.from_settings(s2).to_settings().close_on_exit is False
+
+    env_path = tmp_path / ".env"
+    update_env_with_settings(env_path, s2)
+    assert read_close_on_exit(env_path) is False
+    env_path.write_text("TG_CLOSE_ON_EXIT=0\n", encoding="utf-8")
+    assert read_close_on_exit(env_path) is False
+    env_path.write_text("TG_CLOSE_ON_EXIT=yes\n", encoding="utf-8")
+    assert read_close_on_exit(env_path) is True
