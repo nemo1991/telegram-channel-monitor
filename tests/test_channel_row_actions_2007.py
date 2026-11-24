@@ -124,3 +124,50 @@ def test_filter_hides_row_widget_too(qapp) -> None:
         assert item is not None and row is not None
         assert item.isHidden() == row.isHidden()
     card.deleteLater()
+
+
+def test_long_channel_name_elided_before_row_action(qapp) -> None:
+    """长频道名在行尾按钮左侧省略,文字不再压住「+ / −」图标。"""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    from tgmonitor.ui.widgets.channel_widget import _ChannelRowDelegate
+
+    card = _card("plus")
+    long_title = "来一点医学科学前沿🤩🤩🥺🥺 @CNSmydreamlonglong"
+    card.set_items(
+        [ChannelDTO(id=_BIG_ID, title=long_title, username="CNSmydreamlonglong", kind="channel")],
+        count_template="{n}",
+    )
+    item = card.lst.item(0)
+    assert item is not None
+    row = card.lst.itemWidget(item)
+    assert row is not None
+    btn = row.findChild(QToolButton, "channelRowAction")
+    assert btn is not None
+
+    delegate = card.lst.itemDelegate()
+    assert isinstance(delegate, _ChannelRowDelegate)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 300, 34)
+    text_right = delegate._text_right(option, btn)
+    # 按钮宽 + 右边距 4 + spacing 4 必须从行右侧预留出来
+    assert text_right <= option.rect.right() - btn.sizeHint().width() - 8
+
+    fm = QFontMetrics(qapp.font())
+    available = text_right - 30  # 扣掉图标 + 间距后的文字宽度
+    elided = fm.elidedText(item.text(), Qt.ElideRight, available)
+    assert elided != item.text()
+    assert elided.endswith("…")
+    assert fm.horizontalAdvance(elided) <= available
+    card.deleteLater()
+
+
+def test_both_channel_lists_use_eliding_delegate(qapp, qloop_16) -> None:
+    from tgmonitor.ui.widgets.channel_widget import _ChannelRowDelegate
+
+    w = _widget(qapp, qloop_16)
+    assert isinstance(w.joined_card.lst.itemDelegate(), _ChannelRowDelegate)
+    assert isinstance(w.subs_card.lst.itemDelegate(), _ChannelRowDelegate)
+    w.deleteLater()
