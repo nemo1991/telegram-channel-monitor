@@ -9,7 +9,8 @@
   `cmb_channel` / `cmb_type` / `cmb_status` / `cmb_sort` / `cmb_dir` /
   `edit_search` / `lbl_page` / `btn_prev` / `btn_next`
 - 持有状态:`_page` / `_page_size` / `_total` / `_monitored_channels`
-  / `_search_timer`(后者由 `_wire_filter` 懒建)
+  / `_search_timer`(后者由 `_wire_filter` 懒建)/ `_reset_scroll_on_render`
+  (2026-11-24:筛选/翻页时让列表从顶部重渲;普通 refresh 保留滚动位置)
 
 **本 mixin 不含 UI 文案调用** —— 选它做第一个搬家的 mixin 正是为了
 把「QWidget + plain mixin」模式的风险与文案依赖解耦。
@@ -68,6 +69,9 @@ class FilterMixin(_Base):
 
         def _reset_and_refresh() -> None:
             self._page = 0
+            # 2026-11-24:换了筛选条件,新数据集从头看起;下载完成的原地
+            # refresh 不带这个标记,保留用户当前滚动位置。
+            self._reset_scroll_on_render = True
             self.refresh_requested.emit()
 
         self.cmb_channel.currentIndexChanged.connect(lambda _: _reset_and_refresh())
@@ -84,8 +88,11 @@ class FilterMixin(_Base):
 
     # ---- 分页(2026-08-25 v1.3.0 PR #6)----
 
-    def _render_page_info(self) -> None:
+    def _render_page_info(self) -> bool:
         """更新 `lbl_page` 文字 + btn_prev/btn_next enabled 状态。
+
+        返回本次是否因总数变小钳制了页码 —— 调用方据此让本次渲染与随后的
+        补拉渲染都从顶部开始,且不让前一次消费掉 `_reset_scroll_on_render`。
 
         2026-11-22 修:总数变小导致当前页越界时,钳制后必须先 emit refresh
         用修正后的 offset 重拉,否则本页 rows 属于旧 offset,列表会空白到
@@ -99,17 +106,20 @@ class FilterMixin(_Base):
         clamped = self._page >= total_pages
         if clamped:
             self._page = max(0, total_pages - 1)
+            self._reset_scroll_on_render = True
         self.lbl_page.setText(f"{self._page + 1} / {total_pages}")
         self.btn_prev.setEnabled(self._page > 0)
         self.btn_next.setEnabled(self._page + 1 < total_pages)
         if clamped:
             self.refresh_requested.emit()
+        return clamped
 
     def _on_page_prev(self) -> None:
         """上一页 — 触发 refresh,VM 会带新 offset。"""
         if self._page <= 0:
             return
         self._page -= 1
+        self._reset_scroll_on_render = True
         # 立刻同步 UI(乐观)— VM 拉回数据后 `on_media_loaded` 会再校准
         self._render_page_info()
         self.refresh_requested.emit()
@@ -122,6 +132,7 @@ class FilterMixin(_Base):
         if self._page + 1 >= total_pages:
             return
         self._page += 1
+        self._reset_scroll_on_render = True
         # 立刻同步 UI(乐观)— VM 拉回数据后 `on_media_loaded` 会再校准
         self._render_page_info()
         self.refresh_requested.emit()

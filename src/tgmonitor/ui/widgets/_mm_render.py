@@ -240,8 +240,8 @@ class RenderMixin(_Base):
             rows, total = [], 0
         self._rows = list(rows) if isinstance(rows, list) else []
         self._total = int(total) if isinstance(total, int) else len(self._rows)
-        self._render_page_info()
-        self._render_list()
+        page_clamped = self._render_page_info()
+        self._render_list(reset_scroll=page_clamped)
 
     def on_reconcile_done(self, evt: object) -> None:
         """VM.media_reconcile_done 接到 → 更新 footer + 显示结果。
@@ -282,14 +282,28 @@ class RenderMixin(_Base):
 
     # ---- 渲染 ----
 
-    def _render_list(self) -> None:
+    def _render_list(self, reset_scroll: bool | None = None) -> None:
         """清空 list → 按 rows 重建 item + 自绘 widget;更新 status label。
 
         2026-11-22 修:整个重建过程屏蔽 `itemSelectionChanged`。`list.clear()`
         会同步发选中变化,此时 `_rows` 已是新数据、`_last_keys` 还是旧索引,
         `_on_selection_changed → _find_row_by_key` 拿旧 key 的索引越界崩溃。
         渲染完一次性解屏蔽,由末尾的 `_on_selection_changed()` 统一刷新按钮态。
+
+        2026-11-24 修:`list.clear()` 还会把滚动条归零 —— 下载完成触发原地
+        refresh 时用户正看着的行会突然跳到列表首行。这里在重建前存下纵向/
+        横向滚动值,重建后恢复;筛选/翻页由 `_mm_filter` 预先打
+        `_reset_scroll_on_render=True`,这类"换页"仍从顶部看起。
         """
+        v_scroll = self.list.verticalScrollBar().value()
+        h_scroll = self.list.horizontalScrollBar().value()
+        # reset_scroll=True 来自页码钳制:本次与随后的补拉都要回顶部。
+        # stored 标记消费掉;钳制标记留给下一次补拉渲染。
+        stored_reset = bool(getattr(self, "_reset_scroll_on_render", True))
+        reset = stored_reset or bool(reset_scroll)
+        preserve_scroll = not reset
+        self._reset_scroll_on_render = bool(reset_scroll)
+
         self.list.blockSignals(True)
         try:
             self._reset_list_for_render()
@@ -314,6 +328,12 @@ class RenderMixin(_Base):
                         total_bytes += med.file_size
                 elif med.download_status == MediaDownloadStatus.FAILED:
                     count_failed += 1
+
+            # 重建完成再写回目标值(此时 scroll range 已按新 item 更新);
+            # 原地 refresh 用保存值,换页/换筛选写 0 显式回到首行。
+            # 行数变少时 setValue 自动钳到新最大值,不会越界。
+            self.list.verticalScrollBar().setValue(v_scroll if preserve_scroll else 0)
+            self.list.horizontalScrollBar().setValue(h_scroll if preserve_scroll else 0)
 
             # 更新 footer 状态
             total = len(self._rows)
