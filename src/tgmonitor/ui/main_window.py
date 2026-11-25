@@ -624,7 +624,9 @@ class MainWindow(QMainWindow):
         # 右栏内容 —— 用户看到「已加入」栏塌缩成与「已监听」相同。
         # 左栏唯一数据源是「刷新」按钮的 refresh_joined_channels →
         # joined_loaded → set_joined,与监听状态解耦。
-        subscribed = [ch for cid, ch in all_known.items() if cid in self.monitor.monitored_ids]
+        # P2-M3:经域服务 channels 读白名单,不再直取 core 内部 monitor
+        monitored = self.app.channels.monitored_ids()
+        subscribed = [ch for cid, ch in all_known.items() if cid in monitored]
         self.channel_panel.set_monitored(subscribed)
 
         # 2026-11-16:列表 + 详情共用同一份频道名映射(名称优先、id 兜底)。

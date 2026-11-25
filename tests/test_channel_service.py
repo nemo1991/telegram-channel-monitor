@@ -205,3 +205,22 @@ def test_whitelist_without_monitor_raises(
         svc.add_to_whitelist(42)
     with pytest.raises(AssertionError):
         svc.remove_from_whitelist(42)
+
+
+def test_monitored_ids_delegates_to_monitor(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """P2-M3:monitored_ids 经域服务读白名单,UI 不再直取 core monitor。"""
+    monitor = MagicMock()
+    monitor.monitored_ids = frozenset({1, 2, 3})
+    svc = _make_service(bus, fake_client, fake_storage, monitor=monitor)
+
+    assert svc.monitored_ids() == frozenset({1, 2, 3})
+
+
+def test_monitored_ids_returns_empty_when_monitor_absent(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """P2-M3:monitor=None 启动期退化 → 空白名单(不抛,与读语义对齐)。"""
+    svc = _make_service(bus, fake_client, fake_storage, monitor=None)
+    assert svc.monitored_ids() == frozenset()

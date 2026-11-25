@@ -59,9 +59,10 @@ class MediaListCsvExporter(Exporter):
     """Media Manager per-media CSV — 一行一条 media,所有列平铺。
 
     复用 `Exporter.render` 协议:dispatcher(`ExportService._run_media`)
-    把每条目标 media 包成 `MessageDTO`(`media` 字段含 1 个元素,
-    `_media_idx` 临时属性),exporter 直接 `m.media[0]` 写一行。`_media_idx`
-    是 dispatcher ↔ exporter 的私有通道,导出协议外不可见。
+    把每条目标 media 包成 `MediaExportRowDTO`(`media` 字段含 1 个元素,
+    `media_idx` 正式字段),exporter 直接 `m.media[0]` 写一行。
+    2026-11-25 P2-M7:取代旧的 `_media_idx` 动态属性 + type: ignore;
+    保留 `getattr(..., -1)` 兜底以兼容直接传纯 `MessageDTO` 的调用方。
 
     2026-09-10 v1.7.3:`include_metadata=True`(默认)时输出 `is_favorite` /
     `tags` / `notes` 3 列,False 时写空串。
@@ -91,8 +92,9 @@ class MediaListCsvExporter(Exporter):
                     continue
                 med = m.media[0]
                 ch = channels.get(m.channel_id)
-                # 2026-08-25 v1.3.0 PR #7:`_media_idx` 由 service dispatcher 注入
-                media_idx: Any = getattr(m, "_media_idx", -1)
+                # P2-M7:优先读正式字段 `MediaExportRowDTO.media_idx`;
+                # getattr 兜底兼容传纯 MessageDTO 的调用方(默认 -1)。
+                media_idx: Any = getattr(m, "media_idx", -1)
                 w.writerow(
                     {
                         "channel_id": m.channel_id,
