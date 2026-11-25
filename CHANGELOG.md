@@ -5,6 +5,39 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.5] - 2026-11-25
+
+主题:**修复** — 落地 2.1.4 审核报告(`docs/CODE-REVIEW-2.1.4.md`)全部 **P1 × 12**,每个修复
+带回归测试(17 个新测试均在旧代码上取证失败)。无 API/schema/命令变更,DB 无迁移。
+
+### 修复
+
+- **数据损坏(P1-1/P1-2)**:编辑推送改 media 位置索引合并,已下载媒体的
+  `object_key/download_status` 不再被抹掉(reconcile_orphans 不再误删 bytes);
+  save_message upsert 不再清零 is_favorite/tags/notes(标注唯一落库路径是
+  set_favorite/set_tags/set_notes 专用方法,已核实全部调用方)。
+- **生命周期(P1-3/P1-5)**:reconfigure 改两段式原子提交,objects 校验失败不再留下
+  "旧库已 close、monitor 持旧引用"的半完成态;set_storage 补 channel_sync 传播;
+  reconcile 引用收集改分页,消息 >10 万时不再误删真实媒体(且不用 DONE 过滤,
+  主图 FAILED 的 thumb 仍可能 DONE)。
+- **契约正确性(P1-4/P1-8/P1-9)**:全量同步续拉改锚点策略(从最新拉、到已存 max_id 停),
+  monitor 停止期间的新消息可补、不再白翻全库放大 FLOOD_WAIT;
+  get_channel_metadata 失败抛 ChatUnavailableError,sync 跳过该频道元数据写库,
+  不再用 `#<id>` stub 覆盖真实标题;probe_proxy 完整 RFC 1929 认证协商,
+  带认证的 SOCKS5 代理不再被 preflight 一票否决。
+- **UI/CLI(P1-6/P1-7)**:QR 登录弹窗改 done() 统一收口退订(消除实例泄漏与关闭后
+  幽灵 emit);cli sync/monitor 进度行改 stderr,恢复「stdout 只数据」契约。
+- **对象存储(P1-10/P1-11/P1-12)**:S3 get/stream_read 缺失对象转抛 KeyError,
+  单对象缺失不再毁掉整次 ZIP 导出;Local/Folder stream_read 改真流式
+  (内存 O(chunk_size),大文件导出不再 UI 冻结);PG list_media 整行还原
+  元数据字段,与 SQLite 对齐(PG 后端 per-media CSV 元数据列不再恒空)。
+
+### 已知遗留
+
+- 审核报告 P2 × 44 未修(详见报告 P2 清单与修复优先级建议)。
+
+---
+
 ## [2.1.4] - 2026-11-25
 
 主题:**质量治理** — 全量重度代码审核 + 单元测试轻量化。无生产行为变更、无命令行/数据库/配置变更。
