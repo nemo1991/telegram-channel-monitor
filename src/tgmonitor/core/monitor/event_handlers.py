@@ -1,9 +1,9 @@
 """5 个 EventBus 订阅 handler 组件 — 频道 / 互动 / pin 事件。
 
 2026-11-11 v2.0.0 Phase 3-C3:从 `EventHandlerMixin` 改为显式组合组件。
-组件持 `svc: MonitorService` 引用,经 `self._svc.bus / storage` 访问宿主
-依赖 — 不再有 mixin MRO 魔法。handler 互相独立(各管一事件),无共享
-热路径状态(都是 `await storage.X()` 后 publish ErrorOccurred)。
+2026-11-25 P2-M4:组件改为持有共享 `MonitorRuntime`,不再反向持有
+`MonitorService`;依赖经 `self._rt.bus / storage` 访问。handler 互相独立
+(各管一事件),无共享热路径状态(都是 `await storage.X()` 后 publish)。
 
 `MessageDeleted` handler(第 6 个)在 `DeleteManager`(`core/monitor/delete.py`),
 与 `delete_message` 公开 API / orphan 清理紧耦合,不放本文件。
@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from tgmonitor.core.events import (
     ChannelMetadataChanged,
@@ -25,9 +24,7 @@ from tgmonitor.core.events import (
     MessageInteractionsChanged,
     MessagePinChanged,
 )
-
-if TYPE_CHECKING:
-    from tgmonitor.core.monitor.service import MonitorService
+from tgmonitor.core.monitor._runtime import MonitorRuntime
 
 log = logging.getLogger(__name__)
 
@@ -41,11 +38,11 @@ class EventHandlers:
     - `_handle_channel_title_changed` — `updateChatTitle`
     - `_handle_channel_photo_changed` — `updateChatPhoto`
 
-    经 `self._svc` 访问宿主依赖:`bus / storage`。
+    经 `self._rt` 访问共享依赖:`bus / storage`。
     """
 
-    def __init__(self, svc: MonitorService) -> None:
-        self._svc = svc
+    def __init__(self, rt: MonitorRuntime) -> None:
+        self._rt = rt
 
     async def _handle_interactions_changed(
         self,
@@ -59,7 +56,7 @@ class EventHandlers:
         落库前/落库后两条事件同 payload,UI 自取所需时点。
         """
         try:
-            await self._svc.storage.update_message_interactions(
+            await self._rt.storage.update_message_interactions(
                 event.channel_id,
                 event.telegram_msg_id,
                 views=event.views,
@@ -76,7 +73,7 @@ class EventHandlers:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("update interactions failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.interactions",
                     message=str(e),
@@ -103,19 +100,19 @@ class EventHandlers:
         from tgmonitor.core.events import MessageEdited
 
         try:
-            await self._svc.storage.update_message_pin(
+            await self._rt.storage.update_message_pin(
                 event.channel_id,
                 event.telegram_msg_id,
                 event.is_pinned,
             )
             # 重新从 storage 拉完整 DTO(落库可能改变其它字段,虽然本方法
             # 只动 is_pinned;为防 schema 漂移,re-fetch 是稳妥做法)。
-            updated = await self._svc.storage.get_message(
+            updated = await self._rt.storage.get_message(
                 event.channel_id,
                 event.telegram_msg_id,
             )
             if updated is not None:
-                await self._svc.bus.publish(MessageEdited(message=updated))
+                await self._rt.bus.publish(MessageEdited(message=updated))
             log.debug(
                 "pin updated: channel=%s msg=%s pinned=%s",
                 event.channel_id,
@@ -124,7 +121,7 @@ class EventHandlers:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("update pin failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.pin",
                     message=str(e),
@@ -154,9 +151,9 @@ class EventHandlers:
                 # username。生产可加索引;MVP 接受 O(N) 扫。
                 # v1.4.0 MVP:仅 username 不为 None 时反查。
                 if event.username:
-                    for c in await self._svc.storage.list_channels():
+                    for c in await self._rt.storage.list_channels():
                         if c.username == event.username:
-                            await self._svc.storage.update_channel_metadata(
+                            await self._rt.storage.update_channel_metadata(
                                 c.id,
                                 title=event.title,
                                 username=event.username,
@@ -179,7 +176,7 @@ class EventHandlers:
                 return
             if event.channel_id == 0:
                 return  # 无 channel_id 又无 username,跳过
-            await self._svc.storage.update_channel_metadata(
+            await self._rt.storage.update_channel_metadata(
                 event.channel_id,
                 title=event.title,
                 username=event.username,
@@ -204,7 +201,7 @@ class EventHandlers:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelMetadataChanged failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_metadata",
                     message=str(e),
@@ -223,7 +220,7 @@ class EventHandlers:
         陈年 chat 推 metadata update,落库时机晚于本 update)。
         """
         try:
-            await self._svc.storage.update_channel_metadata(event.channel_id, title=event.new_title)
+            await self._rt.storage.update_channel_metadata(event.channel_id, title=event.new_title)
             log.debug(
                 "channel title updated: channel=%s new_title=%r",
                 event.channel_id,
@@ -231,7 +228,7 @@ class EventHandlers:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelTitleChanged failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_title",
                     message=str(e),
@@ -261,7 +258,7 @@ class EventHandlers:
             # 非 None(包含空串):显式写真值。
             # 空串 "" → 视为「头像被删」→ 写 NULL;非空 → 写真路径。
             photo_to_set: str | None = event.local_path if event.local_path else None
-            await self._svc.storage.update_channel_metadata(
+            await self._rt.storage.update_channel_metadata(
                 event.channel_id, photo_local_key=photo_to_set
             )
             log.debug(
@@ -272,7 +269,7 @@ class EventHandlers:
             )
         except Exception as e:  # noqa: BLE001
             log.exception("handle ChannelPhotoChanged failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.channel_photo",
                     message=str(e),

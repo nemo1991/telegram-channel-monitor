@@ -9,20 +9,21 @@
 
 启动/停止:`start()` / `stop()`,由 `AppService.start_monitor()` 调用。
 
-2026-11-11 v2.0.0 Phase 3-C3:5 个 mixin 改为显式组合组件。状态单一
-所有权在本类(`__init__` 一处初始化),组件持 `svc` 引用经 `self._svc.*`
-读写 — 消除 mixin MRO 魔法与 `type: ignore[attr-defined]`:
+2026-11-11 v2.0.0 Phase 3-C3:5 个 mixin 改为显式组合组件。
+2026-11-25 P2-M4:组件改为只持共享 `MonitorRuntime`,不再反向持有宿主
+(原 78 处 `self._svc.*` 归零),打破双向耦合:
   - `whitelist.py`      — 白名单 / 后端热重载(WhitelistManager)
   - `orchestrator.py`   — start/stop/主循环/心跳(Orchestrator)
   - `backfill.py`       — 周期补拉 / reconnect kick(BackfillRunner)
   - `event_handlers.py` — 5 个 bus 订阅(EventHandlers)
   - `delete.py`         — 删 + 孤儿 bytes 清理(DeleteManager)
 
-本类保留:
+依赖 + 可变状态单一所有权在 `MonitorRuntime`(`self._rt`);本类:
   - 核心消息处理:`_handle` / `_handle_edited` / `_download_worker` /
     `_maybe_download_thumb`(热路径,互相依赖,放一起不动)
-  - 状态字段 + 公共常量(`_BACKFILL_*` / `_HEARTBEAT_INTERVAL`)
-  - 公开 / 测试 seam 的 delegate(转发到组件,调用面不变)
+  - 状态 / 依赖 property 转发到 `self._rt`(`monitor.storage` /
+    `monitor._backfill_all` 等公开面与测试 seam 位置完全不变)
+  - 跨组件晚绑定回调注入 `_rt.handle_*` 等槽(测试 patch 宿主方法仍生效)
 
 `MediaDownloader` 仍从此模块 re-export,保持向后兼容
 (`from tgmonitor.core.monitor.service import MediaDownloader`)。
@@ -52,6 +53,7 @@ from tgmonitor.core.events import (
     MessagePinChanged,
     MessageReceived,
 )
+from tgmonitor.core.monitor._runtime import MonitorRuntime
 from tgmonitor.core.monitor.backfill import BackfillRunner
 from tgmonitor.core.monitor.delete import DeleteManager
 from tgmonitor.core.monitor.downloader import MediaDownloader  # noqa: F401  # re-export
@@ -66,6 +68,13 @@ __all__ = ["MonitorService", "MediaDownloader"]  # MediaDownloader re-export
 
 log = logging.getLogger(__name__)
 
+# 配置默认值(P2-M4:原类常量移到模块级,实例值由 MonitorRuntime 持有并通过
+# property 暴露,保留 `monitor._BACKFILL_*` / `_HEARTBEAT_INTERVAL` seam)。
+_DEFAULT_BACKFILL_INTERVAL = 30.0
+_DEFAULT_BACKFILL_LIMIT = 100
+_DEFAULT_BACKFILL_MAX_PAGE = 1000
+_DEFAULT_HEARTBEAT_INTERVAL = 30.0
+
 
 class MonitorService:
     """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。
@@ -79,16 +88,6 @@ class MonitorService:
     引用读写状态。公开 / 测试 seam 方法以 delegate 转发到组件,调用面不变。
     """
 
-    # 周期补拉参数(测试可 monkeypatch 调小)
-    _BACKFILL_INTERVAL = 30.0  # 补拉周期秒
-    _BACKFILL_LIMIT = 100  # 每频道每轮单页条数(<=100,TDLib 上限)
-    _BACKFILL_MAX_PAGE = 1000  # 每轮每频道最多处理条数(防御性上限,防无锚点拉全史)
-
-    # 心跳参数:`_run` 主循环无论流是否有消息,每 `_HEARTBEAT_INTERVAL` 秒打一条
-    # DEBUG 心跳(活跃频道也打,不是只在静默时) —— 有这条日志就证明实时通道还
-    # 活着,是排查"空窗 / 一段时间不监听"的第一手信号(TG_LOG_LEVEL=DEBUG 可看)。
-    _HEARTBEAT_INTERVAL = 30.0  # 心跳间隔秒(测试可 monkeypatch 调小)
-
     def __init__(
         self,
         bus: EventBus,
@@ -99,41 +98,198 @@ class MonitorService:
         downloader: MediaDownloader | None = None,
     ) -> None:
         """`downloader` 可选 — FULL 媒体策略时配置(FULL = 实际下原文件)。"""
-        self.bus = bus
-        self.client = client
-        self.storage = storage
-        self.objects = objects
-        self.settings = settings
-        self.downloader = downloader
-        self._task: asyncio.Task | None = None
-        self._backfill_task: asyncio.Task | None = None
-        self._stream: UpdateStream | None = None
-        self._stop = asyncio.Event()
-        self._whitelist: set[int] = set()  # 被订阅的 channel_id
-        self._handled = 0  # 累计成功落库消息数(心跳日志用)
-        self._last_heartbeat = 0.0  # time.monotonic() 上次心跳时间(周期节流用)
-        # reconnect 立即 kick 补拉后,设 True 跳过紧接的周期 tick
-        # (避免重复回拉 — 在 BackfillRunner._handle_connection_state 里设)。
-        self._skip_next_tick = False
-        # 补拉中判定"频道不可访问"的 channel_id(每频道只 warning 一次,
-        # 避免每 30s 轮刷日志);某频道补拉成功后从集合移除,可重新 warning。
-        self._unavailable_channels: set[int] = set()
-        # 异步下载队列:FULL 策略时 `_handle` 先落库(media 标 DOWNLOADING),
-        # 再入队由 `_download_worker` 串行消费;下载结束后回写状态 + 发
-        # MediaDownloaded 事件。串行单 worker 避免并发下载互相干扰。
-        self._download_queue: asyncio.Queue[tuple[MessageDTO, int]] | None = None
-        self._download_task: asyncio.Task | None = None
-        # 2026-08-24:最近 stream 见过 / 落库过的 (channel_id, telegram_msg_id)。
-        # 用于区分 updateNewMessage 与 updateMessageContent:命中走 _handle_edited,
-        # miss 走 _handle。OrderedDict 限长 10000,超长 evict 最旧。
-        self._seen_ids: collections.OrderedDict[tuple[int, int], None] = collections.OrderedDict()
+        # 共享 runtime:依赖 + 全部可变状态单一所有权在此(P2-M4)。
+        self._rt = MonitorRuntime(
+            bus=bus,
+            client=client,
+            storage=storage,
+            objects=objects,
+            settings=settings,
+            downloader=downloader,
+            heartbeat_interval=_DEFAULT_HEARTBEAT_INTERVAL,
+            backfill_interval=_DEFAULT_BACKFILL_INTERVAL,
+            backfill_limit=_DEFAULT_BACKFILL_LIMIT,
+            backfill_max_page=_DEFAULT_BACKFILL_MAX_PAGE,
+        )
+        rt = self._rt
 
-        # 组合组件 — 状态已就绪后装配,各持 self 引用经 self._svc.* 读写。
-        self._whitelist_mgr = WhitelistManager(self)
-        self._orchestrator = Orchestrator(self)
-        self._backfill_runner = BackfillRunner(self)
-        self._events = EventHandlers(self)
-        self._delete_mgr = DeleteManager(self)
+        # 组合组件 — 只持共享 runtime,不再反向持有宿主。
+        self._whitelist_mgr = WhitelistManager(rt)
+        self._orchestrator = Orchestrator(rt)
+        self._backfill_runner = BackfillRunner(rt)
+        self._events = EventHandlers(rt)
+        self._delete_mgr = DeleteManager(rt)
+
+        # 跨组件晚绑定回调 — lambda 解析本宿主**当前**属性,使测试在
+        # monitor 实例上 patch `_backfill_all` / `_delete_with_orphan_check`
+        # 等方法后,组件调用仍命中 patch(保持 seam 语义不变)。
+        rt.handle_message = lambda msg: self._handle(msg)
+        rt.handle_edited = lambda msg: self._handle_edited(msg)
+        rt.backfill_all = lambda: self._backfill_all()
+        rt.download_worker = lambda: self._download_worker()
+        rt.delete_with_orphan_check = lambda cid, mid: self._delete_with_orphan_check(cid, mid)
+        rt.handle_interactions_changed = lambda e: self._handle_interactions_changed(e)
+        rt.handle_pin_changed = lambda e: self._handle_pin_changed(e)
+        rt.handle_message_deleted = lambda e: self._handle_message_deleted(e)
+        rt.handle_channel_metadata = lambda e: self._handle_channel_metadata(e)
+        rt.handle_channel_title_changed = lambda e: self._handle_channel_title_changed(e)
+        rt.handle_channel_photo_changed = lambda e: self._handle_channel_photo_changed(e)
+        rt.handle_connection_state = lambda e: self._handle_connection_state(e)
+        rt.backfill_loop = lambda: self._backfill_loop()
+
+    # ---------- 共享状态 property(P2-M4:转发 runtime,seam 位置不变) ----------
+
+    @property
+    def bus(self) -> EventBus:
+        return self._rt.bus
+
+    @property
+    def client(self) -> TelegramClient:
+        return self._rt.client
+
+    @property
+    def storage(self) -> StorageRepository:
+        return self._rt.storage
+
+    @storage.setter
+    def storage(self, value: StorageRepository) -> None:
+        self._rt.storage = value
+
+    @property
+    def objects(self) -> ObjectStore:
+        return self._rt.objects
+
+    @objects.setter
+    def objects(self, value: ObjectStore) -> None:
+        self._rt.objects = value
+
+    @property
+    def settings(self) -> Settings:
+        return self._rt.settings
+
+    @settings.setter
+    def settings(self, value: Settings) -> None:
+        self._rt.settings = value
+
+    @property
+    def downloader(self) -> MediaDownloader | None:
+        return self._rt.downloader
+
+    @downloader.setter
+    def downloader(self, value: MediaDownloader | None) -> None:
+        self._rt.downloader = value
+
+    @property
+    def _whitelist(self) -> set[int]:
+        return self._rt.whitelist
+
+    @property
+    def _seen_ids(self) -> collections.OrderedDict[tuple[int, int], None]:
+        return self._rt.seen_ids
+
+    @property
+    def _download_queue(self) -> asyncio.Queue[tuple[MessageDTO, int]] | None:
+        return self._rt.download_queue
+
+    @_download_queue.setter
+    def _download_queue(self, value: asyncio.Queue[tuple[MessageDTO, int]] | None) -> None:
+        self._rt.download_queue = value
+
+    @property
+    def _handled(self) -> int:
+        return self._rt.handled
+
+    @_handled.setter
+    def _handled(self, value: int) -> None:
+        self._rt.handled = value
+
+    @property
+    def _skip_next_tick(self) -> bool:
+        return self._rt.skip_next_tick
+
+    @_skip_next_tick.setter
+    def _skip_next_tick(self, value: bool) -> None:
+        self._rt.skip_next_tick = value
+
+    @property
+    def _unavailable_channels(self) -> set[int]:
+        return self._rt.unavailable_channels
+
+    @property
+    def _last_heartbeat(self) -> float:
+        return self._rt.last_heartbeat
+
+    @_last_heartbeat.setter
+    def _last_heartbeat(self, value: float) -> None:
+        self._rt.last_heartbeat = value
+
+    @property
+    def _stop(self) -> asyncio.Event:
+        return self._rt.stop
+
+    @property
+    def _stream(self) -> UpdateStream | None:
+        return self._rt.stream
+
+    @_stream.setter
+    def _stream(self, value: UpdateStream | None) -> None:
+        self._rt.stream = value
+
+    @property
+    def _task(self) -> asyncio.Task | None:
+        return self._rt.task
+
+    @_task.setter
+    def _task(self, value: asyncio.Task | None) -> None:
+        self._rt.task = value
+
+    @property
+    def _backfill_task(self) -> asyncio.Task | None:
+        return self._rt.backfill_task
+
+    @_backfill_task.setter
+    def _backfill_task(self, value: asyncio.Task | None) -> None:
+        self._rt.backfill_task = value
+
+    @property
+    def _download_task(self) -> asyncio.Task | None:
+        return self._rt.download_task
+
+    @_download_task.setter
+    def _download_task(self, value: asyncio.Task | None) -> None:
+        self._rt.download_task = value
+
+    @property
+    def _BACKFILL_INTERVAL(self) -> float:  # noqa: N802 — 测试 seam 沿用原名
+        return self._rt.backfill_interval
+
+    @_BACKFILL_INTERVAL.setter
+    def _BACKFILL_INTERVAL(self, value: float) -> None:  # noqa: N802 — 测试 seam setter
+        self._rt.backfill_interval = value
+
+    @property
+    def _BACKFILL_LIMIT(self) -> int:  # noqa: N802 — 测试 seam 沿用原名
+        return self._rt.backfill_limit
+
+    @_BACKFILL_LIMIT.setter
+    def _BACKFILL_LIMIT(self, value: int) -> None:  # noqa: N802 — 测试 seam setter
+        self._rt.backfill_limit = value
+
+    @property
+    def _BACKFILL_MAX_PAGE(self) -> int:  # noqa: N802 — 测试 seam 沿用原名
+        return self._rt.backfill_max_page
+
+    @_BACKFILL_MAX_PAGE.setter
+    def _BACKFILL_MAX_PAGE(self, value: int) -> None:  # noqa: N802 — 测试 seam setter
+        self._rt.backfill_max_page = value
+
+    @property
+    def _HEARTBEAT_INTERVAL(self) -> float:  # noqa: N802 — 测试 seam 沿用原名
+        return self._rt.heartbeat_interval
+
+    @_HEARTBEAT_INTERVAL.setter
+    def _HEARTBEAT_INTERVAL(self, value: float) -> None:  # noqa: N802 — 测试 seam setter
+        self._rt.heartbeat_interval = value
 
     # ---------- 白名单 delegate(WhitelistManager)----------
 
