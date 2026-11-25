@@ -12,7 +12,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import asyncio
+from datetime import UTC, datetime
 
 from tests.conftest import InMemoryRepository
 from tgmonitor.core.channel_sync import ChannelSyncService
@@ -24,6 +25,45 @@ from tgmonitor.core.dto import (
 )
 from tgmonitor.core.events import EventBus
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
+
+
+class _DescendingHistoryClient(FakeTelegramClient):
+    """`iter_chat_history` 按真 client 契约 yield(最新在前,id 递减)。
+
+    fake 基类按 id 升序 yield,与 `telegram/client.py:92-103` 的
+    "只能向旧方向拉(id 递减)" 契约相反,没法测 P1-4 的锚点 break
+    (升序时锚点 break 会在第一条就命中)。这里按契约改成新→旧,并记录
+    每次调用收到的 `before_msg_id` 供断言。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.before_msg_id_calls: list[int] = []
+
+    async def iter_chat_history(
+        self,
+        channel_id: int,
+        *,
+        before_msg_id: int = 0,
+        limit: int = 100,
+    ):
+        self.before_msg_id_calls.append(before_msg_id)
+        ch_state = self._history_state.get(channel_id)
+        if ch_state is None:
+            return
+        max_id, count = ch_state
+        start = max_id if before_msg_id == 0 else min(max_id, before_msg_id - 1)
+        end = max(1, max_id - count + 1)
+        for mid in range(start, end - 1, -1):
+            yield MessageDTO(
+                id=mid,
+                channel_id=channel_id,
+                telegram_msg_id=mid,
+                text=f"history-{channel_id}-{mid}",
+                date=datetime.now(UTC),
+            )
+            await asyncio.sleep(0)
+
 
 # ---- helpers ----
 
@@ -152,7 +192,11 @@ async def test_sync_history_only(bus, client, storage, settings):
 
 
 async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
-    """已有 max_id=50,client 那边 max=100,只应拉 51-100(50 条)。"""
+    """已有 max_id=50,client 那边 max=100,只应拉 51-100(50 条)。
+
+    P1-4 修后续拉锚点策略:从最新(before_msg_id=0)开始,遇到
+    msg_id <= 已存 max_id 即停 — 已存 1-50 零请求、零 skip。
+    """
     # 先存 50 条到 storage
     for mid in range(1, 51):
         await storage.save_message(
@@ -164,8 +208,9 @@ async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
                 date=datetime(2026, 1, 1),
             )
         )
-    svc = await _make_app(bus, client, storage)
-    client.set_history(100, max_id=100, count=100)
+    fake = _DescendingHistoryClient()
+    svc = await _make_app(bus, fake, storage)
+    fake.set_history(100, max_id=100, count=100)
     options = SyncOptions(
         include_metadata=False,
         include_history=True,
@@ -181,10 +226,49 @@ async def test_resume_from_saved_skips_existing(bus, client, storage, settings):
     # total_messages_added 是"新落库",不含已存在的
     res = captured["done"][0].result
     assert res.total_messages_added == 50
-    # resume 路径拉 49-100(fake client before_msg_id 语义);49-50 与 storage
-    # 命中 skip, 51-100 新落。messages_added 仍 50(只算新落)。
     assert res.per_channel[100].messages_added == 50
-    assert res.per_channel[100].messages_skipped >= 2
+    # P1-4:锚点即停 — 已存历史没被翻,没有 skip 计数
+    assert res.per_channel[100].messages_skipped == 0
+    # 必须从最新(before_msg_id=0)开始拉;旧代码会传 [50]
+    assert fake.before_msg_id_calls == [0]
+
+
+async def test_resume_pulls_new_messages_and_stops_at_anchor(bus, client, storage, settings):
+    """P1-4 回归:resume 必须从最新(before_msg_id=0)开始、到达已存 max_id
+    即停;monitor 停机期间的新消息(id > max_id)全部补到。
+
+    旧代码把 max_id 传给 before_msg_id 向旧方向翻 — 新消息(id > max_id)
+    不在拉取范围,已存历史每条还要 get_message 白 skip 一次。
+    """
+    # storage 已存 1-50;client 侧历史是 1-120(51-120 为停机期间新消息)
+    for mid in range(1, 51):
+        await storage.save_message(
+            MessageDTO(
+                id=0,
+                channel_id=100,
+                telegram_msg_id=mid,
+                text=f"old-{mid}",
+                date=datetime(2026, 1, 1),
+            )
+        )
+    fake = _DescendingHistoryClient()
+    svc = await _make_app(bus, fake, storage)
+    fake.set_history(100, max_id=120, count=120)
+    options = SyncOptions(
+        include_metadata=False,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+        resume_from_saved=True,
+    )
+    result = await svc.sync_channels([100], options)
+    # 从 0(最新)开始 — 旧代码这里记录的是 [50],断言失败
+    assert fake.before_msg_id_calls == [0]
+    msgs = await storage.list_messages([100])
+    # 51-120 共 70 条新消息全部补到(旧代码一条都补不到,仍 50)
+    assert len(msgs) == 120
+    assert result.per_channel[100].messages_added == 70
+    assert result.per_channel[100].error is None
 
 
 async def test_resume_disabled_re_pulls_and_skips_already_stored(bus, client, storage, settings):
@@ -315,6 +399,78 @@ async def test_rate_limit_during_metadata_skips_history(bus, client, storage, se
     # 历史不应被拉(从未走到 history 阶段)
     msgs = await storage.list_messages([100])
     assert len(msgs) == 0
+
+
+# ============================================================
+# P1-8:元数据不可访问(ChatUnavailableError)— 不写 stub,继续同步
+# ============================================================
+
+
+async def test_metadata_unavailable_not_upserted_and_continues(bus, client, storage, settings):
+    """get_channel_metadata 抛 ChatUnavailableError(P1-8:client 不再返回
+    `#<id>` stub DTO)→ 该频道元数据不写库、不标 error,其余频道继续。
+
+    旧代码:service 不捕获该异常 → 频道 1 被标 error;更旧的代码:client
+    返回 stub → `title="#1"` 经覆盖式 upsert 静默写库。
+    """
+    svc = await _make_app(bus, client, storage)
+    from tgmonitor.core.telegram.errors import ChatUnavailableError
+
+    orig = client.get_channel_metadata
+
+    async def _selective(cid: int):
+        if cid == 1:
+            raise ChatUnavailableError(1, reason="get_entity failed: no entity")
+        return await orig(cid)
+
+    client.get_channel_metadata = _selective  # type: ignore[assignment]
+    client.set_metadata(ChannelDTO(id=2, title="OK", kind="channel"))
+    options = SyncOptions(
+        include_metadata=True,
+        include_history=False,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+    )
+    result = await svc.sync_channels([1, 2], options)
+    # 频道 1:元数据没写库(旧 stub 路径会写 "#1")
+    ch1 = await storage.get_channel(1)
+    assert ch1 is None
+    assert not result.per_channel[1].metadata_updated
+    # 跳过不等于失败 — 不标 error,整体不算取消
+    assert result.per_channel[1].error is None
+    assert not result.cancelled
+    # 频道 2 照常完成
+    ch2 = await storage.get_channel(2)
+    assert ch2 is not None
+    assert ch2.title == "OK"
+    assert result.per_channel[2].metadata_updated
+
+
+async def test_metadata_unavailable_history_still_synced(bus, client, storage, settings):
+    """单频道元数据不可访问 — 该频道历史拉取照常进行。"""
+    svc = await _make_app(bus, client, storage)
+    from tgmonitor.core.telegram.errors import ChatUnavailableError
+
+    orig = client.get_channel_metadata
+
+    async def _selective(cid: int):
+        if cid == 100:
+            raise ChatUnavailableError(100, reason="get_entity failed")
+        return await orig(cid)
+
+    client.get_channel_metadata = _selective  # type: ignore[assignment]
+    client.set_history(100, max_id=10, count=10)
+    options = SyncOptions(
+        include_metadata=True,
+        include_history=True,
+        chat_delay_ms=0,
+        page_delay_ms=0,
+    )
+    result = await svc.sync_channels([100], options)
+    assert not result.per_channel[100].metadata_updated
+    assert result.per_channel[100].error is None
+    msgs = await storage.list_messages([100])
+    assert len(msgs) == 10
 
 
 # ============================================================

@@ -63,21 +63,29 @@ async def probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:
 
     流程:
       1) TCP open host:port
-      2) 发 SOCKS5 greeting:[0x05, 0x01, 0x00] (版本 5, 1 种认证方式:无)
-      3) 等 server 回 [0x05, 0x00] (选 no-auth)
+      2) 发 SOCKS5 greeting:[0x05, 0x02, 0x00, 0x02]
+         (版本 5, 2 种认证方式:no-auth + username/password —
+         2026-11-25 修 P1-9:只声明 no-auth 会被带认证的代理回
+         `0x05 0x02` 一票否决,Telethon 本可完成 RFC 1929 认证)
+      3) 等 server 选方式:
+         - 选 no-auth([0x05, 0x00])→ 直接进 CONNECT
+         - 选 username/password([0x05, 0x02])→ RFC 1929 子协商:
+           发 [0x01, ulen, uname, plen, passwd](凭据取自 proxy URL),
+           等 server 回 [0x01, status],status≠0 即认证失败;
+           URL 无凭据时直接报清晰错误
+         - 其他(含 0xFF 拒绝全部)→ 失败
       4) 发 CONNECT 到 1.1.1.1:443(可达目标,只验证代理本身通,不出 DC)
       5) 等 server 回 [0x05, 0x00, ...]
     """
     if not proxy_url or not proxy_url.strip():
         return False, "代理未配置"
     try:
-        rest = proxy_url.strip().split("://", 1)[1]
-        hostport = rest.rsplit("@", 1)[1] if "@" in rest else rest
-        host, _, port_s = hostport.rpartition(":")
-        port = int(port_s)
-    except Exception as e:  # noqa: BLE001
+        parsed = parse_socks5_proxy(proxy_url)
+    except ValueError as e:
         log.error("proxy URL parse failed: %s", e)
         return False, f"代理 URL 格式错: {e}"
+    assert parsed is not None  # 上面已排除空 URL
+    _, host, port, _, username, password = parsed
 
     try:
         reader, writer = await asyncio.wait_for(
@@ -89,16 +97,44 @@ async def probe_proxy(proxy_url: str, timeout: float = 3.0) -> tuple[bool, str]:
         return False, f"代理 TCP 不通 {host}:{port} — {e}"
 
     try:
-        # 1) greeting
-        writer.write(bytes([0x05, 0x01, 0x00]))  # ver=5, nmethods=1, method=no-auth
+        # 1) greeting — 同时声明 no-auth 与 username/password(P1-9)
+        writer.write(bytes([0x05, 0x02, 0x00, 0x02]))  # ver=5, nmethods=2
         await asyncio.wait_for(writer.drain(), timeout=timeout)
         greeting = await asyncio.wait_for(reader.readexactly(2), timeout=timeout)
-        if len(greeting) < 2 or greeting[0] != 0x05 or greeting[1] != 0x00:
+        if len(greeting) < 2 or greeting[0] != 0x05:
             log.error(
-                "proxy greeting response invalid: %s — 不是 SOCKS5 服务,或要求认证",
+                "proxy greeting response invalid: %s — 不是 SOCKS5 服务",
                 greeting.hex(),
             )
-            return False, f"代理不是 SOCKS5 或要求认证 ({greeting.hex()})"
+            return False, f"代理不是 SOCKS5 ({greeting.hex()})"
+        method = greeting[1]
+        if method == 0x02:
+            # RFC 1929 username/password 子协商
+            if not username or not password:
+                log.error("proxy requires auth but URL has no credentials: %s:%d", host, port)
+                return False, f"代理要求认证,但 URL 未提供用户名/密码 ({host}:{port})"
+            uname = username.encode("utf-8")
+            passwd = password.encode("utf-8")
+            auth_req = bytes([0x01, len(uname)]) + uname + bytes([len(passwd)]) + passwd
+            writer.write(auth_req)
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+            auth_reply = await asyncio.wait_for(reader.readexactly(2), timeout=timeout)
+            if len(auth_reply) < 2 or auth_reply[0] != 0x01 or auth_reply[1] != 0x00:
+                log.error(
+                    "SOCKS5 auth failed: reply=%s (status=0x00 表示成功)",
+                    auth_reply.hex(),
+                )
+                status = auth_reply[1] if len(auth_reply) > 1 else -1
+                return False, f"代理认证失败 (status={status:#04x})"
+            log.debug("SOCKS5 RFC 1929 auth OK: %s:%d", host, port)
+        elif method != 0x00:
+            log.error(
+                "proxy chose unsupported auth method 0x%02X: %s:%d",
+                method,
+                host,
+                port,
+            )
+            return False, f"代理选择了不支持的认证方式 (method=0x{method:02X})"
         # 2) CONNECT 1.1.1.1:443 (验证代理本身可达,不出 DC)
         target_host = b"1.1.1.1"
         target_port = 443

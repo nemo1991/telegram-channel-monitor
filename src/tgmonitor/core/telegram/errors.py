@@ -60,9 +60,12 @@ class ChatUnavailableError(Exception):
     """频道在后端侧不可访问(拿不到 chat 对象)。
 
     触发:`iter_chat_history` 预热失败(如频道已不可访问 / 新 session 未加载
-    该 chat)。语义是"该频道本轮无法补拉":`MonitorService._backfill` 捕获后
-    降级为 warning 并跳过,不再每轮刷 error traceback。其它错误
-    (网络 / flood wait 等)仍照常冒泡,由调用方决定怎么处理。
+    该 chat)、`get_channel_metadata` 的 `get_entity` 对未缓存 id 抛
+    ValueError(频道已退订 / 被移除)。语义是"该频道本轮无法处理":
+    `MonitorService._backfill` 捕获后降级为 warning 并跳过;
+    `ChannelSyncService._sync_metadata` 捕获后跳过该频道元数据写库、
+    继续其他频道。其它错误(网络 / flood wait 等)仍照常冒泡,由调用方
+    决定怎么处理。
     """
 
     def __init__(self, channel_id: int, *, reason: str = "") -> None:
