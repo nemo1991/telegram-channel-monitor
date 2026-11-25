@@ -637,16 +637,23 @@ class TelethonTelegramClient:
         return result
 
     async def get_channel_metadata(self, channel_id: int) -> ChannelDTO:
-        """拉一个频道的最新元数据(ChannelSyncService 用)。"""
+        """拉一个频道的最新元数据(ChannelSyncService 用)。
+
+        失败(拿不到 entity / entity 无法映射 DTO)抛 `ChatUnavailableError`,
+        不再返回 `#<id>` stub DTO(修 P1-8:stub 经覆盖式 upsert 会把
+        真实频道标题 / username / member_count 清空)。
+        """
         self._check_alive()
         assert self._client is not None
         try:
             entity = await self._client.get_entity(channel_id)
-        except (ValueError, TypeError):
-            return ChannelDTO(id=channel_id, title=f"#{channel_id}")
+        except (ValueError, TypeError) as e:
+            raise ChatUnavailableError(channel_id, reason=f"get_entity failed: {e}") from e
         dto = self._entity_to_dto(entity)
         if dto is None:
-            return ChannelDTO(id=channel_id, title=f"#{channel_id}")
+            raise ChatUnavailableError(
+                channel_id, reason=f"entity type {type(entity).__name__} 无法映射 ChannelDTO"
+            )
         if isinstance(entity, types.Channel):
             try:
                 full = await self._client(functions.channels.GetFullChannelRequest(entity))

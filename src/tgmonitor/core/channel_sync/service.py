@@ -48,7 +48,10 @@ from tgmonitor.core.events import (
 )
 from tgmonitor.core.ops_gate import require_ready
 from tgmonitor.core.telegram.client import TelegramClient
-from tgmonitor.core.telegram.errors import TelegramRateLimitError
+from tgmonitor.core.telegram.errors import (
+    ChatUnavailableError,
+    TelegramRateLimitError,
+)
 
 if TYPE_CHECKING:
     from tgmonitor.core.events import EventBus
@@ -266,7 +269,11 @@ class ChannelSyncService:
     ) -> None:
         """单频道拉元数据 + 写 storage + 标记 metadata_updated。
 
-        异常由 `_sync_one_channel` 的 try 块捕获,这里不写 error。
+        频道不可访问(`ChatUnavailableError`,2026-11-25 修 P1-8 —
+        client 不再返回 `#<id>` stub DTO):log warning + 跳过该频道元数据
+        写库,不标 error、不清空已存元数据;历史拉取继续,其余频道继续。
+
+        其余异常由 `_sync_one_channel` 的 try 块捕获,这里不写 error。
         """
         await self._emit_progress(
             cid,
@@ -275,7 +282,18 @@ class ChannelSyncService:
             total=1,
             detail="",
         )
-        dto = await self.client.get_channel_metadata(cid)
+        try:
+            dto = await self.client.get_channel_metadata(cid)
+        except ChatUnavailableError as e:
+            log.warning("channel %d metadata unavailable, skipping upsert: %s", cid, e)
+            await self._emit_progress(
+                cid,
+                "metadata",
+                progress=0,
+                total=1,
+                detail="元数据不可访问,已跳过",
+            )
+            return
         dto.last_synced_at = datetime.now(UTC)
         await self.storage.upsert_channel_metadata(dto)
         ch_result.metadata_updated = True
@@ -301,6 +319,14 @@ class ChannelSyncService:
         时仅写元数据,与本函数其他逻辑无关。值由 `_sync_one_channel` 透传,
         内部不读 `self.media_policy`。
 
+        续拉锚点(2026-11-25 修 P1-4):与 `monitor/backfill.py` 同款策略 —
+        `iter_chat_history` 契约只能向旧方向(id 递减)拉,resume 时不能再把
+        已存 `max_msg_id` 传给 `before_msg_id`(那会从已存最新处向旧方向翻,
+        已存历史每条白 skip 一次,id > max_id 的新消息永远不在范围)。
+        改为:`before_msg_id=0` 从最新开始拉,循环内遇到
+        `msg_id <= max_id`(已存锚点)即 break — 新消息(锚点之上)全数补到,
+        已存历史零请求。
+
         写 `ch_result.messages_added`(每条 +1,不去重) +
         `ch_result.new_messages_added`(只在 existed is None 时 +1)。
         取消检测在每条迭代入口;命中后 `_sync_one_channel` 检测
@@ -308,17 +334,16 @@ class ChannelSyncService:
 
         异常由 `_sync_one_channel` 的 try 块捕获。
         """
-        last_id: int | None = None
+        max_id: int = 0
         if options.resume_from_saved:
-            last_id = await self.storage.get_max_telegram_msg_id(cid)
-        from_id = last_id or 0
-        if last_id is not None:
+            max_id = await self.storage.get_max_telegram_msg_id(cid) or 0
+        if max_id > 0:
             await self._emit_progress(
                 cid,
                 "history",
                 progress=0,
                 total=None,
-                detail=f"续拉 from {last_id}",
+                detail=f"续拉 from {max_id}",
             )
         else:
             await self._emit_progress(
@@ -332,11 +357,14 @@ class ChannelSyncService:
         page_count = 0
         async for m in self.client.iter_chat_history(
             cid,
-            before_msg_id=from_id,
+            before_msg_id=0,  # 从最新开始(P1-4:向旧方向拉,锚点停)
             limit=100,
         ):
             if self._cancel.is_set():
                 return  # outer 检测 cancel 写 ch_result.error
+            if max_id > 0 and m.telegram_msg_id <= max_id:
+                # 命中已存锚点 — 之后的(id 更小)全已入库,停。
+                break
             existed = await self.storage.get_message(
                 m.channel_id,
                 m.telegram_msg_id,

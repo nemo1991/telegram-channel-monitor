@@ -13,8 +13,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -128,3 +130,63 @@ async def test_telethon_wait_qr_timeout_returns_error(qr_client) -> None:
 
 
 # ---- UI: 二维码弹窗 ----
+
+
+class _StubAuth:
+    """QrLoginDialog 只用到 auth.wait_qr_login。"""
+
+    async def wait_qr_login(self) -> tuple[str, str | None]:
+        await asyncio.sleep(30)  # 长等待,由关闭路径的 cancel 收尾
+
+
+def _make_stub_app(bus: EventBus) -> SimpleNamespace:
+    """dialog 构造只需要 app.bus + app.auth,用 stub 避免拉起整个 AppService。"""
+    return SimpleNamespace(bus=bus, auth=_StubAuth())
+
+
+async def test_qr_dialog_unsubscribes_bus_on_reject(qapp, qloop) -> None:
+    """P1-6 回归(reject 路径):关闭后必须退订 LoginStateChanged。
+
+    旧行为:handler 是局部闭包,closeEvent 只 cancel future 不退订 →
+    dialog 关闭后 bus 再 publish ready,已关闭 dialog 仍 emit qr_succeeded。
+    """
+    from tgmonitor.ui.widgets.qr_login_dialog import QrLoginDialog
+
+    bus = EventBus()
+    dlg = QrLoginDialog(_make_stub_app(bus), qloop, "tg://login?token=abc")
+    # 订阅存在(结构):handler 以实例属性挂在 bus 上
+    assert dlg._on_login_state in bus._subs[LoginStateChanged]
+
+    emitted: list[int] = []
+    dlg.qr_succeeded.connect(lambda: emitted.append(1))
+
+    dlg.reject()  # 取消按钮路径(不触发 closeEvent)
+    # 结构断言:bus 中不再有该订阅
+    assert dlg._on_login_state not in bus._subs.get(LoginStateChanged, [])
+    # 行为断言:关闭后再 publish ready,qr_succeeded 不再 emit
+    await bus.publish(LoginStateChanged(state="ready"))
+    assert emitted == []
+
+
+async def test_qr_dialog_unsubscribes_bus_on_accept(qapp, qloop) -> None:
+    """P1-6 回归(accept 路径):登录成功 accept() 也必须退订。
+
+    accept() 同样不触发 closeEvent —— 旧代码在登录成功关闭后,
+    下一次 LoginStateChanged(ready) 仍会对已关闭 dialog emit。
+    """
+    from tgmonitor.ui.widgets.qr_login_dialog import QrLoginDialog
+
+    bus = EventBus()
+    dlg = QrLoginDialog(_make_stub_app(bus), qloop, "tg://login?token=abc")
+
+    emitted: list[int] = []
+    dlg.qr_succeeded.connect(lambda: emitted.append(1))
+
+    # 弹窗打开期间:ready → qr_succeeded(并触发 accept → done → 退订)
+    await bus.publish(LoginStateChanged(state="ready"))
+    assert emitted == [1]
+    assert dlg._on_login_state not in bus._subs.get(LoginStateChanged, [])
+
+    # 关闭后再 publish ready:不再 emit(不再重复 accept)
+    await bus.publish(LoginStateChanged(state="ready"))
+    assert emitted == [1]

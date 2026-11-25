@@ -15,6 +15,7 @@ mock `_pool` 拦截传给 `conn.fetch(...)` 的 SQL,断言关键关键字 / 禁�
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -212,3 +213,136 @@ async def test_list_media_sql_sort_date_no_nulls_clause(
     await _repo(fake_pool).list_media(sort=SortKey.DATE)
     sql = fake_pool.captured_sql[0]
     assert "NULLS" not in sql, f"DATE 排序不该有 NULLS 修饰:\n{sql}"
+
+
+# ---- P1-12 回归(2026-11-25):list_media 必须整行还原 message 元数据 ----
+
+
+class _FakeRowsConn:
+    """返预置 rows 的 conn mock — fetch 返回伪 Record(dict 鸭子类型)。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    async def fetch(self, sql: str, *args: Any) -> list[dict]:
+        return self._rows
+
+
+class _FakeRowsAcquire:
+    async def __aenter__(self) -> _FakeRowsConn:
+        return self._conn
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+    def __init__(self, conn: _FakeRowsConn) -> None:
+        self._conn = conn
+
+
+class _FakeRowsPool:
+    def __init__(self, rows: list[dict]) -> None:
+        self._acquire = _FakeRowsAcquire(_FakeRowsConn(rows))
+
+    def acquire(self) -> _FakeRowsAcquire:
+        return self._acquire
+
+
+def _full_list_media_row() -> dict[str, Any]:
+    """伪造 list_media 的 JOIN 行:messages(m.*)全部列 + media 别名列。
+
+    列集与 `_media_pg.list_media` 的 SQL(`SELECT m.*, me.* AS 别名`)对齐。
+    """
+    return {
+        # messages 表全部列(含 v1.7.2 用户元数据 + v1.4.0 互动字段)
+        "id": 7,
+        "channel_id": 100,
+        "telegram_msg_id": 42,
+        "author": "alice",
+        "date": datetime(2026, 1, 1, 12, 0, 0),
+        "text": "hello",
+        "views": 123,
+        "forwards": 4,
+        "reply_to_msg_id": None,
+        "edited": False,
+        "raw": {"id": 42},
+        "forward_origin": None,
+        "via_bot_user_id": None,
+        "media_album_id": None,
+        "is_pinned": True,
+        "reactions": None,
+        "is_favorite": True,
+        "tags": ["tech", "ai"],
+        "notes": "需要 review",
+        # media 别名列
+        "media_id": 3,
+        "media_type": "photo",
+        "mime_type": "image/jpeg",
+        "file_name": "pic.jpg",
+        "file_size": 1234,
+        "width": 800,
+        "height": 600,
+        "duration": None,
+        "telegram_file_id": "11",
+        "object_key": "media/abc.jpg",
+        "object_backend": "local",
+        "thumbnail_telegram_file_id": "33",
+        "emoji": None,
+        "media_dl_status": "done",
+        "download_error": None,
+        "media_idx": 0,
+    }
+
+
+async def test_list_media_restores_full_message_metadata() -> None:
+    """P1-12 回归:list_media 把整行 Record 传给 _row_to_message,
+    is_pinned / is_favorite / tags / notes / forward_origin / via_bot_user_id /
+    media_album_id 必须被还原(与 SQLite `SELECT m.*` 整行还原对齐)。
+
+    旧实现 msg_keys 白名单只挑 11 列,上述字段全被滤成默认值。
+    """
+    from tgmonitor.core.storage import _media_pg
+    from tgmonitor.core.storage.postgres_repo import PostgresRepository
+
+    repo = PostgresRepository(dsn="postgresql://test/test")
+    repo._pool = _FakeRowsPool([_full_list_media_row()])  # type: ignore[assignment]
+
+    result = await _media_pg.list_media(repo)
+    assert len(result) == 1
+    msg, media_idx, media = result[0]
+
+    assert media_idx == 0
+    assert msg.is_pinned is True
+    assert msg.is_favorite is True
+    assert msg.tags == ["tech", "ai"]
+    assert msg.notes == "需要 review"
+    assert msg.views == 123
+    assert msg.forwards == 4
+    assert msg.raw == {"id": 42}
+    assert media.file_name == "pic.jpg"
+    assert media.object_key == "media/abc.jpg"
+    assert media.download_status is not None and media.download_status.value == "done"
+
+
+async def test_list_media_restores_reactions_and_optional_fields() -> None:
+    """reactions(JSONB list[dict])与 forward_origin / via_bot_user_id /
+    media_album_id 也必须随整行还原,不得被白名单滤掉。"""
+    from tgmonitor.core.storage import _media_pg
+    from tgmonitor.core.storage.postgres_repo import PostgresRepository
+
+    row = _full_list_media_row()
+    row["reactions"] = [{"type": "emoji", "emoji": "👍", "count": 3, "is_chosen": False}]
+    row["forward_origin"] = {"type": "channel", "chat_id": 555}
+    row["via_bot_user_id"] = 999
+    row["media_album_id"] = "album-1"
+
+    repo = PostgresRepository(dsn="postgresql://test/test")
+    repo._pool = _FakeRowsPool([row])  # type: ignore[assignment]
+
+    result = await _media_pg.list_media(repo)
+    msg = result[0][0]
+    assert msg.reactions is not None and len(msg.reactions) == 1
+    assert msg.reactions[0].emoji == "👍"
+    assert msg.reactions[0].count == 3
+    assert msg.forward_origin == {"type": "channel", "chat_id": 555}
+    assert msg.via_bot_user_id == 999
+    assert msg.media_album_id == "album-1"

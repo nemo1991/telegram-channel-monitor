@@ -148,10 +148,12 @@ async def save_message(self: PostgresRepository, message: MessageDTO) -> int:
                     via_bot_user_id = EXCLUDED.via_bot_user_id,
                     media_album_id = EXCLUDED.media_album_id,
                     is_pinned = EXCLUDED.is_pinned,
-                    reactions = EXCLUDED.reactions,
-                    is_favorite = EXCLUDED.is_favorite,
-                    tags = EXCLUDED.tags,
-                    notes = EXCLUDED.notes
+                    reactions = EXCLUDED.reactions
+                    -- 2026-11-25 P1-2:is_favorite / tags / notes 不进 UPDATE 列表 —
+                    -- 用户标注走 set_favorite / set_tags / set_notes 专用方法落库;
+                    -- monitor / sync 对已落库消息的重复 upsert 带 TG 侧默认空值,
+                    -- 若覆盖会把用户标注静默清零。显式清空仍走专用方法,路径有效。
+                    -- 与 _messages_sqlite.save_message 语义 1:1 对齐。
                 RETURNING id
                 """,
             message.channel_id,

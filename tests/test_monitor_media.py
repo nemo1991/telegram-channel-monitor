@@ -501,6 +501,75 @@ async def test_edit_path_overwrites_text_views_forwards_edited_media(
         await monitor.stop()
 
 
+async def test_edit_path_preserves_media_download_state(monitor, client, bus, storage) -> None:
+    """P1-1 回归(2026-11-25):编辑路径不得整列表替换 media 抹掉下载状态。
+
+    旧行为:`dataclasses.replace(existed, media=msg.media)` 把 media 换成
+    TG 重映射 DTO(object_key / download_status 全 None),update_message
+    先清后插 → 已下载状态被抹掉,reconcile_orphans 会把对象判孤儿真删。
+
+    新行为(`_merge_media_on_edit`):
+    - 匹配位 media 保留 object_key / object_backend / download_status /
+      download_error,远端侧字段(text / file_name / file_size)以新 DTO
+      为准(file_size 新值为 None 时保留旧值);
+    - 旧列表多出的 media(编辑后消失)保守保留,不产生孤儿;
+    - 新增位 media 以未下载状态插入。
+    """
+    monitor.set_whitelist([100])
+    # 已下载 A(DONE + object_key)+ 未下载 B
+    media_a = MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="a.jpg",
+        file_size=1234,
+        telegram_file_id="fid-a",
+        object_key="media/a.jpg",
+        object_backend="local",
+        download_status=MediaDownloadStatus.DONE,
+    )
+    media_b = _media_with_file_id("fid-b")
+    await storage.save_message(
+        make_message(channel_id=100, msg_id=1, text="v1", media=[media_a, media_b])
+    )
+
+    # 编辑 1:TG 重映射只带回 1 条 media(下载侧字段全 None,file_size 拿不到)
+    fresh_a = MediaDTO(
+        type=MediaType.PHOTO,
+        mime_type="image/jpeg",
+        file_name="renamed.jpg",
+        file_size=None,
+        telegram_file_id="fid-a",
+    )
+    await monitor._handle_edited(
+        make_message(channel_id=100, msg_id=1, text="v2", media=[fresh_a], edited=True)
+    )
+    stored = await storage.get_message(100, 1)
+    assert stored is not None and stored.text == "v2"
+    assert len(stored.media) == 2, "消失的旧 media 应保守保留,不应整列表替换"
+    a = stored.media[0]
+    assert a.object_key == "media/a.jpg", "下载侧 object_key 被编辑抹掉(P1-1)"
+    assert a.object_backend == "local"
+    assert a.download_status == MediaDownloadStatus.DONE, "下载侧状态被编辑抹掉(P1-1)"
+    assert a.file_name == "renamed.jpg", "远端侧字段应以新 DTO 为准"
+    assert a.file_size == 1234, "新 DTO file_size 为 None 时应保留旧值,不能倒退"
+    # 消失的旧 media B 保留
+    assert stored.media[1].telegram_file_id == "fid-b"
+
+    # 编辑 2:新 media 出现在尾部 → 以未下载状态插入(不入队下载,编辑不重下)
+    fresh_a2 = _media_with_file_id("fid-a")
+    fresh_c = _media_with_file_id("fid-c")
+    await monitor._handle_edited(
+        make_message(channel_id=100, msg_id=1, text="v3", media=[fresh_a2, fresh_c], edited=True)
+    )
+    stored = await storage.get_message(100, 1)
+    assert stored is not None
+    assert stored.media[0].download_status == MediaDownloadStatus.DONE
+    assert stored.media[0].object_key == "media/a.jpg"
+    assert stored.media[1].telegram_file_id == "fid-c"
+    assert stored.media[1].download_status is None, "新增 media 应是未下载状态"
+    assert stored.media[1].object_key is None
+
+
 async def test_edit_path_when_storage_empty_saves_as_new(monitor, client, bus, storage) -> None:
     """编辑路径 + storage 空(罕见)→ 当作新增保存,仍发 MessageEdited。
 

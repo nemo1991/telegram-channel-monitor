@@ -17,6 +17,8 @@ from tests.fixtures._s3_client import (
     FakeS3Client,
     FakeS3Session,
 )
+from tgmonitor.core.dto import ChannelDTO
+from tgmonitor.core.export.zip_exporter import ZipExporter
 from tgmonitor.core.objectstore.base import ObjectMeta
 from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 from tgmonitor.core.objectstore.local_store import LocalObjectStore
@@ -290,3 +292,217 @@ async def test_default_stream_read_falls_back_to_get(tmp_path):
     with pytest.raises(KeyError):
         async for _ in s.stream_read("nope"):
             pass
+
+
+# ---- P1-10 回归(2026-11-25):S3 get / stream_read 缺失对象必须抛 KeyError ----
+# 契约:`base.py::ObjectStore.get` — "不存在抛 KeyError";ZipExporter
+# 只兜 KeyError。旧实现让 aioboto3 抛 ClientError(NoSuchKey),一条缺失
+# media 让整包 zip 导出炸掉。
+
+
+@pytest.mark.parametrize("code", ["NoSuchKey", "NotFound", "404"])
+async def test_s3_get_missing_object_raises_keyerror(monkeypatch, code):
+    """三种「对象不存在」错误码(真 AWS / MinIO 兼容实现)都必须转 KeyError。"""
+
+    class _MissingObjectClient(FakeS3Client):
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            raise _client_error(404, code)
+
+    fake = FakeS3Session()
+    fake._client_obj = _MissingObjectClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    with pytest.raises(KeyError):
+        await store.get("media/missing.jpg")
+
+
+@pytest.mark.parametrize("code", ["NoSuchKey", "NotFound", "404"])
+async def test_s3_stream_read_missing_object_raises_keyerror(monkeypatch, code):
+    """stream_read 与 get 失败语义一致:缺失对象 → KeyError。"""
+
+    class _MissingObjectClient(FakeS3Client):
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            raise _client_error(404, code)
+
+    fake = FakeS3Session()
+    fake._client_obj = _MissingObjectClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    with pytest.raises(KeyError):
+        async for _ in store.stream_read("media/missing.jpg"):
+            pass
+
+
+async def test_s3_get_non_404_client_error_propagates(monkeypatch):
+    """非「不存在」错误(如 AccessDenied)必须原样上抛 ClientError,不得误转 KeyError。"""
+
+    class _DeniedClient(FakeS3Client):
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            raise _client_error(403, "AccessDenied")
+
+    fake = FakeS3Session()
+    fake._client_obj = _DeniedClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    with pytest.raises(ClientError):
+        await store.get("media/denied.jpg")
+    with pytest.raises(ClientError):
+        async for _ in store.stream_read("media/denied.jpg"):
+            pass
+
+
+async def test_s3_zip_export_skips_missing_object(monkeypatch, tmp_path):
+    """受害点回归:zip 导出遇到 S3 缺失对象只跳过该条,其余照常打包。
+
+    旧实现 ClientError(NoSuchKey) 不被 `except KeyError` 捕获 → 整包炸;
+    修后缺失条目跳过、存在的条目完整写入。
+    """
+    import zipfile
+
+    from tests.fixtures._factories import make_photo
+    from tgmonitor.core.dto import MediaDownloadStatus
+
+    class _PartialMissingClient(FakeS3Client):
+        """key 含 "missing" → NoSuchKey;其余正常返回 body。"""
+
+        async def get_object(self, **kw: object) -> dict:  # type: ignore[override]
+            self._record("get_object", kw)
+            key = kw["Key"]
+            if "missing" in key:
+                raise _client_error(404, "NoSuchKey")
+            return {"Body": _FakeStreamChunked(b"payload:" + key.encode())}
+
+    fake = FakeS3Session()
+    fake._client_obj = _PartialMissingClient()
+    monkeypatch.setattr(aioboto3, "Session", lambda: fake)
+    store = S3ObjectStore(bucket="test-bucket", region="us-east-1")
+    await store.connect()
+
+    msg_ok = make_photo(msg_id=1)
+    msg_ok.media[0].download_status = MediaDownloadStatus.DONE
+    msg_ok.media[0].object_key = "media/ok.jpg"
+    msg_missing = make_photo(msg_id=2)
+    msg_missing.media[0].download_status = MediaDownloadStatus.DONE
+    msg_missing.media[0].object_key = "media/missing.jpg"
+
+    out = tmp_path / "out.zip"
+    exporter = ZipExporter()
+    await exporter.render(
+        out,
+        {100: ChannelDTO(id=100, title="#100")},
+        [msg_ok, msg_missing],
+        object_store=store,
+    )
+
+    with zipfile.ZipFile(out) as zf:
+        names = [n for n in zf.namelist() if n != "_manifest.json"]
+    # 缺失条目跳过:entry 存在但为空(stream_read 在首块前抛 KeyError,
+    # 未写入任何字节),而不是让整个 render 抛异常炸包 — 与 Local 后端
+    # 缺失文件的行为一致(zip_exporter 只兜 KeyError,entry 已被 zf.open 创建)。
+    assert names == ["1_0_pic.jpg", "2_0_pic.jpg"]
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("1_0_pic.jpg") == b"payload:media/ok.jpg"
+        assert zf.read("2_0_pic.jpg") == b""
+
+
+# ---- P1-11 回归(2026-11-25):Local/Folder stream_read 必须真流式 ----
+
+
+async def test_local_stream_read_reads_incrementally(tmp_path, monkeypatch):
+    """逐块读盘回归:第一个 chunk yield 前,文件不得被全量读入内存。
+
+    旧实现 `list(_chunks())` 把整个文件读进 list 才开始 yield — 消费
+    第一块时累计 read 字节数 = 整个文件大小(O(file_size) 假流式);
+    真流式实现下第一块 yield 时累计 read ≤ 2 块(O(chunk_size))。
+    """
+    from pathlib import Path
+
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    chunk_size = 4096
+    data = b"x" * (10 * 1024)
+    await s.put("media/big.bin", data)
+
+    # spy 文件对象:记录每次 read 的字节数(在 put 之后 monkeypatch,不影响写入)
+    real_open = Path.open
+    reads: list[int] = []
+    closed: list[bool] = []
+
+    class _SpyFile:
+        def __init__(self, f) -> None:
+            self._f = f
+
+        def read(self, size: int = -1) -> bytes:
+            chunk = self._f.read(size)
+            reads.append(len(chunk))
+            return chunk
+
+        def close(self) -> None:
+            closed.append(True)
+            self._f.close()
+
+    def spy_open(self, mode: str = "r", *args, **kwargs):
+        f = real_open(self, mode, *args, **kwargs)
+        if mode == "rb":
+            return _SpyFile(f)
+        return f
+
+    monkeypatch.setattr(Path, "open", spy_open)
+
+    agen = s.stream_read("media/big.bin", chunk_size=chunk_size)
+    first = await agen.__anext__()
+    assert first == data[:chunk_size]
+    # 关键断言:第一块 yield 时只读到了第一块(允许一次 4096 + 一次部分 read)
+    assert sum(reads) <= 2 * chunk_size, (
+        f"假流式:第一块 yield 前已累计读取 {sum(reads)} 字节(文件 {len(data)} 字节)"
+    )
+    # 继续消费完,chunk 边界语义不变
+    rest = [c async for c in agen]
+    assert b"".join([first, *rest]) == data
+    # 句柄被关闭(耗尽路径)
+    assert closed, "stream_read 耗尽后文件句柄必须关闭"
+
+
+async def test_local_stream_read_closes_handle_on_abandon(tmp_path, monkeypatch):
+    """取消 / 提前退出路径:async gen 被 aclose 时文件句柄必须关闭(try/finally)。"""
+    from pathlib import Path
+
+    s = LocalObjectStore(root=tmp_path)
+    await s.connect()
+    await s.put("media/big.bin", b"x" * (10 * 1024))
+
+    real_open = Path.open
+    closed: list[bool] = []
+
+    class _SpyFile:
+        def __init__(self, f) -> None:
+            self._f = f
+
+        def read(self, size: int = -1) -> bytes:
+            return self._f.read(size)
+
+        def close(self) -> None:
+            closed.append(True)
+            self._f.close()
+
+    def spy_open(self, mode: str = "r", *args, **kwargs):
+        f = real_open(self, mode, *args, **kwargs)
+        if mode == "rb":
+            return _SpyFile(f)
+        return f
+
+    monkeypatch.setattr(Path, "open", spy_open)
+
+    agen = s.stream_read("media/big.bin", chunk_size=1024)
+    await agen.__anext__()  # 消费一块后放弃
+    await agen.aclose()
+    assert closed, "aclose(GeneratorExit) 后文件句柄必须关闭(try/finally)"

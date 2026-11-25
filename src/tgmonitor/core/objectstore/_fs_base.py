@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from abc import abstractmethod
 from pathlib import Path
-from typing import AsyncIterator, BinaryIO, Iterator
+from typing import AsyncIterator, BinaryIO
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
 
@@ -103,26 +103,29 @@ class LocalFsStoreBase(ObjectStore):
     ) -> AsyncIterator[bytes]:
         """本地 FS 真流式 — 2026-09-02 v1.5.2 PR #B6。
 
-        sync `open()` + `read(chunk_size)` 包成 sync generator,整个迭代
-        走 `asyncio.to_thread` 让出 qasync 主 loop。与 `get()` 失败语义
-        对齐:不存在 → `KeyError`。
+        `open()` + 逐块 `read(chunk_size)` + `asyncio.to_thread` 让出
+        qasync 主 loop。与 `get()` 失败语义对齐:不存在 → `KeyError`。
 
-        注:此实现把 sync gen 一次性 `list()` 再 yield,完整迭代仍会缓冲
-        所有 chunk(单个 zip export 场景够用);真零拷贝需 aiofiles,留后议。
+        2026-11-25 P1-11:改真流式。旧实现把 sync generator 一次性
+        `list()` 收满再逐块 yield — 内存峰值 O(file_size),与 zip_exporter
+        docstring "内存峰值 O(chunk_size)" 矛盾。现在每次 `__anext__` 只
+        读一块,内存峰值 O(chunk_size);chunk 边界语义不变(末块可短于
+        chunk_size)。
+
+        文件句柄:`try/finally` 保证 async gen 正常耗尽 / break / aclose /
+        异常路径都关闭(to_thread(close) 同步关,不阻塞 loop)。
         """
         path = self._path(key)
         self._ensure_inside_root(path)
         if not path.exists():
             raise KeyError(key)
 
-        def _chunks() -> Iterator[bytes]:
-            with path.open("rb") as f:
-                while True:
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        return
-                    yield chunk
-
-        items = await asyncio.to_thread(list, _chunks())
-        for c in items:
-            yield c
+        f = await asyncio.to_thread(path.open, "rb")
+        try:
+            while True:
+                chunk = await asyncio.to_thread(f.read, chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            await asyncio.to_thread(f.close)

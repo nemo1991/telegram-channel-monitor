@@ -402,11 +402,21 @@ async def test_get_channel_metadata_full_count(wrapper) -> None:
     assert dto.title == "频道"
 
 
-async def test_get_channel_metadata_not_found_stub(wrapper) -> None:
+async def test_get_channel_metadata_not_found_raises(wrapper) -> None:
+    """P1-8:get_entity 失败抛 ChatUnavailableError,不再返回 `#<id>` stub
+    (stub 经覆盖式 upsert 会清空真实频道元数据)。"""
     w, mock = wrapper
     mock.get_entity.side_effect = ValueError("no entity")
-    dto = await w.get_channel_metadata(_CID)
-    assert dto.title == f"#{_CID}"
+    with pytest.raises(ChatUnavailableError):
+        await w.get_channel_metadata(_CID)
+
+
+async def test_get_channel_metadata_unmappable_entity_raises(wrapper) -> None:
+    """entity 拿到了但无法映射 ChannelDTO → 同样抛 ChatUnavailableError。"""
+    w, mock = wrapper
+    mock.get_entity.return_value = SimpleNamespace(id=_CID, title="odd")  # 非 Channel/Chat/User
+    with pytest.raises(ChatUnavailableError):
+        await w.get_channel_metadata(_CID)
 
 
 # ---- join_channel ----

@@ -20,6 +20,16 @@ from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
 
 log = logging.getLogger(__name__)
 
+# 2026-11-25 P1-10:S3 "对象不存在"错误码 → 转抛 KeyError(key)。
+# AWS get_object 缺 key 抛 NoSuchKey;部分兼容实现(MinIO / OSS / mock)抛
+# NotFound 或 "404"(botocore 对无 body 响应用 HTTP 状态码兜底)。
+_MISSING_KEY_CODES = frozenset({"NoSuchKey", "NotFound", "404"})
+
+
+def _is_missing_key(exc: ClientError) -> bool:
+    """ClientError 是否为「对象不存在」— 是则调用方应转抛 KeyError。"""
+    return exc.response.get("Error", {}).get("Code") in _MISSING_KEY_CODES
+
 
 class S3ObjectStore(ObjectStore):
     """S3 协议后端 — AWS S3 / MinIO / 阿里 OSS。
@@ -123,9 +133,19 @@ class S3ObjectStore(ObjectStore):
         return key
 
     async def get(self, key: str) -> bytes:
-        """GET 全量 body(走 streaming read);不存在让 aioboto3 抛。"""
+        """GET 全量 body(走 streaming read)。
+
+        2026-11-25 P1-10:不存在 → 转抛 `KeyError(key)`,与 `base.py` 契约
+        及 Local/Folder 后端对齐(此前让 aioboto3 抛 ClientError(NoSuchKey),
+        ZipExporter 只兜 KeyError → 整包导出直接炸)。
+        """
         async with self._client() as s3:
-            resp = await s3.get_object(Bucket=self._bucket, Key=key)
+            try:
+                resp = await s3.get_object(Bucket=self._bucket, Key=key)
+            except ClientError as e:
+                if _is_missing_key(e):
+                    raise KeyError(key) from e
+                raise
             async with resp["Body"] as stream:
                 return await stream.read()
 
@@ -181,9 +201,18 @@ class S3ObjectStore(ObjectStore):
         `ClientResponse`(`content.iter_chunked(n)`)。分支处理:有 `iter_chunks`
         → 原生路径(零拷贝 + httpx/urllib 互转由 aiobotocore 内部做);
         否则用 `read(chunk_size)` 循环兜底(aiobotocore 任何版本都有 read)。
+
+        2026-11-25 P1-10:失败语义与 `get()` 对齐 — 对象不存在 →
+        `KeyError(key)`(此前 ClientError(NoSuchKey) 原样上抛,违反
+        `base.py` 流式契约"失败语义与 get() 一致");其他错误原样上抛。
         """
         async with self._client() as s3:
-            resp = await s3.get_object(Bucket=self._bucket, Key=key)
+            try:
+                resp = await s3.get_object(Bucket=self._bucket, Key=key)
+            except ClientError as e:
+                if _is_missing_key(e):
+                    raise KeyError(key) from e
+                raise
             async with resp["Body"] as stream:
                 if hasattr(stream, "iter_chunks"):
                     async for chunk in stream.iter_chunks(chunk_size):

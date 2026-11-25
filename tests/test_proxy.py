@@ -153,8 +153,8 @@ async def test_probe_proxy_handshake_ok() -> None:
     """fake SOCKS5 server:greeting 选 no-auth + CONNECT 成功 → ok=True。"""
 
     async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        greeting = await reader.readexactly(3)
-        assert greeting == bytes([0x05, 0x01, 0x00])
+        greeting = await reader.readexactly(4)
+        assert greeting == bytes([0x05, 0x02, 0x00, 0x02])  # P1-9:声明 no-auth + user/pass
         writer.write(bytes([0x05, 0x00]))
         await writer.drain()
         header = await reader.readexactly(4)
@@ -179,7 +179,7 @@ async def test_probe_proxy_connect_refused() -> None:
     """greeting 正常但 CONNECT 被拒(rep=0x01)→ ok=False。"""
 
     async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await reader.readexactly(3)
+        await reader.readexactly(4)
         writer.write(bytes([0x05, 0x00]))
         await writer.drain()
         await reader.readexactly(4)
@@ -194,6 +194,91 @@ async def test_probe_proxy_connect_refused() -> None:
         ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
         assert ok is False
         assert "拒绝 CONNECT" in msg
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+# ---- P1-9:带认证的 SOCKS5(RFC 1929 username/password 子协商) ----
+
+_USER = "alice"
+_PASS = "s3cr3t"
+
+
+async def _start_auth_socks5() -> tuple[asyncio.AbstractServer, int]:
+    """要求认证的 fake SOCKS5 server:选 0x02 method + 校验 RFC 1929 凭据。
+
+    旧 probe 只声明 no-auth,对这种 server 一律握手失败(P1-9)。
+    """
+
+    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        greeting = await reader.readexactly(4)
+        assert greeting == bytes([0x05, 0x02, 0x00, 0x02])
+        writer.write(bytes([0x05, 0x02]))  # 选 username/password
+        await writer.drain()
+        # RFC 1929 子协商:ver(1) ulen(1) uname plen(1) passwd
+        ver = (await reader.readexactly(1))[0]
+        assert ver == 0x01
+        ulen = (await reader.readexactly(1))[0]
+        uname = await reader.readexactly(ulen)
+        plen = (await reader.readexactly(1))[0]
+        passwd = await reader.readexactly(plen)
+        if uname.decode() != _USER or passwd.decode() != _PASS:
+            writer.write(bytes([0x01, 0x01]))  # status≠0 = 认证失败
+            await writer.drain()
+            writer.close()
+            return
+        writer.write(bytes([0x01, 0x00]))
+        await writer.drain()
+        # 认证过了 → CONNECT 阶段
+        header = await reader.readexactly(4)
+        assert header == bytes([0x05, 0x01, 0x00, 0x01])
+        addr_len = (await reader.readexactly(1))[0]
+        await reader.readexactly(addr_len + 2)
+        writer.write(bytes([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(_handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    return server, port
+
+
+async def test_probe_proxy_auth_with_credentials_ok() -> None:
+    """带正确凭据的 probe 对认证代理 → 完成 RFC 1929 + CONNECT,ok=True。
+
+    旧代码 greeting 只声明 no-auth,被本 fake server 回的 0x05 0x02
+    一票否决 — 本测试在旧代码上必失败。
+    """
+    server, port = await _start_auth_socks5()
+    try:
+        ok, msg = await probe_proxy(f"socks5://{_USER}:{_PASS}@127.0.0.1:{port}", timeout=2.0)
+        assert ok is True
+        assert "OK" in msg
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_probe_proxy_auth_without_credentials_fails() -> None:
+    """服务器要求认证但 URL 无凭据 → ok=False,错误信息清晰。"""
+    server, port = await _start_auth_socks5()
+    try:
+        ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
+        assert ok is False
+        assert "认证" in msg
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_probe_proxy_auth_wrong_credentials_fails() -> None:
+    """凭据错误 → RFC 1929 status≠0 → ok=False「认证失败」。"""
+    server, port = await _start_auth_socks5()
+    try:
+        ok, msg = await probe_proxy(f"socks5://{_USER}:wrongpass@127.0.0.1:{port}", timeout=2.0)
+        assert ok is False
+        assert "认证失败" in msg
     finally:
         server.close()
         await server.wait_closed()

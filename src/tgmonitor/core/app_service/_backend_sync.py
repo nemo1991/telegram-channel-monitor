@@ -9,7 +9,9 @@ storage / objects / downloader 三个 property setter 的传播集中于此。
 - objects=None → 早返(aclose 后置 None 的历史路径);storage 非 None
 
 不在本模块范围:
-- `_rebuild_storage` / `_rebuild_objects`(实质 swap 流程)— 在 `_reconfigure.py`
+- `_build_storage` / `_build_objects`(纯构建)— 在 `_reconfigure.py`;
+  实质 swap(赋值 + close 旧)由 `reconfigure` 两段式提交段统一完成
+  (2026-11-25 P1-3)
 """
 
 from __future__ import annotations
@@ -49,11 +51,17 @@ def set_objects(app: AppService, value: ObjectStore | None) -> None:
 
 
 def set_storage(app: AppService, value: StorageRepository) -> None:
-    """swap storage 时同步给 ChannelService + MessageService + MediaService。"""
+    """swap storage 时同步给 ChannelService + MessageService + MediaService +
+    ChannelSyncService。
+
+    2026-11-25 P1-3:channel_sync 也持 storage 引用,不传播则热重载切库后
+    sync 仍写旧库(全量同步 / 补拉落错库)。
+    """
     app._storage = value
     app.channels._storage = value
     app.messages._storage = value
     app.media._storage = value
+    app.channel_sync.storage = value
 
 
 def set_downloader(app: AppService, value: MediaDownloader | None) -> None:
