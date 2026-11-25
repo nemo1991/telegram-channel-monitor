@@ -2,24 +2,19 @@
 + `_delete_with_orphan_check` + `_handle_message_deleted`。
 
 2026-11-11 v2.0.0 Phase 3-C3:从 `DeleteMixin` 改为显式组合组件。
-组件持 `svc: MonitorService` 引用,经 `self._svc.bus / storage / objects`
-访问宿主依赖 — 不再有 mixin MRO 魔法。
-
-`_delete_with_orphan_check` 是测试可替换 seam:本组件的 `delete_message` /
-`delete_messages` / `_handle_message_deleted` 一律经 `self._svc._delete_with_orphan_check`
-回调宿主 delegate,这样测试在 monitor 实例上替换该方法时能被 honoring。
+2026-11-25 P2-M4:组件改为持有共享 `MonitorRuntime`,不再反向持有
+`MonitorService`;依赖经 `self._rt.*` 访问,跨组件 seam 经
+`self._rt.delete_with_orphan_check` 晚绑定回调(测试在 monitor 实例上
+patch 该方法仍被 honoring)。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from tgmonitor.core.events import ErrorOccurred, MessageDeleted
-
-if TYPE_CHECKING:
-    from tgmonitor.core.monitor.service import MonitorService
+from tgmonitor.core.monitor._runtime import MonitorRuntime
 
 log = logging.getLogger(__name__)
 
@@ -32,11 +27,12 @@ class DeleteManager:
     - `_delete_with_orphan_check` — 核心:row + refcount + 孤儿 bytes
     - `_handle_message_deleted` — bus 订阅:`updateDeleteMessages`
 
-    经 `self._svc` 访问宿主依赖:`bus / storage / objects`。
+    经 `self._rt` 访问共享依赖:`bus / storage / objects`,
+    经 `rt.delete_with_orphan_check` 回调宿主 seam。
     """
 
-    def __init__(self, svc: MonitorService) -> None:
-        self._svc = svc
+    def __init__(self, rt: MonitorRuntime) -> None:
+        self._rt = rt
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息 + 清孤儿 bytes + 发 MessageDeleted 事件。
@@ -49,8 +45,10 @@ class DeleteManager:
         2026-08-27 PR #11:走 `_delete_with_orphan_check` 复用;publish 仍在
         这里(AppService 用户触发的删除需要通知 UI)。
         """
-        await self._svc._delete_with_orphan_check(channel_id, telegram_msg_id)
-        await self._svc.bus.publish(
+        cb = self._rt.delete_with_orphan_check
+        assert cb is not None
+        await cb(channel_id, telegram_msg_id)
+        await self._rt.bus.publish(
             MessageDeleted(channel_id=channel_id, telegram_msg_id=telegram_msg_id)
         )
 
@@ -77,17 +75,19 @@ class DeleteManager:
         if not items:
             return 0
         succeeded: list[tuple[int, int]] = []
+        cb = self._rt.delete_with_orphan_check
+        assert cb is not None
         for cid, mid in items:
             if cancel_event is not None and cancel_event.is_set():
                 break
             try:
-                await self._svc._delete_with_orphan_check(cid, mid)
+                await cb(cid, mid)
                 succeeded.append((cid, mid))
             except Exception:  # noqa: BLE001
                 log.exception("delete_messages(%s, %s) failed", cid, mid)
         # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
         for cid, mid in succeeded:
-            await self._svc.bus.publish(MessageDeleted(channel_id=cid, telegram_msg_id=mid))
+            await self._rt.bus.publish(MessageDeleted(channel_id=cid, telegram_msg_id=mid))
         return len(succeeded)
 
     async def _handle_message_deleted(self, event: MessageDeleted) -> None:
@@ -95,10 +95,12 @@ class DeleteManager:
         清孤儿 bytes。**不**再 publish(避免与发布者形成无限循环)。
         """
         try:
-            await self._svc._delete_with_orphan_check(event.channel_id, event.telegram_msg_id)
+            cb = self._rt.delete_with_orphan_check
+            assert cb is not None
+            await cb(event.channel_id, event.telegram_msg_id)
         except Exception as e:  # noqa: BLE001
             log.exception("handle MessageDeleted failed: %s", e)
-            await self._svc.bus.publish(
+            await self._rt.bus.publish(
                 ErrorOccurred(
                     source="monitor.delete",
                     message=str(e),
@@ -112,8 +114,9 @@ class DeleteManager:
         telegram_msg_id: int,
     ) -> None:
         """PR #11:删 row + 清孤儿 bytes 核心逻辑,与 AppService.delete_message 共享。"""
-        old = await self._svc.storage.get_message(channel_id, telegram_msg_id)
-        await self._svc.storage.delete_message(channel_id, telegram_msg_id)
+        rt = self._rt
+        old = await rt.storage.get_message(channel_id, telegram_msg_id)
+        await rt.storage.delete_message(channel_id, telegram_msg_id)
         if not old:
             return
         for med in old.media:
@@ -123,13 +126,13 @@ class DeleteManager:
             try:
                 # 2026-08-25 PR #3:refcount 下沉到 storage 后端
                 # (SQL count / InMemory 顺序扫)。
-                n = await self._svc.storage.count_media_by_object_key(key)
+                n = await rt.storage.count_media_by_object_key(key)
             except Exception:  # noqa: BLE001
                 log.exception("count media by key failed: %s", key)
                 continue
-            if n == 0 and self._svc.objects is not None:
+            if n == 0 and rt.objects is not None:
                 try:
-                    await self._svc.objects.delete(key)
+                    await rt.objects.delete(key)
                     log.info(
                         "monitor delete orphan bytes: channel=%s msg=%s key=%s",
                         channel_id,

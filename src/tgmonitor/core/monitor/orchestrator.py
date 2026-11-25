@@ -2,16 +2,16 @@
 `_log_heartbeat`。
 
 2026-11-11 v2.0.0 Phase 3-C3:从 `OrchestratorMixin` 改为显式组合组件。
-组件持 `svc: MonitorService` 引用,状态单一所有权仍在 MonitorService,
-组件经 `self._svc.*` 读写 — 不再有 mixin MRO 魔法 / `type: ignore[attr-defined]`。
+2026-11-25 P2-M4:组件改为持有共享 `MonitorRuntime`,不再反向持有
+`MonitorService`;状态经 `self._rt.*` 读写,跨组件接线经晚绑定回调。
 
 关注点分离:
   - orchestrator.py:task 生命周期、backoff 退避、心跳、stream 订阅/重订
   - service.py:消息解析、跨消息去重、落库、下载入队
 
-跨组件接线一律经宿主 delegate:`start` 启动 `self._svc._backfill_loop()` /
-`self._svc._download_worker()`,bus 订阅 `self._svc._handle_*`;`_run` 按
-`_seen_ids` 路由到 `self._svc._handle` / `self._svc._handle_edited`。
+跨组件接线经 rt 晚绑定回调:`start` 启动 `rt.backfill_loop()` /
+`rt.download_worker()`,bus 订阅 `rt.handle_*`;`_run` 按
+`seen_ids` 路由到 `rt.handle_message` / `rt.handle_edited`。
 本组件自有方法(`_run` / `_log_heartbeat`)仍走 `self.` 直调。
 """
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import Any, Callable
 
 from tgmonitor.core.events import (
     ChannelMetadataChanged,
@@ -32,11 +32,15 @@ from tgmonitor.core.events import (
     MessageInteractionsChanged,
     MessagePinChanged,
 )
-
-if TYPE_CHECKING:
-    from tgmonitor.core.monitor.service import MonitorService
+from tgmonitor.core.monitor._runtime import MonitorRuntime
 
 log = logging.getLogger("tgmonitor.core.monitor.orchestrator")
+
+
+def _require[C: Callable[..., Any]](cb: C | None) -> C:
+    """取晚绑定回调 —— 由 MonitorService.__init__ 注入,start() 前必已就位。"""
+    assert cb is not None
+    return cb
 
 
 class Orchestrator:
@@ -47,126 +51,125 @@ class Orchestrator:
     - `_run` — 消息主循环(heartbeat + 退避重连)
     - `_log_heartbeat` — 周期 INFO 心跳
 
-    经 `self._svc` 访问宿主状态:client / bus / storage / settings /
-    downloader / _stream / _task / _backfill_task / _download_task /
-    _download_queue / _stop / _seen_ids / _handled / _last_heartbeat /
-    _whitelist 及类常量 _HEARTBEAT_INTERVAL。
+    经 `self._rt` 访问共享状态:client / bus / downloader / stream /
+    task / backfill_task / download_task / download_queue / stop /
+    seen_ids / handled / last_heartbeat / whitelist 及 heartbeat_interval。
     """
 
-    def __init__(self, svc: MonitorService) -> None:
-        self._svc = svc
+    def __init__(self, rt: MonitorRuntime) -> None:
+        self._rt = rt
 
     async def start(self) -> None:
         """启动主循环;幂等(已启动时 no-op)。"""
-        svc = self._svc
-        if svc._task is not None:
+        rt = self._rt
+        if rt.task is not None:
             return
-        svc._stop.clear()
-        svc._seen_ids.clear()
-        svc._stream = svc.client.subscribe_updates()
-        svc._task = asyncio.create_task(self._run(), name="MonitorService")
+        rt.stop.clear()
+        rt.seen_ids.clear()
+        rt.stream = rt.client.subscribe_updates()
+        rt.task = asyncio.create_task(self._run(), name="MonitorService")
         # 跨组件:backfill loop 经宿主 delegate 启动(BackfillRunner 实现)
-        svc._backfill_task = asyncio.create_task(
-            svc._backfill_loop(),
+        rt.backfill_task = asyncio.create_task(
+            _require(rt.backfill_loop)(),
             name="MonitorService.backfill",
         )
         # 2026-08-27 v1.4.0 PR #10:订阅 reactions / views 增量更新事件。
         # Telegram 高频推互动信息,落库走 bus → 单点 +
         # 订阅者异常被吞,比 stream 更安全。
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             MessageInteractionsChanged,
-            svc._handle_interactions_changed,
+            _require(rt.handle_interactions_changed),
         )
         # 2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish
         # MessageEdited 触发 UI 行 置顶 刷新(只有 republish 才能让 UI 实时感知
         # 外部 pin,而不依赖下次 reload)。
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             MessagePinChanged,
-            svc._handle_pin_changed,
+            _require(rt.handle_pin_changed),
         )
         # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
         # 减 object_key refcount,与 `delete_message` 路径同语义。
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             MessageDeleted,
-            svc._handle_message_deleted,
+            _require(rt.handle_message_deleted),
         )
         # 2026-08-27 v1.4.0 PR #14:订阅频道元数据变更事件。`updateChannel`
         # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             ChannelMetadataChanged,
-            svc._handle_channel_metadata,
+            _require(rt.handle_channel_metadata),
         )
         # 2026-09-03 v1.6.0 PR #Q2:订阅普通 chat 改名 / 改头像事件。直接落库
         # (channel_id 即 chat_id,无需反查);UI 端 `ChannelListCard` 也会
         # 订阅同一事件实时刷新卡片。
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             ChannelTitleChanged,
-            svc._handle_channel_title_changed,
+            _require(rt.handle_channel_title_changed),
         )
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             ChannelPhotoChanged,
-            svc._handle_channel_photo_changed,
+            _require(rt.handle_channel_photo_changed),
         )
-        svc.bus.subscribe(
+        rt.bus.subscribe(
             ConnectionStateChanged,
-            svc._handle_connection_state,
+            _require(rt.handle_connection_state),
         )
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
-        if svc.downloader is not None:
-            svc._download_queue = asyncio.Queue()
+        if rt.downloader is not None:
+            rt.download_queue = asyncio.Queue()
             # 跨组件:download worker 是 MonitorService 核心热路径方法
-            svc._download_task = asyncio.create_task(
-                svc._download_worker(),
+            rt.download_task = asyncio.create_task(
+                _require(rt.download_worker)(),
                 name="MonitorService.download",
             )
         log.info(
             "MonitorService started; whitelist size=%d",
-            len(svc._whitelist),
+            len(rt.whitelist),
         )
 
     async def stop(self) -> None:
         """停 monitor + 关流 + 等 task 退出(2s 超时硬 cancel)。"""
-        svc = self._svc
-        svc._stop.set()
-        if svc._download_task is not None:
-            svc._download_task.cancel()
+        rt = self._rt
+        rt.stop.set()
+        if rt.download_task is not None:
+            rt.download_task.cancel()
             try:
-                await svc._download_task
+                await rt.download_task
             except asyncio.CancelledError:
                 pass
-            svc._download_task = None
-        svc._download_queue = None
-        if svc._backfill_task is not None:
-            svc._backfill_task.cancel()
+            rt.download_task = None
+        rt.download_queue = None
+        if rt.backfill_task is not None:
+            rt.backfill_task.cancel()
             try:
-                await svc._backfill_task
+                await rt.backfill_task
             except asyncio.CancelledError:
                 pass
-            svc._backfill_task = None
-        if svc._stream is not None:
+            rt.backfill_task = None
+        if rt.stream is not None:
             try:
-                await svc._stream.aclose()
+                await rt.stream.aclose()
             except Exception:  # noqa: BLE001
                 pass
-        if svc._task is not None:
+        if rt.task is not None:
             try:
-                await asyncio.wait_for(svc._task, timeout=2.0)
+                await asyncio.wait_for(rt.task, timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
-                svc._task.cancel()
-            svc._task = None
+                rt.task.cancel()
+            rt.task = None
 
     async def _run(self) -> None:
-        svc = self._svc
-        assert svc._stream is not None
+        rt = self._rt
+        assert rt.stream is not None
         backoff = 1.0
-        while not svc._stop.is_set():
+        while not rt.stop.is_set():
             try:
-                while not svc._stop.is_set():
+                while not rt.stop.is_set():
                     try:
                         # 用 timeout 包住 anext:流静默超过 _HEARTBEAT_INTERVAL
                         # 秒时抛 TimeoutError → 打心跳后继续等。
-                        async with asyncio.timeout(svc._HEARTBEAT_INTERVAL):
-                            msg = await anext(svc._stream)
+                        async with asyncio.timeout(rt.heartbeat_interval):
+                            msg = await anext(rt.stream)
                     except StopAsyncIteration:
                         break  # 流正常结束(aclose 后 __anext__ 抛它)
                     except TimeoutError:
@@ -190,13 +193,13 @@ class Orchestrator:
                         # Telegram 编辑推送走同一个 stream,
                         # 用 cache 命中标记。
                         key = (msg.channel_id, msg.telegram_msg_id)
-                        if key in svc._seen_ids:
-                            await svc._handle_edited(msg)
+                        if key in rt.seen_ids:
+                            await _require(rt.handle_edited)(msg)
                         else:
-                            await svc._handle(msg)
+                            await _require(rt.handle_message)(msg)
                     except Exception as e:  # noqa: BLE001
                         log.exception("handle message failed: %s", e)
-                        await svc.bus.publish(
+                        await rt.bus.publish(
                             ErrorOccurred(
                                 source="monitor.handle",
                                 message=str(e),
@@ -207,22 +210,22 @@ class Orchestrator:
                 break
             except Exception as e:  # noqa: BLE001
                 log.exception("monitor loop crashed, will reconnect in %.1fs: %s", backoff, e)
-                await svc.bus.publish(
+                await rt.bus.publish(
                     ErrorOccurred(source="monitor.loop", message=str(e), exception=e)
                 )
                 # 退避后重新订阅
                 try:
-                    await asyncio.wait_for(svc._stop.wait(), timeout=backoff)
+                    await asyncio.wait_for(rt.stop.wait(), timeout=backoff)
                     break  # 停止事件触发
                 except TimeoutError:
                     pass
                 backoff = min(backoff * 2, 30.0)
                 try:
-                    if svc._stream is not None:
-                        await svc._stream.aclose()
+                    if rt.stream is not None:
+                        await rt.stream.aclose()
                 except Exception:  # noqa: BLE001
                     pass
-                svc._stream = svc.client.subscribe_updates()
+                rt.stream = rt.client.subscribe_updates()
 
     def _log_heartbeat(self, *, no_updates: bool) -> None:
         """周期心跳 INFO 日志:距上次心跳 ≥ `_HEARTBEAT_INTERVAL` 才打。
@@ -232,14 +235,14 @@ class Orchestrator:
         INFO 级别是为了默认可见 —— 用户不需要设 `TG_LOG_LEVEL=DEBUG` 就能
         确认 monitor 是否在心跳(30s 一条不算日志噪音)。
         """
-        svc = self._svc
+        rt = self._rt
         now = time.monotonic()
-        if now - svc._last_heartbeat < svc._HEARTBEAT_INTERVAL:
+        if now - rt.last_heartbeat < rt.heartbeat_interval:
             return
-        svc._last_heartbeat = now
+        rt.last_heartbeat = now
         log.info(
             "monitor heartbeat: stream alive%s (whitelist=%d, handled=%d)",
             ", no updates" if no_updates else "",
-            len(svc._whitelist),
-            svc._handled,
+            len(rt.whitelist),
+            rt.handled,
         )
