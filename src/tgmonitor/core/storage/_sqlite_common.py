@@ -2,8 +2,8 @@
 
 从 `sqlite_repo.py` 抽出的模块级 schema 常量(`SCHEMA_SQL` /
 `EXPECTED_SCHEMA` / `EXPECTED_TABLES`)与 12 个序列化 / row 映射 helper,
-供 `SqliteRepository` 主类及后续按域拆分的 mixin 共用(避免 mixin import
-主类形成循环)。纯函数 + 常量,无类依赖、无后端连接状态。
+供 `SqliteRepository` facade 与 7 个按域 `_xxx_sqlite.py` free-function module
+共用(避免子模块互相 import 形成循环)。纯函数 + 常量,无类依赖、无后端连接状态。
 
 `SqliteRepository` 与 `tests/test_storage_migration_2006.py` 经 re-export
 继续引用 `EXPECTED_SCHEMA` 等符号,契约不变。
