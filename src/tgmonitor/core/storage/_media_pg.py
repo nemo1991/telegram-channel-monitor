@@ -11,7 +11,8 @@
 `self._pool.acquire() as conn` 拿连接。
 
 `_MEDIA_SORT_COLUMN`(2026-08-25 v1.3.0 PR #6):SortKey → SQL ORDER BY
-列名映射,DATE 走 m.date;SIZE 走 me.file_size(NULLS LAST);
+列名映射,DATE 走 m.date;SIZE 走 me.file_size(2026-11-25 P2-44:NULL 行
+经 `{col} IS NULL` 前置键统一排最后,与 SQLite 逐字一致);
 STATUS 走 me.download_status。`list_media` 排序时按 dir 拼子句。
 
 `_media_status`(2026-08-25 PR #3):反序列化 `download_status`,旧库 /
@@ -173,7 +174,9 @@ async def list_media(
         undownloaded,
     )
     sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
-    nulls_clause = " NULLS LAST" if nulls_last else ""
+    # 2026-11-25 P2-44:SIZE 空值统一 `{col} IS NULL` 前置键(PG boolean
+    # false<true → NULL 行排最后),与 SQLite 端逐字一致。
+    nulls_key = f"{sort_col} IS NULL, " if nulls_last else ""
     # 2026-09-25 fix(media-bug):`media_idx` 不能 SELECT me.media_idx —
     # `media` 表没有该列(InMemory 用 enumerate 运行时生成;PG 把
     # media 拆成独立表时漏了列)。改成窗口函数:`ROW_NUMBER() OVER (PARTITION BY
@@ -193,9 +196,10 @@ async def list_media(
         "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx",
         "FROM messages m JOIN media me ON me.message_id = m.id",
         f"WHERE {where_sql}",
-        f"ORDER BY {sort_col} {sort_dir.value.upper()}{nulls_clause}, m.id DESC, media_idx ASC",
+        f"ORDER BY {nulls_key}{sort_col} {sort_dir.value.upper()}, m.id DESC, media_idx ASC",
     ]
-    if limit:
+    # 2026-11-25 P2-5:limit=0 语义 = 空结果(不再当"无界"),与 SQLite 对齐。
+    if limit is not None:
         sql.append(f"LIMIT ${next_idx} OFFSET ${next_idx + 1}")
         params.extend([limit, offset])
     async with self._pool.acquire() as conn:
@@ -301,8 +305,11 @@ def _media_where_clause(
         params.append(media_type.value)
         idx += 1
     if search:
-        clauses.append(f"LOWER(COALESCE(me.file_name, '')) LIKE ${idx}")
-        params.append(f"%{search.lower()}%")
+        # 2026-11-25 P2-1:转义 LIKE 通配符(% / _ / \),与 SQLite 端
+        # `_media_where_clause` 同款 — 用户输入按字面匹配。
+        escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clauses.append(f"LOWER(COALESCE(me.file_name, '')) LIKE ${idx} ESCAPE '\\'")
+        params.append(f"%{escaped}%")
         idx += 1
     return " AND ".join(clauses), params, idx
 

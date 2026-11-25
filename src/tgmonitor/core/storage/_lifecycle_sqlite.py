@@ -20,6 +20,7 @@ import aiosqlite
 from tgmonitor.core.storage._sqlite_common import (
     EXPECTED_SCHEMA,
     EXPECTED_TABLES,
+    MEDIA_DONE_MIGRATION_KEY,
     SCHEMA_SQL,
     _sql_lower,
 )
@@ -53,6 +54,52 @@ async def close(self: SqliteRepository) -> None:
         self._db = None
 
 
+async def _migrate_subscribed_to_monitored(self: SqliteRepository) -> None:
+    """2.0.6 一次性列改名迁移(迁移 channels.subscribed → monitored)。
+
+    2026-11-25 P2-4:抽公共函数,init_schema 与 repair_schema 共用预检 —
+    repair 路径此前缺这一步,会绕过主迁移补出**空的** monitored 列
+    (ADD COLUMN),旧列数据留在 subscribed 里造成静默分裂。
+
+    必须在 SCHEMA_SQL(IF NOT EXISTS)/ 幂等补列之前做 —— 否则旧表会先被
+    补出一个空的 monitored 列,造成「旧列有数据、新列空」的静默分裂。
+    调用方需已持 `self._lock`。
+    """
+    assert self._db is not None
+    cols = {r["name"] for r in await self._db.execute_fetchall("PRAGMA table_info('channels')")}
+    if "subscribed" in cols and "monitored" not in cols:
+        log.warning("init_schema: 迁移 channels.subscribed → monitored")
+        await self._db.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
+
+
+async def _run_media_done_migration_once(self: SqliteRepository) -> None:
+    """2026-11-25 P2-3:媒体 done 历史迁移 — one-shot,经 meta 标记只跑一次。
+
+    旧实现把 `UPDATE media SET download_status='done' WHERE object_key IS
+    NOT NULL AND download_status='pending'` 内联在 SCHEMA_SQL 里每次启动
+    无条件重跑 — 会复活用户显式重置为未下载、但 object_key 尚在的行。
+    改为:meta 表无 `MEDIA_DONE_MIGRATION_KEY` 标记时执行一次并记标记;
+    全新库(media 表空)同样只跑一次。调用方需已持 `self._lock`,且 meta
+    表已存在(SCHEMA_SQL 之后执行)。直写 SQL 而不经 get_meta/set_meta —
+    后者会再次抢 `self._lock` 死锁。
+    """
+    assert self._db is not None
+    rows = await self._db.execute_fetchall(
+        "SELECT value FROM meta WHERE key = ?", (MEDIA_DONE_MIGRATION_KEY,)
+    )
+    if rows:
+        return
+    await self._db.execute(
+        "UPDATE media SET download_status = 'done' "
+        "WHERE object_key IS NOT NULL AND download_status = 'pending'"
+    )
+    await self._db.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (MEDIA_DONE_MIGRATION_KEY, "1"),
+    )
+
+
 async def init_schema(self: SqliteRepository) -> None:
     """建表 + 幂等补齐缺失列。
 
@@ -64,13 +111,7 @@ async def init_schema(self: SqliteRepository) -> None:
     """
     assert self._db is not None
     async with self._lock:
-        # 2.0.6 一次性列改名迁移:旧库物理列 subscribed(=监听)→monitored。
-        # 必须在 SCHEMA_SQL(IF NOT EXISTS)之前做 —— 否则旧表会先被补出
-        # 一个空的 monitored 列,造成「旧列有数据、新列空」的静默分裂。
-        cols = {r["name"] for r in await self._db.execute_fetchall("PRAGMA table_info('channels')")}
-        if "subscribed" in cols and "monitored" not in cols:
-            log.warning("init_schema: 迁移 channels.subscribed → monitored")
-            await self._db.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
+        await _migrate_subscribed_to_monitored(self)
         await self._db.executescript(SCHEMA_SQL)
         # 幂等补列 — 类型来自 EXPECTED_SCHEMA(与 SCHEMA_SQL 同步维护)。
         for table, columns in EXPECTED_SCHEMA.items():
@@ -81,6 +122,7 @@ async def init_schema(self: SqliteRepository) -> None:
                 if column not in existing:
                     log.warning("init_schema: backfilling missing column %s.%s", table, column)
                     await self._db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {decl}')
+        await _run_media_done_migration_once(self)
 
 
 async def introspect_schema(self: SqliteRepository) -> SchemaReport:
@@ -125,7 +167,12 @@ async def introspect_schema(self: SqliteRepository) -> SchemaReport:
 
 
 async def repair_schema(self: SqliteRepository, report: SchemaReport) -> None:
-    """与 PG 同策略:missing_columns 补列;missing_tables 拒绝;其余仅 log。"""
+    """与 PG 同策略:missing_columns 补列;missing_tables 拒绝;其余仅 log。
+
+    2026-11-25 P2-4:补列前先跑与 init_schema 同款的改名预检
+    (迁移 channels.subscribed → monitored)— 否则旧库 repair 会绕过主迁移
+    直接 ADD 出空的 monitored 列,监听状态静默清零。
+    """
     assert self._db is not None
     if report.missing_tables:
         raise RuntimeError(
@@ -134,7 +181,15 @@ async def repair_schema(self: SqliteRepository, report: SchemaReport) -> None:
         )
     if report.missing_columns:
         async with self._lock:
+            await _migrate_subscribed_to_monitored(self)
             for t, c, expected in report.missing_columns:
+                # 改名预检可能已把 report 里的 subscribed→monitored 补上,
+                # stale 条目不能再 ADD(否则 duplicate column)。
+                cols = {
+                    r["name"] for r in await self._db.execute_fetchall(f"PRAGMA table_info('{t}')")
+                }
+                if c in cols:
+                    continue
                 log.warning("schema repair: adding missing column %s.%s (%s)", t, c, expected)
                 await self._db.execute(f'ALTER TABLE "{t}" ADD COLUMN "{c}" {expected}')
     if report.wrong_types:

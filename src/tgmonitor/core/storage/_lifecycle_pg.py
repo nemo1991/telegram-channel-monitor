@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import asyncpg
 
+from tgmonitor.core.storage._sqlite_common import MEDIA_DONE_MIGRATION_KEY
 from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 
 if TYPE_CHECKING:
@@ -34,13 +35,8 @@ log = logging.getLogger(__name__)
 SCHEMA_SQL = """\
 -- PostgreSQL 参考 DDL(SQLite schema 以此为逻辑对照)
 -- 幂等,init_schema() 会在启动时执行。
-
--- 2026-09-03 v1.6.0 PR #Q1:pg_trgm GIN 索引加速 LIKE 搜索
--- 需 PG ≥9.1,superuser 权限(heroku / RDS / GCP Cloud SQL / 阿里 RDS
--- 默认允许;self-hosted 首次部署需手动 `CREATE EXTENSION pg_trgm;`)。
--- init_schema() 检测到 PermissionDenied → log warning + 跳过索引创建,
--- 功能仍可用(LOWER LIKE 仍工作,只是慢)。生产部署指引见 README 段。
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- 注:trigram 扩展 + 两条 trgm GIN 索引已拆到本 module 顶部 `TRGM_SQL`,
+-- 由 init_schema 单独 try(权限不足降级 warning),不随核心 DDL 上抛。
 
 CREATE TABLE IF NOT EXISTS channels (
     id              BIGINT PRIMARY KEY,              -- Telegram chat_id
@@ -114,6 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_date
 -- 2026-09-03 v1.6.0 PR #Q1:全文搜索加速(v1.5.1 PR #B2 引入的 LOWER LIKE 全表扫)。
 -- trgm GIN 把每行 text 拆成 3-gram,子串匹配走索引(B-tree LIKE '%x%' 走不到)。
 -- 既有 SQL `LOWER(text) LIKE ...` 不动,planner 自动命中本索引。
+-- (本索引依赖 trigram 扩展,已随 TRGM_SQL 拆出 — 见 module 顶部。)
 CREATE INDEX IF NOT EXISTS idx_messages_text_trgm
     ON messages USING gin (lower(text) gin_trgm_ops);
 
@@ -148,10 +145,9 @@ ALTER TABLE media ADD COLUMN IF NOT EXISTS download_error TEXT;
 -- 用它按需下载缩略图入独立 thumbnails 表 + thumb/ prefix。旧库无,NULL 兜底
 -- 表示「该 media 没缩略图或 TG 端 file.id 已丢」。
 ALTER TABLE media ADD COLUMN IF NOT EXISTS thumbnail_telegram_file_id TEXT;
--- 历史数据迁移:已有 object_key 的行视为已下载(done);其余保持 pending,
--- 切到 FULL 策略后 backfill 会对 pending 媒体重新触发下载。
-UPDATE media SET download_status = 'done'
-    WHERE object_key IS NOT NULL AND download_status = 'pending';
+-- 历史数据迁移(已有 object_key 的行视为已下载 done)已改为 one-shot:
+-- 经 meta 表标记 `MEDIA_DONE_MIGRATION_KEY` 只在首次启动跑一次,不再内联
+-- 在 SCHEMA_SQL 里(2026-11-25 P2-3)。见 init_schema 末段。
 
 CREATE INDEX IF NOT EXISTS idx_media_message
     ON media (message_id);
@@ -165,8 +161,7 @@ CREATE INDEX IF NOT EXISTS idx_media_telegram_file_id
 -- 2026-09-03 v1.6.0 PR #Q1:file_name 子串搜索加速。list_messages(search=...) 命中
 -- `EXISTS (SELECT 1 FROM media WHERE message_id=m.id AND LOWER(file_name) LIKE ...)`。
 -- trgm GIN 把 file_name 拆 3-gram,与 idx_messages_text_trgm 对齐。
-CREATE INDEX IF NOT EXISTS idx_media_file_name_trgm
-    ON media USING gin (lower(file_name) gin_trgm_ops);
+-- (依赖 trigram 扩展,已随 TRGM_SQL 拆出。)
 
 CREATE TABLE IF NOT EXISTS meta (
     key     TEXT PRIMARY KEY,
@@ -221,6 +216,20 @@ CREATE TABLE IF NOT EXISTS activities (
 
 CREATE INDEX IF NOT EXISTS idx_activities_occurred
     ON activities (occurred_at DESC, id DESC);
+"""
+
+# 2026-11-25 P2-2:pg_trgm 相关 DDL 从 SCHEMA_SQL 拆出,init_schema 单独 try。
+# 2026-09-03 v1.6.0 PR #Q1:pg_trgm GIN 索引加速 LIKE 搜索 — 需 PG ≥9.1 +
+# superuser 权限(heroku / RDS / GCP Cloud SQL / 阿里 RDS 默认允许;
+# self-hosted 首次部署需手动 `CREATE EXTENSION pg_trgm;`)。权限不足 →
+# log warning + 跳过,功能仍可用(LOWER LIKE 全表扫,只是慢)。核心 DDL
+# (`SCHEMA_SQL`)失败则必须上抛 — 应用不能带病启动。
+TRGM_SQL = """\
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_messages_text_trgm
+    ON messages USING gin (lower(text) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_media_file_name_trgm
+    ON media USING gin (lower(file_name) gin_trgm_ops);
 """
 
 
@@ -377,18 +386,21 @@ async def close(self: PostgresRepository) -> None:
 
 
 async def init_schema(self: PostgresRepository) -> None:
-    """执行 SCHEMA_SQL(创建表 + 索引);幂等(全 IF NOT EXISTS)。
+    """执行核心 DDL(创建表 + 索引);幂等(全 IF NOT EXISTS)。
 
     2026-09-03 v1.6.0 PR #Q1:`CREATE EXTENSION pg_trgm` 需 superuser,
-    旧 PG 托管或受限账号没权限 → permission denied。**失败不抛**,把
-    `CREATE EXTENSION` 单独跑 + log warning,后续 GIN 索引创建失败同
-    样吞掉;`LOWER LIKE` 全表扫仍可用(只是慢)。生产部署由 README 段
-    指引用户首次手动授权。
+    旧 PG 托管或受限账号没权限 → permission denied。2026-11-25 P2-2:trgm
+    相关 DDL 拆到 `TRGM_SQL` 单独 try + log warning 吞掉;**核心 DDL
+    (`SCHEMA_SQL`)失败必须上抛** — 原实现单一 `except Exception` 把
+    CREATE TABLE 失败也吞了,应用带病启动,首条查询才炸。
+
+    2026-11-25 P2-3:媒体 done 历史迁移改为 one-shot — SCHEMA_SQL 执行后
+    查 meta 表标记 `MEDIA_DONE_MIGRATION_KEY`,无标记才执行
+    `UPDATE media ... SET download_status='done'` 并记标记;后续启动跳过,
+    不再无条件重跑复活用户重置为未下载的行。
 
     2026-10-12 plan-batch3 目标 3 step 3.1:从 `storage/schema.sql` 文件
-    inline 到本模块 `SCHEMA_SQL`(模块顶部三引号字符串),`init_schema`
-    直接 `await conn.execute(SCHEMA_SQL)`,免去冷启动 `Path(...) / "schema.sql"`
-    文件 IO 失败路径。
+    inline 到本模块 `SCHEMA_SQL`(模块顶部三引号字符串)。
 
     2026-10-16 plan-batch8-1.1:方法体下沉到 `_lifecycle_pg.py`。
     """
@@ -408,16 +420,33 @@ async def init_schema(self: PostgresRepository) -> None:
         if old_col is not None and new_col is None:
             log.warning("init_schema: 迁移 channels.subscribed → monitored")
             await conn.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
+        # 核心 DDL — 失败上抛(P2-2:不再整体吞异常)。
+        await conn.execute(SCHEMA_SQL)
         try:
-            await conn.execute(SCHEMA_SQL)
-        except Exception as exc:  # noqa: BLE001 — 部分失败只降级警告,功能仍可用
-            # 2026-09-03 v1.6.0 PR #Q1:最常见原因是 superuser 权限不足
-            # (pg_trgm GIN 索引需要)。log.warning 不抛 — `LOWER LIKE`
-            # 全表扫仍是合法行为,只是性能降级。生产环境若需要 GIN 加速
-            # 由 README 段引导手动 `CREATE EXTENSION pg_trgm`。
+            await conn.execute(TRGM_SQL)
+        except Exception as exc:  # noqa: BLE001 — trgm 权限不足只降级警告
+            # 最常见原因是 superuser 权限不足(pg_trgm GIN 索引需要)。
+            # log.warning 不抛 — `LOWER LIKE` 全表扫仍是合法行为,只是性能
+            # 降级。生产环境若需要 GIN 加速由 README 段引导手动
+            # `CREATE EXTENSION pg_trgm`。
             log.warning(
-                "init_schema 部分失败(可能是 pg_trgm 权限不足,功能仍可用): %s",
+                "pg_trgm 扩展/GIN 索引创建失败(可能是权限不足,LIKE 搜索降级全表扫): %s",
                 exc,
+            )
+        # P2-3:媒体 done 迁移 one-shot(meta 标记)。
+        marker = await conn.fetchval(
+            "SELECT value FROM meta WHERE key = $1", MEDIA_DONE_MIGRATION_KEY
+        )
+        if marker is None:
+            await conn.execute(
+                "UPDATE media SET download_status = 'done' "
+                "WHERE object_key IS NOT NULL AND download_status = 'pending'"
+            )
+            await conn.execute(
+                "INSERT INTO meta (key, value) VALUES ($1, $2) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                MEDIA_DONE_MIGRATION_KEY,
+                "1",
             )
 
 

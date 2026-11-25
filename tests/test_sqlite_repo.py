@@ -31,6 +31,7 @@ from tgmonitor.core.dto import (
     MediaType,
     ThumbnailDTO,
 )
+from tgmonitor.core.storage._sqlite_common import MEDIA_DONE_MIGRATION_KEY
 from tgmonitor.core.storage.sqlite_repo import (
     EXPECTED_SCHEMA,
     SqliteRepository,
@@ -472,3 +473,247 @@ async def test_db_file_created_at_path(tmp_path) -> None:
         assert path.is_file()
     finally:
         await r.close()
+
+
+# ---- P2 回归(2026-11-25)----
+
+
+async def test_media_search_escapes_like_wildcards(repo: SqliteRepository) -> None:
+    """P2-1 回归:list_media 的 search 必须转义 % / _ / \\(与 list_messages
+    的正确实现一致)。旧实现 `%{search}%` 直拼,`_` 当单字符通配符 —
+    search="a_c" 会误命中 "abc.jpg"。"""
+    await repo.save_message(
+        make_message(
+            channel_id=1,
+            msg_id=1,
+            media=[
+                MediaDTO(
+                    type=MediaType.PHOTO,
+                    file_name="a_c.jpg",
+                    download_status=MediaDownloadStatus.DONE,
+                    object_key="media/a_c.jpg",
+                )
+            ],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=1,
+            msg_id=2,
+            media=[
+                MediaDTO(
+                    type=MediaType.PHOTO,
+                    file_name="abc.jpg",
+                    download_status=MediaDownloadStatus.DONE,
+                    object_key="media/abc.jpg",
+                )
+            ],
+        )
+    )
+    await repo.save_message(
+        make_message(
+            channel_id=1,
+            msg_id=3,
+            media=[
+                MediaDTO(
+                    type=MediaType.PHOTO,
+                    file_name="100%.jpg",
+                    download_status=MediaDownloadStatus.DONE,
+                    object_key="media/100%.jpg",
+                )
+            ],
+        )
+    )
+
+    rows = await repo.list_media(search="a_c")
+    assert [r[2].file_name for r in rows] == ["a_c.jpg"], "`_` 必须按字面匹配"
+    rows = await repo.list_media(search="100%")
+    assert [r[2].file_name for r in rows] == ["100%.jpg"], "`%` 必须按字面匹配"
+
+
+async def test_media_done_migration_is_one_shot(repo: SqliteRepository) -> None:
+    """P2-3 回归:媒体 done 迁移经 meta 标记只跑一次。
+
+    旧实现把 `UPDATE media SET download_status='done' ...` 内联在
+    SCHEMA_SQL 里每次启动无条件重跑 — 用户显式重置为未下载但 object_key
+    仍在的行会被复活。"""
+    assert repo._db is not None
+    await repo.save_message(make_message(channel_id=1, msg_id=1, media=[_photo()]))
+    # 首次 init_schema(fixture 已跑)已写标记
+    assert await repo.get_meta(MEDIA_DONE_MIGRATION_KEY) == "1"
+
+    # 模拟用户重置:object_key 仍在、状态回到未下载 → 再次 init_schema 不得复活
+    await repo._db.execute(
+        "UPDATE media SET download_status = 'pending' WHERE object_key IS NOT NULL"
+    )
+    await repo.init_schema()
+    rows = await repo._db.execute_fetchall(
+        "SELECT download_status FROM media WHERE object_key IS NOT NULL"
+    )
+    assert all(r["download_status"] == "pending" for r in rows), (
+        "one-shot 标记已存在,重复 init_schema 不得把 pending 行复活为 done"
+    )
+
+    # 删掉标记(模拟首次升级旧库)→ 再跑一次迁移应执行并转换 + 补标记
+    await repo._db.execute("DELETE FROM meta WHERE key = ?", (MEDIA_DONE_MIGRATION_KEY,))
+    await repo.init_schema()
+    rows = await repo._db.execute_fetchall(
+        "SELECT download_status FROM media WHERE object_key IS NOT NULL"
+    )
+    assert all(r["download_status"] == "done" for r in rows)
+    assert await repo.get_meta(MEDIA_DONE_MIGRATION_KEY) == "1"
+
+
+async def test_delete_messages_chunks_over_sqlite_variable_limit(repo: SqliteRepository) -> None:
+    """P2-6 回归:delete_messages 超过 SQLite 32766 变量上限的大选区不抛错。
+
+    旧实现单发 IN(39999 个占位符)→ "too many SQL variables";修复后按
+    ≤1000/批分批,与 PG(ANY(array),无上限)行为对齐。
+    """
+    await repo.save_message(make_message(channel_id=1, msg_id=1))
+    # 39999 个 id(含真实存在的 1)——超过 SQLite 变量上限
+    await repo.delete_messages(1, list(range(1, 40000)))
+    assert await repo.get_message(1, 1) is None
+
+
+async def test_repair_schema_runs_subscribed_rename_first(tmp_path) -> None:
+    """P2-4 回归:repair_schema 补列前必须先跑 subscribed→monitored 改名预检。
+
+    旧实现 repair 只 ADD COLUMN monitored(空列),旧列数据留在 subscribed
+    里造成「旧列有数据、新列空」的静默分裂 — 监听状态清零。
+
+    构造:先 init_schema 建全量表,再手动把 channels 列降级回旧名
+    (RENAME monitored→subscribed + DROP 新增列),模拟绕过主迁移的旧库。
+    """
+    path = tmp_path / "legacy_repair.db"
+    repo = SqliteRepository(path=path)
+    await repo.connect()
+    try:
+        assert repo._db is not None
+        await repo.init_schema()
+        await repo.upsert_channel(ChannelDTO(id=1, title="已监听频道", is_monitored=True))
+        await repo.upsert_channel(ChannelDTO(id=2, title="未监听频道", is_monitored=False))
+        # 模拟旧库:监听数据回到 subscribed 列,monitored 列消失
+        await repo._db.execute("ALTER TABLE channels RENAME COLUMN monitored TO subscribed")
+
+        report = await repo.introspect_schema()
+        assert report.ok is False
+        await repo.repair_schema(report)
+
+        cols = {r["name"] for r in await repo._db.execute_fetchall("PRAGMA table_info('channels')")}
+        assert "monitored" in cols
+        assert "subscribed" not in cols, "repair 必须改名而非补出空 monitored 列"
+        ch = await repo.get_channel(1)
+        assert ch is not None and ch.is_monitored is True, "监听状态必须随改名逐条保留"
+        ch2 = await repo.get_channel(2)
+        assert ch2 is not None and ch2.is_monitored is False
+        after = await repo.introspect_schema()
+        assert after.ok is True
+    finally:
+        await repo.close()
+
+
+# ---- P2 #36: update_message_media 定向 UPDATE(2026-11-25)----
+
+
+async def test_update_message_media_replaces_media_rows_keeps_text(repo: SqliteRepository):
+    """P2 #36:定向 UPDATE 只重写 media 行,text / views / 用户标注不动。
+
+    旧路径 save_message 整条覆盖会把下载期间并发编辑的 text 覆盖回去。
+    """
+    from tests.fixtures._factories import make_message as _mk
+
+    msg = _mk(channel_id=100, msg_id=1, text="原文")
+    msg.media = [_photo(object_key=None, fid="fid-1")]
+    await repo.save_message(msg)
+    await repo.set_tags(100, 1, ["important"])
+    await repo.set_favorite(100, 1, True)
+
+    # 下载完成:media 侧字段更新(上传回写 object_key / DONE)
+    done_media = [
+        MediaDTO(
+            type=MediaType.PHOTO,
+            mime_type="image/jpeg",
+            file_name="p.jpg",
+            file_size=1024,
+            object_key="media/p.jpg",
+            object_backend="local",
+            download_status=MediaDownloadStatus.DONE,
+            telegram_file_id="fid-1",
+        )
+    ]
+    await repo.update_message_media(100, 1, done_media)
+
+    stored = await repo.get_message(100, 1)
+    assert stored is not None
+    assert stored.text == "原文", "text 不得被下载回写覆盖(P2 #36)"
+    assert stored.tags == ["important"], "用户标注不得被下载回写清零"
+    assert stored.is_favorite is True
+    assert len(stored.media) == 1
+    assert stored.media[0].download_status == MediaDownloadStatus.DONE
+    assert stored.media[0].object_key == "media/p.jpg"
+
+    # 再来一轮:media 行确实是 DELETE+重插(列表变化生效)
+    await repo.update_message_media(100, 1, [])
+    stored2 = await repo.get_message(100, 1)
+    assert stored2 is not None
+    assert stored2.media == []
+    assert stored2.text == "原文", "media 清空也不得波及 text"
+
+
+async def test_update_message_media_missing_message_is_noop(repo: SqliteRepository):
+    """消息不存在(下载期间被删)→ no-op 不抛(idempotent)。"""
+    await repo.update_message_media(999, 42, [_photo()])
+
+
+# ---- P2 #37: 频道原子写路径(2026-11-25)----
+
+
+async def test_upsert_channel_and_set_monitored_forces_flag(repo: SqliteRepository):
+    """P2 #37:caller DTO 的 is_monitored=False 也会被强制置 True(单语句原子)。"""
+    await repo.upsert_channel_and_set_monitored(ChannelDTO(id=7, title="频道", is_monitored=False))
+    ch = await repo.get_channel(7)
+    assert ch is not None
+    assert ch.is_monitored is True
+    assert ch.title == "频道"
+    # 已存在行:再次 upsert 仍保持 monitored=True
+    await repo.upsert_channel_and_set_monitored(ChannelDTO(id=7, title="改名"))
+    ch2 = await repo.get_channel(7)
+    assert ch2 is not None
+    assert ch2.is_monitored is True
+    assert ch2.title == "改名"
+
+
+async def test_upsert_channel_metadata_and_set_tg_subscribed(repo: SqliteRepository):
+    """P2 #37:metadata upsert + tg_subscribed=True;monitored 保持旧值。"""
+    await repo.upsert_channel(ChannelDTO(id=8, title="旧", is_monitored=True))
+    await repo.upsert_channel_metadata_and_set_tg_subscribed(
+        ChannelDTO(id=8, title="新", is_monitored=False, is_tg_subscribed=False)
+    )
+    ch = await repo.get_channel(8)
+    assert ch is not None
+    assert ch.title == "新"
+    assert ch.is_tg_subscribed is True
+    assert ch.is_monitored is True, "monitored 标志不得被 metadata upsert 触碰"
+
+
+async def test_set_channel_flags_single_call(repo: SqliteRepository):
+    """P2 #37:双标志一次落库;None=不动;未建档 stub。"""
+    await repo.upsert_channel(ChannelDTO(id=9, title="c", is_monitored=True))
+    await repo.set_channel_flags(9, tg_subscribed=False, monitored=False)
+    ch = await repo.get_channel(9)
+    assert ch is not None
+    assert ch.is_tg_subscribed is False
+    assert ch.is_monitored is False
+
+    # 只动 tg_subscribed,monitored 保持
+    await repo.set_channel_flags(9, tg_subscribed=True)
+    ch2 = await repo.get_channel(9)
+    assert ch2 is not None
+    assert ch2.is_tg_subscribed is True
+    assert ch2.is_monitored is False
+
+    # 未建档:id-stub
+    await repo.set_channel_flags(77, monitored=True)
+    ch3 = await repo.get_channel(77)
+    assert ch3 is not None and ch3.is_monitored is True

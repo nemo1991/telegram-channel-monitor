@@ -145,6 +145,43 @@ class ChannelStore(ABC):
         ...
 
     @abstractmethod
+    async def upsert_channel_and_set_monitored(self, channel: ChannelDTO) -> None:
+        """2026-11-25 P2 #37:原子入口 — 全字段 upsert + 监听标志置 True。
+
+        单条语句(SQL 后端)/ 单次赋值(InMemory)内完成 `upsert_channel +
+        set_channel_monitored(id, True)` 两步,消除「upsert 成功、set 标志
+        失败 → 半状态」窗口。ChannelService.monitor_channel 用。
+        """
+        ...
+
+    @abstractmethod
+    async def upsert_channel_metadata_and_set_tg_subscribed(self, channel: ChannelDTO) -> None:
+        """2026-11-25 P2 #37:原子入口 — 只更元数据 + TG 订阅标志置 True。
+
+        单步完成 `upsert_channel_metadata(channel) +
+        set_channel_tg_subscribed(id, True)`;已存在行的 monitored 标志不动,
+        tg_subscribed 强制 True。ChannelService.refresh_joined_channels 的
+        「TG 列表里的频道」分支用。
+        """
+        ...
+
+    @abstractmethod
+    async def set_channel_flags(
+        self,
+        channel_id: int,
+        *,
+        monitored: bool | None = None,
+        tg_subscribed: bool | None = None,
+    ) -> None:
+        """2026-11-25 P2 #37:原子设置监听 / TG 订阅双标志(单事务)。
+
+        `None` = 不动该标志;两个非 None 标志在同一事务内一起落库,消除
+        「tg_subscribed 写成功、monitored 写失败」的中间态。
+        ChannelService.refresh_joined_channels 的级联退订分支用。
+        """
+        ...
+
+    @abstractmethod
     async def count_tg_subscribed(self) -> int:
         """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡)。"""
         ...
@@ -256,6 +293,27 @@ class MessageStore(ABC):
         ...
 
     @abstractmethod
+    async def update_message_media(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media: list[MediaDTO],
+    ) -> None:
+        """2026-11-25 P2 #36:定向重写一条消息的 media 列表(DELETE+重插)。
+
+        **不碰 messages 表其它列** — text / views / reactions / 用户标注等
+        全部保持旧值。下载完成回写专用:旧路径 save_message / update_message
+        整条覆盖,会把下载期间(最长 30 分钟)并发推送的编辑消息
+        (text / views)用下载开始时的旧 DTO 覆盖回去。
+
+        - 传入 `media` 是"下载侧字段已更新的完整列表"(按消息内位置对齐);
+        - 消息不存在时 no-op(下载期间消息被删除的竞态,与
+          `update_message_interactions` 的 idempotent 语义一致);
+        - SQL 后端在单事务内 DELETE 旧行 + INSERT 新行。
+        """
+        ...
+
+    @abstractmethod
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         """删单条消息;不存在不抛(idempotent)。"""
         ...
@@ -266,6 +324,8 @@ class MessageStore(ABC):
 
         不存在不抛(idempotent)。子 media 通过各后端固有机制清理
         (SQL FK CASCADE / InMemory 内联)。
+        实现注意(2026-11-25 P2-6):SQLite 变量上限 32766 — SQL 后端须按
+        ≤1000/批 分批执行,超大选区行为与 PG(ANY(array),无上限)对齐。
         """
         ...
 
@@ -286,10 +346,13 @@ class MessageStore(ABC):
         favorite_only: bool = False,
         tag_only: bool = False,
         pinned_only: bool = False,
+        tag: str = "",
     ) -> list[MessageDTO]:
         """按时间升序返回。两实现必须排序一致。
 
         `limit`:只返回**最近** N 条(取排序尾部,仍按时间升序)。
+        `limit=None`(默认):**无界** — 返回选区全量(2026-11-25 P2-6 注明:
+        大选区会把全表拉进内存,导出等大范围调用方应自行分页/收窄 date)。
         `offset`:跳过前 N 条(export 真分页)。
         `offset` 与 `limit` 组合:跳过 offset 后取 limit 条(从尾取仍升序)。
         注意:`offset` 是相对排序后的位置,与 channel_ids 顺序无关。
@@ -302,6 +365,10 @@ class MessageStore(ABC):
         (对应 SearchBar ★/标签/置顶 3 toggle)。默认 False 不过滤;True 时仅返回
         满足条件的消息 — UI AND 语义:任一 True 字段必须命中。
         `tag_only=True` 表示「有任意 tag 即可」。
+
+        `tag`(2026-11-25 P2-14):指定标签的**精确匹配**过滤(tags 数组含该
+        元素即命中),SQL 下推(`WHERE` 层) — 必须在 limit 截断之前生效,
+        否则截断后再过滤会漏项。
         """
         ...
 
@@ -367,8 +434,12 @@ class MediaStore(ABC):
 
         排序:`sort` 选 3 key(`DATE`/`SIZE`/`STATUS`),`sort_dir` 选 `ASC`/`DESC`。
         默认 `DATE DESC`。tie-breaker:`m.id DESC, me.media_idx ASC` 保证结果稳定。
+        `SIZE` 的 NULL 值统一排最后(2026-11-25 P2-44:两 SQL 后端均用
+        `{col} IS NULL` 前置键,消除 SQLite/PG NULL 排序位置分叉)。
 
-        分页:`offset` 跳过 N 条;`limit` 限制返数。MVP 阶段各后端实现可简化
+        分页:`offset` 跳过 N 条;`limit` 限制返数。`limit=0` 返回**空结果**
+        (2026-11-25 P2-5:不再当"无界" — truthiness 判断会把 0 跳过 LIMIT
+        意外返回全表)。MVP 阶段各后端实现可简化
         (InMemory 顺序扫 + slice;SQL 用 LIMIT/OFFSET)。
         """
         ...

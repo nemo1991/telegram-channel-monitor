@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from tgmonitor.core.dto import MediaDownloadStatus, SortKey
 
-# SortKey → ORDER BY 列(SIZE 可能 NULL → NULLS LAST,与 PG 对齐)。
+# SortKey → ORDER BY 列(SIZE 可能 NULL → 拼装端加 `{col} IS NULL` 前置键
+# 排最后,SQLite/PG 逐字一致;2026-11-25 P2-44)。
 # value 是 (column, nulls_last) — direction 在拼 ORDER BY 时单独处理。
 _MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
     SortKey.DATE: ("m.date", False),

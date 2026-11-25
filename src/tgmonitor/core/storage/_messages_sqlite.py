@@ -128,6 +128,51 @@ async def update_message(self: SqliteRepository, message: MessageDTO) -> None:
     await save_message(self, message)
 
 
+async def update_message_media(
+    self: SqliteRepository,
+    channel_id: int,
+    telegram_msg_id: int,
+    media: list[MediaDTO],
+) -> None:
+    """P2 #36:定向重写 media 行(单事务 DELETE+重插),不碰 messages 其它列。
+
+    下载完成回写专用 — 旧路径 `save_message` 整条覆盖会把下载期间并发
+    编辑推送的 text / views 用下载开始时的旧 DTO 覆盖回去。消息不存在
+    (下载期间被删)时 no-op(idempotent)。
+    """
+    assert self._db is not None
+    async with self._lock:
+        await self._db.execute("BEGIN")
+        try:
+            cur = await self._db.execute(
+                "SELECT id FROM messages WHERE channel_id = ? AND telegram_msg_id = ?",
+                (channel_id, telegram_msg_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                await self._db.rollback()
+                return
+            msg_pk = row["id"]
+            await self._db.execute("DELETE FROM media WHERE message_id = ?", (msg_pk,))
+            for m in media:
+                await self._db.execute(
+                    """
+                    INSERT INTO media
+                        (message_id, type, mime_type, file_name, file_size,
+                         width, height, duration, telegram_file_id,
+                         thumbnail_telegram_file_id,
+                         object_key, object_backend,
+                         emoji, download_status, download_error)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    _media_to_row(msg_pk, m),
+                )
+            await self._db.commit()
+        except BaseException:
+            await self._db.rollback()
+            raise
+
+
 async def update_message_interactions(
     self: SqliteRepository,
     channel_id: int,
@@ -184,15 +229,24 @@ async def delete_message(self: SqliteRepository, channel_id: int, telegram_msg_i
 
 
 async def delete_messages(self: SqliteRepository, channel_id: int, msg_ids: list[int]) -> None:
+    """批量删;msg_ids 按 1000 一批拆分执行。
+
+    2026-11-25 P2-6:SQLite 变量上限 32766(SQLITE_LIMIT_VARIABLE_NUMBER),
+    超大选区单发 IN 会抛 "too many SQL variables" 而 PG(ANY(array))无此限;
+    分批后与 PG 行为对齐。
+    """
     if not msg_ids:
         return
     assert self._db is not None
+    chunk_size = 1000
     async with self._lock:
-        await self._db.execute(
-            f"DELETE FROM messages WHERE channel_id = ? "
-            f"AND telegram_msg_id IN ({_placeholders(len(msg_ids))})",
-            [channel_id, *msg_ids],
-        )
+        for i in range(0, len(msg_ids), chunk_size):
+            chunk = msg_ids[i : i + chunk_size]
+            await self._db.execute(
+                f"DELETE FROM messages WHERE channel_id = ? "
+                f"AND telegram_msg_id IN ({_placeholders(len(chunk))})",
+                [channel_id, *chunk],
+            )
 
 
 async def get_message(
@@ -224,9 +278,12 @@ async def list_messages(
     favorite_only: bool = False,
     tag_only: bool = False,
     pinned_only: bool = False,
+    tag: str = "",
 ) -> list[MessageDTO]:
     """与 PG 逐条对齐:limit=最近 N 条(倒序取再反转);offset 仅在 limit 给定
-    时生效(从尾部跳过);search 转义 LIKE 通配符,text OR media.file_name。"""
+    时生效(从尾部跳过);search 转义 LIKE 通配符,text OR media.file_name;
+    tag 精确匹配(JSON1 json_each,2026-11-25 P2-14 下推 SQL,避免 limit
+    截断后再过滤漏项)。"""
     assert self._db is not None
     if not channel_ids:
         return []
@@ -244,6 +301,10 @@ async def list_messages(
         where.append("json_array_length(tags) > 0")
     if pinned_only:
         where.append("is_pinned = 1")
+    if tag:
+        # 与 _user_meta_sqlite.list_by_tag 同款匹配(JSON 数组内元素精确相等)。
+        where.append("EXISTS (SELECT 1 FROM json_each(messages.tags) WHERE value = ?)")
+        params.append(tag)
     if search:
         escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like = f"%{escaped}%"

@@ -33,6 +33,7 @@ from tgmonitor.core.dto import (
     ReactionDTO,
 )
 from tgmonitor.core.storage import _media_pg as _media
+from tgmonitor.core.storage._sqlite_common import _ensure_utc
 
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
@@ -159,7 +160,9 @@ async def save_message(self: PostgresRepository, message: MessageDTO) -> int:
             message.channel_id,
             message.telegram_msg_id,
             message.author,
-            message.date,
+            # 2026-11-25 P2-7:naive datetime 显式视为 UTC — 直接传 naive 时
+            # asyncpg 按服务器时区解释,与 SQLite 端时间线分叉。
+            _ensure_utc(message.date),
             message.text,
             message.views,
             message.forwards,
@@ -200,6 +203,46 @@ async def save_message(self: PostgresRepository, message: MessageDTO) -> int:
 async def update_message(self: PostgresRepository, message: MessageDTO) -> None:
     """代理到 save_message(upsert 语义一致)。"""
     await save_message(self, message)  # upsert 语义一致
+
+
+async def update_message_media(
+    self: PostgresRepository,
+    channel_id: int,
+    telegram_msg_id: int,
+    media: list[MediaDTO],
+) -> None:
+    """P2 #36:定向重写 media 行(单事务 DELETE+重插),不碰 messages 其它列。
+
+    下载完成回写专用 — 旧路径 `save_message` 整条覆盖会把下载期间并发
+    编辑推送的 text / views 用下载开始时的旧 DTO 覆盖回去。消息不存在
+    (下载期间被删)时 no-op(idempotent)。
+    """
+    assert self._pool is not None
+    async with self._pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            "SELECT id FROM messages WHERE channel_id = $1 AND telegram_msg_id = $2",
+            channel_id,
+            telegram_msg_id,
+        )
+        if row is None:
+            return
+        msg_pk = row["id"]
+        await conn.execute("DELETE FROM media WHERE message_id = $1", msg_pk)
+        for idx, m in enumerate(media):
+            await conn.execute(
+                """
+                    INSERT INTO media
+                        (message_id, type, mime_type, file_name, file_size,
+                         width, height, duration, telegram_file_id,
+                         thumbnail_telegram_file_id,
+                         object_key, object_backend,
+                         emoji, download_status, download_error)
+                    VALUES
+                        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                         $11,$12,$13,$14,$15)
+                    """,
+                *_media._media_to_row(msg_pk, m, idx),
+            )
 
 
 async def update_message_interactions(
@@ -340,6 +383,7 @@ async def list_messages(
     favorite_only: bool = False,
     tag_only: bool = False,
     pinned_only: bool = False,
+    tag: str = "",
 ) -> list[MessageDTO]:
     """按时间升序 + id 升序(与 SQLite / InMemory 对齐);media 二次查询拼回。
 
@@ -355,6 +399,10 @@ async def list_messages(
     2026-09-14 v1.7.5 PR #8:`favorite_only` / `tag_only` / `pinned_only`
     走 SQL `WHERE` 子句(`is_favorite` / `cardinality(tags) > 0` /
     `is_pinned`);AND 语义任一 True 必须命中。
+
+    `tag` (2026-11-25 P2-14):精确匹配 tags 数组元素(`$n = ANY(tags)`,
+    与 `_user_meta_pg.list_by_tag` 同款)— SQL 下推,避免 limit 截断后再
+    过滤漏项。
     """
     assert self._pool is not None
     if not channel_ids:
@@ -362,10 +410,11 @@ async def list_messages(
     where: list[str] = ["channel_id = ANY($1::bigint[])"]
     params: list[Any] = [channel_ids]
     if date_from is not None:
-        params.append(date_from)
+        # 2026-11-25 P2-7:过滤边界同样 naive 视为 UTC。
+        params.append(_ensure_utc(date_from))
         where.append(f"date >= ${len(params)}")
     if date_to is not None:
-        params.append(date_to)
+        params.append(_ensure_utc(date_to))
         where.append(f"date <= ${len(params)}")
     if favorite_only:
         where.append("is_favorite = TRUE")
@@ -374,6 +423,9 @@ async def list_messages(
         where.append("cardinality(tags) > 0")
     if pinned_only:
         where.append("is_pinned = TRUE")
+    if tag:
+        where.append(f"${len(params) + 1} = ANY(tags)")
+        params.append(tag)
     if search:
         # 转义 LIKE 通配符:`%` / `_` / `\`(用户输入的 `\` 也需转义为 `\\`)。
         escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

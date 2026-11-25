@@ -98,9 +98,10 @@ CREATE TABLE IF NOT EXISTS media (
     thumbnail_telegram_file_id TEXT
 );
 
--- 历史数据迁移:已有 object_key 的行视为已下载(done);与 PG 对齐。
-UPDATE media SET download_status = 'done'
-    WHERE object_key IS NOT NULL AND download_status = 'pending';
+-- 历史数据迁移(已有 object_key 的行视为已下载 done)已改为 one-shot:
+-- 经 meta 表标记 `MEDIA_DONE_MIGRATION_KEY` 只在首次启动跑一次,不再内联在
+-- SCHEMA_SQL 里(2026-11-25 P2-3:无条件每启动重跑会复活用户重置为未下载、
+-- 但 object_key 仍在的行)。见 `_lifecycle_sqlite.init_schema` / `_lifecycle_pg.init_schema`。
 
 CREATE INDEX IF NOT EXISTS idx_media_message
     ON media (message_id);
@@ -249,6 +250,12 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
 
 EXPECTED_TABLES: frozenset[str] = frozenset(EXPECTED_SCHEMA.keys())
 
+# 2026-11-25 P2-3:媒体 done 一次性迁移的 meta 标记 key — SQLite / PG 共用。
+# 首次执行 `UPDATE media SET download_status='done' WHERE object_key IS NOT
+# NULL AND download_status='pending'` 后写入本 key;后续启动跳过(无标记前
+# 每次启动都会复活用户重置为未下载但 object_key 仍在的行)。
+MEDIA_DONE_MIGRATION_KEY = "migration.media_object_key_done_v1"
+
 # ---- 序列化 helper ----
 # `_MEDIA_SORT_COLUMN` / `_media_status` / `_status_to_db` 已收口到
 # `_media_codec.py`(2026-11-25 P1-N2),由顶部 import 引入。
@@ -265,6 +272,23 @@ def _dt_to_db(dt: datetime | None) -> str | None:
 
 def _dt_from_db(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value is not None else None
+
+
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    """naive datetime 显式视为 UTC(打 tzinfo);aware 归一到 UTC。
+
+    2026-11-25 P2-7:PG 写路径(TIMESTAMPTZ 参数)直接传 naive datetime 时
+    asyncpg 按服务器时区解释,与 SQLite 端 `_dt_to_db`(aware → UTC ISO,
+    naive 原样)的时间线分叉。所有 PG 写路径的 datetime 参数先过本 helper。
+
+    本 helper 无后端依赖(纯 datetime 归一),定义在共享 helper module;
+    `_messages_pg` / `_channels_pg` / `_activity_pg` 均从这里 import。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _json_to_db(value: Any) -> str | None:
@@ -421,6 +445,10 @@ def _media_where_clause(
         clauses.append("me.type = ?")
         params.append(media_type.value)
     if search:
-        clauses.append("LOWER(COALESCE(me.file_name, '')) LIKE ?")
-        params.append(f"%{search.lower()}%")
+        # 2026-11-25 P2-1:转义 LIKE 通配符(% / _ / \),与 _messages_sqlite
+        # list_messages 的 search 同款 — 否则用户输入 `_` 会当单字符通配符,
+        # `100%` 匹配到不含字面 % 的文件名。
+        escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clauses.append("LOWER(COALESCE(me.file_name, '')) LIKE ? ESCAPE '\\'")
+        params.append(f"%{escaped}%")
     return " AND ".join(clauses), params
