@@ -68,6 +68,8 @@ class MediaListCsvExporter(Exporter):
     """
 
     format = ExportFormat.MEDIA_CSV
+    extension = ".csv"
+    uses_media_dto = True
 
     async def render(
         self,

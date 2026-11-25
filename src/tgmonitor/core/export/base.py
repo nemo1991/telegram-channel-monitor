@@ -18,9 +18,18 @@ if TYPE_CHECKING:
 
 
 class Exporter(ABC):
-    """导出器接口。"""
+    """导出器接口。
+
+    2026-11-25 P1-E:类级元数据描述格式能力,由注册表驱动 GUI 下拉 / CLI
+    choices,消除"注册表非唯一真源"漂移(M2)。默认值保持向后兼容 ——
+    现有 exporter 不声明也能工作。
+    """
 
     format: ExportFormat
+    extension: str = ""  # 输出文件扩展名(含点),如 ".json";空 = 调用方自定
+    needs_object_store: bool = False  # render 是否必须有 object_store(ZIP=True)
+    supports_thumbnails: bool = False  # 是否消费 include_thumbnails(HTML/ZIP=True)
+    uses_media_dto: bool = False  # True = MediaExportRequest(per-media 行)而非消息导出
 
     @abstractmethod
     async def render(
@@ -73,6 +82,35 @@ class ExporterRegistry:
     def available(self) -> list[ExportFormat]:
         """所有已注册 format(供 UI 下拉框用)。"""
         return list(self._items.keys())
+
+    def message_formats(self) -> list[ExportFormat]:
+        """走 `ExportRequest`(per-message)的格式 —— GUI 消息导出下拉 / CLI 用。
+
+        P1-E:`MEDIA_CSV` 走 `MediaExportRequest`(per-media 行),不属消息导出,
+        从这里排除;新增消息格式只要 `@exporter` 注册即自动出现,无需改 UI/CLI。
+        按 `ExportFormat` 枚举声明顺序排,保持下拉顺序向后兼容(不受 import 顺序影响)。
+        """
+        order = {f: i for i, f in enumerate(ExportFormat)}
+        return sorted(
+            (f for f, ex in self._items.items() if not ex.uses_media_dto),
+            key=lambda f: order.get(f, len(order)),
+        )
+
+    def media_formats(self) -> list[ExportFormat]:
+        """走 `MediaExportRequest`(per-media)的格式 —— CLI `export media` 用。"""
+        order = {f: i for i, f in enumerate(ExportFormat)}
+        return sorted(
+            (f for f, ex in self._items.items() if ex.uses_media_dto),
+            key=lambda f: order.get(f, len(order)),
+        )
+
+    def extension(self, fmt: ExportFormat) -> str:
+        """格式的默认扩展名(含点),由 exporter 元数据声明。"""
+        return self._items[fmt].extension
+
+    def supports_thumbnails(self, fmt: ExportFormat) -> bool:
+        """格式是否消费 include_thumbnails(驱动 GUI 缩略图勾选框启用态)。"""
+        return self._items[fmt].supports_thumbnails
 
 
 EXPORTERS = ExporterRegistry()

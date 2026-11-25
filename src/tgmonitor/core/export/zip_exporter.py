@@ -83,6 +83,9 @@ class ZipExporter(Exporter):
     """
 
     format = ExportFormat.ZIP
+    extension = ".zip"
+    needs_object_store = True
+    supports_thumbnails = True
 
     async def render(
         self,

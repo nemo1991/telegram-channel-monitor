@@ -109,6 +109,8 @@ class HtmlExporter(Exporter):
     """
 
     format = ExportFormat.HTML
+    extension = ".html"
+    supports_thumbnails = True
 
     def __init__(self) -> None:
         """建 Jinja2 Environment + 预编译模板(同步 init,模板一次性)。"""

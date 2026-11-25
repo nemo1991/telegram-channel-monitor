@@ -53,6 +53,7 @@ class CsvExporter(Exporter):
     """
 
     format = ExportFormat.CSV
+    extension = ".csv"
 
     async def render(
         self,
