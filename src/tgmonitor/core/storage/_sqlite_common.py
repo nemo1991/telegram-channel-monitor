@@ -424,5 +424,3 @@ def _media_where_clause(
         clauses.append("LOWER(COALESCE(me.file_name, '')) LIKE ?")
         params.append(f"%{search.lower()}%")
     return " AND ".join(clauses), params
-
-
