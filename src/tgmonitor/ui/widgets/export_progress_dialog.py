@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from tgmonitor.ui._qt_signal import disconnect_quietly
+
 
 class ExportProgressDialog(QDialog):
     """导出进度对话框 — 显示当前 ExportProgress + 取消按钮。
@@ -110,11 +112,7 @@ class ExportProgressDialog(QDialog):
         解除 signal 连接,避免 dangling pointer;不主动 cancel — 用户可能
         想让导出在后台跑完,关窗只是不显示进度条。
         """
-        try:
-            self._vm.export_progress.disconnect(self._on_progress)
-        except (RuntimeError, TypeError):
-            # 已 disconnect(Qt 抛 RuntimeError);TypeError 是 slot 已 GC
-            pass
+        disconnect_quietly(self._vm.export_progress, self._on_progress)
         super().closeEvent(event)
 
     def done(self, result: int) -> None:
@@ -123,8 +121,5 @@ class ExportProgressDialog(QDialog):
         `ExportDone` 事件触发 vm._on_export_done 自动调 `dlg.accept()` —
         此方法负责断开 signal + 走父类 done。
         """
-        try:
-            self._vm.export_progress.disconnect(self._on_progress)
-        except (RuntimeError, TypeError):
-            pass
+        disconnect_quietly(self._vm.export_progress, self._on_progress)
         super().done(result)

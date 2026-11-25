@@ -59,36 +59,15 @@ if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
 from tgmonitor.core.storage import _messages_pg as _messages
+from tgmonitor.core.storage._media_codec import (  # re-export: _thumbnails_pg 经本模块引用
+    _MEDIA_SORT_COLUMN,
+    _media_status,
+    _status_to_db,
+)
 
-# 2026-08-25 v1.3.0 PR #6:SortKey → SQL ORDER BY 列名映射。
-# DATE 走 m.date;SIZE 走 me.file_size(可能 NULL → NULLS LAST 让 NULL 落到末尾);
-# STATUS 走 me.download_status(枚举字符串字典序 = done<failed<pending<downloading)。
-# value 是 (column, nulls_last) — direction 与 nulls_last 在拼 ORDER BY 时分别处理,
-# 见 _media_order_by_clause(DESC 时变 `col DESC NULLS LAST`,ASC 时 `col ASC NULLS LAST`)。
-_MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
-    SortKey.DATE: ("m.date", False),
-    SortKey.SIZE: ("me.file_size", True),
-    SortKey.STATUS: ("me.download_status", False),
-}
-
-
-def _media_status(value: object | None) -> MediaDownloadStatus | None:
-    """反序列化 download_status(None=未下载)。
-
-    2026-11-22:历史 DB 里未下载存的是字符串 `'pending'`,枚举已删该值 →
-    与非法 / 缺失(旧库)一并读成 None,不迁移 schema。
-    """
-    if value is None or str(value) == "pending":
-        return None
-    try:
-        return MediaDownloadStatus(str(value))
-    except ValueError:
-        return None
-
-
-def _status_to_db(value: MediaDownloadStatus | None) -> str:
-    """序列化 download_status — None(未下载)沿用历史物理值 'pending'。"""
-    return value.value if value is not None else "pending"
+# 2026-11-25 P1-N2:`_MEDIA_SORT_COLUMN` / `_media_status` / `_status_to_db`
+# 已收口到 `_media_codec.py` SQLite/PG 唯一定义点,顶部 import 保留为模块
+# 属性(_thumbnails_pg 经 `_media._media_status` 引用,契约不变)。
 
 
 def _media_to_row(message_pk: int, m: MediaDTO, idx: int) -> tuple[Any, ...]:

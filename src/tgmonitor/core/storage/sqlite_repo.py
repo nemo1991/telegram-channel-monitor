@@ -43,6 +43,11 @@ from tgmonitor.core.dto import (
     SortKey,
     ThumbnailDTO,
 )
+from tgmonitor.core.storage._media_codec import (
+    _MEDIA_SORT_COLUMN,
+    _media_status,
+    _status_to_db,
+)
 from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
 
@@ -269,15 +274,9 @@ EXPECTED_SCHEMA: dict[str, dict[str, str]] = {
 
 EXPECTED_TABLES: frozenset[str] = frozenset(EXPECTED_SCHEMA.keys())
 
-# SortKey → ORDER BY 列(SIZE 可能 NULL → NULLS LAST,与 PG 对齐)。
-_MEDIA_SORT_COLUMN: dict[SortKey, tuple[str, bool]] = {
-    SortKey.DATE: ("m.date", False),
-    SortKey.SIZE: ("me.file_size", True),
-    SortKey.STATUS: ("me.download_status", False),
-}
-
-
 # ---- 序列化 helper ----
+# `_MEDIA_SORT_COLUMN` / `_media_status` / `_status_to_db` 已收口到
+# `_media_codec.py`(2026-11-25 P1-N2),由顶部 import 引入。
 
 
 def _dt_to_db(dt: datetime | None) -> str | None:
@@ -304,29 +303,6 @@ def _json_from_db(value: str | None) -> Any:
 def _sql_lower(value: str | None) -> str | None:
     """注册到 SQLite 的 LOWER — Python str.lower 是 Unicode 感知,对齐 PG。"""
     return value.lower() if value is not None else None
-
-
-def _media_status(value: object | None) -> MediaDownloadStatus | None:
-    """反序列化 download_status(None=未下载)。
-
-    2026-11-22:历史 DB 里未下载存的是字符串 `'pending'`,枚举已删该值 →
-    与非法 / 缺失值一并读成 None,不迁移 schema(NOT NULL 列仍写 'pending')。
-    """
-    if value is None or str(value) == "pending":
-        return None
-    try:
-        return MediaDownloadStatus(str(value))
-    except ValueError:
-        return None
-
-
-def _status_to_db(value: MediaDownloadStatus | None) -> str:
-    """序列化 download_status — None(未下载)沿用历史物理值 'pending'。
-
-    DB 列 NOT NULL,不迁移 schema;枚举已删 PENDING,此处是唯一允许写出
-    'pending' 字面量的地方,读回时由 `_media_status` 转回 None。
-    """
-    return value.value if value is not None else "pending"
 
 
 def _placeholders(n: int) -> str:
