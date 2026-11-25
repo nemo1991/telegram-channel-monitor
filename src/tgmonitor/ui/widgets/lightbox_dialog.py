@@ -59,14 +59,13 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QFrame,
-    QGraphicsOpacityEffect,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
+
+from tgmonitor.ui.widgets import _lightbox_control_bar as _control_bar
 
 if TYPE_CHECKING:
     pass
@@ -322,7 +321,7 @@ class LightboxDialog(QDialog):
         # v1.6.10:按当前 kind / data 启灰工具栏按钮
         self._update_button_states()
         # 2026-09-09 v1.7.2:刷新 ▶/⏸ 按钮图标(切图后状态可能变)。
-        # noqa: capability-probe — 控制条按 kind 条件 build,kind=image 不创建
+        # 控制条按 kind 条件 build,kind=image 不创建
         if hasattr(self, "_btn_play_pause"):
             self._update_play_pause_button()
 
@@ -733,137 +732,33 @@ class LightboxDialog(QDialog):
 
     # ---- v1.6.10 控制条 ----
 
-    def _build_control_bar(self) -> None:
-        """底部贴边工具栏 — 7 个按钮(上一张/下一张/缩小/放大/旋转/另存为/关闭)。
+    # 2026-11-25 P2-N5b:控制条构建 / 淡入淡出实现体抽到
+    # `_lightbox_control_bar.py`(free function + host 透传);方法名与所有
+    # `_btn_*` / `_control_bar` 属性保留(测试直接访问,几何/信号不变)。
 
-        默认隐藏,`mouseMoveEvent` 触发 `_show_bar` 淡入 + 重启 2s QTimer
-        静默淡出。视觉风格延续 `_zoom_label` 的半透黑底白字(避免引入
-        stylesheet 二套体系)。
-        """
-        self._init_control_bar_frame()
-        self._init_control_buttons()
-        self._wire_control_buttons()
-        self._init_bar_opacity_and_timer()
-        # 把 control_bar 加进 outer layout,align bottom-center。stretch=0
-        # 不抢画布空间;_canvas(stretch=1)撑满中间区域
-        outer = self.layout()
-        assert outer is not None
-        outer.addWidget(self._control_bar)
-        outer.setAlignment(self._control_bar, Qt.AlignBottom | Qt.AlignHCenter)
+    def _build_control_bar(self) -> None:
+        _control_bar.build_control_bar(self)
 
     def _init_control_bar_frame(self) -> None:
-        """QFrame + stylesheet + QHBoxLayout 容器,设半透黑底白字风格。"""
-        self._control_bar = QFrame(self)
-        self._control_bar.setStyleSheet(
-            "QFrame { background-color: rgba(0, 0, 0, 180); border-radius: 6px; }"
-            "QPushButton { color: white; background: transparent; border: none;"
-            " padding: 6px 12px; font-size: 16px; }"
-            "QPushButton:hover { background-color: rgba(255, 255, 255, 30); }"
-            "QPushButton:disabled { color: rgba(255, 255, 255, 80); }"
-        )
-        bar = QHBoxLayout(self._control_bar)
-        bar.setContentsMargins(12, 6, 12, 6)
-        bar.setSpacing(4)
+        _control_bar.init_control_bar_frame(self)
 
     def _init_control_buttons(self) -> None:
-        """建 9 个按钮(prev/next/zoom_out/zoom_in/rotate/play_pause/slideshow/save/close)+ 布局。"""
-        self._btn_prev = self._make_btn("‹", self.tr("上一张"))
-        self._btn_next = self._make_btn("›", self.tr("下一张"))
-        self._btn_zoom_out = self._make_btn("−", self.tr("缩小"))
-        self._btn_zoom_in = self._make_btn("＋", self.tr("放大"))
-        self._btn_rotate = self._make_btn("⟳", self.tr("旋转 90°"))
-        # 2026-09-09 v1.7.2:▶/⏸ 按钮 — gif / video 播放切换。
-        self._btn_play_pause = self._make_btn("▶", self.tr("播放/暂停"))
-        # 2026-09-09 v1.7.2:⏯ 幻灯片切换(checkable)。
-        self._btn_slideshow = self._make_btn("⏯", self.tr("幻灯片"))
-        self._btn_slideshow.setCheckable(True)
-        self._btn_save = self._make_btn("⤓", self.tr("另存为…"))
-        self._btn_close = self._make_btn("关闭", self.tr("关闭"))
-
-        bar = self._control_bar.layout()
-        assert isinstance(bar, QHBoxLayout)
-        bar.addWidget(self._btn_prev)
-        bar.addWidget(self._btn_next)
-        bar.addSpacing(16)
-        bar.addWidget(self._btn_zoom_out)
-        bar.addWidget(self._btn_zoom_in)
-        bar.addSpacing(16)
-        bar.addWidget(self._btn_rotate)
-        bar.addWidget(self._btn_play_pause)
-        bar.addWidget(self._btn_slideshow)
-        bar.addSpacing(16)
-        bar.addWidget(self._btn_save)
-        bar.addWidget(self._btn_close)
+        _control_bar.init_control_buttons(self)
 
     def _wire_control_buttons(self) -> None:
-        """9 个按钮 clicked/toggled 信号接 handler。"""
-        self._btn_prev.clicked.connect(lambda: self._step_index(-1))
-        self._btn_next.clicked.connect(lambda: self._step_index(+1))
-        self._btn_zoom_out.clicked.connect(self._zoom_out)
-        self._btn_zoom_in.clicked.connect(self._zoom_in)
-        self._btn_rotate.clicked.connect(self._rotate_90)
-        self._btn_play_pause.clicked.connect(self._toggle_play_pause)
-        self._btn_slideshow.toggled.connect(self._toggle_slideshow)
-        self._btn_save.clicked.connect(self._save_current)
-        self._btn_close.clicked.connect(self.accept)
+        _control_bar.wire_control_buttons(self)
 
     def _init_bar_opacity_and_timer(self) -> None:
-        """QGraphicsOpacityEffect 通道(避开 QFrame 在父 dialog 内 setWindowOpacity 无效的坑)+ 2s 淡出 QTimer。
-
-        底部居中 — 用独立 QHBoxLayout 加一层 stretch wrapper 比较啰嗦,
-        直接 fixed bottom + adjustSize + 在 resizeEvent 里 move 居中。
-        """
-        self._control_bar.hide()
-        # QFrame 在父 dialog 内不是独立 window → setWindowOpacity 无效。
-        # 用 QGraphicsOpacityEffect 走 widget 的 graphics effect 通道。
-        self._bar_opacity_effect = QGraphicsOpacityEffect(self._control_bar)
-        self._bar_opacity_effect.setOpacity(0.0)
-        self._control_bar.setGraphicsEffect(self._bar_opacity_effect)
-        self._control_bar.adjustSize()
-
-        # 2s 不动 → 淡出
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(2000)
-        self._hide_timer.timeout.connect(self._fade_out_bar)
+        _control_bar.init_bar_opacity_and_timer(self)
 
     def _make_btn(self, text: str, tooltip: str) -> QPushButton:
-        """单按钮工厂 — NoFocus 防按钮抢键盘焦点,左右方向键继续走 keyPressEvent 翻页。"""
-        btn = QPushButton(text, self._control_bar)
-        btn.setToolTip(tooltip)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setFocusPolicy(Qt.NoFocus)
-        btn.setFixedHeight(32)
-        return btn
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt API
-        """v1.6.10:鼠标移动 → 控制条淡入 + 重启 2s 静默淡出 timer。
-
-        不抢 `mousePressEvent` 的关闭语义 — 关闭仍由 mousePress 处理。
-        """
-        if event is not None and self._control_bar is not None:
-            self._show_bar()
-        super().mouseMoveEvent(event)
+        return _control_bar.make_btn(self, text, tooltip)
 
     def _show_bar(self) -> None:
-        """鼠标动 → bar 渐显 + 重启 2s timer。"""
-        if self._control_bar is None:
-            return
-        self._control_bar.show()
-        self._bar_opacity_effect.setOpacity(1.0)
-        self._hide_timer.start()
+        _control_bar.show_bar(self)
 
     def _fade_out_bar(self) -> None:
-        """2s 不动 → bar 渐隐。
-
-        用 QGraphicsOpacityEffect 而不是 setWindowOpacity,因为 QFrame
-        在父 dialog 内不是独立 window,setWindowOpacity 不生效。
-        QGraphicsOpacityEffect 走 widget 的 graphics effect 通道,所有
-        平台统一支持。
-        """
-        if self._control_bar is None:
-            return
-        self._bar_opacity_effect.setOpacity(0.0)
+        _control_bar.fade_out_bar(self)
 
     def _zoom_in(self) -> None:
         """点 + 按钮放大 1.25×,clamp 到 _max_zoom。仅 image 生效。"""
@@ -938,7 +833,7 @@ class LightboxDialog(QDialog):
 
     def _update_button_states(self) -> None:
         """按当前 kind / data 启灰工具栏按钮。"""
-        # noqa: capability-probe — 控制条按 kind 条件 build,老测试无控制条场景
+        # 控制条按 kind 条件 build,老测试无控制条场景
         if not hasattr(self, "_btn_prev"):
             # _build_control_bar 未调 — 老测试无控制条场景,跳过
             return
