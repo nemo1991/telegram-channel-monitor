@@ -6,6 +6,11 @@
     落盘: <root>/media/ab/cd/abcdef1234567890.jpg
 
 适用:大量小文件时,避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
+
+2026-11-25 P1-N3:`connect/close/_ensure_inside_root/get/exists/delete/
+stat/open_read/stream_read` 与 Local 后端逐字重复,已上提到 `_fs_base.py`
+共享基类。本模块只保留分片布局特有的 `__init__` / `_path` / `put` /
+`iter_keys`。
 """
 
 from __future__ import annotations
@@ -14,14 +19,15 @@ import asyncio
 import os
 import re
 from pathlib import Path
-from typing import AsyncIterator, BinaryIO, Iterator
+from typing import AsyncIterator
 
-from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
+from tgmonitor.core.objectstore._fs_base import LocalFsStoreBase
+from tgmonitor.core.objectstore.base import ObjectMeta
 
 _VALID_KEY = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
 
-class FolderObjectStore(ObjectStore):
+class FolderObjectStore(LocalFsStoreBase):
     """两级分片:文件名前 2 字符 + 后 2 字符做目录(目录前缀按字面保留)。
 
     适用:大量小文件时避免单目录 inode 压力;仍可用任何 FS 工具直接浏览。
@@ -31,23 +37,8 @@ class FolderObjectStore(ObjectStore):
 
     def __init__(self, root: Path, shard_size: int = 2) -> None:
         """`root` = 根目录;`shard_size` = 分片前缀长度(0 = 不分片,等同平铺)。"""
-        self._root = Path(root)
+        super().__init__(root)
         self._shard = shard_size  # 0 = 不分片,等同平铺
-
-    # ---- 生命周期 ----
-
-    async def connect(self) -> None:
-        """确保 root 目录存在且可写(配置变更保存前做真实写探测)。
-
-        mkdir(exist_ok=True) 对「目录已存在但不可写」不报错,写入时才失败;
-        加一步探针写/删,权限问题在保存设置时就暴露(2026-08-18)。
-        """
-        self._root.mkdir(parents=True, exist_ok=True)
-        probe_writable(self._root)
-
-    async def close(self) -> None:
-        """本地 FS 无连接 — no-op。"""
-        return None
 
     # ---- 路径解析 ----
 
@@ -70,12 +61,6 @@ class FolderObjectStore(ObjectStore):
         tail = name[self._shard : self._shard * 2]
         return (self._root / parent / head / tail / name).resolve()
 
-    def _ensure_inside_root(self, path: Path) -> None:
-        try:
-            path.relative_to(self._root.resolve())
-        except ValueError as e:
-            raise ValueError(f"key escapes root: {path}") from e
-
     # ---- 操作 ----
 
     async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
@@ -96,68 +81,6 @@ class FolderObjectStore(ObjectStore):
 
         await asyncio.to_thread(_write)
         return key
-
-    async def get(self, key: str) -> bytes:
-        """读全量 bytes;不存在抛 `KeyError`。读盘走 to_thread 不阻塞 loop。"""
-        path = self._path(key)
-        self._ensure_inside_root(path)
-        if not path.exists():
-            raise KeyError(key)
-        return await asyncio.to_thread(path.read_bytes)
-
-    async def exists(self, key: str) -> bool:
-        """是否存在(比 try get + 捕获 KeyError 轻)。"""
-        path = self._path(key)
-        self._ensure_inside_root(path)
-        return path.exists()
-
-    async def delete(self, key: str) -> None:
-        """删除;不存在不抛(idempotent)。"""
-        path = self._path(key)
-        self._ensure_inside_root(path)
-        if path.exists():
-            path.unlink()
-
-    async def stat(self, key: str) -> ObjectMeta | None:
-        """拿 size;不存在返 None(不抛)。"""
-        path = self._path(key)
-        self._ensure_inside_root(path)
-        if not path.exists():
-            return None
-        return ObjectMeta(size=path.stat().st_size)
-
-    async def open_read(self, key: str) -> BinaryIO:
-        """默认 `BytesIO(await get())`;Folder 不 override streaming。"""
-        from io import BytesIO
-
-        return BytesIO(await self.get(key))
-
-    async def stream_read(
-        self,
-        key: str,
-        chunk_size: int = 65536,
-    ) -> AsyncIterator[bytes]:
-        """Folder 真流式 — 2026-09-02 v1.5.2 PR #B6。
-
-        同 Local override 的 sync-gen + to_thread 模式,只是路径走两级
-        分片布局(`_path()` 内部把 key 重组为 `<root>/<parent>/<head>/<tail>/<name>`)。
-        """
-        path = self._path(key)
-        self._ensure_inside_root(path)
-        if not path.exists():
-            raise KeyError(key)
-
-        def _chunks() -> Iterator[bytes]:
-            with path.open("rb") as f:
-                while True:
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        return
-                    yield chunk
-
-        items = await asyncio.to_thread(list, _chunks())
-        for c in items:
-            yield c
 
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """枚举所有 key — 把分片布局展开成原始 key(2026-08-24 orphan reconcile)。

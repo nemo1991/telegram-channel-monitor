@@ -44,6 +44,7 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.events import MediaDeleted, MediaDownloaded
+from tgmonitor.ui._qt_signal import disconnect_quietly
 from tgmonitor.ui.async_bridge import run_coro
 from tgmonitor.ui.controllers._base import MainWindowCtx
 from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem
@@ -206,11 +207,8 @@ class MediaActionsController:
     ) -> None:
         """`delete_preview_ready` 信号 handler — 弹 dialog,Accepted 才真删。"""
 
-        # 断开一次性连接,避免重复触发
-        try:
-            self._ctx.vm.delete_preview_ready.disconnect()
-        except (RuntimeError, TypeError):
-            pass  # 没连过 / 已断
+        # 断开一次性连接,避免重复触发(已断 / 没连过一律静默)
+        disconnect_quietly(self._ctx.vm.delete_preview_ready)
 
         if not isinstance(preview, DeleteChannelPreview):
             return
