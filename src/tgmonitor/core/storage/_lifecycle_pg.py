@@ -410,7 +410,7 @@ async def init_schema(self: PostgresRepository) -> None:
             await conn.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
         try:
             await conn.execute(SCHEMA_SQL)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 部分失败只降级警告,功能仍可用
             # 2026-09-03 v1.6.0 PR #Q1:最常见原因是 superuser 权限不足
             # (pg_trgm GIN 索引需要)。log.warning 不抛 — `LOWER LIKE`
             # 全表扫仍是合法行为,只是性能降级。生产环境若需要 GIN 加速
@@ -544,5 +544,5 @@ async def ping(self: PostgresRepository) -> bool:
         async with self._pool.acquire() as conn:
             await conn.fetchval("SELECT 1")
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — ping 契约:任何异常一律返 False
         return False

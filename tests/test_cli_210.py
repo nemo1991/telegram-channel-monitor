@@ -115,8 +115,8 @@ async def test_login_writes_credentials_before_bootstrap(monkeypatch, tmp_path) 
     args = _args("login", api_id=123, api_hash="h" * 32, show_url=False)
     try:
         await auth.run_login(args)  # app=None → 生产路径
-    except Exception:
-        pass  # fake_context 的 None ctx 会在后续崩,这里只关心写盘已发生
+    except Exception:  # noqa: BLE001 — fake_context 的 None ctx 会在后续崩,只关心写盘已发生
+        pass
     assert len(env_seen) == 1
     assert "TG_API_ID=123" in env_seen[0]
     assert "h" * 32 in env_seen[0]

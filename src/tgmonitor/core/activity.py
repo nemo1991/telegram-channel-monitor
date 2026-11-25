@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from tgmonitor.core.dto import ActivityDTO
 from tgmonitor.core.events import (
@@ -195,19 +195,33 @@ def format_activity(event: Event) -> ActivityDTO | None:
     return None
 
 
-def make_persistence_subscriber(store: ActivityStore):
+def make_persistence_subscriber(
+    store: ActivityStore | Callable[[], ActivityStore],
+):
     """构造一个 `EventBus.subscribe_all` 订阅者，把覆盖事件落库。
+
+    `store` 可传 ActivityStore 实例（普通用法），也可传 getter（热重载安全）。
+    后者每次落库时重新求值，使切库后订阅者自动指向新 storage —— 修复
+    bootstrap 在构造期闭包捕获具体实例、reconfigure 后仍写旧库的静默 bug
+    （2026-11-25 v2.1.3 P0-C2）。
 
     订阅者内部吞掉所有异常（EventBus 契约本就吞），避免落库失败影响主流程；
     落库失败只记 warning。UI 侧另有订阅者负责实时追加，本订阅者只管持久化。
     """
+
+    # 判别不能用 callable():MagicMock 替身既 callable 又有 append_activity。
+    # 以是否具 append_activity 为准 —— 有则是 store 实例,无则是 getter。
+    def get_store() -> ActivityStore:
+        if hasattr(store, "append_activity"):
+            return cast("ActivityStore", store)
+        return store()
 
     async def _subscriber(event: Event) -> None:
         activity = format_activity(event)
         if activity is None:
             return
         try:
-            await store.append_activity(activity)
+            await get_store().append_activity(activity)
         except Exception:  # noqa: BLE001 — 落库失败不阻断事件主流程
             log.warning("append_activity failed for %s", activity.event_type, exc_info=True)
 

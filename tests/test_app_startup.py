@@ -172,7 +172,7 @@ def test_background_startup_updates_activity_label(app_source: str) -> None:
 # ---- helper ----
 
 
-def _extract_function_body(source: str, name: str) -> str | None:
+def _extract_function_body(source: str, name: str) -> str | None:  # noqa: C901 — 测试专用源码解析,分支多为括号/缩进边界,够用即可
     """简单 Python 解析 — 找 `def NAME(...)` 到下一个 `def` / `class` / 同级缩进的
     语句块为止。够用,因为 app.py 里都是顶层函数 / 嵌套函数(缩进 4 空格)。
 

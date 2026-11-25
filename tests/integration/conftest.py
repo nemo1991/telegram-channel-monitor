@@ -50,7 +50,7 @@ def _pg_container_or_skip():
         pytest.skip("testcontainers[postgres] 未装", allow_module_level=False)
     try:
         return PostgresContainer("postgres:16-alpine")
-    except Exception as e:  # DockerNotFoundError / ImageNotFoundError / 权限问题
+    except Exception as e:  # noqa: BLE001 — DockerNotFoundError / ImageNotFoundError / 权限问题一律跳过
         pytest.skip(f"Docker 不可用,跳过 PG 集成测试: {type(e).__name__}: {e}")
 
 
@@ -97,8 +97,7 @@ async def pg_repo(pg_engine) -> AsyncIterator[PostgresRepository]:
         async with repo._pool.acquire() as conn:  # type: ignore[attr-defined]
             try:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-            except Exception:
-                # 兜底:init_schema 内部也会再试一次,这里是 best-effort
+            except Exception:  # noqa: BLE001 — 兜底:init_schema 内部也会再试,这里 best-effort
                 pass
         await repo.init_schema()
         # 清理 schema:直接 drop tables + recreate,比 TRUNCATE 更快也更彻底

@@ -82,7 +82,12 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC"]
+# 2026-11-25 v2.1.3 P4:渐进引入复杂度 / 宽泛异常门禁。
+# - BLE:宽泛 except 必须显式 # noqa 知情抑制(此前 142 处已带,新开 6 处)。
+# - C90:圈复杂度上限 15,仅 app.py:run() 组合根入口(23)已知豁免。
+# - ANN 暂不开启:全 src 94 处,其中 23 处 Any 注解是第三方边界的刻意选择,
+#   强开会逼出无意义 `-> Any`;待 core 边界 Any 收窄后再评估(见重构计划 P4)。
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC", "BLE", "C90"]
 ignore = [
     "E501",   # line length
     "UP042",  # str + Enum is fine for pydantic-settings / json roundtrip
@@ -91,6 +96,9 @@ ignore = [
     "N818",   # exception naming — we use domain names
     "B008",   # default-arg call sites in Qt widgets
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

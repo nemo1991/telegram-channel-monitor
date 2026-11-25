@@ -135,7 +135,7 @@ class S3ObjectStore(ObjectStore):
             async with self._client() as s3:
                 await s3.head_object(Bucket=self._bucket, Key=key)
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — HEAD 探测 best-effort,网络/权限错误一律视为不存在
             return False
 
     async def delete(self, key: str) -> None:
@@ -152,7 +152,7 @@ class S3ObjectStore(ObjectStore):
                 content_type=h.get("ContentType"),
                 size=h.get("ContentLength"),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — HEAD 错误一律视为无元数据(best-effort)
             return None
 
     async def open_read(self, key: str) -> BinaryIO:
