@@ -49,18 +49,25 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --group dev -q
 
-      # 只 load entry point,不调 main():--help 会启动 Qt loop,在 macOS runner 卡死。
+      # 只 load entry point,不调 main():避免任何入口在 runner 上意外启动 GUI。
+      # 2.1.2:两个入口 tgmon(GUI) / tgmon-cli(CLI),旧的 tgmonitor 已移除。
       - name: Verify CLI entry
         shell: bash
         run: |
           uv run python - <<'PY'
           from importlib.metadata import entry_points
 
-          matches = entry_points(group="console_scripts", name="tgmonitor")
-          assert len(matches) == 1, matches
-          entry = next(iter(matches))
-          assert callable(entry.load())
-          print(f"{entry.name} -> {entry.value}")
+          scripts = {ep.name: ep for ep in entry_points(group="console_scripts")}
+          for name, expected in (
+              ("tgmon", "tgmonitor.__main__:main"),
+              ("tgmon-cli", "tgmonitor.cli.main:main_tgmon_cli"),
+          ):
+              entry = scripts.get(name)
+              assert entry is not None, f"missing console script: {name}"
+              assert entry.value == expected, (name, entry.value)
+              assert callable(entry.load())
+              print(f"{entry.name} -> {entry.value}")
+          assert "tgmonitor" not in scripts, "tgmonitor 命令应在 2.1.2 移除"
           PY
 
       # 三平台统一裸 pytest,覆盖率交给下方独立的 coverage job(仅 ubuntu)。
