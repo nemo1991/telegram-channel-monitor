@@ -18,9 +18,23 @@ from tgmonitor.core.storage.sqlite_repo import EXPECTED_SCHEMA, SqliteRepository
 # 迁移逻辑必须保留旧列名作为「源」;除此之外存储层不应再出现裸 subscribed 列。
 _STORAGE_MODULES = (
     "sqlite_repo.py",
+    # 2026-11-25 P2-N1:SQLite 按域拆出 free-function module,迁移 SQL 移到
+    # _lifecycle_sqlite.py;全部纳入扫描以维持「无裸 subscribed 列」守门覆盖。
+    "_lifecycle_sqlite.py",
+    "_channels_sqlite.py",
+    "_messages_sqlite.py",
+    "_media_sqlite.py",
+    "_thumbnails_sqlite.py",
+    "_user_meta_sqlite.py",
+    "_activity_sqlite.py",
+    "_sqlite_common.py",
     "_lifecycle_pg.py",
     "_channels_pg.py",
     "_messages_pg.py",
+    "_media_pg.py",
+    "_thumbnails_pg.py",
+    "_user_meta_pg.py",
+    "_activity_pg.py",
 )
 _MIGRATION_MARKERS = (
     "RENAME COLUMN",  # ALTER TABLE ... RENAME COLUMN subscribed TO monitored

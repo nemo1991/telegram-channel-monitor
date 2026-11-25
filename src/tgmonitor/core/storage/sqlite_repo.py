@@ -1,8 +1,9 @@
-"""SQLite 仓储 — v2.0.0 默认后端(aiosqlite,WAL)。
+"""SQLite 仓储 facade — v2.0.0 默认后端(aiosqlite,WAL)。
 
-单文件内聚实现 `StorageRepository` 的全部方法,查询语义与
-`postgres_repo` 逐条对齐(契约测试 `tests/test_storage_backends.py`
-parametrize 守门)。
+2026-11-25 P2-N1:按域把方法体抽到 7 个 `_xxx_sqlite.py` free-function module
+(与 PG 端 `_xxx_pg.py` 1:1 对称)。本类只持连接状态(`_db` / `_lock` / `_path`)
+并提供 48 个 1 行 thin delegate;查询语义与 `postgres_repo` 逐条对齐(契约测试
+`tests/test_storage_backends.py` parametrize 守门)。
 
 设计要点:
 - 单连接 + `asyncio.Lock` 串行化所有操作。SQLite 单写者,桌面规模下
@@ -22,9 +23,7 @@ parametrize 守门)。
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,15 +37,17 @@ from tgmonitor.core.dto import (
     MediaDTO,
     MediaType,
     MessageDTO,
-    ReactionDTO,
     SortDir,
     SortKey,
     ThumbnailDTO,
 )
-from tgmonitor.core.storage._media_codec import (
-    _MEDIA_SORT_COLUMN,
-    _status_to_db,
-)
+from tgmonitor.core.storage import _activity_sqlite as _activity
+from tgmonitor.core.storage import _channels_sqlite as _channels
+from tgmonitor.core.storage import _lifecycle_sqlite as _lifecycle
+from tgmonitor.core.storage import _media_sqlite as _media
+from tgmonitor.core.storage import _messages_sqlite as _messages
+from tgmonitor.core.storage import _thumbnails_sqlite as _thumbnails
+from tgmonitor.core.storage import _user_meta_sqlite as _user_meta
 from tgmonitor.core.storage._sqlite_common import (  # noqa: F401 — re-export 保持契约
     EXPECTED_SCHEMA,
     EXPECTED_TABLES,
@@ -65,245 +66,47 @@ from tgmonitor.core.storage._sqlite_common import (  # noqa: F401 — re-export 
     _sql_lower,
 )
 from tgmonitor.core.storage.repository import StorageRepository
-from tgmonitor.core.storage.schema_report import ColumnDrift, SchemaReport
-
-log = logging.getLogger(__name__)
-
-
-# 2026-11-25 P2-N1:schema 常量 + 序列化 / row 映射 helper 抽到 `_sqlite_common.py`
-# (主类与后续 mixin 共用,避免循环);上面 re-export 保持
-# `tests/test_storage_migration_2006.py` 对 EXPECTED_SCHEMA 的 import 契约。
+from tgmonitor.core.storage.schema_report import SchemaReport
 
 
 class SqliteRepository(StorageRepository):
-    """SQLite 后端 — 单连接 + asyncio.Lock 串行化;WAL 模式。"""
+    """SQLite 后端 — 单连接 + asyncio.Lock 串行化;WAL 模式。
+
+    facade:连接状态在此,方法体在 7 个按域 module(见顶部 import)。
+    """
 
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path) if path != ":memory:" else path
         self._db: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
 
-    # ---- 生命周期 ----
+    # ---- 生命周期 → _lifecycle_sqlite ----
 
     async def connect(self) -> None:
-        """建连接 + PRAGMA;幂等(已连接直接返回)。"""
-        if self._db is not None:
-            return
-        if isinstance(self._path, Path):
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(str(self._path), isolation_level=None)
-        self._db.row_factory = aiosqlite.Row
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._db.execute("PRAGMA busy_timeout=5000")
-        await self._db.execute("PRAGMA synchronous=NORMAL")
-        # Unicode LOWER — 对齐 PG(SQLite 内置 LOWER 只折 ASCII)。
-        await self._db.create_function("LOWER", 1, _sql_lower, deterministic=True)
+        return await _lifecycle.connect(self)
 
     async def close(self) -> None:
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
+        return await _lifecycle.close(self)
 
     async def init_schema(self) -> None:
-        """建表 + 幂等补齐缺失列。
-
-        2026-11-17 v2.0.3 修复:原实现只跑 `CREATE TABLE IF NOT EXISTS`,对存量表的
-        **新增列无效**,存量库补不上 `tg_subscribed` 致大盘查询抛 "no such column"。
-        这里对齐 PG 的 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`:每次 init_schema
-        主动按 EXPECTED_SCHEMA 幂等补缺失列,新增列不回填(保持列默认值)。
-        schema 迁移对用户无感 —— 无开关、无需配置,启动即自愈。
-        """
-        assert self._db is not None
-        async with self._lock:
-            # 2.0.6 一次性列改名迁移:旧库物理列 subscribed(=监听)→monitored。
-            # 必须在 SCHEMA_SQL(IF NOT EXISTS)之前做 —— 否则旧表会先被补出
-            # 一个空的 monitored 列,造成「旧列有数据、新列空」的静默分裂。
-            cols = {
-                r["name"] for r in await self._db.execute_fetchall("PRAGMA table_info('channels')")
-            }
-            if "subscribed" in cols and "monitored" not in cols:
-                log.warning("init_schema: 迁移 channels.subscribed → monitored")
-                await self._db.execute("ALTER TABLE channels RENAME COLUMN subscribed TO monitored")
-            await self._db.executescript(SCHEMA_SQL)
-            # 幂等补列 — 类型来自 EXPECTED_SCHEMA(与 SCHEMA_SQL 同步维护)。
-            for table, columns in EXPECTED_SCHEMA.items():
-                existing = {
-                    r["name"]
-                    for r in await self._db.execute_fetchall(f"PRAGMA table_info('{table}')")
-                }
-                for column, decl in columns.items():
-                    if column not in existing:
-                        log.warning("init_schema: backfilling missing column %s.%s", table, column)
-                        await self._db.execute(
-                            f'ALTER TABLE "{table}" ADD COLUMN "{column}" {decl}'
-                        )
+        return await _lifecycle.init_schema(self)
 
     async def introspect_schema(self) -> SchemaReport:
-        """查 sqlite_master + PRAGMA table_info 比对 EXPECTED_SCHEMA。"""
-        assert self._db is not None
-        async with self._lock:
-            table_rows = await self._db.execute_fetchall(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-            actual_tables = {r["name"] for r in table_rows}
-            actual_cols: dict[tuple[str, str], str] = {}
-            for t in sorted(actual_tables):
-                # 表名来自 sqlite_master(内部值),无注入面。
-                rows = await self._db.execute_fetchall(f"PRAGMA table_info('{t}')")
-                for r in rows:
-                    actual_cols[(t, r["name"])] = r["type"].upper()
-
-        missing_tables = sorted(EXPECTED_TABLES - actual_tables)
-        missing_columns: list[tuple[str, str, str]] = []
-        wrong_types: list[ColumnDrift] = []
-        extra_columns: list[tuple[str, str, str]] = []
-
-        for t, cols in EXPECTED_SCHEMA.items():
-            if t in missing_tables:
-                continue
-            for c, expected in cols.items():
-                actual = actual_cols.get((t, c))
-                if actual is None:
-                    missing_columns.append((t, c, expected))
-                elif actual != expected:
-                    wrong_types.append(ColumnDrift(t, c, expected, actual))
-        for (t, c), actual in actual_cols.items():
-            if t in EXPECTED_SCHEMA and c not in EXPECTED_SCHEMA[t]:
-                extra_columns.append((t, c, actual))
-
-        return SchemaReport(
-            missing_tables=missing_tables,
-            missing_columns=missing_columns,
-            wrong_types=wrong_types,
-            extra_columns=extra_columns,
-        )
+        return await _lifecycle.introspect_schema(self)
 
     async def repair_schema(self, report: SchemaReport) -> None:
-        """与 PG 同策略:missing_columns 补列;missing_tables 拒绝;其余仅 log。"""
-        assert self._db is not None
-        if report.missing_tables:
-            raise RuntimeError(
-                f"schema repair: missing tables {report.missing_tables} — "
-                "manual init_schema() required (auto-repair refuses DROP+CREATE)"
-            )
-        if report.missing_columns:
-            async with self._lock:
-                for t, c, expected in report.missing_columns:
-                    log.warning("schema repair: adding missing column %s.%s (%s)", t, c, expected)
-                    await self._db.execute(f'ALTER TABLE "{t}" ADD COLUMN "{c}" {expected}')
-        if report.wrong_types:
-            log.warning(
-                "schema repair: %d column(s) have wrong types — NOT auto-fixed "
-                "(manual ALTER COLUMN ... TYPE required)",
-                len(report.wrong_types),
-            )
-        if report.extra_columns:
-            log.info(
-                "schema repair: %d extra column(s) — diagnostic only",
-                len(report.extra_columns),
-            )
+        return await _lifecycle.repair_schema(self, report)
 
     async def ping(self) -> bool:
-        if self._db is None:
-            return False
-        try:
-            async with self._lock:
-                await self._db.execute("SELECT 1")
-            return True
-        except Exception:  # noqa: BLE001 — ping 契约:任何异常一律返 False
-            return False
+        return await _lifecycle.ping(self)
 
-    # ---- 频道 ----
+    # ---- 频道 + 元数据 → _channels_sqlite ----
 
     async def upsert_channel(self, channel: ChannelDTO) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO channels
-                    (id, title, username, kind, member_count, created_at,
-                     monitored, tg_subscribed, last_synced_at, photo_local_key,
-                     is_verified, is_scam, is_fake, has_protected_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = excluded.title,
-                    username = excluded.username,
-                    kind = excluded.kind,
-                    member_count = excluded.member_count,
-                    created_at = excluded.created_at,
-                    monitored = excluded.monitored,
-                    tg_subscribed = excluded.tg_subscribed,
-                    last_synced_at = excluded.last_synced_at,
-                    photo_local_key = excluded.photo_local_key,
-                    is_verified = excluded.is_verified,
-                    is_scam = excluded.is_scam,
-                    is_fake = excluded.is_fake,
-                    has_protected_content = excluded.has_protected_content
-                """,
-                (
-                    channel.id,
-                    channel.title,
-                    channel.username,
-                    channel.kind,
-                    channel.member_count,
-                    _dt_to_db(channel.created_at),
-                    channel.is_monitored,
-                    channel.is_tg_subscribed,
-                    _dt_to_db(channel.last_synced_at),
-                    channel.photo_local_key,
-                    channel.is_verified,
-                    channel.is_scam,
-                    channel.is_fake,
-                    channel.has_protected_content,
-                ),
-            )
+        return await _channels.upsert_channel(self, channel)
 
     async def upsert_channel_metadata(self, channel: ChannelDTO) -> None:
-        """只更元数据;两个订阅/监听标志保持旧值(首次插入用 caller 值)。
-
-        v2.0.3:新增 tg_subscribed 列只在首次插入写 caller 值,已存在行不动 —
-        刷新落库校正 tg_subscribed 走专门的 `set_channel_tg_subscribed`。
-        """
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO channels
-                    (id, title, username, kind, member_count, created_at,
-                     monitored, tg_subscribed, last_synced_at, photo_local_key,
-                     is_verified, is_scam, is_fake, has_protected_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = excluded.title,
-                    username = excluded.username,
-                    kind = excluded.kind,
-                    member_count = excluded.member_count,
-                    created_at = excluded.created_at,
-                    last_synced_at = excluded.last_synced_at,
-                    photo_local_key = excluded.photo_local_key,
-                    is_verified = excluded.is_verified,
-                    is_scam = excluded.is_scam,
-                    is_fake = excluded.is_fake,
-                    has_protected_content = excluded.has_protected_content
-                """,
-                (
-                    channel.id,
-                    channel.title,
-                    channel.username,
-                    channel.kind,
-                    channel.member_count,
-                    _dt_to_db(channel.created_at),
-                    channel.is_monitored,
-                    channel.is_tg_subscribed,
-                    _dt_to_db(channel.last_synced_at),
-                    channel.photo_local_key,
-                    channel.is_verified,
-                    channel.is_scam,
-                    channel.is_fake,
-                    channel.has_protected_content,
-                ),
-            )
+        return await _channels.upsert_channel_metadata(self, channel)
 
     async def update_channel_metadata(
         self,
@@ -318,236 +121,59 @@ class SqliteRepository(StorageRepository):
         is_fake: bool | None = None,
         has_protected_content: bool | None = None,
     ) -> None:
-        """部分更新 — COALESCE(?, 列) 把 None 映射成「保留旧值」。"""
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                UPDATE channels SET
-                    title                 = COALESCE(?, title),
-                    username              = COALESCE(?, username),
-                    member_count          = COALESCE(?, member_count),
-                    photo_local_key       = COALESCE(?, photo_local_key),
-                    is_verified           = COALESCE(?, is_verified),
-                    is_scam               = COALESCE(?, is_scam),
-                    is_fake               = COALESCE(?, is_fake),
-                    has_protected_content = COALESCE(?, has_protected_content)
-                WHERE id = ?
-                """,
-                (
-                    title,
-                    username,
-                    member_count,
-                    photo_local_key,
-                    is_verified,
-                    is_scam,
-                    is_fake,
-                    has_protected_content,
-                    channel_id,
-                ),
-            )
+        return await _channels.update_channel_metadata(
+            self,
+            channel_id,
+            title=title,
+            username=username,
+            member_count=member_count,
+            photo_local_key=photo_local_key,
+            is_verified=is_verified,
+            is_scam=is_scam,
+            is_fake=is_fake,
+            has_protected_content=has_protected_content,
+        )
 
     async def set_channel_monitored(self, channel_id: int, monitored: bool) -> None:
-        """只设**监听**标志(物理列 monitored);频道未建档时用 id 做 stub。"""
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO channels (id, title, monitored)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET monitored = excluded.monitored
-                """,
-                (channel_id, f"#{channel_id}", monitored),
-            )
+        return await _channels.set_channel_monitored(self, channel_id, monitored)
 
     async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
-        """只设 **TG 订阅**标志(tg_subscribed 列),不动监听标志。
-
-        v2.0.3:刷新落库校正 TG 订阅状态用;频道未建档时用 id 做 stub。
-        """
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO channels (id, title, tg_subscribed)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET tg_subscribed = excluded.tg_subscribed
-                """,
-                (channel_id, f"#{channel_id}", tg_subscribed),
-            )
+        return await _channels.set_channel_tg_subscribed(self, channel_id, tg_subscribed)
 
     async def count_tg_subscribed(self) -> int:
-        """TG 侧仍订阅/加入的频道数(大盘"已加入频道"卡,与"已监听"独立)。"""
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute("SELECT COUNT(*) FROM channels WHERE tg_subscribed = 1")
-            row = await cur.fetchone()
-        return int(row[0]) if row else 0
+        return await _channels.count_tg_subscribed(self)
 
     async def list_tg_subscribed_channels(self) -> list[ChannelDTO]:
-        """只返 tg_subscribed=1 的频道(按 id;2026-11-19 左栏启动读库用)。"""
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM channels WHERE tg_subscribed = 1 ORDER BY id"
-            )
-        return [_row_to_channel(dict(r)) for r in rows]
+        return await _channels.list_tg_subscribed_channels(self)
 
     async def list_channels(self) -> list[ChannelDTO]:
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall("SELECT * FROM channels ORDER BY id")
-        return [_row_to_channel(dict(r)) for r in rows]
+        return await _channels.list_channels(self)
 
     async def list_monitored_channels(self) -> list[ChannelDTO]:
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM channels WHERE monitored = 1 ORDER BY id"
-            )
-        return [_row_to_channel(dict(r)) for r in rows]
+        return await _channels.list_monitored_channels(self)
 
     async def get_channel(self, channel_id: int) -> ChannelDTO | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
-            row = await cur.fetchone()
-        return _row_to_channel(dict(row)) if row else None
+        return await _channels.get_channel(self, channel_id)
 
     async def delete_channel(self, channel_id: int) -> None:
-        """删频道;FK CASCADE 自动带 messages / media / thumbnails。"""
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+        return await _channels.delete_channel(self, channel_id)
 
     async def get_max_telegram_msg_id(self, channel_id: int) -> int | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT MAX(telegram_msg_id) FROM messages WHERE channel_id = ?",
-                (channel_id,),
-            )
-            row = await cur.fetchone()
-        assert row is not None  # MAX 聚合恒返一行(值可为 NULL)
-        return row[0]
-
-    # ---- 全局元数据 ----
+        return await _channels.get_max_telegram_msg_id(self, channel_id)
 
     async def get_meta(self, key: str) -> str | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute("SELECT value FROM meta WHERE key = ?", (key,))
-            row = await cur.fetchone()
-        return row[0] if row is not None else None
+        return await _channels.get_meta(self, key)
 
     async def set_meta(self, key: str, value: str) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO meta (key, value) VALUES (?, ?)
-                ON CONFLICT (key) DO UPDATE SET value = excluded.value
-                """,
-                (key, value),
-            )
+        return await _channels.set_meta(self, key, value)
 
-    # ---- 消息 ----
+    # ---- 消息 → _messages_sqlite ----
 
     async def save_message(self, message: MessageDTO) -> int:
-        """幂等 upsert;隐式建频道占位(与 PG / InMemory 对齐);media 先清后插。
-
-        全程单事务(BEGIN/COMMIT),异常回滚 — 不留「消息在、media 丢」中间态。
-        """
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute("BEGIN")
-            try:
-                await self._db.execute(
-                    """
-                    INSERT INTO channels (id, title, monitored)
-                    VALUES (?, ?, 0)
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    (message.channel_id, f"#{message.channel_id}"),
-                )
-                cur = await self._db.execute(
-                    """
-                    INSERT INTO messages
-                        (channel_id, telegram_msg_id, author, date, text,
-                         views, forwards, reply_to_msg_id, edited, raw,
-                         forward_origin, via_bot_user_id, media_album_id, is_pinned,
-                         reactions, is_favorite, tags, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (channel_id, telegram_msg_id) DO UPDATE SET
-                        author = excluded.author,
-                        date = excluded.date,
-                        text = excluded.text,
-                        views = excluded.views,
-                        forwards = excluded.forwards,
-                        reply_to_msg_id = excluded.reply_to_msg_id,
-                        edited = excluded.edited,
-                        raw = excluded.raw,
-                        forward_origin = excluded.forward_origin,
-                        via_bot_user_id = excluded.via_bot_user_id,
-                        media_album_id = excluded.media_album_id,
-                        is_pinned = excluded.is_pinned,
-                        reactions = excluded.reactions,
-                        is_favorite = excluded.is_favorite,
-                        tags = excluded.tags,
-                        notes = excluded.notes
-                    RETURNING id
-                    """,
-                    (
-                        message.channel_id,
-                        message.telegram_msg_id,
-                        message.author,
-                        _dt_to_db(message.date),
-                        message.text,
-                        message.views,
-                        message.forwards,
-                        message.reply_to_msg_id,
-                        message.edited,
-                        _json_to_db(message.raw),
-                        _json_to_db(message.forward_origin),
-                        message.via_bot_user_id,
-                        message.media_album_id,
-                        message.is_pinned,
-                        _json_to_db(
-                            [r.to_dict() for r in message.reactions]
-                            if message.reactions is not None
-                            else None
-                        ),
-                        message.is_favorite,
-                        json.dumps(message.tags),
-                        message.notes,
-                    ),
-                )
-                row = await cur.fetchone()
-                assert row is not None
-                msg_pk = row["id"]
-                await self._db.execute("DELETE FROM media WHERE message_id = ?", (msg_pk,))
-                for m in message.media:
-                    await self._db.execute(
-                        """
-                        INSERT INTO media
-                            (message_id, type, mime_type, file_name, file_size,
-                             width, height, duration, telegram_file_id,
-                             thumbnail_telegram_file_id,
-                             object_key, object_backend,
-                             emoji, download_status, download_error)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        _media_to_row(msg_pk, m),
-                    )
-                await self._db.commit()
-            except BaseException:
-                await self._db.rollback()
-                raise
-        message.id = msg_pk
-        return msg_pk
+        return await _messages.save_message(self, message)
 
     async def update_message(self, message: MessageDTO) -> None:
-        await self.save_message(message)
+        return await _messages.update_message(self, message)
 
     async def update_message_interactions(
         self,
@@ -557,27 +183,13 @@ class SqliteRepository(StorageRepository):
         views: int | None = None,
         reactions: list[Any] | None = None,
     ) -> None:
-        """增量更新 views / reactions;None=不动,[]=清空;不存在不抛。"""
-        assert self._db is not None
-        set_parts: list[str] = []
-        args: list[Any] = []
-        if views is not None:
-            set_parts.append("views = ?")
-            args.append(views)
-        if reactions is not None:
-            set_parts.append("reactions = ?")
-            args.append(
-                json.dumps([r.to_dict() if isinstance(r, ReactionDTO) else r for r in reactions])
-            )
-        if not set_parts:
-            return
-        args.extend([channel_id, telegram_msg_id])
-        async with self._lock:
-            await self._db.execute(
-                f"UPDATE messages SET {', '.join(set_parts)} "
-                "WHERE channel_id = ? AND telegram_msg_id = ?",
-                args,
-            )
+        return await _messages.update_message_interactions(
+            self,
+            channel_id,
+            telegram_msg_id,
+            views=views,
+            reactions=reactions,
+        )
 
     async def update_message_pin(
         self,
@@ -585,47 +197,16 @@ class SqliteRepository(StorageRepository):
         telegram_msg_id: int,
         is_pinned: bool,
     ) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "UPDATE messages SET is_pinned = ? WHERE channel_id = ? AND telegram_msg_id = ?",
-                (is_pinned, channel_id, telegram_msg_id),
-            )
+        return await _messages.update_message_pin(self, channel_id, telegram_msg_id, is_pinned)
 
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
-        """删单条消息;media / thumbnails 走 FK CASCADE。"""
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "DELETE FROM messages WHERE channel_id = ? AND telegram_msg_id = ?",
-                (channel_id, telegram_msg_id),
-            )
+        return await _messages.delete_message(self, channel_id, telegram_msg_id)
 
     async def delete_messages(self, channel_id: int, msg_ids: list[int]) -> None:
-        if not msg_ids:
-            return
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                f"DELETE FROM messages WHERE channel_id = ? "
-                f"AND telegram_msg_id IN ({_placeholders(len(msg_ids))})",
-                [channel_id, *msg_ids],
-            )
+        return await _messages.delete_messages(self, channel_id, msg_ids)
 
     async def get_message(self, channel_id: int, telegram_msg_id: int) -> MessageDTO | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT * FROM messages WHERE channel_id = ? AND telegram_msg_id = ?",
-                (channel_id, telegram_msg_id),
-            )
-            row = await cur.fetchone()
-            if not row:
-                return None
-            media_rows = await self._db.execute_fetchall(
-                "SELECT * FROM media WHERE message_id = ? ORDER BY id", (row["id"],)
-            )
-        return _row_to_message(dict(row), [_row_to_media(dict(m)) for m in media_rows])
+        return await _messages.get_message(self, channel_id, telegram_msg_id)
 
     async def list_messages(
         self,
@@ -639,117 +220,29 @@ class SqliteRepository(StorageRepository):
         tag_only: bool = False,
         pinned_only: bool = False,
     ) -> list[MessageDTO]:
-        """与 PG 逐条对齐:limit=最近 N 条(倒序取再反转);offset 仅在 limit 给定
-        时生效(从尾部跳过);search 转义 LIKE 通配符,text OR media.file_name。"""
-        assert self._db is not None
-        if not channel_ids:
-            return []
-        where: list[str] = [f"channel_id IN ({_placeholders(len(channel_ids))})"]
-        params: list[Any] = list(channel_ids)
-        if date_from is not None:
-            where.append("date >= ?")
-            params.append(_dt_to_db(date_from))
-        if date_to is not None:
-            where.append("date <= ?")
-            params.append(_dt_to_db(date_to))
-        if favorite_only:
-            where.append("is_favorite = 1")
-        if tag_only:
-            where.append("json_array_length(tags) > 0")
-        if pinned_only:
-            where.append("is_pinned = 1")
-        if search:
-            escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            like = f"%{escaped}%"
-            where.append(
-                "(LOWER(text) LIKE ? ESCAPE '\\' "
-                "OR EXISTS (SELECT 1 FROM media WHERE media.message_id = messages.id "
-                "AND LOWER(media.file_name) LIKE ? ESCAPE '\\'))"
-            )
-            params.extend([like, like])
-        order_by = "date DESC, id DESC" if limit is not None else "date ASC, id ASC"
-        sql = "SELECT * FROM messages WHERE " + " AND ".join(where) + f" ORDER BY {order_by}"
-        if limit is not None:
-            sql += " LIMIT ?"
-            params.append(limit)
-            if offset > 0:
-                sql += " OFFSET ?"
-                params.append(offset)
-        async with self._lock:
-            rows = [dict(r) for r in await self._db.execute_fetchall(sql, params)]
-            if limit is not None:
-                rows.reverse()
-            if not rows:
-                return []
-            ids = [r["id"] for r in rows]
-            media_rows = await self._db.execute_fetchall(
-                f"SELECT * FROM media WHERE message_id IN ({_placeholders(len(ids))}) ORDER BY id",
-                ids,
-            )
-        by_msg: dict[int, list[MediaDTO]] = {}
-        for mr in media_rows:
-            by_msg.setdefault(mr["message_id"], []).append(_row_to_media(dict(mr)))
-        return [_row_to_message(r, by_msg.get(r["id"], [])) for r in rows]
+        return await _messages.list_messages(
+            self,
+            channel_ids,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
+            search=search,
+            favorite_only=favorite_only,
+            tag_only=tag_only,
+            pinned_only=pinned_only,
+        )
 
     async def count_messages(self, channel_id: int) -> int:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT count(*) FROM messages WHERE channel_id = ?", (channel_id,)
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        return row[0]
+        return await _messages.count_messages(self, channel_id)
 
     async def aggregate_per_channel(self, channel_ids: list[int]) -> dict[int, ChannelStats]:
-        """单 GROUP BY 查询;done_media 用 SUM(CASE)(SQLite 无 FILTER 子句)。"""
-        if not channel_ids:
-            return {}
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                f"""
-                SELECT m.channel_id,
-                       count(DISTINCT m.id) AS messages,
-                       count(me.id) AS media,
-                       sum(CASE WHEN me.download_status = 'done' THEN 1 ELSE 0 END)
-                           AS done_media,
-                       max(m.date) AS last_date
-                FROM messages m
-                LEFT JOIN media me ON me.message_id = m.id
-                WHERE m.channel_id IN ({_placeholders(len(channel_ids))})
-                GROUP BY m.channel_id
-                """,
-                channel_ids,
-            )
-        out: dict[int, ChannelStats] = {}
-        for r in rows:
-            out[int(r["channel_id"])] = ChannelStats(
-                messages=int(r["messages"]),
-                media=int(r["media"]),
-                done_media=int(r["done_media"]),
-                last_date=_dt_from_db(r["last_date"]),
-            )
-        return out
+        return await _messages.aggregate_per_channel(self, channel_ids)
 
-    # ---- 媒体 ----
+    # ---- 媒体 → _media_sqlite ----
 
     async def find_media_by_file_id(self, telegram_file_id: str) -> MediaDTO | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                """
-                SELECT * FROM media
-                WHERE telegram_file_id = ?
-                  AND object_key IS NOT NULL
-                  AND download_status = 'done'
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (telegram_file_id,),
-            )
-            row = await cur.fetchone()
-        return _row_to_media(dict(row)) if row else None
+        return await _media.find_media_by_file_id(self, telegram_file_id)
 
     async def list_media(
         self,
@@ -764,53 +257,18 @@ class SqliteRepository(StorageRepository):
         sort: SortKey = SortKey.DATE,
         sort_dir: SortDir = SortDir.DESC,
     ) -> list[tuple[MessageDTO, int, MediaDTO]]:
-        """与 PG 对齐:ROW_NUMBER 窗口生成 media_idx;tie-break m.id DESC, idx ASC。"""
-        assert self._db is not None
-        where_sql, params = _media_where_clause(
-            channel_ids, status, media_type, search, undownloaded
+        return await _media.list_media(
+            self,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            undownloaded=undownloaded,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            sort_dir=sort_dir,
         )
-        sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
-        nulls_clause = " NULLS LAST" if nulls_last else ""
-        sql = (
-            "SELECT m.*, me.id AS media_id, me.type AS media_type,"
-            "       me.mime_type, me.file_name, me.file_size, me.width, me.height,"
-            "       me.duration, me.telegram_file_id, me.object_key,"
-            "       me.object_backend, me.thumbnail_telegram_file_id, me.emoji,"
-            "       me.download_status AS media_dl_status, me.download_error,"
-            "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx "
-            "FROM messages m JOIN media me ON me.message_id = m.id "
-            f"WHERE {where_sql} "
-            f"ORDER BY {sort_col} {sort_dir.value.upper()}{nulls_clause}, m.id DESC, media_idx ASC"
-        )
-        if limit:
-            sql += " LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
-        async with self._lock:
-            rows = await self._db.execute_fetchall(sql, params)
-
-        out: list[tuple[MessageDTO, int, MediaDTO]] = []
-        for r in rows:
-            row = dict(r)
-            media = _row_to_media(
-                {
-                    "type": row["media_type"],
-                    "mime_type": row["mime_type"],
-                    "file_name": row["file_name"],
-                    "file_size": row["file_size"],
-                    "width": row["width"],
-                    "height": row["height"],
-                    "duration": row["duration"],
-                    "telegram_file_id": row["telegram_file_id"],
-                    "object_key": row["object_key"],
-                    "object_backend": row["object_backend"],
-                    "emoji": row["emoji"],
-                    "download_status": row["media_dl_status"],
-                    "download_error": row["download_error"],
-                    "thumbnail_telegram_file_id": row["thumbnail_telegram_file_id"],
-                }
-            )
-            out.append((_row_to_message(row, [media]), row["media_idx"], media))
-        return out
 
     async def count_media(
         self,
@@ -821,98 +279,28 @@ class SqliteRepository(StorageRepository):
         search: str = "",
         undownloaded: bool = False,
     ) -> int:
-        assert self._db is not None
-        where_sql, params = _media_where_clause(
-            channel_ids, status, media_type, search, undownloaded
+        return await _media.count_media(
+            self,
+            channel_ids=channel_ids,
+            status=status,
+            media_type=media_type,
+            search=search,
+            undownloaded=undownloaded,
         )
-        async with self._lock:
-            cur = await self._db.execute(
-                f"SELECT count(*) FROM messages m "
-                f"JOIN media me ON me.message_id = m.id WHERE {where_sql}",
-                params,
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        return row[0]
 
     async def count_media_by_object_key(self, object_key: str) -> int:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT count(*) FROM media WHERE object_key = ?", (object_key,)
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        return row[0]
+        return await _media.count_media_by_object_key(self, object_key)
 
     async def count_media_by_channel(self, channel_id: int) -> int:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT count(*) FROM media me "
-                "JOIN messages m ON me.message_id = m.id WHERE m.channel_id = ?",
-                (channel_id,),
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        return row[0]
+        return await _media.count_media_by_channel(self, channel_id)
 
     async def reset_stuck_downloads(self) -> int:
-        """启动自愈:DOWNLOADING 且无 object_key → pending — 返回复位条数。
+        return await _media.reset_stuck_downloads(self)
 
-        2026-11-23 v2.0.9 hotfix:见 `MediaStore.reset_stuck_downloads` docstring。
-        物理值写回 `'pending'`(未下载),读回时由 `_media_status` → None。
-        """
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "UPDATE media SET download_status = 'pending', download_error = NULL "
-                "WHERE download_status = 'downloading' "
-                "AND (object_key IS NULL OR object_key = '')"
-            )
-            return cur.rowcount
-
-    # ---- 缩略图 ----
+    # ---- 缩略图 → _thumbnails_sqlite ----
 
     async def save_thumbnail(self, thumb: ThumbnailDTO) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                """
-                INSERT INTO thumbnails
-                    (channel_id, telegram_msg_id, media_idx,
-                     object_key, object_backend,
-                     mime_type, file_size, width, height, sha256,
-                     download_status, download_error, telegram_thumb_file_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (channel_id, telegram_msg_id, media_idx) DO UPDATE SET
-                    object_key = excluded.object_key,
-                    object_backend = excluded.object_backend,
-                    mime_type = excluded.mime_type,
-                    file_size = excluded.file_size,
-                    width = excluded.width,
-                    height = excluded.height,
-                    sha256 = excluded.sha256,
-                    download_status = excluded.download_status,
-                    download_error = excluded.download_error,
-                    telegram_thumb_file_id = excluded.telegram_thumb_file_id
-                """,
-                (
-                    thumb.channel_id,
-                    thumb.telegram_msg_id,
-                    thumb.media_idx,
-                    thumb.object_key,
-                    thumb.object_backend,
-                    thumb.mime_type,
-                    thumb.file_size,
-                    thumb.width,
-                    thumb.height,
-                    thumb.sha256,
-                    _status_to_db(thumb.download_status),
-                    thumb.download_error,
-                    thumb.telegram_thumb_file_id,
-                ),
-            )
+        return await _thumbnails.save_thumbnail(self, thumb)
 
     async def get_thumbnail(
         self,
@@ -920,15 +308,7 @@ class SqliteRepository(StorageRepository):
         telegram_msg_id: int,
         media_idx: int,
     ) -> ThumbnailDTO | None:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT * FROM thumbnails "
-                "WHERE channel_id = ? AND telegram_msg_id = ? AND media_idx = ?",
-                (channel_id, telegram_msg_id, media_idx),
-            )
-            row = await cur.fetchone()
-        return _row_to_thumbnail(dict(row)) if row else None
+        return await _thumbnails.get_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
     async def delete_thumbnail(
         self,
@@ -936,126 +316,39 @@ class SqliteRepository(StorageRepository):
         telegram_msg_id: int,
         media_idx: int,
     ) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "DELETE FROM thumbnails "
-                "WHERE channel_id = ? AND telegram_msg_id = ? AND media_idx = ?",
-                (channel_id, telegram_msg_id, media_idx),
-            )
+        return await _thumbnails.delete_thumbnail(self, channel_id, telegram_msg_id, media_idx)
 
     async def list_thumbnails_for_message(
         self,
         channel_id: int,
         telegram_msg_id: int,
     ) -> list[ThumbnailDTO]:
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM thumbnails "
-                "WHERE channel_id = ? AND telegram_msg_id = ? ORDER BY media_idx",
-                (channel_id, telegram_msg_id),
-            )
-        return [_row_to_thumbnail(dict(r)) for r in rows]
+        return await _thumbnails.list_thumbnails_for_message(self, channel_id, telegram_msg_id)
 
     async def count_thumbnails_by_object_key(self, object_key: str) -> int:
-        assert self._db is not None
-        async with self._lock:
-            cur = await self._db.execute(
-                "SELECT count(*) FROM thumbnails WHERE object_key = ?", (object_key,)
-            )
-            row = await cur.fetchone()
-        assert row is not None
-        return row[0]
+        return await _thumbnails.count_thumbnails_by_object_key(self, object_key)
 
-    # ---- 用户元数据 ----
+    # ---- 用户元数据 → _user_meta_sqlite ----
 
     async def set_favorite(self, channel_id: int, telegram_msg_id: int, value: bool) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "UPDATE messages SET is_favorite = ? WHERE channel_id = ? AND telegram_msg_id = ?",
-                (value, channel_id, telegram_msg_id),
-            )
+        return await _user_meta.set_favorite(self, channel_id, telegram_msg_id, value)
 
     async def set_tags(self, channel_id: int, telegram_msg_id: int, tags: list[str]) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "UPDATE messages SET tags = ? WHERE channel_id = ? AND telegram_msg_id = ?",
-                (json.dumps(tags), channel_id, telegram_msg_id),
-            )
+        return await _user_meta.set_tags(self, channel_id, telegram_msg_id, tags)
 
     async def set_notes(self, channel_id: int, telegram_msg_id: int, notes: str) -> None:
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "UPDATE messages SET notes = ? WHERE channel_id = ? AND telegram_msg_id = ?",
-                (notes, channel_id, telegram_msg_id),
-            )
+        return await _user_meta.set_notes(self, channel_id, telegram_msg_id, notes)
 
     async def list_favorites(self) -> list[MessageDTO]:
-        """跨频道 is_favorite=1,date DESC;media 不带(轻量路径,与 PG 对齐)。"""
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM messages WHERE is_favorite = 1 ORDER BY date DESC"
-            )
-        return [_row_to_message(dict(r), []) for r in rows]
+        return await _user_meta.list_favorites(self)
 
     async def list_by_tag(self, tag: str) -> list[MessageDTO]:
-        """tag 精确匹配(JSON1 json_each),date DESC。"""
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM messages "
-                "WHERE EXISTS (SELECT 1 FROM json_each(messages.tags) WHERE value = ?) "
-                "ORDER BY date DESC",
-                (tag,),
-            )
-        return [_row_to_message(dict(r), []) for r in rows]
+        return await _user_meta.list_by_tag(self, tag)
 
-    # ---- 活动记录（v2.0.4 FR-05）----
+    # ---- 活动记录 → _activity_sqlite ----
 
     async def append_activity(self, activity: ActivityDTO) -> None:
-        """追加一条活动 — 全留存，不裁剪（用户 2026-11-17 决策）。"""
-        assert self._db is not None
-        async with self._lock:
-            await self._db.execute(
-                "INSERT INTO activities "
-                "(event_type, occurred_at, icon, title, detail, severity, channel_id, "
-                "telegram_msg_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    activity.event_type,
-                    _dt_to_db(activity.occurred_at),
-                    activity.icon,
-                    activity.title,
-                    activity.detail,
-                    activity.severity,
-                    activity.channel_id,
-                    activity.telegram_msg_id,
-                ),
-            )
+        return await _activity.append_activity(self, activity)
 
     async def list_activities(self, limit: int = 200) -> list[ActivityDTO]:
-        """列最近 N 条 — occurred_at DESC, id DESC（新的在前）。"""
-        assert self._db is not None
-        async with self._lock:
-            rows = await self._db.execute_fetchall(
-                "SELECT * FROM activities ORDER BY occurred_at DESC, id DESC LIMIT ?",
-                (limit,),
-            )
-        return [
-            ActivityDTO(
-                id=r["id"],
-                event_type=r["event_type"],
-                occurred_at=_dt_from_db(r["occurred_at"]) or datetime.now(UTC),
-                icon=r["icon"],
-                title=r["title"],
-                detail=r["detail"],
-                severity=r["severity"],
-                channel_id=r["channel_id"],
-                telegram_msg_id=r["telegram_msg_id"],
-            )
-            for r in rows
-        ]
+        return await _activity.list_activities(self, limit)
