@@ -414,13 +414,16 @@ class DashboardWidget(QWidget):
         self.activity_list.insertItem(0, item)
         self.activity_list.setItemWidget(item, entry)
         # 限制条目数
+        # 2.1.4 P2 #41:itemWidget 必须在 item **仍在列表中**时取 —
+        # takeItem 后 itemWidget(item) 恒返回 None(Qt 靠 model index 关联),
+        # widget 变成 viewport 上的孤儿缓慢泄漏。
         while self.activity_list.count() > 200:
-            item = self.activity_list.takeItem(self.activity_list.count() - 1)
-            if item is not None:
-                w = self.activity_list.itemWidget(item)
+            last = self.activity_list.item(self.activity_list.count() - 1)
+            if last is not None:
+                w = self.activity_list.itemWidget(last)
                 if w is not None:
                     w.deleteLater()
-                del item
+            self.activity_list.takeItem(self.activity_list.count() - 1)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
         """FR-01:列表宽度变化(尤其半宽布局首次布局)时重算所有行高。
@@ -489,7 +492,17 @@ class DashboardWidget(QWidget):
             return []
 
     def _apply_activities(self, activities: list) -> None:
-        """库历史填充时间线(新的在前),覆盖启动期可能的空列表。"""
+        """库历史填充时间线(新的在前),覆盖启动期可能的空列表。
+
+        2.1.4 P2 #41:`QListWidget.clear()` 不会 deleteLater `setItemWidget`
+        的 widget(实测 widget 仍存活,变 viewport 孤儿缓慢泄漏)— 先在
+        item 仍在列表时逐项取 widget deleteLater,再 clear。
+        """
+        for i in range(self.activity_list.count()):
+            item = self.activity_list.item(i)
+            w = self.activity_list.itemWidget(item) if item is not None else None
+            if w is not None:
+                w.deleteLater()
         self.activity_list.clear()
         # 库中已是 occurred_at DESC(新的在前);倒序插入使最新显示在列表头。
         for activity in reversed(activities):

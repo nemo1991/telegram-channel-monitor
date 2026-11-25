@@ -57,8 +57,8 @@ class MainWindowCtx:
     - plain class(controller)接受 ctx,只读字段,避免反向修改污染 state
     - MainWindow 仍持所有真实状态,controller 不重复持有
     - `main_window` 字段持 MainWindow QWidget 引用 — controller 需要
-      作 `parent=QWidget` 给 dialog(QrLoginDialog / BatchProgressDialog /
-      QMessageBox 等)时通过此字段访问;反向"调出去"动作(改窗口标题
+      作 `parent=QWidget` 给 dialog(QrLoginDialog / QMessageBox 等)时
+      通过此字段访问;反向"调出去"动作(改窗口标题
       / 触发退出)走 `window_title_setter` / `quit_app` callback,不直接
       持 `main_window` 反向方法调用。
     """

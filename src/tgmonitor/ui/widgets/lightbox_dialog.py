@@ -849,8 +849,26 @@ class LightboxDialog(QDialog):
 
     # ---- 关闭时清理 ----
 
+    def done(self, result: int) -> None:  # noqa: N802 — Qt 签名
+        """accept() / reject() / close 的统一收口:停 player + unlink 视频 tmpfile。
+
+        QDialog 的 accept() / reject() 最终都走 done(),但**不触发
+        closeEvent** — 视频 tmpfile 只在 closeEvent 清理的话,Esc(→
+        accept)/ 右键 / fallback accept 等路径都会在 $TMPDIR 残留大文件
+        (2.1.4 P2 #40)。三条关闭路径最终都汇到 done(),在此统一收口;
+        closeEvent 也调同一对清理方法(幂等:_unlink_staged_video unlink
+        后置 None,_stop_active_player 对已清引用是 no-op),不重复清理。
+        """
+        self._stop_active_player()
+        self._unlink_staged_video()
+        super().done(result)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 — Qt API
-        """2026-09-04 v1.6.7:关窗前严格 stop QMovie / QMediaPlayer + unlink tmpfile。"""
+        """2026-09-04 v1.6.7:关窗前严格 stop QMovie / QMediaPlayer + unlink tmpfile。
+
+        注:QDialog.close() 的默认 closeEvent 会走 reject() → done(),
+        与 done() 里的清理幂等,不会二次 unlink。
+        """
         self._stop_active_player()
         self._unlink_staged_video()
         super().closeEvent(event)
