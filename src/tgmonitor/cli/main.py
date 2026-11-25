@@ -7,7 +7,8 @@
 `CLI_SUBCOMMANDS` + `_DISPATCH` 是命令注册表单一真源,新增子命令需在
 `build_parser()` 注册 + 两个集合同步。
 
-`help` 子命令打印帮助总览;未知参数由 argparse 报用法错误(退出码 2)。
+`help` 子命令打印帮助总览;未知参数与组命令缺动作(channels/messages/
+media/export/config 未跟子动作)均由 argparse 报用法错误(退出码 2)。
 """
 
 from __future__ import annotations
@@ -114,7 +115,9 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
 
     # ---- channels ----
     ch_p = sub.add_parser("channels", help="监听频道管理")
-    ch_sub = ch_p.add_subparsers(dest="channel_cmd")
+    # 组内子动作 required=True(2.1.6 P2 #15):缺动作在解析期就报用法错
+    # (退出码 2,stderr),不进 dispatch / bootstrap。
+    ch_sub = ch_p.add_subparsers(dest="channel_cmd", required=True)
     ch_list = ch_sub.add_parser("list", help="列出频道")
     ch_list.add_argument(
         "--source",
@@ -123,7 +126,10 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
         help="joined=连 TG 拉取 / monitored=白名单(默认) / subscribed=TG 已订阅",
     )
     _add_json_flag(ch_list)
-    ch_sub.add_parser("refresh", help="从 Telegram 同步已加入频道并落库")
+    # refresh 会级联停掉"已在 TG 退出频道"的监听(写操作),与 add/remove 一致
+    # 强制 --yes(2.1.6 P2 #17)。
+    ch_refresh = ch_sub.add_parser("refresh", help="从 Telegram 同步已加入频道并落库")
+    ch_refresh.add_argument("--yes", action="store_true", help="确认执行")
     ch_add = ch_sub.add_parser("add", help="加入监听")
     ch_add.add_argument("channel_ids", type=int, nargs="+", help="Telegram chat_id")
     ch_add.add_argument("--yes", action="store_true", help="确认执行")
@@ -169,7 +175,7 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
 
     # ---- messages ----
     msg_p = sub.add_parser("messages", help="消息查询与操作")
-    msg_sub = msg_p.add_subparsers(dest="message_cmd")
+    msg_sub = msg_p.add_subparsers(dest="message_cmd", required=True)
     msg_list = msg_sub.add_parser("list", help="查询消息")
     msg_list.add_argument("--channel", type=int, help="限定 chat_id")
     msg_list.add_argument("--search", help="搜索正文 / 文件名")
@@ -204,7 +210,7 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
 
     # ---- media ----
     med_p = sub.add_parser("media", help="媒体查询与操作")
-    med_sub = med_p.add_subparsers(dest="media_cmd")
+    med_sub = med_p.add_subparsers(dest="media_cmd", required=True)
     med_list = med_sub.add_parser("list", help="列出媒体")
     med_list.add_argument("--channel", type=int, help="限定 chat_id")
     med_list.add_argument(
@@ -234,7 +240,7 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
 
     # ---- export ----
     exp_p = sub.add_parser("export", help="导出消息 / 媒体")
-    exp_sub = exp_p.add_subparsers(dest="export_cmd")
+    exp_sub = exp_p.add_subparsers(dest="export_cmd", required=True)
     exp_msg = exp_sub.add_parser("messages", help="导出消息")
     exp_msg.add_argument(
         "--format",
@@ -259,7 +265,7 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
 
     # ---- config ----
     cfg_p = sub.add_parser("config", help="配置管理与校验")
-    cfg_sub = cfg_p.add_subparsers(dest="config_cmd")
+    cfg_sub = cfg_p.add_subparsers(dest="config_cmd", required=True)
     cfg_show = cfg_sub.add_parser("show", help="展示有效配置(敏感项打码)")
     _add_json_flag(cfg_show)
     cfg_get = cfg_sub.add_parser("get", help="读取单个配置键")

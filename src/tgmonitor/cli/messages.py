@@ -32,20 +32,28 @@ async def run_messages(
         if cmd == "list":
             date_from = parse_date(args.date_from) if getattr(args, "date_from", None) else None
             date_to = parse_date(args.date_to) if getattr(args, "date_to", None) else None
-            msgs = await ctx.messages.list_messages(
-                channel_ids=[args.channel] if getattr(args, "channel", None) else None,
+            tag = getattr(args, "tag", None)
+            # 2026-11-25 P2-14:--tag 过滤下推 storage SQL(`list_messages(tag=)`)
+            # — 旧实现在 limit 截断**之后**按 tag 值过滤,命中项被截掉造成漏项。
+            # 直接走 storage 层(channel_ids=None 的「已订真理」解析在此等价复刻,
+            # MessageService.list_messages 暂无 tag 参数)。
+            if getattr(args, "channel", None):
+                channel_ids = [args.channel]
+            elif getattr(args, "include_unmonitored", False):
+                channel_ids = [c.id for c in await ctx.storage.list_channels()]
+            else:
+                channel_ids = [c.id for c in await ctx.storage.list_monitored_channels()]
+            msgs = await ctx.storage.list_messages(
+                channel_ids,
                 date_from=date_from,
                 date_to=date_to,
                 limit=getattr(args, "limit", 200),
                 search=getattr(args, "search", "") or "",
-                include_unmonitored=getattr(args, "include_unmonitored", False),
                 favorite_only=getattr(args, "favorite", False),
-                tag_only=bool(getattr(args, "tag", None)),
+                tag_only=bool(tag),
                 pinned_only=getattr(args, "pinned", False),
+                tag=tag or "",
             )
-            # tag_only 需要额外按 tag 值过滤(list_messages 的 tag_only 是"有任意标签")
-            if getattr(args, "tag", None):
-                msgs = [m for m in msgs if args.tag in m.tags]
 
             def rows():
                 for m in msgs:

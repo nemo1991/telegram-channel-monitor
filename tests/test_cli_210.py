@@ -183,6 +183,42 @@ async def test_channels_add_requires_yes(app, monitor) -> None:
         await run_channels(args, app=app, monitor=monitor)
 
 
+async def test_channels_refresh_requires_yes(app, monitor, monkeypatch) -> None:
+    """channels refresh 无 --yes → CliError(2.1.6 P2 #17:refresh 会级联停掉
+    已在 TG 退出频道的监听,属写操作,与 add/remove 同一确认边界)。"""
+    from tgmonitor.cli._common import CliError
+    from tgmonitor.cli.channels import run_channels
+
+    called: list[int] = []
+
+    async def _spy() -> list:
+        called.append(1)
+        return []
+
+    monkeypatch.setattr(app.channels, "refresh_joined_channels", _spy)
+    args = _args("channels", channel_cmd="refresh", yes=False)
+    with pytest.raises(CliError, match="--yes"):
+        await run_channels(args, app=app, monitor=monitor)
+    assert not called, "无 --yes 时不得执行 refresh_joined_channels"
+
+
+async def test_channels_refresh_with_yes(app, monitor, monkeypatch, capsys) -> None:
+    """channels refresh --yes → 执行 refresh_joined_channels,rc 0。"""
+    from tgmonitor.cli.channels import run_channels
+
+    called: list[int] = []
+
+    async def _fake() -> list:
+        called.append(1)
+        return [ChannelDTO(id=100, title="Ch")]
+
+    monkeypatch.setattr(app.channels, "refresh_joined_channels", _fake)
+    args = _args("channels", channel_cmd="refresh", yes=True)
+    rc = await run_channels(args, app=app, monitor=monitor)
+    assert rc == 0
+    assert called == [1]
+
+
 async def test_channels_add_and_remove(app, monitor) -> None:
     """channels add/remove 走白名单,rc 0。"""
     from tgmonitor.cli.channels import run_channels
@@ -414,6 +450,17 @@ async def test_config_set_requires_yes(app, monitor) -> None:
         await run_config(args, app=app, monitor=monitor)
 
 
+async def test_config_set_unknown_key_cli_error(app, monitor) -> None:
+    """config set 未知键 → CliError(2.1.6 P2 #16:旧实现裸 ValueError
+    traceback 直出;走 CliError 后 main() 统一 stderr + 退出码 1)。"""
+    from tgmonitor.cli._common import CliError
+    from tgmonitor.cli.config import run_config
+
+    args = _args("config", config_cmd="set", key="bogus_key", value="1", yes=True)
+    with pytest.raises(CliError, match="未知配置键"):
+        await run_config(args, app=app, monitor=monitor)
+
+
 async def test_config_set_persists(app, monitor, monkeypatch, tmp_path, capsys) -> None:
     """config set 校验→reconfigure→写盘,用临时 .env。"""
     from tgmonitor.cli import config as cfg_mod
@@ -447,3 +494,72 @@ async def test_config_set_persists(app, monitor, monkeypatch, tmp_path, capsys) 
     assert len(reconfigured) == 1
     assert reconfigured[0].sync_chat_delay_ms == 750
     assert "TG_SYNC_CHAT_DELAY_MS=750" in env_path.read_text(encoding="utf-8")
+
+
+# ---- P2-14(2026-11-25):messages list --tag 过滤下推 ----
+
+
+async def test_messages_list_tag_filter_pushdown(app, monitor, capsys) -> None:
+    """P2-14 回归:--tag 过滤必须在 limit 截断之前生效(SQL 下推)。
+
+    种 3 条消息:最新未打标;次新带 tag="other";最旧带 tag="keep"。
+    limit=1 + --tag keep 时必须返回最旧的 keep 消息 — 旧实现(tag_only
+    截断后再按 tag 值内存过滤)在 tag_only 集合 {other, keep} 里截到
+    other,keep 被挤掉,输出空。
+    """
+    from datetime import UTC, datetime
+
+    from tgmonitor.cli.messages import run_messages
+
+    await app.storage.upsert_channel(ChannelDTO(id=100, title="Ch", is_monitored=True))
+    await app.storage.save_message(
+        MessageDTO(
+            id=1,
+            channel_id=100,
+            telegram_msg_id=10,
+            text="oldest keep",
+            date=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+    await app.storage.save_message(
+        MessageDTO(
+            id=2,
+            channel_id=100,
+            telegram_msg_id=9,
+            text="middle other",
+            date=datetime(2026, 1, 2, tzinfo=UTC),
+        )
+    )
+    await app.storage.save_message(
+        MessageDTO(
+            id=3,
+            channel_id=100,
+            telegram_msg_id=11,
+            text="newest untagged",
+            date=datetime(2026, 1, 3, tzinfo=UTC),
+        )
+    )
+    await app.storage.set_tags(100, 10, ["keep"])
+    await app.storage.set_tags(100, 9, ["other"])
+
+    args = _args(
+        "messages",
+        message_cmd="list",
+        channel=100,
+        date_from=None,
+        date_to=None,
+        limit=1,
+        search="",
+        favorite=False,
+        tag="keep",
+        pinned=False,
+        include_unmonitored=False,
+        json=True,
+    )
+    rc = await run_messages(args, app=app, monitor=monitor)
+    assert rc == 0
+    out, _ = _out(capsys)
+    data = json.loads(out)
+    assert [m["msg_id"] for m in data] == [10], (
+        f"--tag 命中的旧消息被 limit 截断漏掉: {[m['msg_id'] for m in data]}"
+    )

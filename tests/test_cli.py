@@ -240,6 +240,70 @@ def test_help_subcommand_prints_overview() -> None:
         assert cmd in r.stdout, f"help 总览缺少 {cmd}"
 
 
+# ============================================================
+# 2.1.6 P2 #15:组命令缺动作 → argparse 用法错误(退出码 2)
+# ============================================================
+
+
+def test_cli_group_without_action_exits_2() -> None:
+    """channels/messages/media/export/config 缺子动作 → 退出码 2,stderr 是
+    argparse 用法错误(不进 dispatch / bootstrap,无 traceback、无业务错误)。
+
+    2.1.6 P2 #15:旧实现缺动作走 dispatch → 完整 bootstrap → CliError
+    (退出码 1);改为 `add_subparsers(required=True)` 在解析期拒绝。
+    """
+    for cmd in ("channels", "messages", "media", "export", "config"):
+        r = _run_subprocess(["-m", "tgmonitor.cli.main", cmd])
+        assert r.returncode == 2, f"{cmd} 缺动作应退出 2,实际 {r.returncode}\nstderr={r.stderr}"
+        assert "usage:" in r.stderr, f"{cmd} stderr 缺 usage: {r.stderr}"
+        assert "error:" in r.stderr, f"{cmd} stderr 缺 argparse 错误行: {r.stderr}"
+        assert "Traceback" not in r.stderr, f"{cmd} 不应有 traceback: {r.stderr}"
+
+
+def test_cli_no_args_still_prints_help_exit_zero() -> None:
+    """顶层无子命令仍打印帮助总览退出 0 — 2.1.0 设计保留(仅组内缺动作变严)。"""
+    r = _run_subprocess(["-m", "tgmonitor.cli.main"])
+    assert r.returncode == 0, f"stderr={r.stderr}"
+    assert "usage:" in r.stdout
+
+
+def test_config_set_unknown_key_stderr_clean() -> None:
+    """`config set <未知键>` 经 main() → stderr `error: 未知配置键`,退出码 1,
+    无 traceback(2.1.6 P2 #16:旧实现裸 ValueError traceback 直出)。
+
+    子进程内把 cli_context 换成 fake(不真 bootstrap),只验证错误契约。
+    """
+    code = textwrap.dedent("""
+        import contextlib
+        import io
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        from tgmonitor.cli import _common
+        from tgmonitor.core.config import Settings
+
+        @asynccontextmanager
+        async def fake_ctx(*_a, **_kw):
+            settings = Settings(_env_file=None, api_id=1, api_hash="x" * 32)
+            yield SimpleNamespace(env_path=None), None, settings
+
+        _common.cli_context = fake_ctx
+
+        from tgmonitor.cli.main import main
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = main(["config", "set", "bogus_key", "1", "--yes"])
+        assert rc == 1, rc
+        text = err.getvalue()
+        assert "未知配置键" in text, repr(text)
+        assert text.startswith("error:"), repr(text)
+        assert "Traceback" not in text, repr(text)
+    """)
+    r = _run_subprocess(["-c", code])
+    assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
+
+
 def test_tgmon_rejects_cli_subcommands() -> None:
     """`tgmon status` 等 CLI 子命令一律报错退出 2,不 import / 不调用 GUI。"""
     code = textwrap.dedent("""
