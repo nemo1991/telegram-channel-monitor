@@ -1,9 +1,9 @@
 """CLI 入口 smoke + 子命令路由 + 不加载 Qt 的核心断言。
 
-2026-09-27 refactor 守门测试:
-  - `--help` / `sync --help` / `monitor --help` 退出码 0
+2.1.2 命令体系:`tgmon` 只启动 GUI,`tgmon-cli` 独占 CLI。
+  - CLI 帮助经 `python -m tgmonitor.cli.main`(等价 tgmon-cli)
   - CLI 模式永不加载 PySide6 / qasync / MainWindow(核心架构约束)
-  - `__main__` argv 分流正确(子命令走 cli.main,不走 app.run)
+  - `__main__` 只启 GUI:无参数 / `gui` 走 app.run,其余参数报错退出 2
   - `bootstrap()` / `shutdown()` 从 `core.runtime` 可独立 import
 
 子命令逻辑(sync / monitor)在 `test_cli_sync.py` / `test_cli_monitor.py`
@@ -49,8 +49,8 @@ def _run_subprocess(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def test_cli_help_exits_zero() -> None:
-    """`python -m tgmonitor --help` 退出码 0,且包含全部 2.1.1 子命令。"""
-    r = _run_subprocess(["-m", "tgmonitor", "--help"])
+    """`python -m tgmonitor.cli.main --help` 退出码 0,含全部 2.1.2 子命令。"""
+    r = _run_subprocess(["-m", "tgmonitor.cli.main", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     for cmd in (
         "sync",
@@ -71,7 +71,7 @@ def test_cli_help_exits_zero() -> None:
 
 
 def test_cli_sync_help() -> None:
-    r = _run_subprocess(["-m", "tgmonitor", "sync", "--help"])
+    r = _run_subprocess(["-m", "tgmonitor.cli.main", "sync", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     assert "--no-metadata" in r.stdout
     assert "--resume" in r.stdout
@@ -79,7 +79,7 @@ def test_cli_sync_help() -> None:
 
 
 def test_cli_monitor_help() -> None:
-    r = _run_subprocess(["-m", "tgmonitor", "monitor", "--help"])
+    r = _run_subprocess(["-m", "tgmonitor.cli.main", "monitor", "--help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     assert "--no-resume" in r.stdout
 
@@ -101,9 +101,9 @@ def _all_command_helps():
 
 
 def test_all_subcommands_help_exit_zero() -> None:
-    """2.1.0 全部子命令 `--help` 退出码 0,输出含命令关键词。"""
+    """2.1.2 全部子命令 `--help` 退出码 0,输出含命令关键词。"""
     for cmd, keyword in _all_command_helps():
-        r = _run_subprocess(["-m", "tgmonitor", cmd, "--help"])
+        r = _run_subprocess(["-m", "tgmonitor.cli.main", cmd, "--help"])
         assert r.returncode == 0, f"{cmd} --help stderr={r.stderr}"
         assert keyword in r.stdout, f"{cmd} --help 缺少 {keyword}"
 
@@ -128,7 +128,7 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
     code = textwrap.dedent("""
         import sys
 
-        # 入口 + 全部 2.1.1 子命令模块都触发 import(模拟 CLI 所有代码路径)
+        # 入口 + 全部 2.1.2 子命令模块都触发 import(模拟 CLI 所有代码路径)
         import importlib
         from tgmonitor.cli.main import CLI_SUBCOMMANDS, build_parser
         from tgmonitor.cli.sync import run_sync
@@ -168,33 +168,31 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
 
 
 def test_cli_dispatch_subcommand_routes_to_cli() -> None:
-    """`__main__` 收到 `sync` 时走 `cli.main`,**不**走 `app.run`。
+    """CLI 入口收到 `sync` 时直接解析,**不**走 `app.run`。
 
-    通过 sentinel:子进程把 `tgmonitor.app` 替换成会在 `run()` 调起时抛
-    AssertionError 的占位模块,然后 `__main__.main()` 应不抛 — 证明子
-    命令路径根本不 import `tgmonitor.app`。
+    2.1.2 起 `__main__` 不再分流 CLI,本测试直接针对 `cli.main.main()`:
+    子进程把 `tgmonitor.app` 换成 `run()` 会抛 AssertionError 的占位模块,
+    CLI 路径不应触碰它。
     """
     code = textwrap.dedent("""
         import sys
 
-        # 占位 app:若被调用证明 CLI 路径错了
         class FakeApp:
             @staticmethod
             def run():
                 raise AssertionError('GUI 模式被错误触发')
 
         sys.modules['tgmonitor.app'] = FakeApp
-        sys.argv = ['tgmonitor', 'sync', '--help']
 
-        from tgmonitor.__main__ import main
+        from tgmonitor.cli.main import main
 
         try:
-            rc = main()
+            rc = main(['sync', '--help'])
         except SystemExit as e:
             # argparse --help 走 SystemExit(0)
             rc = e.code if isinstance(e.code, int) else 0
         if rc != 0:
-            raise AssertionError(f'__main__ 返非零退出码 {rc}')
+            raise AssertionError(f'CLI 返非零退出码 {rc}')
     """)
     r = _run_subprocess(["-c", code])
     assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
@@ -216,7 +214,7 @@ def test_cli_dispatch_default_routes_to_gui() -> None:
                 raise RuntimeError("GUI not available in test")
 
         sys.modules['tgmonitor.app'] = FakeApp
-        sys.argv = ['tgmonitor']  # 无参数 → 默认 GUI
+        sys.argv = ['tgmon']  # 无参数 → 默认 GUI
 
         from tgmonitor.__main__ import main
 
@@ -230,20 +228,20 @@ def test_cli_dispatch_default_routes_to_gui() -> None:
 
 
 # ============================================================
-# 2.1.1:CLI 独立入口 + 未知参数绝不唤醒 GUI
+# 2.1.2:GUI / CLI 命令彻底分离
 # ============================================================
 
 
 def test_help_subcommand_prints_overview() -> None:
-    """`tgmonitor help` 打印帮助总览(等同 --help),退出码 0。"""
-    r = _run_subprocess(["-m", "tgmonitor", "help"])
+    """`tgmon-cli help` 打印帮助总览(等同 --help),退出码 0。"""
+    r = _run_subprocess(["-m", "tgmonitor.cli.main", "help"])
     assert r.returncode == 0, f"stderr={r.stderr}"
     for cmd in ("status", "config", "help"):
         assert cmd in r.stdout, f"help 总览缺少 {cmd}"
 
 
-def test_unknown_arg_never_launches_gui() -> None:
-    """未知首参 → 退出码 2 + stderr 提示,不 import / 不调用 GUI。"""
+def test_tgmon_rejects_cli_subcommands() -> None:
+    """`tgmon status` 等 CLI 子命令一律报错退出 2,不 import / 不调用 GUI。"""
     code = textwrap.dedent("""
         import sys
 
@@ -253,7 +251,7 @@ def test_unknown_arg_never_launches_gui() -> None:
                 raise AssertionError('GUI 被错误唤醒')
 
         sys.modules['tgmonitor.app'] = FakeApp
-        sys.argv = ['tgmonitor', 'stats']
+        sys.argv = ['tgmon', 'status']
 
         from tgmonitor.__main__ import main
 
@@ -264,49 +262,71 @@ def test_unknown_arg_never_launches_gui() -> None:
     r = _run_subprocess(["-c", code])
     assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
     assert "无法识别的参数" in r.stderr
-    assert "tgmon" in r.stderr
+    assert "tgmon-cli" in r.stderr
 
 
-def test_console_scripts_registered() -> None:
-    """pyproject 注册三个入口:tgmonitor(GUI)+ tgmon / tgmon-cli(纯 CLI)。"""
-    import tomllib
-    from pathlib import Path
-
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["scripts"]
-    assert scripts["tgmonitor"] == "tgmonitor.__main__:main"
-    assert scripts["tgmon"] == "tgmonitor.cli.main:main_tgmon"
-    assert scripts["tgmon-cli"] == "tgmonitor.cli.main:main_tgmon_cli"
-
-
-def test_tgmon_entries_are_pure_cli() -> None:
-    """两个新入口 usage 显示各自名字;未知参数由 argparse 拒绝,不加载 app。"""
+def test_tgmon_help_points_to_cli() -> None:
+    """`tgmon --help` 只说明 GUI 用法并指向 tgmon-cli,不加载 app。"""
     code = textwrap.dedent("""
         import contextlib
         import io
         import sys
 
-        from tgmonitor.cli.main import main_tgmon, main_tgmon_cli
+        sys.argv = ['tgmon', '--help']
+        from tgmonitor.__main__ import main
 
-        for entry, prog in ((main_tgmon, 'tgmon'), (main_tgmon_cli, 'tgmon-cli')):
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                try:
-                    entry(['--help'])
-                except SystemExit as exc:
-                    assert exc.code == 0, (prog, exc.code)
-                else:
-                    raise AssertionError(f'{prog} --help 未走 argparse 退出')
-            assert f'usage: {prog} ' in buf.getvalue(), (prog, buf.getvalue()[:200])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main()
+        assert rc == 0, rc
+        out = buf.getvalue()
+        assert 'tgmon [gui]' in out, out
+        assert 'tgmon-cli' in out, out
+        assert 'tgmonitor.app' not in sys.modules
+    """)
+    r = _run_subprocess(["-c", code])
+    assert r.returncode == 0, f"stderr={r.stderr}\nstdout={r.stdout}"
 
-            # 未知参数 SystemExit(2),且绝不触碰 GUI
+
+def test_console_scripts_registered() -> None:
+    """pyproject 只注册两个入口:tgmon(GUI)+ tgmon-cli(CLI),无 tgmonitor。"""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["scripts"]
+    assert scripts == {
+        "tgmon": "tgmonitor.__main__:main",
+        "tgmon-cli": "tgmonitor.cli.main:main_tgmon_cli",
+    }
+
+
+def test_tgmon_cli_entry_is_pure_cli() -> None:
+    """tgmon-cli 入口 usage 显示自身名字;未知参数 argparse 拒绝,不加载 app。"""
+    code = textwrap.dedent("""
+        import contextlib
+        import io
+        import sys
+
+        from tgmonitor.cli.main import main_tgmon_cli
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
             try:
-                with contextlib.redirect_stderr(io.StringIO()):
-                    entry(['bogus'])
+                main_tgmon_cli(['--help'])
             except SystemExit as exc:
-                assert exc.code == 2, (prog, exc.code)
+                assert exc.code == 0, exc.code
             else:
-                raise AssertionError(f'{prog} 未知参数未报错')
+                raise AssertionError('--help 未走 argparse 退出')
+        assert 'usage: tgmon-cli ' in buf.getvalue(), buf.getvalue()[:200]
+
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                main_tgmon_cli(['bogus'])
+        except SystemExit as exc:
+            assert exc.code == 2, exc.code
+        else:
+            raise AssertionError('未知参数未报错')
 
         assert 'tgmonitor.app' not in sys.modules
     """)
