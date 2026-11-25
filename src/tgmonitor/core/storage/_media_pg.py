@@ -221,28 +221,21 @@ async def list_media(
             "thumbnail_telegram_file_id": r["thumbnail_telegram_file_id"],
         }
 
-    msg_keys = (
-        "id",
-        "channel_id",
-        "telegram_msg_id",
-        "author",
-        "date",
-        "text",
-        "views",
-        "forwards",
-        "reply_to_msg_id",
-        "edited",
-        "raw",
-    )
+    # 2026-11-25 P1-12:msg_keys 白名单已删 — SQL 本就 `SELECT m.*`(含
+    # is_pinned / is_favorite / tags / notes / reactions / forward_origin /
+    # via_bot_user_id / media_album_id 等全部 messages 列),直接把整行
+    # Record 传给 `_messages._row_to_message`(其内部对每个元数据字段都有
+    # `.get` 兜底),与 SQLite `_media_sqlite.list_media`(SELECT m.* + 整行
+    # dict)对齐。旧白名单把 2026-09-09 v1.7.2 起的用户元数据列全部滤掉,
+    # PG 后端 list_media 返回的 is_pinned 恒 False / tags 恒 [] / notes 恒 ""。
     return [
         (
-            _messages._row_to_message(
-                {k: r[k] for k in msg_keys}, [_row_to_media(_row_to_media_dict(r))]
-            ),
+            _messages._row_to_message(r, [media]),
             r["media_idx"],
-            _row_to_media(_row_to_media_dict(r)),
+            media,
         )
         for r in rows
+        for media in [_row_to_media(_row_to_media_dict(r))]
     ]
 
 
