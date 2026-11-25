@@ -1,24 +1,35 @@
-"""BatchService — 批量操作域服务(7 op + 取消 + ETA 进度)。
+"""BatchService — 批量操作域服务(6 op + 取消 + ETA 进度)。
 
 2026-11-11 v2.0.0 Phase 3:从 `app_service/_batch_ops.py`(module-level
 function 持 facade mutable state)改为独立 class,**自持**取消 Event +
 批量计时起点 — 不再与 facade 共享 `_cancel_event` / `_batch_started_at`。
 
-7 batch op(UI 批量多选触发):
+6 batch op(UI 批量多选触发):
 - `delete_messages_batch` — 走 `monitor.delete_messages(items, cancel_event)`
-- `mark_messages_read` — 走 `client.mark_messages_read(cid, msg_ids)`
 - `forward_messages` — 走 `client.forward_messages` + `_chunks(mids, 100)`
 - `pin_messages` / `unpin_messages` — 走 `client.pin_messages` / `unpin_messages`
 - `add_reaction` / `remove_reaction` — 走 `client.add_reaction` / `remove_reaction`
 
-取消语义:`cancel_current_batch()` set Event,op 循环下一个 item 前检查
-break + 发 BatchDone(error='cancelled')。不调 task.cancel — 批量在主 task
-loop 里 await,set Event 即可跳出;task.cancel 的 CancelledError 会被
-run_coro 吞,无法发 BatchDone。已发出的 RPC server-side 仍可能完成,
-best-effort。
+取消语义(2026-11-25 P2 #31 重构):**每个 op 进入时创建局部
+`asyncio.Event`**,整个执行链(delete 传给 monitor / 其余 op 内部循环)
+都引用这个局部 Event;类上只保留 `_cancel_event` 指向"当前 op 的
+event"供 `cancel_current_batch()` 定位,op 结束(含异常)时在 finally
+置回 None。旧实现是单一 Event + 各 op 开头 clear() — 两个批量并发时,
+后启动的 op 一 clear 就把前一个的取消信号抹掉。新语义:
+
+- 单线程 asyncio loop 下,"op 开头赋值 / finally 置 None"是顺序一致的;
+- 并发两个 op 时,`cancel_current_batch()` 只保证作用于**最近注册**
+  (仍在跑)的那个 op — 前一个 op 的取消窗口已过,语义由 UI 单批量
+  dialog 前提兜底(同一时刻至多一个可见批量);
+- 无 op 进行时调用 `cancel_current_batch()` 是 no-op(置 None 防悬挂
+  set 落到下一个 op 上 — 下一个 op 用自己的新 Event,旧 set 自然失效)。
+
+不调 task.cancel — 批量在主 task loop 里 await,set Event 即可跳出;
+task.cancel 的 CancelledError 会被 run_coro 吞,无法发 BatchDone。
+已发出的 RPC server-side 仍可能完成,best-effort。
 
 paused 守卫:构造时注入 `is_paused: Callable[[], bool]`(读 AppService
-实时状态,不持副本)— paused 期间 client 已 stop,7 op 返 0 + log warning。
+实时状态,不持副本)— paused 期间 client 已 stop,6 op 返 0 + log warning。
 """
 
 from __future__ import annotations
@@ -53,18 +64,22 @@ class BatchService:
         self._client = client
         self._monitor = monitor
         self._is_paused = is_paused
-        self._cancel_event: asyncio.Event = asyncio.Event()
+        # P2 #31:指向"当前 op 的局部取消 Event";无 op 进行时为 None。
+        # 赋值发生在每个 op 入口(创建局部 Event 后),置 None 在 op 的
+        # finally — 单线程 loop 下两步之间不会被其它 op 穿插写。
+        self._cancel_event: asyncio.Event | None = None
         self._batch_started_at: float = 0.0
 
     # ---------- 取消 ----------
 
     def cancel_current_batch(self) -> None:
-        """取消当前批量操作 — set Event,op 下一个 item 检查后 break。
+        """取消当前批量操作 — set 当前 op 的局部 Event,op 下一个 item 检查后 break。
 
-        多次调用安全(只是 set 已 set 的 Event);无批量进行时也无副作用
-        (下一次 op 开头 clear)。
+        多次调用安全(只是 set 已 set 的 Event);无批量进行时是 no-op
+        (不再像旧实现那样 set 一个"下一个 op 会 clear"的共享 Event)。
         """
-        self._cancel_event.set()
+        if self._cancel_event is not None:
+            self._cancel_event.set()
 
     # ---------- ETA helper ----------
 
@@ -98,13 +113,31 @@ class BatchService:
             return []
         return [items[i : i + size] for i in range(0, len(items), size)]
 
-    # ---------- 7 批量 op ----------
+    def _begin_op(self) -> asyncio.Event:
+        """op 入口:创建本 op 专属的取消 Event 并注册为"当前 op"。
+
+        P2 #31:每个 op 一个新 Event,取代旧的共享 Event + 开头 clear()。
+        """
+        cancel_event = asyncio.Event()
+        self._cancel_event = cancel_event
+        self._start_batch_timer()
+        return cancel_event
+
+    def _end_op(self) -> None:
+        """op 退出(含异常):清"当前 op"引用 — 之后的 cancel 调用变 no-op。"""
+        self._cancel_event = None
+
+    # ---------- 6 批量 op ----------
 
     async def delete_messages_batch(self, items: list[tuple[int, int]]) -> int:
         """批量删 N 条消息 — 转 MonitorService.delete_messages(带 cancel_event)。
 
         返成功条数;每条成功 publish MessageDeleted → LIVE view remove_row。
         monitor 内部循环不逐条 emit,进度按 (deleted, total) 末尾发一次。
+
+        2026-11-25 P2 #32:monitor.delete_messages 返回
+        `(succeeded, failures)`,部分失败时 failures 逐条组装进
+        BatchDone(旧实现部分失败 failures=[] —「查看失败详情」拿空列表)。
         """
         if not items:
             return 0
@@ -112,66 +145,33 @@ class BatchService:
             log.warning("BatchService.delete_messages_batch: paused, skip %d items", len(items))
             return 0
         assert self._monitor is not None
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        await self._publish_batch_progress("delete", 0, len(items))
-        failures: list[tuple[int, int, str]] = []
+        cancel_event = self._begin_op()
         try:
-            deleted = await self._monitor.delete_messages(items, cancel_event=self._cancel_event)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("delete_messages_batch 全批失败")
-            deleted = 0
-            for cid, mid in items:
-                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._publish_batch_progress("delete", deleted, len(items))
-        await self._bus.publish(
-            BatchDone(
-                op="delete",
-                succeeded=deleted,
-                failed=len(items) - deleted,
-                error="cancelled" if self._cancel_event.is_set() else None,
-                failures=failures,
-            )
-        )
-        return deleted
-
-    async def mark_messages_read(self, items: list[tuple[int, int]]) -> int:
-        """批量标已读 — 按 channel_id 分组,各调一次 client.mark_messages_read。"""
-        if not items:
-            return 0
-        if self._is_paused():
-            log.warning("BatchService.mark_messages_read: paused, skip %d items", len(items))
-            return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        by_cid: dict[int, list[int]] = {}
-        for cid, mid in items:
-            by_cid.setdefault(cid, []).append(mid)
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for cid, msg_ids in by_cid.items():
-            if self._cancel_event.is_set():
-                cancelled = True
-                break
+            await self._publish_batch_progress("delete", 0, len(items))
+            failures: list[tuple[int, int, str]] = []
             try:
-                await self._client.mark_messages_read(cid, msg_ids)
-                success += len(msg_ids)
-                await self._publish_batch_progress("mark_read", success, len(items))
+                deleted, op_failures = await self._monitor.delete_messages(
+                    items, cancel_event=cancel_event
+                )
+                failures.extend(op_failures)
             except Exception as exc:  # noqa: BLE001
-                log.exception("mark_messages_read(cid=%s) failed", cid)
-                for mid in msg_ids:
+                log.exception("delete_messages_batch 全批失败")
+                deleted = 0
+                for cid, mid in items:
                     failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._bus.publish(
-            BatchDone(
-                op="mark_read",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+            await self._publish_batch_progress("delete", deleted, len(items))
+            await self._bus.publish(
+                BatchDone(
+                    op="delete",
+                    succeeded=deleted,
+                    failed=len(items) - deleted,
+                    error="cancelled" if cancel_event.is_set() else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return deleted
+        finally:
+            self._end_op()
 
     async def forward_messages(self, items: list[tuple[int, int]], to_chat_id: int) -> int:
         """批量转发 — 按 from_cid group,各走 `_chunks(mids, 100)`(API 上限)。
@@ -183,41 +183,43 @@ class BatchService:
         if self._is_paused():
             log.warning("BatchService.forward_messages: paused, skip %d items", len(items))
             return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        by_cid: dict[int, list[int]] = {}
-        for cid, mid in items:
-            by_cid.setdefault(cid, []).append(mid)
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for from_cid, mids in by_cid.items():
-            for chunk in self._chunks(mids, 100):
-                if self._cancel_event.is_set():
-                    cancelled = True
+        cancel_event = self._begin_op()
+        try:
+            by_cid: dict[int, list[int]] = {}
+            for cid, mid in items:
+                by_cid.setdefault(cid, []).append(mid)
+            success = 0
+            cancelled = False
+            failures: list[tuple[int, int, str]] = []
+            for from_cid, mids in by_cid.items():
+                for chunk in self._chunks(mids, 100):
+                    if cancel_event.is_set():
+                        cancelled = True
+                        break
+                    try:
+                        await self._client.forward_messages(from_cid, to_chat_id, chunk)
+                        success += len(chunk)
+                        await self._publish_batch_progress("forward", success, len(items))
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception(
+                            "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
+                        )
+                        for mid in chunk:
+                            failures.append((from_cid, mid, str(exc) or exc.__class__.__name__))
+                if cancelled:
                     break
-                try:
-                    await self._client.forward_messages(from_cid, to_chat_id, chunk)
-                    success += len(chunk)
-                    await self._publish_batch_progress("forward", success, len(items))
-                except Exception as exc:  # noqa: BLE001
-                    log.exception(
-                        "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
-                    )
-                    for mid in chunk:
-                        failures.append((from_cid, mid, str(exc) or exc.__class__.__name__))
-            if cancelled:
-                break
-        await self._bus.publish(
-            BatchDone(
-                op="forward",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+            await self._bus.publish(
+                BatchDone(
+                    op="forward",
+                    succeeded=success,
+                    failed=len(items) - success,
+                    error="cancelled" if cancelled else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return success
+        finally:
+            self._end_op()
 
     async def pin_messages(self, items: list[tuple[int, int]]) -> int:
         """批量钉选 — 按 cid group(per-msg RPC,异常隔离粒度到单条)。"""
@@ -226,36 +228,38 @@ class BatchService:
         if self._is_paused():
             log.warning("BatchService.pin_messages: paused, skip %d items", len(items))
             return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        by_cid: dict[int, list[int]] = {}
-        for cid, mid in items:
-            by_cid.setdefault(cid, []).append(mid)
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for cid, msg_ids in by_cid.items():
-            if self._cancel_event.is_set():
-                cancelled = True
-                break
-            try:
-                await self._client.pin_messages(cid, msg_ids)
-                success += len(msg_ids)
-                await self._publish_batch_progress("pin", success, len(items))
-            except Exception as exc:  # noqa: BLE001
-                log.exception("pin_messages(cid=%s) failed", cid)
-                for mid in msg_ids:
-                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._bus.publish(
-            BatchDone(
-                op="pin",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+        cancel_event = self._begin_op()
+        try:
+            by_cid: dict[int, list[int]] = {}
+            for cid, mid in items:
+                by_cid.setdefault(cid, []).append(mid)
+            success = 0
+            cancelled = False
+            failures: list[tuple[int, int, str]] = []
+            for cid, msg_ids in by_cid.items():
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    await self._client.pin_messages(cid, msg_ids)
+                    success += len(msg_ids)
+                    await self._publish_batch_progress("pin", success, len(items))
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("pin_messages(cid=%s) failed", cid)
+                    for mid in msg_ids:
+                        failures.append((cid, mid, str(exc) or exc.__class__.__name__))
+            await self._bus.publish(
+                BatchDone(
+                    op="pin",
+                    succeeded=success,
+                    failed=len(items) - success,
+                    error="cancelled" if cancelled else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return success
+        finally:
+            self._end_op()
 
     async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
         """批量取消钉选 — 同 pin_messages 模式。"""
@@ -264,36 +268,38 @@ class BatchService:
         if self._is_paused():
             log.warning("BatchService.unpin_messages: paused, skip %d items", len(items))
             return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        by_cid: dict[int, list[int]] = {}
-        for cid, mid in items:
-            by_cid.setdefault(cid, []).append(mid)
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for cid, msg_ids in by_cid.items():
-            if self._cancel_event.is_set():
-                cancelled = True
-                break
-            try:
-                await self._client.unpin_messages(cid, msg_ids)
-                success += len(msg_ids)
-                await self._publish_batch_progress("unpin", success, len(items))
-            except Exception as exc:  # noqa: BLE001
-                log.exception("unpin_messages(cid=%s) failed", cid)
-                for mid in msg_ids:
-                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._bus.publish(
-            BatchDone(
-                op="unpin",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+        cancel_event = self._begin_op()
+        try:
+            by_cid: dict[int, list[int]] = {}
+            for cid, mid in items:
+                by_cid.setdefault(cid, []).append(mid)
+            success = 0
+            cancelled = False
+            failures: list[tuple[int, int, str]] = []
+            for cid, msg_ids in by_cid.items():
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    await self._client.unpin_messages(cid, msg_ids)
+                    success += len(msg_ids)
+                    await self._publish_batch_progress("unpin", success, len(items))
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("unpin_messages(cid=%s) failed", cid)
+                    for mid in msg_ids:
+                        failures.append((cid, mid, str(exc) or exc.__class__.__name__))
+            await self._bus.publish(
+                BatchDone(
+                    op="unpin",
+                    succeeded=success,
+                    failed=len(items) - success,
+                    error="cancelled" if cancelled else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return success
+        finally:
+            self._end_op()
 
     async def add_reaction(
         self,
@@ -308,32 +314,34 @@ class BatchService:
         if self._is_paused():
             log.warning("BatchService.add_reaction: paused, skip %d items", len(items))
             return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for cid, mid in items:
-            if self._cancel_event.is_set():
-                cancelled = True
-                break
-            try:
-                await self._client.add_reaction(cid, mid, emoji, is_big=is_big)
-                success += 1
-                await self._publish_batch_progress("react", success, len(items))
-            except Exception as exc:  # noqa: BLE001
-                log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
-                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._bus.publish(
-            BatchDone(
-                op="react",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+        cancel_event = self._begin_op()
+        try:
+            success = 0
+            cancelled = False
+            failures: list[tuple[int, int, str]] = []
+            for cid, mid in items:
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    await self._client.add_reaction(cid, mid, emoji, is_big=is_big)
+                    success += 1
+                    await self._publish_batch_progress("react", success, len(items))
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
+                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
+            await self._bus.publish(
+                BatchDone(
+                    op="react",
+                    succeeded=success,
+                    failed=len(items) - success,
+                    error="cancelled" if cancelled else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return success
+        finally:
+            self._end_op()
 
     async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
         """批量取消 emoji 回应 — 同 add_reaction 模式。"""
@@ -342,29 +350,31 @@ class BatchService:
         if self._is_paused():
             log.warning("BatchService.remove_reaction: paused, skip %d items", len(items))
             return 0
-        self._cancel_event.clear()
-        self._start_batch_timer()
-        success = 0
-        cancelled = False
-        failures: list[tuple[int, int, str]] = []
-        for cid, mid in items:
-            if self._cancel_event.is_set():
-                cancelled = True
-                break
-            try:
-                await self._client.remove_reaction(cid, mid, emoji)
-                success += 1
-                await self._publish_batch_progress("unreact", success, len(items))
-            except Exception as exc:  # noqa: BLE001
-                log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
-                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
-        await self._bus.publish(
-            BatchDone(
-                op="unreact",
-                succeeded=success,
-                failed=len(items) - success,
-                error="cancelled" if cancelled else None,
-                failures=failures,
+        cancel_event = self._begin_op()
+        try:
+            success = 0
+            cancelled = False
+            failures: list[tuple[int, int, str]] = []
+            for cid, mid in items:
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    await self._client.remove_reaction(cid, mid, emoji)
+                    success += 1
+                    await self._publish_batch_progress("unreact", success, len(items))
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
+                    failures.append((cid, mid, str(exc) or exc.__class__.__name__))
+            await self._bus.publish(
+                BatchDone(
+                    op="unreact",
+                    succeeded=success,
+                    failed=len(items) - success,
+                    error="cancelled" if cancelled else None,
+                    failures=failures,
+                )
             )
-        )
-        return success
+            return success
+        finally:
+            self._end_op()

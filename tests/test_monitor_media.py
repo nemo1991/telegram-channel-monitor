@@ -48,18 +48,31 @@ def _media_with_file_id(file_id: str, **overrides) -> MediaDTO:
 
 
 class _SlowDownloadClient(FakeTelegramClient):
-    """`download_file` 睡 0.2s 再返回 — 模拟大文件下载耗时。
+    """`download_file` / `download_file_to` 都睡 0.2s 再返回 — 模拟大文件下载耗时。
 
     让「先落库 DOWNLOADING → 后台下载 → 回写 DONE」的时序可确定性观察,
     而不是在 0.05s 的 sleep 里被秒完成下载的假 client 竞态掉。
 
     2026-09-01 v1.5.1 PR #B3:接 `progress_callback` kwarg — 与 Protocol
     签名对齐;SlowClient 不发进度(避免测试事件洪水)。
+    2026-11-25 P2 #36:fake client 新增流式 `download_file_to`(主媒体实际
+    走这条路径),同样加 0.2s 延迟 — 否则慢速语义被流式路径绕过。
     """
 
     async def download_file(self, file_id: str, *, progress_callback=None) -> bytes | None:
         await asyncio.sleep(0.2)
         return await super().download_file(file_id, progress_callback=progress_callback)
+
+    async def download_file_to(  # type: ignore[override]
+        self, file_id: str, dest_path, *, progress_callback=None, max_bytes=None
+    ):
+        await asyncio.sleep(0.2)
+        return await super().download_file_to(
+            file_id,
+            dest_path,
+            progress_callback=progress_callback,
+            max_bytes=max_bytes,
+        )
 
 
 async def test_full_policy_downloads_media_async(bus, storage, objectstore, settings) -> None:
@@ -805,5 +818,74 @@ async def test_default_thumb_skips_media_without_thumb_id(
         stored = await wait_for(lambda: storage.get_message(100, 14))
         assert stored is not None
         assert thumb_calls == 0, "无 thumb id 不应调 download_thumb"
+    finally:
+        await mon.stop()
+
+
+# ============================================================
+# 2026-11-25 P2 #36:下载完成回写改定向 UPDATE
+# 下载可达 30 分钟,期间并发编辑推送(updateMessageContent)已把新
+# text / views 落库;旧实现 worker save_message(整条 stale DTO)把它们
+# 覆盖回去。新实现只定向回写 media 行(update_message_media)。
+# ============================================================
+
+
+async def test_download_writeback_preserves_concurrent_edit_text(
+    bus, storage, objectstore, settings
+) -> None:
+    """P2 #36 回归:下载完成回写不再覆盖并发编辑的 text。
+
+    时序:FULL 新消息落库(DOWNLOADING)→ 下载进行中(0.2s 窗口)推送
+    同 id 编辑(text v2)→ worker 完成。
+    - 旧实现:worker save_message(下载开始时的 stale DTO)→ text 回退 v1 ✗
+    - 新实现:update_message_media 只动 media 行 → text 保持 v2 ✓,
+      且 media 状态照常 DONE + object_key。
+    """
+    client = _SlowDownloadClient()
+    client.set_download("fid-1", b"image-bytes")
+    full = settings.model_copy(update={"media_policy": MediaPolicy.FULL})
+    mon = MonitorService(
+        bus,
+        client,
+        storage,
+        objectstore,
+        full,
+        downloader=MediaDownloader(client, storage, objectstore),
+    )
+    mon.set_whitelist([100])
+    downloaded_evt = asyncio.Event()
+
+    async def _on_downloaded(e: MediaDownloaded) -> None:
+        downloaded_evt.set()
+
+    bus.subscribe(MediaDownloaded, _on_downloaded)
+
+    msg = make_message(
+        channel_id=100,
+        msg_id=30,
+        text="v1",
+        media=[_media_with_file_id("fid-1")],
+    )
+    await mon.start()
+    try:
+        await client.simulate_incoming(msg)
+        # 等消息落库(DOWNLOADING 状态)— 此时下载 worker 刚拿到任务
+        assert await wait_for(lambda: storage.get_message(100, 30), timeout=2.0), (
+            "消息没在 2s 内落库"
+        )
+        # 下载进行中(SlowClient 0.2s 窗口)推送编辑:text 变更
+        await client.simulate_incoming(make_message(channel_id=100, msg_id=30, text="v2-edited"))
+        # 等下载完成回写
+        await asyncio.wait_for(downloaded_evt.wait(), timeout=3.0)
+        stored = await storage.get_message(100, 30)
+        assert stored is not None
+        assert stored.text == "v2-edited", (
+            "text 被下载完成回写覆盖(P2 #36):worker 不应用 stale DTO 整条覆盖"
+        )
+        # media 下载状态照常落库
+        assert stored.media[0].download_status == MediaDownloadStatus.DONE
+        assert stored.media[0].object_key
+        assert await objectstore.exists(stored.media[0].object_key)
+        assert await objectstore.get(stored.media[0].object_key) == b"image-bytes"
     finally:
         await mon.stop()

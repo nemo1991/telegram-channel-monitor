@@ -108,10 +108,11 @@ async def test_monitor_delete_messages_supports_cancel_event(monitor, storage, b
     monitor._delete_with_orphan_check = _counting_delete  # type: ignore[attr-defined]
 
     items = [(100, m) for m in range(1, 6)]
-    succeeded = await monitor.delete_messages(items, cancel_event=cancel)
+    succeeded, failures = await monitor.delete_messages(items, cancel_event=cancel)
 
-    # 只删了 2 条,后 3 条不应被调用
+    # 只删了 2 条,后 3 条不应被调用;失败明细为空(P2 #32 契约)
     assert succeeded == 2
+    assert failures == []
     assert deleted_calls == [(100, 1), (100, 2)]
 
     # 后 3 条仍存在

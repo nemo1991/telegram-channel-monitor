@@ -155,7 +155,15 @@ class Orchestrator:
             try:
                 await asyncio.wait_for(rt.task, timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
+                # P2 #34:cancel 后必须 await gather — 旧实现只 cancel 不等,
+                # task 的异常无人观察(asyncio "Task exception was never
+                # retrieved"),且若 cancel 自身再被卡住,stop 直接跳走。
+                # gather(return_exceptions=True) 收尾并吞掉一切结果。
                 rt.task.cancel()
+                try:
+                    await asyncio.gather(rt.task, return_exceptions=True)
+                except asyncio.CancelledError:
+                    pass
             rt.task = None
 
     async def _run(self) -> None:

@@ -429,8 +429,12 @@ class MonitorService:
         self,
         items: list[tuple[int, int]],
         cancel_event: asyncio.Event | None = None,
-    ) -> int:
-        """批量删(支持 cancel_event)— 转发 DeleteManager。"""
+    ) -> tuple[int, list[tuple[int, int, str]]]:
+        """批量删(支持 cancel_event)— 转发 DeleteManager。
+
+        2026-11-25 P2 #32:返回 `(succeeded, failures)`,failures 供
+        BatchService 组装 BatchDone.failures。
+        """
         return await self._delete_mgr.delete_messages(items, cancel_event=cancel_event)
 
     async def _delete_with_orphan_check(self, channel_id: int, telegram_msg_id: int) -> None:
@@ -663,8 +667,31 @@ class MonitorService:
                 updated.download_status.value if updated.download_status else "未下载",
                 updated.object_key or "-",
             )
+            # P2 #36:定向回写 media 行 — 不再 save_message 整条覆盖。
+            # 下载可能长达 30 分钟,期间并发编辑推送(updateMessageContent)
+            # 已把新 text / views 落库;整条回写会用下载开始时的旧 DTO 把
+            # 它们覆盖回去。改为:重读当前消息 → 只替换 media[idx] →
+            # `update_message_media`(DELETE+重插 media 行,text 不动)。
+            # 消息在下载期间被删(get_message 返 None)则跳过回写。
             try:
-                await self.storage.save_message(msg)
+                current = await self.storage.get_message(msg.channel_id, msg.telegram_msg_id)
+                if current is not None:
+                    current_media = list(current.media)
+                    if idx < len(current_media):
+                        current_media[idx] = updated
+                    else:
+                        current_media.append(updated)
+                    await self.storage.update_message_media(
+                        msg.channel_id,
+                        msg.telegram_msg_id,
+                        current_media,
+                    )
+                else:
+                    log.warning(
+                        "skip media writeback: message gone: channel=%s msg_id=%s",
+                        msg.channel_id,
+                        msg.telegram_msg_id,
+                    )
             except Exception as e:  # noqa: BLE001
                 log.exception(
                     "update media status failed: channel=%s msg_id=%s: %s",

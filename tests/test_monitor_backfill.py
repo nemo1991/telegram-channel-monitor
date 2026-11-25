@@ -291,3 +291,57 @@ async def test_seen_ids_cache_evicts_when_over_limit(monitor, client, bus) -> No
         assert (100, 10001) in monitor._seen_ids
     finally:
         await monitor.stop()
+
+
+# ============================================================
+# 2026-11-25 P2 #30:skip_next_tick 死逻辑修复
+# ============================================================
+
+
+async def test_reconnect_kick_skips_next_periodic_tick(bus, storage, objectstore, settings):
+    """P2 #30 回归:reconnect kick 后,下一轮周期 tick 跳过一次。
+
+    `_handle_connection_state`(reconnect → 立即 kick)设置
+    `skip_next_tick=True`;旧实现该标志无任何消费者 — 30s tick 紧接着
+    kick 又跑一轮,造成回拉重复。新实现 `_backfill_loop` 在 tick 顶部
+    消费标志(skip 一次)。
+
+    可观测行为:kick 与下一次 backfill_all 调用的间隔 ≥ 2 个 tick 周期
+    (旧实现 ≈ 1 个周期)。
+    """
+    import time as _time
+
+    from tgmonitor.core.events import ConnectionStateChanged
+    from tgmonitor.core.monitor.service import MonitorService
+
+    client = _BackfillClient({100: [1]})
+    mon = MonitorService(bus, client, storage, objectstore, settings)
+    mon.set_whitelist([100])
+    mon._BACKFILL_INTERVAL = 0.01  # type: ignore[assignment]
+    stamps: list[float] = []
+
+    async def _spy_backfill() -> None:
+        stamps.append(_time.monotonic())
+
+    mon._backfill_all = _spy_backfill  # type: ignore[method-assign]
+
+    # reconnect kick(loop 未运行,无竞态):立即补拉一轮 + 置位 skip
+    await mon._handle_connection_state(ConnectionStateChanged(state="ready"))
+    assert len(stamps) == 1, "kick 应立即补拉一轮"
+    assert mon._skip_next_tick is True, "kick 应置位 skip_next_tick"
+
+    # 启动周期循环:首个 tick 应消费 skip(不调用),次轮起恢复周期补拉
+    await mon.start()
+    try:
+        assert await wait_for(lambda: len(stamps) >= 2, timeout=2.0), (
+            f"skip 消费后周期补拉未恢复:stamps={len(stamps)}"
+        )
+        gap = stamps[1] - stamps[0]
+        # 旧实现(gap ≈ 1 周期 = 10ms)在本断言失败;新实现中间隔了一个
+        # 被跳过的 tick,gap ≥ 2 周期。
+        assert gap >= 0.015, (
+            f"kick 与下一次 tick 补拉间隔 {gap * 1000:.1f}ms ≈ 1 周期 — "
+            "skip_next_tick 未被消费(P2 #30)"
+        )
+    finally:
+        await mon.stop()

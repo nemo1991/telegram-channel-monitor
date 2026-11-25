@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,7 +71,13 @@ def parse_env_file(path: Path) -> EnvFile:
 
 
 def write_env_file(env: EnvFile, path: Path) -> None:
-    """把 EnvFile 落盘(保留注释/空行,只更新已存在的 key,新增 key 追加到末尾)。"""
+    """把 EnvFile 落盘(保留注释/空行,只更新已存在的 key,新增 key 追加到末尾)。
+
+    2026-11-25 P2 #38:.env 含明文 secret(TG_API_HASH / TG_OBJECTSTORE_SECRET_KEY),
+    旧实现 umask 默认 0644 — 同机其它用户可读。落盘前后均 chmod 0o600:
+    tmp 文件在 replace 前先收紧(replace 保留 inode 权限位),replace 后对
+    最终路径再兜底一次(防 umask 意外 / 已存在旧文件权限残留)。
+    """
     lines = list(env.raw_lines)
     # 已存在 key 直接覆盖
     for k, v in env.pairs.items():
@@ -86,7 +93,9 @@ def write_env_file(env: EnvFile, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
     tmp.replace(path)
+    os.chmod(path, 0o600)
 
 
 # ---- 高层 API:Settings <-> EnvFile ----
@@ -324,9 +333,8 @@ class EditableSettings:
             objectstore_region=self.objectstore_region,
             objectstore_access_key=self.objectstore_access_key or None,
             objectstore_secret_key=self.objectstore_secret_key or None,
-            objectstore_bucket=self.objectstore_backend == "s3"
-            and self.objectstore_bucket
-            or self.objectstore_bucket,
+            # 2026-11-25 P2 #39:旧写法 `a and b or b` 恒等于 b,死代码 — 直接传值。
+            objectstore_bucket=self.objectstore_bucket,
             media_policy=MediaPolicy(policy_value),
             media_max_bytes=self.media_max_mb * 1024 * 1024,
             data_root=Path(self.data_root),

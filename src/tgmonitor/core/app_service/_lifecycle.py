@@ -146,6 +146,12 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
     让用户重试(resume 失败而 .env 写 resumed 会导致下次启动误以为已恢复,
     实际上 client 没连 — 不一致更糟)。写顺序:in-memory flip 先于 .env 写
     (失败仅 log,内存态正确;下次重启回退 .env 旧值,可接受退化)。
+
+    2026-11-25 P2 #35:`monitor.start()` 失败同样**不** flip `_is_paused`、
+    **不**发 `MonitoringResumed`、**不**写 .env — 与 client.start 失败分支
+    对齐。旧实现 monitor.start 抛错后照样 flip + 发 Resumed,UI 显示
+    「监听中」但实时流/下载 worker 实际没起来,是假状态;保持 paused 让
+    用户看到「暂停中」并可重试 resume。
     """
     if not app._is_paused:
         log.debug("resume_monitor: not paused, no-op")
@@ -162,7 +168,10 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
         try:
             await app.monitor.start()
         except Exception:  # noqa: BLE001
-            log.exception("resume_monitor: monitor.start failed")
+            # P2 #35:monitor.start 失败同样保持 paused — 不 flip、不发
+            # Resumed、不写 .env,让 UI 停在「暂停中」等用户重试。
+            log.exception("resume_monitor: monitor.start failed, keep paused")
+            return
     app._is_paused = False
     # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=false)—失败保留 paused=True 内存态,
     # 避免 .env 说 resumed 但实际 client.start 失败的不一致(只在内存 flip 成功
@@ -199,8 +208,22 @@ async def shutdown(app: AppService) -> None:
         log.error("client.close() 超时(2s)— 后台任务可能残留,下次启动 client 自愈 401")
     except Exception:  # noqa: BLE001
         log.exception("client.close() failed")
-    await app.storage.close()
-    await app.objects.close()
+    # 2026-11-25 P2 #33:storage / objects close 同样包 2s hard timeout —
+    # 之前只有 client 有超时,这两步任何一段 hang 都会让整个 shutdown 卡死
+    # (外层 wait_for 强 cancel 会留下未 flush 的 SQLite WAL / 未释放连接)。
+    # 与 client.close 的 2s 对齐;超时 / 异常仅 log,继续往下走(尽力清,不卡死)。
+    try:
+        await asyncio.wait_for(app.storage.close(), timeout=2.0)
+    except TimeoutError:
+        log.error("storage.close() 超时(2s)— 未 flush 的写入可能丢失")
+    except Exception:  # noqa: BLE001
+        log.exception("storage.close() failed")
+    try:
+        await asyncio.wait_for(app.objects.close(), timeout=2.0)
+    except TimeoutError:
+        log.error("objects.close() 超时(2s)— 上传中的对象可能未完成")
+    except Exception:  # noqa: BLE001
+        log.exception("objects.close() failed")
 
 
 __all__ = [

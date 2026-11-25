@@ -223,11 +223,16 @@ async def test_handle_channel_photo_changed_storage_error_emits_error_event() ->
 
 
 def _make_monitor_with_downloader() -> tuple[MonitorService, EventBus, MagicMock]:
-    """构造带真 downloader 的 MonitorService — 用 mock downloader 替换。"""
+    """构造带真 downloader 的 MonitorService — 用 mock downloader 替换。
+
+    2026-11-25 P2 #36:worker 回写契约从 `save_message`(整条)改为
+    `get_message` + `update_message_media`(定向 media 行)。
+    """
     bus = EventBus()
     client = FakeTelegramClient()
     storage = MagicMock(spec=StorageRepository)
-    storage.save_message = AsyncMock(return_value=None)
+    storage.get_message = AsyncMock(return_value=None)
+    storage.update_message_media = AsyncMock(return_value=None)
     objects = MagicMock()
     settings = MagicMock()
     mon = MonitorService(bus, client, storage, objects, settings)
@@ -253,8 +258,8 @@ def _make_monitor_with_downloader() -> tuple[MonitorService, EventBus, MagicMock
 
 
 async def test_download_worker_processes_one_message_and_emits_event() -> None:
-    """worker 拉一条消息 → `downloader.download_one` → `storage.save_message`
-    回写 + 发 `MediaDownloaded` 事件。"""
+    """worker 拉一条消息 → `downloader.download_one` → `update_message_media`
+    定向回写 + 发 `MediaDownloaded` 事件(P2 #36:不再整条 save_message)。"""
     mon, bus, storage = _make_monitor_with_downloader()
 
     msg = MessageDTO(
@@ -277,6 +282,7 @@ async def test_download_worker_processes_one_message_and_emits_event() -> None:
             )
         ],
     )
+    storage.get_message.return_value = msg
 
     received: list[MediaDownloaded] = []
     bus.subscribe(MediaDownloaded, lambda e: received.append(e))
@@ -285,9 +291,9 @@ async def test_download_worker_processes_one_message_and_emits_event() -> None:
     worker_task = asyncio.create_task(mon._download_worker())
     await mon._download_queue.put((msg, 0))  # msg + media_idx
 
-    # 等 worker 处理完(save_message 被调一次)— wait_for 比 for+sleep 更声明式
-    assert await wait_for(lambda: storage.save_message.await_count >= 1, timeout=2.0), (
-        "download_worker 没在 2s 内调 save_message"
+    # 等 worker 处理完(update_message_media 被调一次)
+    assert await wait_for(lambda: storage.update_message_media.await_count >= 1, timeout=2.0), (
+        "download_worker 没在 2s 内调 update_message_media"
     )
     # cancel worker 退出
     worker_task.cancel()
@@ -298,7 +304,11 @@ async def test_download_worker_processes_one_message_and_emits_event() -> None:
 
     # 断言
     assert mon.downloader.download_one.await_count == 1
-    storage.save_message.assert_awaited_once()
+    storage.save_message.assert_not_awaited()  # P2 #36:不再整条覆盖
+    storage.update_message_media.assert_awaited_once()
+    write_args = storage.update_message_media.await_args
+    assert write_args.args[0] == 100 and write_args.args[1] == 99
+    assert write_args.args[2][0].download_status == MediaDownloadStatus.DONE
     assert len(received) == 1
     assert received[0].channel_id == 100
     assert received[0].telegram_msg_id == 99
@@ -431,6 +441,8 @@ async def test_download_worker_swallows_download_exception() -> None:
         ],
     )
 
+    storage.get_message.return_value = msg
+
     worker_task = asyncio.create_task(mon._download_worker())
     # 塞 2 条:第一条失败,第二条成功
     await mon._download_queue.put((msg, 0))
@@ -438,10 +450,11 @@ async def test_download_worker_swallows_download_exception() -> None:
 
     # 等 worker 跑完 2 条(wait_for 比 for+sleep 更声明式)
     assert await wait_for(
-        lambda: call_count["n"] >= 2 and storage.save_message.await_count >= 2,
+        lambda: call_count["n"] >= 2 and storage.update_message_media.await_count >= 2,
         timeout=2.0,
     ), (
-        f"download_worker 没在 2s 内跑完 2 条:count={call_count['n']}, saved={storage.save_message.await_count}"
+        f"download_worker 没在 2s 内跑完 2 条:count={call_count['n']}, "
+        f"saved={storage.update_message_media.await_count}"
     )
     worker_task.cancel()
     try:
@@ -449,8 +462,9 @@ async def test_download_worker_swallows_download_exception() -> None:
     except asyncio.CancelledError:
         pass
 
-    # worker 没死:2 条都处理了
+    # worker 没死:2 条都处理了;回写走定向 media UPDATE(P2 #36)
     assert call_count["n"] == 2
+    assert storage.update_message_media.await_count == 2
     # 2 个 MediaDownloaded:第一个 FAILED,第二个 DONE
     assert len(received) == 2
     assert received[0].media is not None

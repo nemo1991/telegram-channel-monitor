@@ -131,11 +131,21 @@ class BackfillRunner:
             await self._backfill(cid, channels.get(cid))
 
     async def _backfill_loop(self) -> None:
-        """周期补拉主循环:每 `_BACKFILL_INTERVAL` 秒全量扫一轮白名单。"""
+        """周期补拉主循环:每 `_BACKFILL_INTERVAL` 秒全量扫一轮白名单。
+
+        2026-11-25 P2 #30:`skip_next_tick` 在此消费 — reconnect kick
+        (`_handle_connection_state`)刚跑过一轮立即补拉时置位,本循环下一轮
+        tick 跳过一次,避免 30s tick 紧接着再跑一轮造成回拉重复。
+        """
         while not self._rt.stop.is_set():
             await asyncio.sleep(self._rt.backfill_interval)
             if self._rt.stop.is_set():
                 break
+            # P2 #30:reconnect kick 后跳过一次 tick(标志消费即清零)
+            if self._rt.skip_next_tick:
+                self._rt.skip_next_tick = False
+                log.debug("backfill tick skipped: just kicked on reconnect")
+                continue
             # 心跳:每轮补拉打一条 INFO —— 实时流挂了但补拉还活着时,
             # 日志里能看到两者不同步,定位"空窗"来源(INFO 默认可见)
             log.info(

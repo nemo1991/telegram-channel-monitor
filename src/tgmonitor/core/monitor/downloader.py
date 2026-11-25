@@ -3,6 +3,12 @@
 2026-10-10 v1.12.x plan-batch2 目标 2 从 `service.py` 抽出(原本 240 LOC
 嵌在 1,278 LOC service.py 末尾)。REVIEW M2.1 真实现见 class docstring。
 
+2026-11-25 P2 #36:主媒体走流式路径 — `client.download_file_to(fid, tmp)`
+落临时文件 → 分块读 → `objects.put_stream` → finally 删临时文件。旧实现
+`download_file` 整文件进内存,数 GB 视频 RAM 峰值 = 文件大小。客户端未
+提供 `download_file_to`(测试替身 / 过渡期)时回退旧 bytes 路径。
+缩略图(≤50KB)保留 bytes 版 `download_file` 不动。
+
 设计:`MediaDownloader` 自持 `client / storage / objects / max_bytes` — 无
 状态共享,可独立单测。`MonitorService` 持 optional `downloader`,FULL
 媒体策略时通过 `_download_worker` 串行消费。
@@ -13,6 +19,10 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import os
+import tempfile
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, ThumbnailDTO
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore
@@ -20,6 +30,9 @@ from tgmonitor.core.storage.repository import StorageRepository
 from tgmonitor.core.telegram.client import TelegramClient
 
 log = logging.getLogger(__name__)
+
+# 流式写 ObjectStore 的分块大小(1MB — 本地盘读 + 网络 PUT 的平衡值)
+_STREAM_CHUNK_SIZE = 1024 * 1024
 
 
 class MediaDownloader:
@@ -72,6 +85,104 @@ class MediaDownloader:
         h = hashlib.sha256(thumb_fid.encode()).hexdigest()[:16]
         return f"thumb/{h}.{ext}"
 
+    async def _download_streaming(
+        self,
+        fid: str,
+        key: str,
+        media: MediaDTO,
+        progress_callback,
+        failed,
+    ) -> MediaDTO | None:
+        """P2 #36 流式主路径:`download_file_to` 落临时文件 → put_stream → 删 tmp。
+
+        - `max_bytes` 超限由 `download_file_to` 内部中止并返 None → failed();
+        - 临时文件在 finally 兜底删除(成功 / 失败 / 异常路径都清);
+        - 返回 None 表示走 failed 分支已被处理,调用方直接透传。
+
+        仅当 client 提供 `download_file_to`(telegram 组新增 API)时使用;
+        测试替身 / 过渡期回退 `_download_bytes`。
+        """
+        download_to = getattr(self.client, "download_file_to", None)
+        if download_to is None:
+            return None  # 让调用方走 bytes 回退路径
+        fd, tmp_name = tempfile.mkstemp(prefix="tgmonitor-dl-")
+        tmp_path = Path(tmp_name)
+        os.close(fd)
+        try:
+            dest = await download_to(
+                fid,
+                tmp_path,
+                progress_callback=progress_callback,
+                max_bytes=self.max_bytes or None,
+            )
+            if dest is None:
+                return failed("下载超时或未返回数据")
+            size = dest.stat().st_size
+
+            def _read_chunks(path: Path) -> Iterator[bytes]:
+                # 同步生成器:本地盘分块读;put_stream 消费端是 async。
+                with open(path, "rb") as f:
+                    while True:
+                        chunk = f.read(_STREAM_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            async def _chunk_iter() -> AsyncIterator[bytes]:
+                for chunk in _read_chunks(dest):
+                    yield chunk
+
+            meta = ObjectMeta(content_type=media.mime_type, size=size)
+            try:
+                await self.objects.put_stream(key, _chunk_iter(), meta)
+            except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
+                return failed(f"对象存储写入失败: {e}")
+            return dataclasses.replace(
+                media,
+                download_status=MediaDownloadStatus.DONE,
+                download_error=None,
+                object_key=key,
+                object_backend=self.objects.backend_name,
+                file_size=size,
+            )
+        finally:
+            try:
+                tmp_path.unlink()  # noqa: ASYNC240 — 临时文件 unlink 极快
+            except OSError:
+                pass
+
+    async def _download_bytes(
+        self,
+        fid: str,
+        key: str,
+        media: MediaDTO,
+        progress_callback,
+        failed,
+    ) -> MediaDTO:
+        """bytes 回退路径(客户端无 `download_file_to` 时):旧行为不变。"""
+        data = await self.client.download_file(fid, progress_callback=progress_callback)
+        if data is None:
+            return failed("下载超时或未返回数据")
+        # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)
+        if self.max_bytes and len(data) > self.max_bytes:
+            return failed(f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节")
+        meta = ObjectMeta(
+            content_type=media.mime_type,
+            size=len(data),
+        )
+        try:
+            await self.objects.put(key, data, meta)
+        except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
+            return failed(f"对象存储写入失败: {e}")
+        return dataclasses.replace(
+            media,
+            download_status=MediaDownloadStatus.DONE,
+            download_error=None,
+            object_key=key,
+            object_backend=self.objects.backend_name,
+            file_size=len(data),
+        )
+
     async def download_one(
         self,
         msg_pk: int,
@@ -93,12 +204,22 @@ class MediaDownloader:
 
         `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选
         `await cb(downloaded: int, total: int | None)`,透传给
-        `client.download_file`;skip-if-stored 命中时**不**调(没进度可报)。
-        默认 None = 不上报(老调用方零改动)。
+        `client.download_file` / `download_file_to`;skip-if-stored 命中时**不**调
+        (没进度可报)。默认 None = 不上报(老调用方零改动)。
 
         成功:`object_key` / `object_backend` / `file_size` 已填,`download_status=DONE`;
         失败:`download_status=FAILED` + `download_error`(原因可持久化 / UI 展示),
         不抛异常。`msg_pk` 仅用于日志(消息主键,出问题时定位上下文)。
+
+        P2 #36:主媒体优先走 `_download_streaming`(临时文件 + put_stream,
+        内存 O(chunk));client 未实现 `download_file_to` 时回退
+        `_download_bytes`(整文件进内存,旧行为)。缩略图 `download_thumb`
+        保持 bytes 版不动(≤50KB,流式无收益)。
+
+        **调用方注意**:本方法返回的新 MediaDTO 必须经
+        `storage.update_message_media` 定向回写(只动 media 行),不要
+        `save_message` / `update_message` 整条覆盖 — 否则下载期间的并发
+        编辑(text / views)会被下载开始时的旧 DTO 覆盖回去(P2 #36)。
         """
 
         def failed(reason: str) -> MediaDTO:
@@ -163,31 +284,10 @@ class MediaDownloader:
 
         if self.max_bytes and media.file_size and media.file_size > self.max_bytes:
             return failed(f"文件 {media.file_size:,} 字节超过单文件上限 {self.max_bytes:,} 字节")
-        data = await self.client.download_file(fid, progress_callback=progress_callback)
-        if data is None:
-            return failed("下载超时或未返回数据")
-        # hard cap for unknown-size downloads(sticker / 加密附件 / file_size 不可信场景)
-        if self.max_bytes and len(data) > self.max_bytes:
-            return failed(f"实际下载 {len(data):,} 字节超过单文件上限 {self.max_bytes:,} 字节")
-        meta = ObjectMeta(
-            content_type=media.mime_type,
-            size=len(data),
-        )
-        try:
-            await self.objects.put(key, data, meta)
-        except Exception as e:  # noqa: BLE001 — 契约:下载失败不抛,monitor 循环继续
-            return failed(f"对象存储写入失败: {e}")
-        # 返新 MediaDTO:保留原字段,只覆盖 object_key / object_backend / file_size
-        # 与下载状态。dataclasses.replace 比 `__dict__` 解构更稳(保留 frozen /
-        # __post_init__ 等),这里 MediaDTO 是普通 dataclass,replace() 同样适用。
-        return dataclasses.replace(
-            media,
-            download_status=MediaDownloadStatus.DONE,
-            download_error=None,
-            object_key=key,
-            object_backend=self.objects.backend_name,
-            file_size=len(data),
-        )
+        streamed = await self._download_streaming(fid, key, media, progress_callback, failed)
+        if streamed is not None:
+            return streamed
+        return await self._download_bytes(fid, key, media, progress_callback, failed)
 
     async def download_thumb(
         self,

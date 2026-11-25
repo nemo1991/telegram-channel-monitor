@@ -118,6 +118,37 @@ def _make_progress_callback(
     return _on_progress
 
 
+async def _write_media_update(
+    ms: MediaService,
+    channel_id: int,
+    telegram_msg_id: int,
+    media_idx: int,
+    med: MediaDTO,
+) -> None:
+    """P2 #36:定向回写 media[media_idx] = med(只动 media 行,不碰消息其它列)。
+
+    旧路径 `update_message(整条 msg)` 会把下载期间(可达 30 分钟)并发
+    编辑推送的新 text / views 用下载开始时的旧 DTO 覆盖回去。改为:重读
+    当前消息 → 只替换目标位 media → `storage.update_message_media`
+    (SQL 后端单事务 DELETE+重插 media 行)。消息不存在(下载期间被删)
+    时 no-op。
+    """
+    current = await ms._storage.get_message(channel_id, telegram_msg_id)
+    if current is None:
+        log.warning(
+            "skip media writeback: message gone: %s/%s",
+            channel_id,
+            telegram_msg_id,
+        )
+        return
+    media_list = list(current.media)
+    if media_idx < len(media_list):
+        media_list[media_idx] = med
+    else:
+        media_list.append(med)
+    await ms._storage.update_message_media(channel_id, telegram_msg_id, media_list)
+
+
 # ---------- open_media / open_media_with_result ----------
 
 
@@ -420,9 +451,7 @@ async def download_media(
             med,
             download_error="未配置下载器,无法下载原文件",
         )
-        final_media = list(msg.media)
-        final_media[media_idx] = stuck
-        await ms._storage.update_message(dataclasses.replace(msg, media=final_media))
+        await _write_media_update(ms, channel_id, telegram_msg_id, media_idx, stuck)
         log.warning(
             "download_media: downloader 未配置,保持未下载: %s/%s/%d",
             channel_id,
@@ -440,15 +469,13 @@ async def download_media(
         return
 
     # 标 DOWNLOADING 先落库(用户立刻可见「下载中」,崩溃后重启可续)。
+    # P2 #36:走定向 media 回写,不整条 update_message。
     new_med = dataclasses.replace(
         med,
         download_status=MediaDownloadStatus.DOWNLOADING,
         download_error=None,
     )
-    new_media = list(msg.media)
-    new_media[media_idx] = new_med
-    new_msg = dataclasses.replace(msg, media=list(new_media))
-    await ms._storage.update_message(new_msg)
+    await _write_media_update(ms, channel_id, telegram_msg_id, media_idx, new_med)
 
     if ms._downloader is not None:
         try:
@@ -467,10 +494,8 @@ async def download_media(
                 download_status=MediaDownloadStatus.FAILED,
                 download_error=f"下载异常: {e}",
             )
-        final_media = list(new_msg.media)
-        final_media[media_idx] = updated
-        final_msg = dataclasses.replace(new_msg, media=list(final_media))
-        await ms._storage.update_message(final_msg)
+        # P2 #36:最终状态同样定向回写 media 行(text 不被 stale DTO 覆盖)。
+        await _write_media_update(ms, channel_id, telegram_msg_id, media_idx, updated)
         await ms._bus.publish(
             MediaDownloaded(
                 channel_id=channel_id,
@@ -549,10 +574,8 @@ async def retry_media(
         download_status=MediaDownloadStatus.DOWNLOADING,
         download_error=None,
     )
-    new_media = list(msg.media)
-    new_media[media_idx] = new_med
-    new_msg = dataclasses.replace(msg, media=list(new_media))
-    await ms._storage.update_message(new_msg)
+    # P2 #36:定向 media 回写(不整条 update_message)。
+    await _write_media_update(ms, channel_id, telegram_msg_id, media_idx, new_med)
     # 清旧 bytes — 让 download_one(force=True) 一定走真下载路径
     if old_object_key and ms._objects is not None:
         try:
@@ -590,11 +613,8 @@ async def retry_media(
                 download_status=MediaDownloadStatus.FAILED,
                 download_error=f"重试异常: {e}",
             )
-        # 回写最终状态
-        final_media = list(new_msg.media)
-        final_media[media_idx] = updated
-        final_msg = dataclasses.replace(new_msg, media=list(final_media))
-        await ms._storage.update_message(final_msg)
+        # 回写最终状态 — P2 #36:定向 media 回写(text 不被 stale DTO 覆盖)。
+        await _write_media_update(ms, channel_id, telegram_msg_id, media_idx, updated)
         await ms._bus.publish(
             MediaDownloaded(
                 channel_id=channel_id,

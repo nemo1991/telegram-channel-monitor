@@ -154,3 +154,51 @@ async def test_shutdown_client_close_timeout_does_not_block(app: AppService) -> 
     assert 1.5 < elapsed < 4.0, f"shutdown 应在 2s timeout 后返回,实跑 {elapsed:.2f}s"
     assert storage_close_called.is_set(), "client timeout 后 storage.close() 仍应被调"
     assert objects_close_called.is_set(), "client timeout 后 objects.close() 仍应被调"
+
+
+# ---- shutdown 分阶段超时:P2 #33(storage / objects close 包 2s) ----
+
+
+async def test_shutdown_storage_close_timeout_does_not_block(app: AppService) -> None:
+    """P2 #33:`storage.close()` 永久 hang → shutdown 在 ~2s 超时后继续,
+    `objects.close()` 仍被调(与 client.close 的 2s hard timeout 对齐)。
+
+    旧实现 storage / objects close 无超时 — 任何一段 hang 整个 shutdown 卡死。
+    """
+    import asyncio as _asyncio
+
+    started = _asyncio.get_event_loop().time()
+
+    async def hanging_storage_close() -> None:
+        await _asyncio.Event().wait()  # 永远不返回
+
+    app.storage.close = hanging_storage_close  # type: ignore[method-assign]
+
+    objects_close_called = _asyncio.Event()
+
+    async def fast_objects_close() -> None:
+        objects_close_called.set()
+
+    app.objects.close = fast_objects_close  # type: ignore[method-assign]
+
+    await app.shutdown()
+    elapsed = _asyncio.get_event_loop().time() - started
+    # storage 超时 2s + client.close 正常(秒回)→ 总耗时 ~2s
+    assert 1.5 < elapsed < 4.5, f"storage.close hang 应在 2s 超时后返回,实跑 {elapsed:.2f}s"
+    assert objects_close_called.is_set(), "storage 超时后 objects.close() 仍应被调"
+
+
+async def test_shutdown_objects_close_timeout_does_not_block(app: AppService) -> None:
+    """P2 #33:`objects.close()` hang → shutdown 同样 2s 超时后返回。"""
+    import asyncio as _asyncio
+
+    started = _asyncio.get_event_loop().time()
+
+    async def hanging_objects_close() -> None:
+        await _asyncio.Event().wait()
+
+    app.objects.close = hanging_objects_close  # type: ignore[method-assign]
+
+    await app.shutdown()
+    elapsed = _asyncio.get_event_loop().time() - started
+    assert 1.5 < elapsed < 4.5, f"objects.close hang 应在 2s 超时后返回,实跑 {elapsed:.2f}s"
