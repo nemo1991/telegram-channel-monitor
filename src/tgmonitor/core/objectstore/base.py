@@ -1,7 +1,7 @@
 """ObjectStore — 媒体二进制对象存储抽象。
 
 - 接口全部 `async`
-- `put/get/exists/delete` + 流式上下文 `open_read/open_write`(可选用)
+- `put/put_stream/get/exists/delete` + 流式上下文 `open_read/open_write`(可选用)
 - 后端有 Local 与 S3(aioboto3)两种,后端在 DB `media.object_backend` 字段标记
 """
 
@@ -54,9 +54,39 @@ class ObjectStore(ABC):
     async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
         """存入对象,返回稳定 key(调用方可忽略返回值,用自己生成的 key 也行)。
 
-        原子写由后端保证:Local 走 .part + rename,S3 走 multipart。
+        原子写由后端保证:Local/Folder 走 .part + rename;S3 小对象走单次
+        PUT(单请求本身原子),大对象(> 8MB)走 `upload_fileobj` multipart
+        分段上传(2026-11-25 #19 — 单次 PUT 有 5GB 上限,multipart 无)。
+
+        注意:入参是完整 `bytes`,内存占用 O(file) 由调用方承担 —
+        大文件请用 `put_stream`(内存 O(chunk))。
+
+        若 `meta` 给出且 `meta.sha256` 为空,后端自动算一个并回填到
+        `meta.sha256`(2026-11-25 #21:Local / Folder / S3 三后端行为一致)。
         """
         ...
+
+    async def put_stream(
+        self,
+        key: str,
+        chunk_iter: AsyncIterator[bytes],
+        meta: ObjectMeta | None = None,
+    ) -> ObjectMeta:  # noqa: D417 — 默认实现,三个生产后端均已 override
+        """分块流式写入(2026-11-25 #27,为 Telegram 大文件直传铺垫)。
+
+        契约:
+        - 内存 O(chunk):逐块消费 `chunk_iter`,不整块缓存;
+        - 返回填好的 `ObjectMeta`(至少含 `size` 与 `sha256` — 写完对
+          全量字节算哈希,与 `put` 的 meta.sha256 回填行为一致;
+          `meta.content_type` 传入时透传给后端,如 S3 ContentType);
+        - key 校验 / 原子写语义与 `put()` 完全一致(.part + rename);
+        - 与 `put` 等价:写完后 `get(key)` 返回所有 chunk 顺序拼接。
+
+        默认实现抛 `NotImplementedError`(不设 abstractmethod:第三方 /
+        测试替身后端不必强制实现;Local / Folder / S3 三个生产后端均已
+        override,AppService 构建的后端必然可用)。
+        """
+        raise NotImplementedError(f"{type(self).__name__} 未实现 put_stream")
 
     @abstractmethod
     async def get(self, key: str) -> bytes:
