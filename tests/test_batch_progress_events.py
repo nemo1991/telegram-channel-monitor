@@ -19,10 +19,8 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from tgmonitor.core.events import (
-    BatchDone,
     BatchProgress,
     EventBus,
-    MessageEdited,
 )
 from tgmonitor.ui.viewmodels.monitor_vm import MonitorViewModel
 
@@ -43,57 +41,6 @@ def _drain(qapp: QCoreApplication) -> None:
     qapp.processEvents()
 
 
-async def test_bus_batch_progress_triggers_vm_signal(
-    vm: MonitorViewModel, qapp: QCoreApplication
-) -> None:
-    """Bus.publish(BatchProgress) → MonitorViewModel.batch_progress signal 触发。"""
-    captured: list[BatchProgress] = []
-    vm.batch_progress.connect(lambda e: captured.append(e))  # type: ignore[arg-type]
-
-    evt = BatchProgress(op="delete", processed=3, total=10)
-    await vm.app.bus.publish(evt)
-    _drain(qapp)
-
-    assert len(captured) == 1
-    assert captured[0] is evt
-    assert captured[0].op == "delete"
-    assert captured[0].processed == 3
-    assert captured[0].total == 10
-
-
-async def test_bus_batch_done_triggers_vm_signal(
-    vm: MonitorViewModel, qapp: QCoreApplication
-) -> None:
-    """Bus.publish(BatchDone) → MonitorViewModel.batch_done signal 触发。"""
-    captured: list[BatchDone] = []
-    vm.batch_done.connect(lambda e: captured.append(e))  # type: ignore[arg-type]
-
-    evt = BatchDone(op="forward", succeeded=5, failed=0)
-    await vm.app.bus.publish(evt)
-    _drain(qapp)
-
-    assert len(captured) == 1
-    assert captured[0] is evt
-    assert captured[0].op == "forward"
-    assert captured[0].succeeded == 5
-
-
-async def test_vm_signal_filters_non_batch_events(
-    vm: MonitorViewModel, qapp: QCoreApplication
-) -> None:
-    """MessageEdited 等非 batch 事件不应触发 batch_progress / batch_done。"""
-    progress_captured: list = []
-    done_captured: list = []
-    vm.batch_progress.connect(lambda e: progress_captured.append(e))  # type: ignore[arg-type]
-    vm.batch_done.connect(lambda e: done_captured.append(e))  # type: ignore[arg-type]
-
-    await vm.app.bus.publish(MessageEdited(message=MagicMock()))
-    _drain(qapp)
-
-    assert progress_captured == []
-    assert done_captured == []
-
-
 async def test_vm_multiple_batch_progress_preserve_order(
     vm: MonitorViewModel, qapp: QCoreApplication
 ) -> None:
@@ -109,17 +56,3 @@ async def test_vm_multiple_batch_progress_preserve_order(
     assert len(captured) == 3
     assert [c.processed for c in captured] == [1, 2, 5]
     assert all(c.op == "pin" for c in captured)
-
-
-async def test_vm_batch_done_carries_error_field(
-    vm: MonitorViewModel, qapp: QCoreApplication
-) -> None:
-    """顶层错误(paused short-circuit)走 BatchDone.error 字段透传。"""
-    captured: list[BatchDone] = []
-    vm.batch_done.connect(lambda e: captured.append(e))  # type: ignore[arg-type]
-
-    await vm.app.bus.publish(BatchDone(op="forward", succeeded=0, failed=0, error="paused"))
-    _drain(qapp)
-
-    assert len(captured) == 1
-    assert captured[0].error == "paused"

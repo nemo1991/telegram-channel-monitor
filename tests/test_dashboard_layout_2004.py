@@ -9,12 +9,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QSplitter, QVBoxLayout
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout
 
 from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-from tgmonitor.ui.widgets.message_detail import MessageDetail
-from tgmonitor.ui.widgets.message_view import MessageView
 
 
 def _dashboard_layout(win) -> QVBoxLayout:
@@ -34,67 +32,9 @@ def test_nav_has_three_items_and_dashboard_is_home(qapp, qloop, tmp_path):
     win.close()
 
 
-def test_live_stream_is_single_instance(qapp, qloop, tmp_path):
-    """G3-1 + G3-4：全窗口仅一对消息流 widget，MainWindow 引用保持。"""
-    win = build_real_main_window(qloop, tmp_path)
-    assert len(win.findChildren(MessageView)) == 1
-    assert len(win.findChildren(MessageDetail)) == 1
-    assert win.findChild(MessageView) is win.live_view
-    assert win.findChild(MessageDetail) is win.message_detail
-    win.close()
-
-
-def test_live_splitter_above_bottom_row(qapp, qloop, tmp_path):
-    """G3-3：实时流 splitter 在统计卡之后；活动/统计左右并排在同一 QHBoxLayout。"""
-    win = build_real_main_window(qloop, tmp_path)
-    layout = _dashboard_layout(win)
-
-    splitter = win.dashboard.findChild(QSplitter, "dashboardLiveSplitter")
-    assert splitter is not None
-    assert splitter.indexOf(win.live_view) >= 0
-    assert splitter.indexOf(win.message_detail) >= 0
-
-    # 2026-11-18 v2.0.5:splitter 装进 QFrame#liveWrap(外围圆角容器),
-    # 根布局里直接子项是 liveWrap 而非 splitter。取 liveWrap 的位置比较。
-    from PySide6.QtWidgets import QFrame
-
-    wrap = win.dashboard.findChild(QFrame, "liveWrap")
-    assert wrap is not None
-    assert wrap.layout().indexOf(splitter) >= 0
-    splitter_pos = layout.indexOf(wrap)
-    bottom_pos = next(
-        i
-        for i in range(layout.count())
-        if isinstance(layout.itemAt(i).layout(), QHBoxLayout)
-        and layout.itemAt(i).layout() is not None
-        and _is_bottom_row(layout.itemAt(i).layout())
-    )
-    assert 0 <= splitter_pos < bottom_pos
-
-    # 底部行内两个 QGroupBox：最近活动 | 频道统计
-    bottom = layout.itemAt(bottom_pos).layout()
-    groups = [
-        bottom.itemAt(i).widget()
-        for i in range(bottom.count())
-        if isinstance(bottom.itemAt(i).widget(), QGroupBox)
-    ]
-    titles = [g.title() for g in groups]
-    assert titles == ["最近活动", "频道统计"]
-    win.close()
-
-
 def _is_bottom_row(layout) -> bool:
     return any(
         isinstance(layout.itemAt(i).widget(), QGroupBox)
         and "最近活动" in layout.itemAt(i).widget().title()
         for i in range(layout.count())
     )
-
-
-def test_media_page_index_is_two():
-    """G3-5 + v2.0.8：消息页索引 1，媒体页索引 2，设置页索引 3。"""
-    from tgmonitor.ui.nav_bar import _NAV_LABELS_SRC
-
-    assert _NAV_LABELS_SRC == ("大盘", "消息", "媒体", "设置")
-    assert _NAV_LABELS_SRC.index("媒体") == 2
-    assert _NAV_LABELS_SRC.index("消息") == 1

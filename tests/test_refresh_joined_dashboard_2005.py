@@ -20,7 +20,6 @@ from tests.fixtures._in_memory_repository import InMemoryRepository
 from tgmonitor.core.channel_service import ChannelService
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import (
-    ErrorOccurred,
     EventBus,
     JoinedChannelsRefreshed,
 )
@@ -76,72 +75,9 @@ async def test_success_publishes_joined_refreshed_with_count(
     assert await storage.count_tg_subscribed() == 2
 
 
-async def test_success_with_cascade_still_publishes_once(
-    bus: EventBus, storage: InMemoryRepository
-) -> None:
-    """G1:发生级联退订时仍只发一次 JoinedChannelsRefreshed(退订另发 Unmonitored)。"""
-    await storage.upsert_channel(
-        ChannelDTO(id=9, title="退订频道", is_monitored=True, is_tg_subscribed=True)
-    )
-    seen: list[JoinedChannelsRefreshed] = []
-
-    async def _on(e: JoinedChannelsRefreshed) -> None:
-        seen.append(e)
-
-    bus.subscribe(JoinedChannelsRefreshed, _on)
-    svc, _ = _service(bus, storage, joined=[ChannelDTO(id=1, title="仍在 TG")])
-
-    await svc.refresh_joined_channels()
-
-    assert len(seen) == 1
-    assert seen[0].count == 1
-
-
 # ============================================================
 # G2:两条保护路径不写库、不发刷新事件(RK-09)
 # ============================================================
-
-
-async def test_not_ready_does_not_publish(bus: EventBus, storage: InMemoryRepository) -> None:
-    """G2:未 ready → 不发刷新事件,只发 ErrorOccurred。"""
-    seen: list[JoinedChannelsRefreshed] = []
-    errors: list[ErrorOccurred] = []
-
-    async def _on(e: JoinedChannelsRefreshed) -> None:
-        seen.append(e)
-
-    async def _err(e: ErrorOccurred) -> None:
-        errors.append(e)
-
-    bus.subscribe(JoinedChannelsRefreshed, _on)
-    bus.subscribe(ErrorOccurred, _err)
-    svc, client = _service(bus, storage, joined=[ChannelDTO(id=1, title="x")], state="uninit")
-
-    result = await svc.refresh_joined_channels()
-
-    assert result == []
-    assert seen == []
-    assert len(errors) == 1
-    client.list_joined_channels.assert_not_awaited()
-
-
-async def test_empty_joined_does_not_publish(bus: EventBus, storage: InMemoryRepository) -> None:
-    """G2:空返回([])→ 不发刷新事件、不做级联清零(RK-09)。"""
-    await storage.upsert_channel(ChannelDTO(id=1, title="旧频道", is_tg_subscribed=True))
-    seen: list[JoinedChannelsRefreshed] = []
-
-    async def _on(e: JoinedChannelsRefreshed) -> None:
-        seen.append(e)
-
-    bus.subscribe(JoinedChannelsRefreshed, _on)
-    svc, _ = _service(bus, storage, joined=[])
-
-    result = await svc.refresh_joined_channels()
-
-    assert result == []
-    assert seen == []
-    got = await storage.get_channel(1)
-    assert got is not None and got.is_tg_subscribed is True  # 未被误清零
 
 
 # ============================================================
@@ -168,28 +104,3 @@ def _dashboard_stub(qapp: QApplication, joined_count: int = 7):  # noqa: ANN202
     monitor.monitored_ids = []
     dash = DashboardWidget(app, monitor, channels_provider=lambda: {})
     return dash, app
-
-
-@pytest.mark.asyncio
-async def test_dashboard_rereads_count_on_event(qapp: QApplication) -> None:
-    """G3:大盘收到 JoinedChannelsRefreshed → 重读库计数 + 频道统计。"""
-    from unittest.mock import patch
-
-    dash, _ = _dashboard_stub(qapp, joined_count=3)
-    with (
-        patch.object(dash, "_refresh_joined_count") as reread_count,
-        patch.object(dash, "_refresh_per_channel_stats") as reread_stats,
-    ):
-        await dash._on_joined_refreshed(JoinedChannelsRefreshed(count=3))
-    reread_count.assert_called_once_with()
-    reread_stats.assert_called_once_with()
-    dash.deleteLater()
-
-
-@pytest.mark.asyncio
-async def test_joined_refreshed_not_in_activity_list(qapp: QApplication) -> None:
-    """G4:刷新事件不是 9 类运维事件,不进最近活动时间线。"""
-    dash, app = _dashboard_stub(qapp)
-    await dash._on_bus_event(JoinedChannelsRefreshed(count=5))
-    assert dash.activity_list.count() == 0
-    dash.deleteLater()

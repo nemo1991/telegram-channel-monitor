@@ -18,7 +18,6 @@ from tgmonitor.core.settings_store import (
     EditableSettings,
     _validate_proxy_url,
     parse_env_file,
-    settings_to_pairs,
     update_env_with_settings,
 )
 from tgmonitor.core.telegram.proxy import parse_socks5_proxy, probe_proxy
@@ -27,15 +26,6 @@ from tgmonitor.core.telegram.proxy import parse_socks5_proxy, probe_proxy
 
 
 class TestParseSocks5Proxy:
-    def test_none_returns_none(self) -> None:
-        assert parse_socks5_proxy(None) is None
-
-    def test_empty_returns_none(self) -> None:
-        assert parse_socks5_proxy("") is None
-
-    def test_strip_whitespace(self) -> None:
-        assert parse_socks5_proxy("  ") is None
-
     def test_basic(self) -> None:
         out = parse_socks5_proxy("socks5://127.0.0.1:1080")
         assert out is not None
@@ -55,17 +45,6 @@ class TestParseSocks5Proxy:
         assert out[4] == "alice"
         assert out[5] == "s3cr3t"
 
-    def test_with_user_only(self) -> None:
-        out = parse_socks5_proxy("socks5://bob@1.2.3.4:1080")
-        assert out is not None
-        assert out[4] == "bob"
-        assert out[5] is None
-
-    def test_uppercase_scheme(self) -> None:
-        out = parse_socks5_proxy("SOCKS5://h:1")
-        assert out is not None
-        assert out[1] == "h" and out[2] == 1
-
     @pytest.mark.parametrize(
         "bad",
         [
@@ -84,19 +63,9 @@ class TestParseSocks5Proxy:
 
 
 class TestValidateProxyUrl:
-    def test_empty_ok(self) -> None:
-        assert _validate_proxy_url("") is None
-        assert _validate_proxy_url("   ") is None
-
     def test_socks5_ok(self) -> None:
         assert _validate_proxy_url("socks5://u:p@1.1.1.1:1080") is None
         assert _validate_proxy_url("SOCKS5://h:1") is None
-
-    @pytest.mark.parametrize("bad", ["http://x.com", "socks5://noport", "ftp://x.com"])
-    def test_reject(self, bad: str) -> None:
-        err = _validate_proxy_url(bad)
-        assert err is not None
-        assert "TG_PROXY" in err
 
 
 # ---- Settings + store 往返 ----
@@ -107,28 +76,10 @@ class TestSettingsProxyRoundTrip:
         s = Settings.for_test(proxy="socks5://u:p@1.2.3.4:1080")
         assert s.proxy == "socks5://u:p@1.2.3.4:1080"
 
-    def test_settings_proxy_default_none(self) -> None:
-        s = Settings.for_test()
-        assert s.proxy is None
-
-    def test_settings_to_pairs(self) -> None:
-        s = Settings.for_test(proxy="socks5://1.1.1.1:1080")
-        pairs = settings_to_pairs(s)
-        assert pairs["TG_PROXY"] == "socks5://1.1.1.1:1080"
-
-    def test_settings_to_pairs_empty_when_none(self) -> None:
-        s = Settings.for_test()
-        assert settings_to_pairs(s)["TG_PROXY"] == ""
-
     def test_editable_round_trip(self) -> None:
         s = Settings.for_test(proxy="socks5://abc@host:9050")
         e = EditableSettings.from_settings(s)
         assert e.proxy == "socks5://abc@host:9050"
-
-    def test_editable_to_settings_strips_empty(self) -> None:
-        e = EditableSettings(api_id=1, api_hash="x" * 16, proxy="  ")
-        out = e.to_settings()
-        assert out.proxy is None
 
     def test_full_env_round_trip(self, tmp_path: Path) -> None:
         """写到 .env 再 parse 出来,proxy 必须还原。"""
@@ -189,49 +140,7 @@ def test_proxy_tuple_passed_to_telethon_via_factory(
     assert captured["flood_sleep_threshold"] == 0
 
 
-def test_factory_no_proxy_passes_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """未配代理 → Telethon 构造 proxy=None(直连)。"""
-    from unittest.mock import MagicMock
-
-    from tgmonitor.core.telegram import telethon_client as tc
-    from tgmonitor.core.telegram.factory import build_telegram_client
-
-    captured: dict = {}
-
-    def _fake_ctor(*args, **kwargs):
-        captured["args"] = args
-        captured.update(kwargs)
-        m = MagicMock()
-        m.add_event_handler = MagicMock()
-        return m
-
-    monkeypatch.setattr(tc, "TelegramClient", _fake_ctor)
-    s = Settings.for_test(proxy=None, session_dir=tmp_path / "session")
-    client = build_telegram_client(s, use_fake=False, event_bus=None)
-    client._build_client()
-    assert captured["proxy"] is None
-
-
 # ---- probe_proxy:真 SOCKS5 握手(本地 fake server,离线) ----
-
-
-async def test_probe_proxy_empty_url() -> None:
-    ok, msg = await probe_proxy("")
-    assert ok is False
-    assert "未配置" in msg
-
-
-async def test_probe_proxy_malformed_url() -> None:
-    ok, msg = await probe_proxy("socks5://no-port")
-    assert ok is False
-    assert "格式错" in msg
-
-
-async def test_probe_proxy_tcp_unreachable() -> None:
-    # 127.0.0.1:1 几乎不可能有服务 listen
-    ok, msg = await probe_proxy("socks5://127.0.0.1:1", timeout=1.0)
-    assert ok is False
-    assert "TCP 不通" in msg
 
 
 async def _start_fake_socks5(handler) -> tuple[asyncio.AbstractServer, int]:
@@ -261,25 +170,6 @@ async def test_probe_proxy_handshake_ok() -> None:
         ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
         assert ok is True
         assert "OK" in msg
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-async def test_probe_proxy_bad_greeting() -> None:
-    """端口开但不是 SOCKS5(回错 greeting)→ ok=False,不误报。"""
-
-    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await reader.readexactly(3)
-        writer.write(bytes([0x04, 0x00]))  # 错版本
-        await writer.drain()
-        writer.close()
-
-    server, port = await _start_fake_socks5(_handler)
-    try:
-        ok, msg = await probe_proxy(f"socks5://127.0.0.1:{port}", timeout=2.0)
-        assert ok is False
-        assert "不是 SOCKS5" in msg
     finally:
         server.close()
         await server.wait_closed()

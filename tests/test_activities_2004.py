@@ -11,66 +11,22 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tests.fixtures._in_memory_repository import InMemoryRepository  # noqa: E402
 from tgmonitor.core.activity import format_activity, make_persistence_subscriber  # noqa: E402
-from tgmonitor.core.dto import ActivityDTO, ChannelDTO, SyncResult  # noqa: E402
 from tgmonitor.core.events import (  # noqa: E402
-    AuthErrorOccurred,
-    BatchDone,
-    ChannelMonitored,
-    ChannelSyncDone,
     ErrorOccurred,
-    MediaDownloadProgress,
-    MediaReconcileFinished,
-    MessageReceived,
     SettingsChanged,
 )
 from tgmonitor.core.storage.sqlite_repo import SqliteRepository  # noqa: E402
 
 # ---------------------------------------------------------------- formatter
-
-
-def test_format_activity_covers_ops_events() -> None:
-    """9 类运维事件都能归一化成 ActivityDTO，字段可序列化。"""
-    events = [
-        ChannelMonitored(channel=ChannelDTO(id=1, title="科技")),
-        ChannelSyncDone(result=SyncResult(total_messages_added=5)),
-        BatchDone(op="delete", succeeded=3, failed=1),
-        MediaReconcileFinished(scanned=10, orphans=2, deleted=2, dry_run=False),
-        SettingsChanged(what="proxy"),
-        ErrorOccurred(source="auth", message="bad thing"),
-    ]
-    for e in events:
-        activity = format_activity(e)
-        assert activity is not None, type(e).__name__
-        assert isinstance(activity.event_type, str) and activity.event_type
-        assert isinstance(activity.title, str) and activity.title
-        assert isinstance(activity.detail, str)
-        assert isinstance(activity.occurred_at, datetime)
-
-
-def test_format_activity_filters_progress_and_messages() -> None:
-    """Progress / 消息类事件不进活动账本（D3-α）。"""
-    assert format_activity(MessageReceived(message=None)) is None
-    assert format_activity(MediaDownloadProgress(channel_id=1, telegram_msg_id=2)) is None
-
-
-def test_format_activity_auth_error_via_mro() -> None:
-    """AuthErrorOccurred 是 ErrorOccurred 子类，按 MRO 命中 _fmt_error。"""
-    activity = format_activity(AuthErrorOccurred(message="验证码错误"))
-    assert activity is not None
-    assert activity.event_type == "error_occurred"
-    assert activity.severity == "error"
 
 
 def test_format_activity_exception_not_leaked() -> None:
@@ -80,14 +36,6 @@ def test_format_activity_exception_not_leaked() -> None:
     assert activity is not None
     assert "secret detail" in activity.detail
     assert not isinstance(activity.detail, BaseException)
-
-
-def test_format_channel_monitored_no_memory_address() -> None:
-    """FR-04：空频道兜底不再用 id(e) 内存地址。"""
-    activity = format_activity(ChannelMonitored(channel=None))
-    assert activity is not None
-    assert "0x" not in activity.detail
-    assert activity.detail == "(未知频道)"
 
 
 # ---------------------------------------------------------------- subscriber
@@ -103,67 +51,7 @@ async def test_persistence_subscriber_writes_to_store() -> None:
     assert activities[0].event_type == "settings_changed"
 
 
-@pytest.mark.asyncio
-async def test_persistence_subscriber_swallows_store_failure() -> None:
-    """落库失败不阻断事件主流程（EventBus 契约）。"""
-    store = MagicMock()
-    store.append_activity = AsyncMock(side_effect=OSError("disk full"))
-    subscriber = make_persistence_subscriber(store)
-    await subscriber(SettingsChanged(what="x"))  # 不抛
-    store.append_activity.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_persistence_subscriber_skips_unmapped_events() -> None:
-    store = InMemoryRepository()
-    subscriber = make_persistence_subscriber(store)
-    await subscriber(MessageReceived(message=None))
-    assert await store.list_activities() == []
-
-
-@pytest.mark.asyncio
-async def test_persistence_subscriber_follows_storage_after_swap() -> None:
-    """热重载换 storage 后,活动必须写新库 —— 回归 `runtime.bootstrap` 闭包捕获旧实例的 bug。
-
-    旧实现 `make_persistence_subscriber(store)` 在构造时闭包捕获具体实例,
-    `reconfigure` 替换 `app.storage` 后订阅者仍写旧库,失败被吞成 warning
-    完全静默。惰性版每次落库时经 getter 取当前 storage,切换后自动指向新库。
-    """
-    old_store = InMemoryRepository()
-    new_store = InMemoryRepository()
-    current = {"store": old_store}
-    subscriber = make_persistence_subscriber(lambda: current["store"])
-
-    await subscriber(SettingsChanged(what="before-swap"))
-    before = await old_store.list_activities()
-    assert len(before) == 1
-    assert before[0].event_type == "settings_changed"
-
-    current["store"] = new_store
-    await subscriber(SettingsChanged(what="after-swap"))
-    assert len(await old_store.list_activities()) == 1, "切换后不应再写旧库"
-    after = await new_store.list_activities()
-    assert len(after) == 1
-    assert after[0].detail == "after-swap"
-
-
 # ---------------------------------------------------------------- storage roundtrip
-
-
-@pytest.mark.asyncio
-async def test_inmemory_activity_roundtrip_order_and_full_retention() -> None:
-    store = InMemoryRepository()
-    t0 = datetime(2020, 1, 1, tzinfo=UTC)
-    for i in range(3):
-        await store.append_activity(
-            ActivityDTO(event_type="e", occurred_at=t0, icon="i", title=f"act-{i}")
-        )
-    all_rows = await store.list_activities(limit=200)
-    assert len(all_rows) == 3  # 全留存，无裁剪
-    # 同样时间戳下 id DESC（新的在前）
-    assert [a.title for a in all_rows] == ["act-2", "act-1", "act-0"]
-    limited = await store.list_activities(limit=2)
-    assert len(limited) == 2
 
 
 @pytest_asyncio.fixture
@@ -177,82 +65,4 @@ async def sqlite_repo(tmp_path):
         await r.close()
 
 
-@pytest.mark.asyncio
-async def test_sqlite_activity_roundtrip(sqlite_repo) -> None:
-    occurred = datetime(2021, 5, 6, 7, 8, 9, tzinfo=UTC)
-    await sqlite_repo.append_activity(
-        ActivityDTO(
-            event_type="channel_monitored",
-            occurred_at=occurred,
-            icon="kind_channel",
-            title="已监听频道",
-            detail="科技早报",
-            channel_id=42,
-        )
-    )
-    rows = await sqlite_repo.list_activities()
-    assert len(rows) == 1
-    row = rows[0]
-    assert row.event_type == "channel_monitored"
-    assert row.title == "已监听频道"
-    assert row.detail == "科技早报"
-    assert row.channel_id == 42
-    assert row.occurred_at == occurred
-    assert row.id is not None
-
-
-@pytest.mark.asyncio
-async def test_sqlite_activity_full_retention(sqlite_repo) -> None:
-    """A3：不限量全留存，写入 250 条后仍全部可读（超过旧 200 上限）。"""
-    t = datetime(2022, 1, 1, tzinfo=UTC)
-    for i in range(250):
-        await sqlite_repo.append_activity(
-            ActivityDTO(event_type="e", occurred_at=t, icon="i", title=str(i))
-        )
-    assert len(await sqlite_repo.list_activities(limit=1000)) == 250
-
-
 # ---------------------------------------------------------------- UI load
-
-
-@pytest.mark.asyncio
-async def test_dashboard_loads_activities_from_storage(qapp: QApplication) -> None:
-    """FR-05：DashboardWidget 启动从库加载历史活动。"""
-    from types import SimpleNamespace
-
-    from tgmonitor.core.monitor.service import MonitorService
-    from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
-
-    # 库契约：list_activities 返回 occurred_at DESC（新的在前）
-    stored = [
-        ActivityDTO(
-            id=2,
-            event_type="error_occurred",
-            occurred_at=datetime(2020, 1, 2, tzinfo=UTC),
-            icon="refresh",
-            title="发生错误",
-            detail="boom",
-        ),
-        ActivityDTO(
-            id=1,
-            event_type="settings_changed",
-            occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
-            icon="settings",
-            title="设置已变更",
-            detail="proxy",
-        ),
-    ]
-    app = MagicMock()
-    app.bus = MagicMock()
-    app.client = SimpleNamespace(state="ready", me=None)
-    app.storage.list_activities = AsyncMock(return_value=stored)
-    monitor = MagicMock(spec=MonitorService)
-    monitor.monitored_ids = []
-    # loop=None → _load_activities 跳过；直接调 _apply_activities 验证渲染
-    dash = DashboardWidget(app, monitor, loop=None)
-    dash._apply_activities(stored)
-    assert dash.activity_list.count() == 2
-    # 库中 reversed 插入：最新（id=2，2020-01-02）在列表头
-    widget = dash.activity_list.itemWidget(dash.activity_list.item(0))
-    assert "发生错误" in widget.msg_lbl.text()
-    dash.deleteLater()

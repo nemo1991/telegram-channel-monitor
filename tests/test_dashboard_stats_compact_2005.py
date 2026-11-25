@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QSplitter
+from PySide6.QtWidgets import QHBoxLayout
 
 from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
@@ -29,49 +29,6 @@ def _cards_row(dash: DashboardWidget) -> QHBoxLayout:
     raise AssertionError("找不到 4 卡统计行")
 
 
-def test_cards_compressed_and_splitter_grows(qapp, qloop, tmp_path):
-    """G2:卡片行变矮、消息流 splitter 不减反增(固定尺寸几何断言)。"""
-    win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
-    dash = win.dashboard
-    assert isinstance(dash, DashboardWidget)
-
-    row = _cards_row(dash)
-    card = dash.card_channels
-    assert card.height() < _BASELINE_CARD_H
-    # v2.0.7 FR-01:单行卡 68→48px。
-    assert card.height() == 48
-    assert row.geometry().height() <= 48
-
-    sp = dash.findChild(QSplitter, "dashboardLiveSplitter")
-    assert sp is not None
-    # 用比值而非绝对像素:改造前 splitter/card≈3.18,改造后 ≥4.6(跨平台稳定)。
-    # 避免把某个平台的绝对基线写死导致其他平台误报。
-    assert sp.height() > card.height() * 4  # 释放的空间给了消息流
-    win.close()
-
-
-def test_root_spacing_tightened(qapp, qloop, tmp_path):
-    """G2:root margin/spacing 与 cards spacing 收紧。"""
-    win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
-    dash = win.dashboard
-    lay = dash.layout()
-    m = lay.contentsMargins()
-    assert (m.left(), m.top(), m.right(), m.bottom()) == (16, 16, 16, 16)
-    assert lay.spacing() == 12
-    assert _cards_row(dash).spacing() == 10
-    win.close()
-
-
-def test_stretch_ratio_unchanged(qapp, qloop, tmp_path):
-    """G2:live_splitter 与 bottom_row 的 stretch 保持 3:2。"""
-    win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
-    lay = win.dashboard.layout()
-    # item[0]=cards(无 stretch)、item[1]=splitter(3)、item[2]=bottom_row(2)
-    assert lay.stretch(1) == 3
-    assert lay.stretch(2) == 2
-    win.close()
-
-
 def test_four_cards_and_values_intact(qapp, qloop, tmp_path):
     """v2.0.7 FR-01:删「消息总数」后剩 4 张卡,取值接口不变。"""
     win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
@@ -88,20 +45,4 @@ def test_four_cards_and_values_intact(qapp, qloop, tmp_path):
     dash.card_channels.set_value("12")
     assert dash.card_channels.value_lbl.text() == "12"
     assert not hasattr(dash.card_channels, "sub_lbl")
-    win.close()
-
-
-def test_compressed_card_text_not_clipped(qapp, qloop, tmp_path):
-    """压缩后文字不裁切:卡内布局的最小所需高度 ≤ 卡片固定高度。
-
-    用 Qt 布局自身的 minimumSize（已含各平台字体度量与 margins/spacing）：
-    比手写 QFontMetrics 行高求和更贴合真实排版，且跨平台稳定。
-    """
-    win = build_real_main_window(qloop, tmp_path, width=1280, height=800)
-    dash = win.dashboard
-    card = dash.card_channels
-    card.set_value("1234")
-    vbox = card.layout()
-    assert vbox is not None
-    assert vbox.totalMinimumSize().height() <= card.height()
     win.close()

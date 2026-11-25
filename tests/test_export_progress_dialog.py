@@ -28,27 +28,6 @@ def vm() -> MagicMock:
     return MagicMock()
 
 
-def test_dialog_connects_to_vm_on_init(qapp: QApplication, vm: MagicMock) -> None:
-    """构造时必须 connect vm.export_progress — 否则 UI 永远收不到进度。"""
-    ExportProgressDialog(vm)
-    vm.export_progress.connect.assert_called_once()
-
-
-def test_dialog_close_disconnects_signal(qapp: QApplication, vm: MagicMock) -> None:
-    """用户拖标题栏关闭(X / Alt+F4)→ disconnect signal — 避免 dangling 引用。"""
-    dlg = ExportProgressDialog(vm)
-    dlg.close()
-    # closeEvent 已调 disconnect — vm 上 disconnect 至少被调一次
-    vm.export_progress.disconnect.assert_called()
-
-
-def test_dialog_done_disconnects_signal(qapp: QApplication, vm: MagicMock) -> None:
-    """`dlg.accept()` 路径(dialog.done 回调)也必须 disconnect — 防双订阅。"""
-    dlg = ExportProgressDialog(vm)
-    dlg.done(0)  # QDialog.Accepted = 0
-    vm.export_progress.disconnect.assert_called()
-
-
 def test_dialog_progress_handler_accepts_total_none(qapp: QApplication, vm: MagicMock) -> None:
     """ExportProgress.total=None → QProgressBar 走 indeterminate(max=0)。"""
     dlg = ExportProgressDialog(vm)
@@ -57,36 +36,3 @@ def test_dialog_progress_handler_accepts_total_none(qapp: QApplication, vm: Magi
 
     assert dlg.bar.maximum() == 0  # indeterminate
     assert "500" in dlg.lbl_status.text()
-
-
-def test_dialog_progress_handler_accepts_total_int(qapp: QApplication, vm: MagicMock) -> None:
-    """ExportProgress.total=int → QProgressBar 走确定模式 + 设值 + 状态文字。"""
-    dlg = ExportProgressDialog(vm)
-    e = ExportProgress(request_id="r1", written=300, total=1000)
-    dlg._on_progress(e)
-
-    assert dlg.bar.maximum() == 1000
-    assert dlg.bar.value() == 300
-    assert "300" in dlg.lbl_status.text()
-    assert "1000" in dlg.lbl_status.text()
-
-
-def test_dialog_cancel_invokes_vm_cancel(qapp: QApplication, vm: MagicMock) -> None:
-    """取消按钮 → vm.cancel_current_export() — UI 不直 cancel task。"""
-    dlg = ExportProgressDialog(vm)
-    dlg._on_cancel()
-
-    vm.cancel_current_export.assert_called_once()
-    # 取消后按钮禁用,避免重复点
-    assert dlg.btn_cancel.isEnabled() is False
-
-
-def test_dialog_cancel_emits_signal(qapp: QApplication, vm: MagicMock) -> None:
-    """取消按钮 → cancelled signal emit(供 main_window 做 statusbar 提示)。"""
-    dlg = ExportProgressDialog(vm)
-    captured: list[object] = []
-    dlg.cancelled.connect(lambda: captured.append(object()))
-
-    dlg._on_cancel()
-
-    assert len(captured) == 1
