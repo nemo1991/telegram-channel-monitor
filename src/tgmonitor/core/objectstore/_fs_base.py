@@ -57,6 +57,10 @@ class LocalFsStoreBase(ObjectStore):
         except ValueError as e:
             raise ValueError(f"key escapes root: {path}") from e
 
+    def local_path(self, key: str) -> Path | None:
+        """P1-C3 能力:本地 FS 后端都有真实落盘路径 → 委托 `_path()`。"""
+        return self._path(key)
+
     # ---- 操作 ----
 
     async def get(self, key: str) -> bytes:

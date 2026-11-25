@@ -228,3 +228,7 @@ class S3ObjectStore(ObjectStore):
                     key = obj.get("Key")
                     if key:
                         yield key
+
+    def uri(self, key: str) -> str | None:
+        """P1-C3 能力:S3 无本地路径,但可给 `s3://bucket/key` URI 供复制。"""
+        return f"s3://{self._bucket}/{key}"

@@ -161,10 +161,6 @@ async def open_media_with_result(
     `register_qt_callbacks`)时返失败 DTO 而不是抛 — 与现有
     `objects=None` 失败语义一致。
     """
-    from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
     msg = await ms._storage.get_message(channel_id, telegram_msg_id)
     if msg is None or media_idx >= len(msg.media):
         return OpenMediaResult(False, "消息或媒体不存在")
@@ -176,18 +172,20 @@ async def open_media_with_result(
         return OpenMediaResult(False, "open_url callback 未注册(UI 层未 bootstrap)")
 
     try:
-        if isinstance(ms._objects, (LocalObjectStore, FolderObjectStore)):
-            # 用 backend 自带的 _path 而非 ms._objects._root / key —
-            # FolderObjectStore 用 `media/<ab>/<cd>/<name>` 分片式相对路径,
-            # 直接拼 root 会落到错的子目录。
-            abs_path = ms._objects._path(med.object_key)  # noqa: SLF001
+        objects = ms._objects
+        if objects is None:
+            return OpenMediaResult(False, "不支持的对象存储后端: NoneType")
+        # P1-C3:能力探测替代 isinstance(Local/Folder/S3)。有 local_path →
+        # 直接开本地文件;无本地路径但有 uri(远端后端)→ stage 到 tmp 再开。
+        local = objects.local_path(med.object_key)
+        if local is not None:
             # 2026-09-26 fix(open-media-hang):open_url 在 macOS 上同步走
             # `[NSWorkspace openURL:]` AppleEvent → LaunchServices,会卡
             # 主线程 100ms~数秒;放 worker thread 跑,UI 不冻。
             ok = bool(
                 await asyncio.to_thread(
                     _bridge._module_open_url_cb,
-                    str(abs_path),
+                    str(local),
                 )
             )
             return (
@@ -195,9 +193,9 @@ async def open_media_with_result(
                 if ok
                 else OpenMediaResult(False, "系统调用失败:请检查是否已关联默认应用")
             )
-        if isinstance(ms._objects, S3ObjectStore):
+        if objects.uri(med.object_key) is not None:
             tmp = await _stage_s3_to_tmp(ms, med)
-            # 同上 — S3 路径 open_url 也走 worker thread,见上注。
+            # 同上 — 远端路径 open_url 也走 worker thread,见上注。
             ok = bool(
                 await asyncio.to_thread(
                     _bridge._module_open_url_cb,
@@ -237,29 +235,31 @@ async def reveal_in_folder(
     仅 Local / Folder 后端有效:S3 无本地文件,S3 路径应走 `copy_media_path`
     拿 URI。失败原因以 `RevealResult.error` 返回,UI 据此弹 QMessageBox。
     """
-    from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
     msg = await ms._storage.get_message(channel_id, telegram_msg_id)
     if msg is None or media_idx >= len(msg.media):
         return RevealResult(False, "消息或媒体不存在")
     med = msg.media[media_idx]
     if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
         return RevealResult(False, "媒体未下载完成")
-    if isinstance(ms._objects, S3ObjectStore):
-        return RevealResult(
-            False,
-            "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
-        )
-    if not isinstance(ms._objects, (LocalObjectStore, FolderObjectStore)):
+    # P1-C3:能力探测替代 isinstance。S3 等远端后端有 uri 无 local_path →
+    # 保留原"S3 后端无本地路径"提示;两者皆无 → 不支持。
+    objects = ms._objects
+    if objects is None:
+        return RevealResult(False, "不支持的对象存储后端: NoneType")
+    local = objects.local_path(med.object_key)
+    if local is None:
+        if objects.uri(med.object_key) is not None:
+            return RevealResult(
+                False,
+                "S3 后端无本地路径:请使用「Copy 路径」拿到 s3:// URI",
+            )
         return RevealResult(
             False,
             f"不支持的对象存储后端: {type(ms._objects).__name__}",
         )
 
     try:
-        abs_path = ms._objects._path(med.object_key)  # noqa: SLF001
+        abs_path = local
         if not abs_path.exists():
             return RevealResult(False, f"文件不存在: {abs_path}")
         # OS-specific 唤起文件管理器(macOS `open -R` 高亮 / Windows
@@ -309,41 +309,25 @@ async def copy_media_path(
     - S3:`s3://<bucket>/<object_key>`(URI 字符串,不是本地路径)
     - 其它后端:失败 + 不支持提示
     """
-    from tgmonitor.core.objectstore.folder_store import FolderObjectStore
-    from tgmonitor.core.objectstore.local_store import LocalObjectStore
-    from tgmonitor.core.objectstore.s3_store import S3ObjectStore
-
     msg = await ms._storage.get_message(channel_id, telegram_msg_id)
     if msg is None or media_idx >= len(msg.media):
         return CopyResult(False, error="消息或媒体不存在")
     med = msg.media[media_idx]
     if not med.object_key or med.download_status != MediaDownloadStatus.DONE:
         return CopyResult(False, error="媒体未下载完成")
-    if isinstance(ms._objects, (LocalObjectStore, FolderObjectStore)):
+    # P1-C3:能力探测替代 isinstance。local_path 优先(本地 FS 绝对路径),
+    # 否则 uri(S3 s3:// 或未来远端后端);两者皆无 → 不支持。
+    objects = ms._objects
+    if objects is None:
+        return CopyResult(False, error="不支持的对象存储后端: NoneType")
+    local = objects.local_path(med.object_key)
+    if local is not None:
         try:
-            abs_path = ms._objects._path(med.object_key)  # noqa: SLF001
+            return CopyResult(True, copied_value=str(local))
         except Exception as exc:  # noqa: BLE001
-            return CopyResult(
-                False,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-        return CopyResult(True, copied_value=str(abs_path))
-    if isinstance(ms._objects, S3ObjectStore):
-        # S3ObjectStore 通常有 bucket / key 拼接;s3a URI 也可,这里用 s3://
-        try:
-            bucket = (
-                getattr(ms._objects, "bucket_name", None)
-                or getattr(ms._objects, "bucket", None)
-                or getattr(ms._objects, "_bucket", None)
-            )
-        except Exception:  # noqa: BLE001
-            bucket = None
-        if not bucket:
-            return CopyResult(
-                False,
-                error="S3 后端未暴露 bucket 字段",
-            )
-        uri = f"s3://{bucket}/{med.object_key}"
+            return CopyResult(False, error=f"{type(exc).__name__}: {exc}")
+    uri = objects.uri(med.object_key)
+    if uri is not None:
         return CopyResult(True, copied_value=uri)
     return CopyResult(
         False,

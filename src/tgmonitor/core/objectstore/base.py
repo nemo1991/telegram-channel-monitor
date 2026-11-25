@@ -115,3 +115,27 @@ class ObjectStore(ABC):
         """按前缀枚举所有 key;默认 no-op(后端支持再 override)。"""
         if False:
             yield ""
+
+    # ---- 能力探测(2026-11-25 P1-C3)----
+    #
+    # `open_media` / `reveal_in_folder` / `copy_media_path` 原先对后端做
+    # `isinstance(LocalObjectStore, FolderObjectStore, S3ObjectStore)` 判断,
+    # 新增第 4 种后端时三条路径静默不可用(返回"不支持的后端")。改为能力
+    # 探测:后端声明自己有本地路径 / 远端 URI,调用方按能力分支,零改 core。
+    # 默认 None = 不支持该能力,现有后端不 override 也不破坏。
+
+    def local_path(self, key: str) -> Path | None:
+        """key → 本地绝对路径;无本地落盘的后端(如 S3)返回 None。
+
+        Local / Folder override:返回 `key` 在其布局下的真实路径。
+        调用方须先用本方法判能力,不要 isinstance 具体类。
+        """
+        return None
+
+    def uri(self, key: str) -> str | None:
+        """key → 可复制的 URI(如 `s3://bucket/key`);不支持的后端返回 None。
+
+        本地 FS 后端无需 URI(直接给绝对路径),保持默认 None 即可;
+        远端后端 override 返业务可粘贴的 URI 字符串。
+        """
+        return None
