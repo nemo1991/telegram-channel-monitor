@@ -76,6 +76,52 @@ _DEFAULT_BACKFILL_MAX_PAGE = 1000
 _DEFAULT_HEARTBEAT_INTERVAL = 30.0
 
 
+def _merge_media_on_edit(old_media: list[MediaDTO], new_media: list[MediaDTO]) -> list[MediaDTO]:
+    """编辑路径 media 合并(2026-11-25 P1-1 修复)。
+
+    背景:`_handle_edited` 此前用 `media=msg.media` 整列表替换 —
+    `msg.media` 是从 TG 重新映射的 DTO,`object_key` / `download_status`
+    全为 None,`update_message` 走 `save_message` 的「先清后插」后,
+    已下载媒体的下载状态被抹掉;`reconcile_orphans` 会把这些失去引用的
+    对象判孤儿**真删**。
+
+    合并键 = 消息内位置。`telegram_file_id` 是消息级定位符
+    (`tl:{chat_id}:{msg_id}`,同一条消息内所有 media 共享,见
+    telethon_messages.py),无法区分条目,位置索引是本代码库既有的
+    per-media 稳定语义(dto.py:thumbnails 的 media_idx 即按索引关联)。
+
+    规则:
+    - 位置匹配上的 media:下载侧字段(`object_key` / `object_backend` /
+      `download_status` / `download_error`)保留旧值;远端侧字段(type /
+      mime_type / file_name / 尺寸 / duration / file_id / thumb id /
+      emoji)以新 DTO 为准;`file_size` 新值非 None 用新值,否则保留旧值
+      (编辑重映射可能拿不到 size,不能倒退抹掉)。
+    - 超出旧列表的新 media:按未下载新条目插入(交由下载队列处理)。
+    - 旧列表多出的 media(编辑后消失):保守保留、追加尾部。删除会让
+      已下载对象立即变孤儿被 reconcile 回收;保留的代价是这些条目的
+      thumbnail `media_idx` 可能与 thumbnails 表错位(缩略图可按需重下,
+      可接受)。TG 编辑实际不会移除媒体,此分支纯防御。
+    """
+    merged: list[MediaDTO] = []
+    for idx, new in enumerate(new_media):
+        if idx < len(old_media):
+            old = old_media[idx]
+            merged.append(
+                dataclasses.replace(
+                    new,
+                    file_size=new.file_size if new.file_size is not None else old.file_size,
+                    object_key=old.object_key,
+                    object_backend=old.object_backend,
+                    download_status=old.download_status,
+                    download_error=old.download_error,
+                )
+            )
+        else:
+            merged.append(new)
+    merged.extend(old_media[len(new_media) :])
+    return merged
+
+
 class MonitorService:
     """实时监听服务:订阅 TelegramClient.update 流 → 落库 + 发 MessageReceived。
 
@@ -503,7 +549,8 @@ class MonitorService:
         """编辑路径(2026-08-24):`_run` 路由命中 `_seen_ids` 后调这里。
 
         编辑的常见字段:text / views / forwards / edited 标志 / media 列表 —
-        覆盖式写回 storage(`update_message`)并发 `MessageEdited` 事件。
+        写回 storage(`update_message`)并发 `MessageEdited` 事件。media
+        按 `_merge_media_on_edit` 合并(保留下载侧状态),其余字段覆盖。
 
         不入队下载(编辑不该重下媒体);不发 `MessageReceived`(避免
         MessageView 把它当新消息插入)。
@@ -532,13 +579,16 @@ class MonitorService:
             await self.bus.publish(MessageEdited(message=msg))
             return
         # 字段级覆盖 — 保留 storage 的 message.id 与其它未列字段
+        # media 走合并(P1-1):整列表替换会把重新映射 DTO 的
+        # object_key/download_status=None 写库,抹掉已下载状态 → 孤儿回收
+        # 真删文件。见 `_merge_media_on_edit` docstring。
         updated = dataclasses.replace(
             existed,
             text=msg.text,
             views=msg.views,
             forwards=msg.forwards,
             edited=msg.edited,
-            media=msg.media,
+            media=_merge_media_on_edit(existed.media, msg.media),
         )
         await self.storage.update_message(updated)
         log.debug(

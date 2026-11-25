@@ -372,6 +372,46 @@ async def test_save_message_upsert_stable_pk_and_media_replace(repo: SqliteRepos
     assert await repo.count_media(channel_ids=[1]) == 1
 
 
+async def test_save_message_upsert_preserves_user_annotations(repo: SqliteRepository) -> None:
+    """P1-2 回归(2026-11-25):save_message upsert 不得覆盖用户标注。
+
+    旧行为:ON CONFLICT DO UPDATE 列表含 is_favorite / tags / notes —
+    monitor / sync 对已落库消息重复推送时带 TG 侧默认空值,把用户标注
+    静默清零。用户标注的唯一落库路径是 set_favorite / set_tags /
+    set_notes 专用方法;save_message upsert 只更新 TG 侧字段。
+
+    显式清空走专用方法(如 set_favorite(False)),路径仍然有效。
+    """
+    await repo.save_message(
+        make_message(
+            channel_id=1,
+            msg_id=1,
+            text="v1",
+            is_favorite=True,
+            tags=["tech"],
+            notes="user note",
+        )
+    )
+    # 模拟 monitor / sync 对已落库消息的重复推送(TG 重映射 DTO,标注为默认空值)
+    await repo.save_message(make_message(channel_id=1, msg_id=1, text="v2"))
+    msg = await repo.get_message(1, 1)
+    assert msg is not None
+    assert msg.text == "v2", "TG 侧字段正常覆盖"
+    assert msg.is_favorite is True, "is_favorite 被 upsert 清零(P1-2)"
+    assert msg.tags == ["tech"], "tags 被 upsert 清零(P1-2)"
+    assert msg.notes == "user note", "notes 被 upsert 清零(P1-2)"
+
+    # 显式清空走专用方法,路径有效
+    await repo.set_favorite(1, 1, False)
+    await repo.set_tags(1, 1, [])
+    await repo.set_notes(1, 1, "")
+    msg = await repo.get_message(1, 1)
+    assert msg is not None
+    assert msg.is_favorite is False
+    assert msg.tags == []
+    assert msg.notes == ""
+
+
 async def test_list_messages_search_escapes_like_wildcards(repo: SqliteRepository) -> None:
     """list_messages 的 LIKE 转义(与 PG 对齐):% / _ 按字面匹配。"""
     await repo.save_message(make_message(channel_id=1, msg_id=1, text="discount 50% off"))
