@@ -5,6 +5,35 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.3] - 2026-11-25
+
+主题:**内部重构** — 无新功能、无命令行/数据库/配置变更,全部改动面向可维护性与契约正确性。
+
+### 修复
+
+- **热重载后活动写旧库**:活动持久化订阅改为在 `app` 构造后注册并取当前 storage,
+  切换后端(热重载)后活动记录不再写入旧数据库。
+
+### 变更
+
+- **契约止血**:清理 UI 侧对不存在事件字段的死代码引用(全量同步入口已于 v2.0.5 移除)。
+- **去重契约**:SQLite/PG 媒体状态序列化统一到共享 codec;Local/Folder 对象存储抽出共享
+  基类;Qt 安全断连统一 helper;ObjectStore 新增 `local_path` / `uri` 能力接口,替代
+  `isinstance` 击穿,新增第 4 种后端零改 core 即可接入。
+- **导出注册表单一真源**:GUI / CLI 的格式下拉改为从 Exporter 注册表派生;修正
+  MEDIA_CSV 误用消息 DTO 的语义错位。
+- **结构拆分**:`sqlite_repo.py` 按域拆为 7 个 free-function 模块(1061 → 354 行,与 PG 端
+  对称);Telethon 实时 handler 与 Lightbox 控制条各自抽独立 module。
+- **MonitorService 解耦**:5 个组件不再反向持有宿主,改为共享 `MonitorRuntime` + 宿主
+  property 转发,双向耦合变单向;公开面与测试 seam 位置不变。
+- **门禁增强**:ruff 启用 `BLE` / `C90`(上限 15);ANN 实测告警面后暂缓。
+
+### 注意
+
+- 无用户可见功能变化;CLI 命令、配置键、数据库 schema 均不变,无需重新登录。
+- 大拆分均以 AST 方法体等价性校验 + 全量测试证明零行为漂移。
+- 测试体系经复审决定不批量精简;全套 1772 passed / 11 skipped / 63 deselected。
+
 ## [2.1.2] - 2026-11-24
 
 主题:**命令体系收敛** — `tgmon` 只做 GUI,`tgmon-cli` 独占 CLI,`tgmonitor` 命令移除。

@@ -123,8 +123,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "tgmonitor",
             "CFBundleDisplayName": "Telegram Channel Monitor",
-            "CFBundleShortVersionString": "2.1.2",
-            "CFBundleVersion": "2.1.2",
+            "CFBundleShortVersionString": "2.1.3",
+            "CFBundleVersion": "2.1.3",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "13.0",
             # 不申请 Developer ID,Info.plist 不带 LSApplicationCategoryType,
