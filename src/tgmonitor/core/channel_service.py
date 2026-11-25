@@ -196,3 +196,13 @@ class ChannelService:
         """退订后从监听白名单摘掉频道 — sync,幂等。"""
         assert self._monitor is not None
         self._monitor.remove_from_whitelist(channel_id)
+
+    def monitored_ids(self) -> frozenset[int]:
+        """P2-M3:当前监听白名单 id 集合 — UI/CLI 经域服务读,不再直取 monitor。
+
+        monitor 为 None(启动期退化)时返回空集,与 `monitor.monitored_ids`
+        的既有语义对齐(白名单尚未初始化 = 无监听)。
+        """
+        if self._monitor is None:
+            return frozenset()
+        return self._monitor.monitored_ids

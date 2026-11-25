@@ -244,6 +244,20 @@ class MessageDTO:
 
 
 @dataclass
+class MediaExportRowDTO(MessageDTO):
+    """per-media 导出的一行 — `MessageDTO` + 目标 media 在原消息里的下标。
+
+    2026-11-25 P2-M7:`ExportService._run_media` 把每条 `(msg, idx, med)`
+    包成本 DTO(`media=[med]`, `media_idx=idx`)交给 `MediaListCsvExporter`,
+    取代旧实现给 `MessageDTO` 动态 setattr `_media_idx` 的做法(破坏 DTO
+    purity、两处 `type: ignore[attr-defined]`)。`media_idx` 是 dataclass
+    正式字段,类型安全、可被 `dataclasses.replace` 正确传播。
+    """
+
+    media_idx: int = -1
+
+
+@dataclass
 class ReactionDTO:
     """Telegram reaction 单条 → 扁平 dataclass。
 

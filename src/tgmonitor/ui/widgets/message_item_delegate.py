@@ -43,9 +43,10 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from tgmonitor.core.dto import MessageDTO
 
-# 2026-10-15 plan-batch7-A:role enum 跨文件引用,主文件 re-export 该类
-# 避免循环 import(message_view.py → message_item_delegate.py → message_view.py)。
-from tgmonitor.ui.widgets.message_view import MessageListModel
+# 2026-11-25 P2-M6:Role 枚举真实定义在 message_list_model.py,直接 import
+# 它解除循环(旧实现经 message_view re-export 中转:message_view → delegate →
+# message_view,靠 import 时机侥幸不炸)。message_list_model 不反向依赖 delegate。
+from tgmonitor.ui.widgets.message_list_model import MessageListModel
 
 # v2.0.5 FR-06:cache key 类型 = (cid, mid, width, font_key)
 _LayoutKey = tuple[int | None, int | None, int, tuple[str, int, bool, bool]]

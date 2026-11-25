@@ -22,6 +22,7 @@ from tgmonitor.core.dto import (
     ExportRequest,
     ExportResult,
     MediaExportRequest,
+    MediaExportRowDTO,
     MessageDTO,  # noqa: F401 — 2026-08-25 PR #7:dispatcher 用 dataclasses.replace
 )
 from tgmonitor.core.events import EventBus, ExportDone, ExportProgress
@@ -290,14 +291,14 @@ class ExportService:
         )
         yield
 
-        # 包成 exporter 期望的 MessageDTO 列表(每条 message 仅含目标 media)
-        # `_media_idx` 是 dispatcher ↔ exporter 的私有通道:replace 后再
-        # 直接 setattr(MessageDTO 非 frozen)。
+        # 包成 exporter 期望的行列表(每条含目标 media + 其在原消息的下标)。
+        # P2-M7:用正式 DTO `MediaExportRowDTO.media_idx` 取代旧的动态属性
+        # `_media_idx`(两处 type: ignore)—— DTO purity 恢复,类型安全。
         wrapped: list[MessageDTO] = []
         for msg, idx, med in rows:
-            new_msg = dataclasses.replace(msg, media=[med])
-            new_msg._media_idx = idx  # type: ignore[attr-defined]
-            wrapped.append(new_msg)
+            fields = {f.name: getattr(msg, f.name) for f in dataclasses.fields(msg)}
+            fields["media"] = [med]
+            wrapped.append(MediaExportRowDTO(**fields, media_idx=idx))
 
         try:
             exporter = EXPORTERS.get(request.format)

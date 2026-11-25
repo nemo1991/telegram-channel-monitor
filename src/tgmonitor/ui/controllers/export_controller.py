@@ -30,7 +30,7 @@ class ExportController:
 
     def on_export(self) -> None:
         mw = self._ctx.main_window
-        if not self._ctx.monitor.monitored_ids:
+        if not self._ctx.app.channels.monitored_ids():
             from PySide6.QtWidgets import QMessageBox
 
             QMessageBox.information(
@@ -39,7 +39,7 @@ class ExportController:
                 mw.tr("请先订阅至少一个频道"),
             )
             return
-        ids = sorted(int(cid) for cid in self._ctx.monitor.monitored_ids)
+        ids = sorted(int(cid) for cid in self._ctx.app.channels.monitored_ids())
         from tgmonitor.ui.widgets.export_dialog import ExportDialog
         from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
 
