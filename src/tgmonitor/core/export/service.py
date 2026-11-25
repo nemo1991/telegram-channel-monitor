@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -45,6 +45,25 @@ from tgmonitor.core.storage.repository import StorageRepository
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 500
+
+
+def _message_sort_key(m: MessageDTO) -> tuple[datetime, int]:
+    """导出排序键(P2-2.1.4 #8)— naive date 视作 UTC 归一 + int tie-break。
+
+    旧实现 `(m.date or datetime.min, str(m.id))` 两个问题:
+    1. `datetime.min` 是 naive,与 aware `m.date` 混比直接 TypeError;
+    2. `str(id)` 字典序导致 "10" < "9" 错序。
+
+    tie-break 改用 int 主键 `m.id`(与各存储后端 `date ASC, id ASC` 的
+    SQL tie-break 一致);`m.date` 按 DTO 契约非空,None 分支仅防御。
+    """
+    d = m.date
+    if d is None:
+        return (datetime.min.replace(tzinfo=UTC), m.id)
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=UTC)
+    return (d, m.id)
+
 
 # 2026-08-25 v1.3.0 PR #7:`run` 入参联合类型 — ExportRequest (per-message)
 # | MediaExportRequest (per-media)。
@@ -184,39 +203,78 @@ class ExportService:
             )
             yield
         else:
-            # 流式分页拉取(分页上限 PAGE_SIZE,累加并按时间排序)
+            # 快照边界分页(P2-2.1.4 #9)— 修复 offset 从尾翻页的并发竞态。
             #
-            # 2026-08-27 v1.4.0 PR #12:list_messages `limit` 语义是「最近 N 条」
-            # (取排序尾部);要向前翻历史页就靠 `offset` 从尾部继续跳过。
-            # 翻页方向:offset 0 → PAGE_SIZE → 2*PAGE_SIZE → ...
-            # 翻页终止:batch < PAGE_SIZE(到顶了)/ offset 超 10M 兜底。
-            offset = 0
+            # 旧实现:offset 每页 += len(batch),从「最新端」跳过
+            # (list_messages 的 LIMIT/OFFSET 在 `date DESC, id DESC` 上取,
+            # 再反转返回)。导出期间有新消息入库时,已取过的页整体后移,
+            # 下一页会重复取到旧消息(offset 空间漂移 → 重复导出)。
+            #
+            # keyset 分页需要 storage 支持「取比游标更旧的一批」,
+            # list_messages 无此参数且本次修复不动 storage/,故采用
+            # 快照边界方案:
+            # 1. 会话开始时逐频道取最新一条,记 telegram_msg_id 作该频道
+            #    快照上界;
+            # 2. 分页查询带 date_to = 各频道快照最新时间的最大值封顶
+            #    (用户显式传 date_to 则尊重用户范围),快照之后的新消息
+            #    在 SQL 层被排除,翻页空间不再漂移;
+            # 3. 同秒落库等漏网消息由 per-channel telegram_msg_id 上界
+            #    二次过滤;期间仍可能变动的区间(如同秒回填)造成的页
+            #    重叠按 (channel_id, telegram_msg_id) 去重兜底。
+            #
+            # 结果 ≈ 快照时刻的一致性视图;导出中「删除」消息仍可能漏导
+            # (storage 无快照隔离,记录为已知边界)。
             channel_ids = list(channels.keys())
+            boundaries: dict[int, int] = {}
+            snapshot_date_to: datetime | None = None
+            snapshot_key: datetime | None = None
+            for cid in channel_ids:
+                newest = await self._storage.list_messages(channel_ids=[cid], limit=1)
+                if newest:
+                    n = newest[-1]
+                    boundaries[cid] = n.telegram_msg_id
+                    nd = n.date if n.date.tzinfo else n.date.replace(tzinfo=UTC)
+                    if snapshot_key is None or nd > snapshot_key:
+                        snapshot_key = nd
+                        snapshot_date_to = n.date
+            eff_date_to = request.date_to if request.date_to is not None else snapshot_date_to
+            seen_keys: set[tuple[int, int]] = set()
+            offset = 0
             while channel_ids:
-                batch = await self._storage.list_messages(
+                raw = await self._storage.list_messages(
                     channel_ids=channel_ids,
                     date_from=request.date_from,
-                    date_to=request.date_to,
+                    date_to=eff_date_to,
                     limit=PAGE_SIZE,
                     offset=offset,
                 )
-                if not batch:
+                if not raw:
                     break
-                all_messages.extend(batch)
-                offset += len(batch)
+                # offset 推进按 raw 页计 — 快照过滤不改变 offset 空间。
+                offset += len(raw)
+                for m in raw:
+                    # 快照后新增的消息不入导出:telegram_msg_id 超出频道
+                    # 上界(频道快照时为空 → 上界 -1 全拒;TG msg_id ≥ 1)。
+                    if m.telegram_msg_id > boundaries.get(m.channel_id, -1):
+                        continue
+                    key = (m.channel_id, m.telegram_msg_id)
+                    if key in seen_keys:  # 并发写入导致的页重叠 → 去重
+                        continue
+                    seen_keys.add(key)
+                    all_messages.append(m)
                 await self._bus.publish(
                     ExportProgress(request_id=req_id, written=offset, total=None)
                 )
                 yield
-                # 最后一页:不足 PAGE_SIZE 说明数据耗尽。
-                if len(batch) < PAGE_SIZE:
+                # 最后一页:raw 不足 PAGE_SIZE 说明数据耗尽。
+                if len(raw) < PAGE_SIZE:
                     break
                 # 死循环兜底:offset 已超数据上限(防 storage 端 race / bug)。
                 if offset > 10_000_000:
                     log.error("export pagination 超 10M 退出,channel_ids=%s", channel_ids)
                     break
 
-            all_messages.sort(key=lambda m: (m.date or datetime.min, str(m.id)))
+            all_messages.sort(key=_message_sort_key)
 
             await self._bus.publish(
                 ExportProgress(

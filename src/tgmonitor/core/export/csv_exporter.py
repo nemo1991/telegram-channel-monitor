@@ -4,6 +4,9 @@
 - 所有列展开平铺,无嵌套
 - 2026-08-27 v1.4.0 PR #17:`text` / `author` / `channel_title` 等用户/频道
   内容走 `_guard_csv_cell` 防 Excel 公式注入(CWE-1236)
+- 2026-11-25 P2-2.1.4 #10/#11:
+  - `tags` 列 join 前逐 tag 走 `_guard_csv_cell`(tag 是用户输入,与 notes 同攻击面)
+  - 写盘 encoding 改 `utf-8-sig`(带 BOM),Windows Excel 直接双击不乱码
 """
 
 from __future__ import annotations
@@ -67,7 +70,7 @@ class CsvExporter(Exporter):
         storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用(CSV 不用,签名对齐)
     ) -> int:
         """写 CSV → 返回字节数(便于进度回报)。"""
-        with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()
             for m in messages:
@@ -91,8 +94,11 @@ class CsvExporter(Exporter):
                         # 2026-09-10 v1.7.3:`include_metadata=False` 时留空(保留列)。
                         # tags 走 `|` 分隔 — 沿用 `media_types` 列的 escape 模式;
                         # CSV cell 内部不能含 `|`(避免与本列分隔符冲突),notes 可含任意。
+                        # P2-2.1.4 #10:join 前逐 tag guard(tag 用户可控,公式注入面)。
                         "is_favorite": (m.is_favorite if include_metadata else ""),
-                        "tags": ("|".join(m.tags) if include_metadata else ""),
+                        "tags": (
+                            "|".join(_guard_csv_cell(t) for t in m.tags) if include_metadata else ""
+                        ),
                         "notes": (_guard_csv_cell(m.notes) if include_metadata else ""),
                     }
                 )

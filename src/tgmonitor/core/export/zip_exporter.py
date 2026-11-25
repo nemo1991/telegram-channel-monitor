@@ -40,6 +40,7 @@ from tgmonitor.core.dto import (
     MessageDTO,
 )
 from tgmonitor.core.export.base import Exporter, exporter
+from tgmonitor.core.export.json_exporter import _json_safe
 
 if TYPE_CHECKING:
     from tgmonitor.core.objectstore.base import ObjectStore
@@ -114,8 +115,11 @@ class ZipExporter(Exporter):
         # ZIP_DEFLATED 压缩;level 默认 6 平衡速度 / 体积
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
             # 先写 manifest(顶层 metadata,解压后用户能直接 JSON 解析)
+            # P2-2.1.4 #12:Enum 显式转 .value(DB 内部值 "photo"/"done",与
+            # JSON/CSV 一致,非 "MediaType.PHOTO" repr 形式)、datetime 转
+            # isoformat;default=str 仅作未知类型最终兜底。
             manifest = json.dumps(
-                [asdict(m) for m in messages],
+                [_json_safe(asdict(m)) for m in messages],
                 default=str,
                 ensure_ascii=False,
             ).encode("utf-8")
