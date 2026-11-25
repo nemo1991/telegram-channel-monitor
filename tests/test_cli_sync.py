@@ -17,6 +17,8 @@ from __future__ import annotations
 import argparse
 from types import SimpleNamespace
 
+import pytest
+
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import ChannelSyncProgress
 from tgmonitor.core.telegram.fake_client import FakeTelegramClient
@@ -150,6 +152,28 @@ async def test_cli_sync_passes_correct_options(
     assert app.channel_sync.media_policy.value == "metadata"  # service 默认未变
 
 
+async def test_cli_sync_progress_and_done_go_to_stderr(
+    app, monitor, storage, client: FakeTelegramClient, capsys
+) -> None:
+    """P1-7 回归:进度行与完成行必须走 stderr,stdout 只数据(sync 无数据输出)。
+
+    旧行为:进度行 / done 完成行 print 到 stdout,重定向管道消费被污染。
+    """
+    from tgmonitor.cli.sync import run_sync
+
+    _setup_ready_client_with_history(client)
+    await storage.upsert_channel_metadata(client._channels[100])
+
+    args = _make_args(channel_ids=[100])
+    rc = await run_sync(args, app=app, monitor=monitor)
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == "", "stdout 只允许数据输出,sync 没有数据输出"
+    assert "[sync]" in captured.err
+    assert "stage=done" in captured.err  # 进度行
+    assert "messages added" in captured.err  # 完成行
+
+
 # ============================================================
 # `cli.monitor.run_monitor`
 # ============================================================
@@ -179,3 +203,35 @@ async def test_cli_monitor_handles_not_ready(app, monitor, monkeypatch) -> None:
     rc = await run_monitor(args, app=app, monitor=monitor)
     assert rc == 1
     assert not started
+
+
+async def test_cli_monitor_status_lines_go_to_stderr(app, monitor, capsys, monkeypatch) -> None:
+    """P1-7 回归:monitor 状态行(starting…)必须走 stderr,stdout 保持纯净。
+
+    monitor 无数据输出,stdout 应完全为空。fake_start 抛 KeyboardInterrupt
+    模拟 SIGINT,绕开 `await stop.wait()` 阻塞。
+    """
+    from tgmonitor.cli.monitor import run_monitor
+
+    async def fake_bootstrap():
+        return ("ready", "")
+
+    monkeypatch.setattr(app, "bootstrap", fake_bootstrap)
+
+    async def fake_list_monitored():
+        return []
+
+    monkeypatch.setattr(app.channels, "list_monitored_channels", fake_list_monitored)
+    monkeypatch.setattr(app, "_is_paused", False)
+
+    async def fake_start():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(monitor, "start", fake_start)
+
+    args = SimpleNamespace(no_resume=False)
+    with pytest.raises(KeyboardInterrupt):
+        await run_monitor(args, app=app, monitor=monitor)
+    captured = capsys.readouterr()
+    assert "[cli.monitor]" not in captured.out
+    assert "starting" in captured.err

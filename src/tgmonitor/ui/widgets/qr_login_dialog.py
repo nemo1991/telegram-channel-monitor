@@ -127,11 +127,13 @@ class QrLoginDialog(QDialog):
     # ---- 状态订阅 / 渲染 ----
 
     def _subscribe_state(self) -> None:
-        async def _on(e: LoginStateChanged) -> None:
-            if e.state == "ready":
-                self.qr_succeeded.emit()
+        # P1-6:handler 必须存实例属性(不能是局部闭包)——unsubscribe 要求
+        # 同一函数对象,且闭包强引用 dialog 会造成实例泄漏。
+        self.app.bus.subscribe(LoginStateChanged, self._on_login_state)
 
-        self.app.bus.subscribe(LoginStateChanged, _on)
+    async def _on_login_state(self, e: LoginStateChanged) -> None:
+        if e.state == "ready":
+            self.qr_succeeded.emit()
 
     def _render_qr(self, url: str) -> None:
         self._qr_url = url
@@ -221,8 +223,16 @@ class QrLoginDialog(QDialog):
         self._set_busy(False)
         self.status_label.setText(f"{self.tr('二维码登录失败')}: {msg}")
 
-    def closeEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt 签名
-        """关闭弹窗 → cancel 等待任务,避免后台悬挂。"""
+    def done(self, result: int) -> None:  # noqa: N802 — Qt 签名
+        """accept() / reject() / 窗口关闭的统一收口:cancel 等待 + 退订 EventBus。
+
+        QDialog 的 accept() / reject() 不触发 closeEvent(登录成功走
+        accept()、取消按钮走 reject();窗口关闭的 QDialog 默认 closeEvent
+        也是 reject() → done()),三条关闭路径最终都到 done(),在这里退订
+        才能全覆盖。不退订的后果(P1-6):每次打开新增一条订阅 + 闭包强
+        引用 dialog,关闭后 LoginStateChanged(ready) 仍对已关闭对象 emit。
+        """
         if self._wait_future is not None and not self._wait_future.done():
             self._wait_future.cancel()
-        super().closeEvent(event)
+        self.app.bus.unsubscribe(LoginStateChanged, self._on_login_state)
+        super().done(result)

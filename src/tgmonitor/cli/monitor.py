@@ -28,7 +28,7 @@ async def run_monitor(
     """CLI monitor 主流程:前台跑 monitor 到 SIGINT / SIGTERM,然后干净退出。
 
     与 GUI 路径差异:
-    - 无 UI 状态指示,只走 stdout print
+    - 无 UI 状态指示,状态行只走 stderr print(stdout 只数据;本命令无数据输出)
     - 启动后从 storage 重载白名单(与 GUI 行为一致)
     - 暂停状态走 `app.is_paused`;`--no-resume` 标志忽略暂停强制启动
       (CLI 假定用户用此标志是明确知道后果的;GUI 没有此能力)
@@ -84,12 +84,13 @@ async def run_monitor(
 
         print(
             f"[cli.monitor] subscribed={len(subscribed)} channels;starting…",
+            file=sys.stderr,
             flush=True,
         )
 
         await monitor.start()
         await stop.wait()
-        print("[cli.monitor] stopped", flush=True)
+        print("[cli.monitor] stopped", file=sys.stderr, flush=True)
         return 0
     finally:
         # remove_signal_handler 走 try/except — Windows 上 add 失败的同样 remove 失败

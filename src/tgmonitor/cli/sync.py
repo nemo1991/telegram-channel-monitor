@@ -25,10 +25,10 @@ async def run_sync(
     app: AppService | None = None,
     monitor: MonitorService | None = None,
 ) -> int:
-    """CLI sync 主流程:阻塞跑完一轮 sync,输出进度到 stdout,退出码 0/1。
+    """CLI sync 主流程:阻塞跑完一轮 sync,输出进度到 stderr,退出码 0/1。
 
     与 GUI 路径差异:
-    - 进度反馈走 stdout `print`(无 UI dialog)
+    - 进度反馈走 stderr `print`(stdout 只数据;本命令无数据输出)
     - 白名单以 `args.channel_ids` 为准(不走 storage `list_monitored_channels()`,
       CLI 显式选择胜过默认行为)
     - bootstrap 未 ready 时退出码 1 + 提示去 GUI 完成登录(CLI 没有 code 输入面板)
@@ -54,10 +54,11 @@ async def run_sync(
         # 白名单 = CLI 显式指定的 channel_ids
         monitor.set_whitelist(args.channel_ids)
 
-        # 进度事件 → stdout
+        # 进度事件 → stderr(stdout 只数据;P1-7 契约与 cli/_common.progress 一致)
         async def on_progress(e: ChannelSyncProgress) -> None:
             print(
                 f"[sync] cid={e.channel_id} stage={e.stage} {e.detail}",
+                file=sys.stderr,
                 flush=True,
             )
 
@@ -80,6 +81,7 @@ async def run_sync(
         print(
             f"[sync] done: {result.total_messages_added} messages added "
             f"(cancelled={result.cancelled})",
+            file=sys.stderr,
             flush=True,
         )
         # rate_limited 透传警告
