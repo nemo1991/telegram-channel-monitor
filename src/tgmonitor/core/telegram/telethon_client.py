@@ -45,15 +45,10 @@ from tgmonitor.core.config import Settings
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
 from tgmonitor.core.events import (
     AuthErrorOccurred,
-    ChannelMetadataChanged,
-    ChannelPhotoChanged,
-    ChannelTitleChanged,
     ConnectionStateChanged,
     LoginStateChanged,
-    MessageDeleted,
-    MessageInteractionsChanged,
-    MessagePinChanged,
 )
+from tgmonitor.core.telegram import _telethon_handlers as _handlers
 from tgmonitor.core.telegram.client import UpdateStream
 from tgmonitor.core.telegram.errors import (
     ChatUnavailableError,
@@ -66,7 +61,6 @@ from tgmonitor.core.telegram.errors import (
 from tgmonitor.core.telegram.proxy import parse_socks5_proxy, probe_proxy
 from tgmonitor.core.telegram.telethon_messages import (
     map_message,
-    map_reactions,
     parse_file_id,
     pick_thumb_size,
 )
@@ -534,156 +528,45 @@ class TelethonTelegramClient:
     # 实时更新 handler
     # ============================================================
 
+    # 2026-11-25 P2-N5a:handler 实现体抽到 `_telethon_handlers.py`(free function
+    # + host 透传);下列方法保留原名(Telethon 注册 + 测试直接调用依赖它),
+    # 只做 1 行薄委托。实现语义逐字不变。
+
     async def _on_new_message(self, event: Any) -> None:
-        try:
-            msg = event.message
-            if msg is None:
-                return
-            dto = map_message(msg)
-            for s in list(self._streams):
-                await s.push(dto)
-        except Exception:  # noqa: BLE001
-            log.exception("NewMessage handling failed")
+        await _handlers.on_new_message(self, event)
 
     async def _on_message_edited(self, event: Any) -> None:
-        try:
-            msg = event.message
-            if msg is None:
-                return
-            dto = map_message(msg)
-            for s in list(self._streams):
-                await s.push(dto)
-        except Exception:  # noqa: BLE001
-            log.exception("MessageEdited handling failed")
+        await _handlers.on_message_edited(self, event)
 
     async def _on_message_deleted(self, event: Any) -> None:
-        try:
-            chat_id = event.chat_id
-            if chat_id is None:
-                return
-            for mid in event.deleted_ids or []:
-                self._publish(MessageDeleted(channel_id=chat_id, telegram_msg_id=int(mid)))
-        except Exception:  # noqa: BLE001
-            log.exception("MessageDeleted handling failed")
+        await _handlers.on_message_deleted(self, event)
 
     async def _on_chat_action(self, event: Any) -> None:
-        """频道改名 / 头像变化(pin 走 Raw UpdatePinned*,避免与此重复)。"""
-        try:
-            chat_id = event.chat_id
-            if chat_id is None:
-                return
-            if event.new_title:
-                self._publish(ChannelTitleChanged(channel_id=chat_id, new_title=event.new_title))
-            if event.new_photo:
-                await self._handle_chat_photo(chat_id, event.photo)
-        except Exception:  # noqa: BLE001
-            log.exception("ChatAction handling failed")
+        await _handlers.on_chat_action(self, event)
 
     async def _handle_chat_photo(self, chat_id: int, photo: Any) -> None:
-        """头像变化 — 下载到 session_dir/photos/{cid}.jpg;None = 头像被删。"""
-        if photo is None:
-            self._photo_cache.pop(chat_id, None)
-            self._publish(ChannelPhotoChanged(channel_id=chat_id, local_path=None))
-            return
-        pid = getattr(photo, "id", None)
-        if pid is not None and self._photo_cache.get(chat_id) == pid:
-            return
-        photos_dir = self._settings.session_dir / "photos"
-        photos_dir.mkdir(parents=True, exist_ok=True)
-        path = photos_dir / f"{chat_id}.jpg"
-        try:
-            assert self._client is not None
-            await self._client.download_media(photo, file=str(path))
-            if pid is not None:
-                self._photo_cache[chat_id] = pid
-            self._publish(ChannelPhotoChanged(channel_id=chat_id, local_path=str(path)))
-        except Exception:  # noqa: BLE001
-            log.debug("chat photo download failed for %s", chat_id, exc_info=True)
+        await _handlers.handle_chat_photo(self, chat_id, photo)
 
     async def _on_views(self, update: types.UpdateChannelMessageViews) -> None:
-        try:
-            marked = utils.get_peer_id(types.PeerChannel(update.channel_id))
-            self._publish(
-                MessageInteractionsChanged(
-                    channel_id=marked,
-                    telegram_msg_id=int(update.id),
-                    views=int(update.views),
-                    reactions=None,
-                )
-            )
-        except Exception:  # noqa: BLE001
-            log.exception("UpdateChannelMessageViews handling failed")
+        await _handlers.on_views(self, update)
 
     async def _on_reactions(self, update: types.UpdateMessageReactions) -> None:
-        try:
-            if update.peer is None:
-                return
-            marked = utils.get_peer_id(update.peer)
-            self._publish(
-                MessageInteractionsChanged(
-                    channel_id=marked,
-                    telegram_msg_id=int(update.msg_id),
-                    views=None,
-                    reactions=map_reactions(update.reactions),
-                )
-            )
-        except Exception:  # noqa: BLE001
-            log.exception("UpdateMessageReactions handling failed")
+        await _handlers.on_reactions(self, update)
 
     async def _on_pinned_channel(self, update: types.UpdatePinnedChannelMessages) -> None:
-        try:
-            marked = utils.get_peer_id(types.PeerChannel(update.channel_id))
-            pinned = bool(update.pinned)
-            for mid in update.messages or []:
-                self._publish(
-                    MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
-                )
-        except Exception:  # noqa: BLE001
-            log.exception("UpdatePinnedChannelMessages handling failed")
+        await _handlers.on_pinned_channel(self, update)
 
     async def _on_pinned(self, update: types.UpdatePinnedMessages) -> None:
-        try:
-            if update.peer is None:
-                return
-            marked = utils.get_peer_id(update.peer)
-            pinned = bool(update.pinned)
-            for mid in update.messages or []:
-                self._publish(
-                    MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
-                )
-        except Exception:  # noqa: BLE001
-            log.exception("UpdatePinnedMessages handling failed")
+        await _handlers.on_pinned(self, update)
 
     async def _on_channel_updated(self, update: types.UpdateChannel) -> None:
-        marked = utils.get_peer_id(types.PeerChannel(update.channel_id))
-        await self._refresh_channel_metadata(marked)
+        await _handlers.on_channel_updated(self, update)
 
     async def _on_chat_updated(self, update: types.UpdateChat) -> None:
-        marked = utils.get_peer_id(types.PeerChat(update.chat_id))
-        await self._refresh_channel_metadata(marked)
+        await _handlers.on_chat_updated(self, update)
 
     async def _refresh_channel_metadata(self, marked: int) -> None:
-        """UpdateChannel/UpdateChat 只带 id — 重取 entity 发 ChannelMetadataChanged。"""
-        try:
-            assert self._client is not None
-            entity = await self._client.get_entity(marked)
-            dto = self._entity_to_dto(entity)
-            if dto is None:
-                return
-            self._publish(
-                ChannelMetadataChanged(
-                    channel_id=dto.id,
-                    title=dto.title,
-                    username=dto.username,
-                    member_count=dto.member_count,
-                    is_verified=dto.is_verified,
-                    is_scam=dto.is_scam,
-                    is_fake=dto.is_fake,
-                    has_protected_content=dto.has_protected_content,
-                )
-            )
-        except Exception:  # noqa: BLE001
-            log.debug("channel metadata refresh failed for %s", marked, exc_info=True)
+        await _handlers.refresh_channel_metadata(self, marked)
 
     # ============================================================
     # 频道
