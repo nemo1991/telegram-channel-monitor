@@ -9,8 +9,8 @@
 - mutex `ms._reconcile_lock`(2026-09-22 加的并发重入保护)— 锁住时直接返
   空事件不重入
 - facade 1 行 thin delegate
-- 子 module 不引入新私有 helper(原 reconcile 循环内联 delete,简单清晰;
-  未来若 delete 路径复杂化,可拆 `_delete_orphan` helper,本步先不动)
+- `_collect_referenced_keys`(2026-11-25 P1-5):引用收集分页循环拆出,
+  控制 `reconcile_orphans` 认知复杂度
 """
 
 from __future__ import annotations
@@ -18,13 +18,62 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from tgmonitor.core.dto import MediaDownloadStatus
+from tgmonitor.core.dto import MediaDownloadStatus, SortDir, SortKey
 from tgmonitor.core.events import MediaReconcileFinished
 
 if TYPE_CHECKING:
     from tgmonitor.core.media_service.media_service import MediaService
 
 log = logging.getLogger(__name__)
+
+# 2026-11-25 P1-5:分页页大小(测试可 monkeypatch 压小验证截断场景)。
+_RECONCILE_PAGE_SIZE = 500
+
+
+async def _collect_referenced_keys(
+    ms: MediaService,
+    channel_ids: list[int],
+    referenced_keys: set[str],
+) -> None:
+    """分页收集全部 DONE 媒体 + thumb 的 object_key 进 `referenced_keys`。
+
+    2026-11-25 P1-5:旧实现 `list_messages([ids], limit=100_000)` 只取
+    **最近** 10 万条 — 库内消息超限时,更旧消息的 object_key 进不了
+    referenced_keys,Prune Orphans(dry_run=False)会把仍在引用的真实媒体
+    误判孤儿真删。改为 `list_media` 按 DATE ASC 分页直到空页,收集**全部**
+    DONE 媒体的引用(ASC 排序下新消息追加在尾部,已取窗口稳定,不受实时
+    写入影响)。
+
+    thumb 收集按 message 去重 — 一条消息 N 个 media 行会在分页里重复出现。
+    注意 thumb 收集不能只跟随 DONE 的 media 行 — 主图 FAILED 的消息 thumb
+    仍可能是 DONE(monitor/service.py:626),所以对分页中出现的每条消息都
+    查一次 thumb。
+    """
+    offset = 0
+    thumb_seen: set[tuple[int, int]] = set()
+    while True:
+        rows = await ms._storage.list_media(
+            channel_ids=channel_ids,
+            limit=_RECONCILE_PAGE_SIZE,
+            offset=offset,
+            sort=SortKey.DATE,
+            sort_dir=SortDir.ASC,
+        )
+        for m, _idx, med in rows:
+            if med.object_key and med.download_status == MediaDownloadStatus.DONE:
+                referenced_keys.add(med.object_key)
+            # 2026-09-29:同时收集原图 + 缩略图引用;thumb 走独立
+            # `thumbnails` 表,逐 message 调 `list_thumbnails_for_message`
+            # 拉 thumb DTO(media_idx 索引保证与父 media 一一对应)。
+            tk = (m.channel_id, m.telegram_msg_id)
+            if tk not in thumb_seen:
+                thumb_seen.add(tk)
+                for t in await ms._storage.list_thumbnails_for_message(*tk):
+                    if t.object_key and t.download_status == MediaDownloadStatus.DONE:
+                        referenced_keys.add(t.object_key)
+        if len(rows) < _RECONCILE_PAGE_SIZE:
+            break
+        offset += _RECONCILE_PAGE_SIZE
 
 
 async def reconcile_orphans(
@@ -82,23 +131,11 @@ async def reconcile_orphans(
                 )
         chs = await ms._storage.list_channels()
         if chs:
-            msgs = await ms._storage.list_messages(
+            await _collect_referenced_keys(
+                ms,
                 [c.id for c in chs],
-                limit=100_000,
+                referenced_keys,
             )
-            # 2026-09-29:同时收集原图 + 缩略图引用;thumb 走独立
-            # `thumbnails` 表,需逐 message 调 `list_thumbnails_for_message`
-            # 拉 thumb DTO(media_idx 索引保证与父 media 一一对应)。
-            for m in msgs:
-                for med in m.media:
-                    if med.object_key and med.download_status == MediaDownloadStatus.DONE:
-                        referenced_keys.add(med.object_key)
-                thumbs = await ms._storage.list_thumbnails_for_message(
-                    m.channel_id, m.telegram_msg_id
-                )
-                for t in thumbs:
-                    if t.object_key and t.download_status == MediaDownloadStatus.DONE:
-                        referenced_keys.add(t.object_key)
         orphans = scanned_keys - referenced_keys
         deleted = 0
         if not dry_run and ms._objects is not None and orphans:

@@ -268,6 +268,113 @@ async def test_reconfigure_objectstore_failure_keeps_old_objects(
     assert _BrokenObjects.closed is True
 
 
+async def test_reconfigure_objects_failure_after_storage_build_keeps_old_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P1-3 回归(2026-11-25):storage 构建成功后 objects 校验失败 → 全体回滚。
+
+    旧实现(半完成态):`_rebuild_storage` 成功 = 旧库已 close + app.storage
+    已换新并 setter 传播;随后 `_rebuild_objects` connect 失败上抛 →
+    MonitorService / ChannelSyncService 仍持已 close 的旧 storage(实时消息
+    写不进,ErrorOccurred 风暴),且 settings 未提交导致下次 diff 基线错乱。
+
+    新实现两段式提交:新 storage / objects 全部构建 + 校验成功才统一换引用;
+    任一构建失败丢弃新对象、原样上抛 — 旧后端毫发无损、settings 不提交。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    storage = InMemoryRepository()
+    await storage.init_schema()
+    await storage.set_channel_monitored(100, True)  # 白名单真理 = storage
+    objects = FolderObjectStore(root=s1.objectstore_root)
+    await objects.connect()
+    client = FakeTelegramClient()
+    monitor = MonitorService(
+        bus,
+        client,
+        storage,
+        objects,
+        s1,
+        downloader=MediaDownloader(client, storage, objects),
+    )
+    monitor.set_whitelist({100})  # 模拟启动时已加载的白名单
+    app = AppService(bus, client, storage, objects, s1, monitor=monitor)
+
+    # 新 storage 构建成功(connect + init_schema 通过),但带 close 侦针
+    new_storage = InMemoryRepository()
+    await new_storage.connect()
+    new_storage_closes: list[int] = []
+    _orig_new_close = new_storage.close
+
+    async def _spy_new_close() -> None:
+        new_storage_closes.append(1)
+        await _orig_new_close()
+
+    new_storage.close = _spy_new_close  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_storage",
+        lambda settings: new_storage,
+    )
+    # 新 objects connect 即失败(模拟 S3 端点 / 凭据错);重置类级 closed 标志
+    _BrokenObjects.closed = False
+    monkeypatch.setattr(
+        "tgmonitor.core.app_service._reconfigure.build_object_store",
+        lambda settings: _BrokenObjects(),
+    )
+    s2 = _settings(
+        tmp_path,
+        db_dsn="postgresql://new/db",
+        objectstore_backend=ObjectStoreBackend.S3,
+        objectstore_endpoint="https://bad.example.com",
+        objectstore_bucket="bad-bucket",
+    )
+    s2.ensure_dirs()
+    seen: list[SettingsChanged] = []
+    bus.subscribe(SettingsChanged, lambda e: seen.append(e))
+
+    with pytest.raises(ConnectionError):
+        await app.reconfigure(s2)
+
+    # 旧 storage 未被 close、未被替换:monitor / channel_sync 仍持旧引用且可用
+    assert app.storage is storage
+    assert monitor.storage is storage
+    assert app.channel_sync.storage is storage
+    assert await app.storage.ping() is True
+    msg = make_message(channel_id=100, msg_id=1, text="still-works")
+    await monitor._handle(msg)
+    assert await storage.get_message(100, 1) is not None
+    # 旧 objects 未被 close、未被替换;settings 未提交、无事件
+    assert app.objects is objects
+    assert app.settings is s1
+    assert seen == []
+    # 未就绪的新 objects、构建成功但未提交的新 storage 都被丢弃关闭(不留泄漏)
+    assert _BrokenObjects.closed is True
+    assert new_storage_closes == [1]
+
+
+async def test_set_storage_propagates_to_channel_sync(tmp_path: Path):
+    """P1-3 配套:`app.storage = X` setter 同步给 ChannelSyncService。
+
+    2026-11-25 之前 set_storage 不传播 channel_sync — 热重载切库后 sync
+    仍写旧库(全量同步 / 补拉落错库)。
+    """
+    s1 = _settings(tmp_path)
+    s1.ensure_dirs()
+    bus = EventBus()
+    app = AppService(
+        bus,
+        FakeTelegramClient(),
+        InMemoryRepository(),
+        LocalObjectStore(root=s1.objectstore_root),
+        s1,
+    )
+    new_storage = InMemoryRepository()
+    app.storage = new_storage  # type: ignore[assignment]
+    assert app.channel_sync.storage is new_storage
+
+
 async def test_reconfigure_validates_objects_even_when_objects_unchanged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
