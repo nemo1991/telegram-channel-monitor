@@ -5,6 +5,32 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.4] - 2026-11-25
+
+主题:**质量治理** — 全量重度代码审核 + 单元测试轻量化。无生产行为变更、无命令行/数据库/配置变更。
+
+### 变更
+
+- **重度代码审核**:三路并行深审 core / storage+telegram / UI+CLI 全部生产代码,结论落盘
+  `docs/CODE-REVIEW-2.1.4.md` — **P1 × 12、P2 × 44**(合并去重),安全项(QR token 不泄露、
+  退出码契约、双路径关闭幂等)验证通过,无 P0。P1 集中在:编辑推送覆盖媒体下载状态、
+  save_message 清零用户标注、reconfigure 半完成态、全量同步续拉方向错误、reconcile 引用
+  收集截断误删、QR 弹窗 EventBus 订阅泄漏、S3 KeyError 契约违约、假流式导出等;修复排期
+  见报告优先级建议,本版本不携带生产行为修复。
+- **单元测试轻量化**:UI 类测试从 62 文件 / 710 用例缩减至 54 文件 / 106 用例(约 15%,
+  保留架构分层守卫、close_on_exit 回归、QR token 不泄露、64-bit id、transient 布局等
+  不可删守卫),4 个版本快照类测试文件整删;非 UI 侧删除"测测试替身"(test_telegram_batch_actions)
+  与参数化冗余矩阵共约 93 用例。全套收集数 1772 → 1063(-40%),test diff 约 -12,200 行,
+  基线全绿(pytest 1000 passed / 1 预期 skip / 63 deselected,mypy 166 files,ruff 全绿)。
+
+### 移除
+
+- 测试:`tests/test_ui_208.py`、`test_ui_2007_hotfix.py`(含本地偶发 DPI 脆弱用例)、
+  `test_ui_polish_round2_2005.py`、`test_dashboard_cards_refine_2005.py`(版本快照类,行为
+  已由保留的结构/布局守卫覆盖)。
+
+---
+
 ## [2.1.3] - 2026-11-25
 
 主题:**内部重构** — 无新功能、无命令行/数据库/配置变更,全部改动面向可维护性与契约正确性。
