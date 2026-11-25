@@ -68,21 +68,44 @@ from tgmonitor.core.telegram.telethon_messages import (
 log = logging.getLogger(__name__)
 
 
+class _MaxBytesExceeded(Exception):
+    """download_file_to 的 max_bytes 中止哨兵 — 在 Telethon progress_callback
+    (每 chunk 同步调用)内抛出,沿分块循环冒泡实现下载中途止损。"""
+
+
 class _TelethonUpdateStream(UpdateStream):
     """Telethon update handler → asyncio.Queue → UI。
 
     与 TDLib 版 `_TdlibJsonUpdateStream` 同契约:`aclose()` 幂等、塞 sentinel
     让 `__anext__` 抛 StopAsyncIteration、触发 `on_close` 把自己从
     `client._streams` 拿掉(防长会话列表只增不减)。
+
+    反压策略(2026-11-25 修 P2-29,预决:宁慢勿丢):Queue 有界
+    (`maxsize=2000`),生产端(handler task)`put` 满时 **await 阻塞**等待
+    消费端消化 — 反压沿 Telethon update 分发链上游传导,不丢消息。
+    代价是高频频道 + 消费慢时消息延迟上升;过半(>1500)时 warning
+    一次提示消费端跟不上(只发一次防刷屏)。
     """
 
+    _QUEUE_MAXSIZE = 2000
+    _QUEUE_WARN_AT = 1500
+
     def __init__(self, on_close: Callable[[_TelethonUpdateStream], None] | None = None) -> None:
-        self._queue: asyncio.Queue[MessageDTO | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[MessageDTO | None] = asyncio.Queue(maxsize=self._QUEUE_MAXSIZE)
         self._closed = False
         self._on_close = on_close
+        self._warned_full = False
 
     async def push(self, msg: MessageDTO) -> None:
         if not self._closed:
+            if self._queue.qsize() > self._QUEUE_WARN_AT and not self._warned_full:
+                self._warned_full = True
+                log.warning(
+                    "update stream backlog %d > %d — 消费端跟不上,生产端将阻塞反压 (宁慢勿丢)",
+                    self._queue.qsize(),
+                    self._QUEUE_WARN_AT,
+                )
+            # 满时阻塞等待消费端腾位(反压,不丢消息)。
             await self._queue.put(msg)
 
     async def close(self) -> None:
@@ -154,6 +177,10 @@ class TelethonTelegramClient:
         self._watchdog_task: asyncio.Task | None = None
         # 频道头像去重缓存(chat_id → photo.id),避免重复下载同一头像。
         self._photo_cache: dict[int, int] = {}
+
+        # watchdog 重连守卫(2026-11-25 修 P2-28):connect 进行中置 True,
+        # 跳过后续检测并防并发重入;完成后清。
+        self._reconnecting = False
 
         # 顶层状态机 — 初值 uninit,真值由 start() 后的授权检查决定。
         self._state: str = "uninit"
@@ -385,20 +412,33 @@ class TelethonTelegramClient:
         """5s 轮询 is_connected,变化时发 ConnectionStateChanged;断线主动 reconnect。
 
         只在 ready 期间运行(stop/close/logout 会 cancel)。首次迭代立即发当前状态。
+
+        重连守卫(2026-11-25 修 P2-28):`_reconnecting` 标志保证同一时刻
+        只有一个 watchdog 发起的 connect 在跑。Telethon 自身有内部锁
+        (auto_reconnect 与手动 connect 理论上互斥),但这是 Telethon 内部
+        实现细节、不写进公开契约 — 显式守卫不赌内部实现,杜绝 watchdog
+        主动 connect 与 auto_reconnect 竞态。
         """
         last: str | None = None
         try:
             while not self._closing and self._state == "ready":
+                if self._reconnecting:
+                    # connect 进行中:跳过本轮检测,防并发重入。
+                    await asyncio.sleep(self._WATCHDOG_INTERVAL)
+                    continue
                 connected = bool(self._client and self._client.is_connected())
                 cur = "ready" if connected else "waiting_for_network"
                 if cur != last:
                     self._publish(ConnectionStateChanged(state=cur))
                     last = cur
                 if not connected and self._client is not None:
+                    self._reconnecting = True
                     try:
                         await self._client.connect()
                     except Exception:  # noqa: BLE001
                         log.debug("watchdog reconnect failed", exc_info=True)
+                    finally:
+                        self._reconnecting = False
                 await asyncio.sleep(self._WATCHDOG_INTERVAL)
         except asyncio.CancelledError:
             pass
@@ -508,9 +548,10 @@ class TelethonTelegramClient:
                 pass
         self._streams.clear()
         await self._disconnect_quietly()
-        self._state = "uninit"
-        self._state_detail = ""
-        self._state_event.clear()
+        # 2026-11-25 修 P2-25:走 _set_state 唯一写入口(原先直写 _state 绕过
+        # 状态机、不发 LoginStateChanged,UI 可能停留 ready)。detail="" —
+        # uninit 无附加信息,不会发假 ready 事件。
+        self._set_state("uninit")
 
     async def close(self) -> None:
         """app exit — `_closing=True` 不可逆 + 关流 + 断网。"""
@@ -702,17 +743,18 @@ class TelethonTelegramClient:
         channel_id: int,
         *,
         before_msg_id: int = 0,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> AsyncIterator[MessageDTO]:
         """分页拉取频道历史(向旧方向)。async generator 直接返回保 lazy。
 
-        `limit` 仅作页大小提示 — Telethon `iter_messages` 内部自动分页,
-        这里 yield 全量历史(ChannelSyncService 期望全量,自己做节流)。
+        `limit=None`(默认)全量拉;`limit=N` 从起点向旧方向最多 N 条
+        (2026-11-25 修 P2-23:此前 limit 收了不传、恒全量,与 Protocol
+        文档"最新 N 条"矛盾)。节流仍由 caller(ChannelSyncService)负责。
         """
         return self._iter_chat_history(channel_id, before_msg_id=before_msg_id, limit=limit)
 
     async def _iter_chat_history(
-        self, channel_id: int, *, before_msg_id: int, limit: int
+        self, channel_id: int, *, before_msg_id: int, limit: int | None
     ) -> AsyncIterator[MessageDTO]:
         self._check_alive()
         assert self._client is not None
@@ -727,7 +769,7 @@ class TelethonTelegramClient:
             raise ChatUnavailableError(channel_id, reason=str(e)) from e
         try:
             async for msg in self._client.iter_messages(
-                entity, limit=None, offset_id=before_msg_id
+                entity, limit=limit, offset_id=before_msg_id
             ):
                 self._check_alive()
                 yield map_message(msg)
@@ -748,25 +790,15 @@ class TelethonTelegramClient:
 
         file_id 是消息定位符(`tl:{chat_id}:{msg_id}[:thumb]`)。重取消息 →
         download_media(Telethon 自动刷新过期 file_reference)。30 min hard cap。
+
+        整文件进内存(2026-11-25 P2-27):只给缩略图等小文件用;主媒体
+        大文件请用 `download_file_to`(流式落盘 + max_bytes 提前止损)。
         """
-        self._check_alive()
-        parsed = parse_file_id(file_id)
-        if parsed is None:
-            log.warning("download_file: invalid file_id %r", file_id)
+        fetched = await self._fetch_media_message(file_id, op="download_file")
+        if fetched is None:
             return None
-        chat_id, msg_id, is_thumb = parsed
-        assert self._client is not None
-        try:
-            msg = await self._client.get_messages(chat_id, ids=msg_id)
-        except ClientClosingError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            log.warning("download_file: get_messages(%s,%s) failed: %s", chat_id, msg_id, e)
-            return None
-        if msg is None or getattr(msg, "media", None) is None:
-            log.warning("download_file: message %s has no media", file_id)
-            return None
-        thumb = self._pick_thumb_arg(msg.media) if is_thumb else None
+        msg, thumb = fetched
+        assert self._client is not None  # fetch 成功即存在
         wrapper = (
             self._make_progress_wrapper(progress_callback)
             if progress_callback is not None
@@ -795,6 +827,155 @@ class TelethonTelegramClient:
             except Exception:  # noqa: BLE001
                 log.exception("progress final emit failed")
         return data
+
+    async def download_file_to(
+        self,
+        file_id: str,
+        dest_path: Path,
+        *,
+        progress_callback: Callable[[int, int | None], Awaitable[None]] | None = None,
+        max_bytes: int | None = None,
+    ) -> Path | None:
+        """流式下载媒体到 `dest_path`;失败 / 超时 / 超 max_bytes 返 None,**不抛**。
+
+        契约见 Protocol docstring。实现要点:
+          - `download_media(msg, file=dest_path)` 原生落盘,内存恒定。
+          - `max_bytes` 超限**中途中止**:Telethon 的 progress_callback 每
+            chunk 同步调用(telethon/client/downloads.py `_download_file`),
+            回调内抛异常沿分块循环冒泡 → 下载停止、文件句柄经 finally 关闭;
+            然后删掉半成品返 None(核实于 telethon downloads.py 源码)。
+          - dest_path 无后缀时 Telethon `_get_proper_filename` 会自动补
+            `.jpg` / `.mp4` 等 → 下载完把补名产物 rename 归位回 dest_path。
+        """
+        fetched = await self._fetch_media_message(file_id, op="download_file_to")
+        if fetched is None:
+            return None
+        msg, thumb = fetched
+        assert self._client is not None  # fetch 成功即存在
+        wrapper = self._make_dl_to_progress(progress_callback, max_bytes)
+        try:
+            out = await asyncio.wait_for(
+                self._client.download_media(
+                    msg, file=dest_path, thumb=thumb, progress_callback=wrapper
+                ),
+                timeout=self._DOWNLOAD_TIMEOUT,
+            )
+        except ClientClosingError:
+            raise
+        except _MaxBytesExceeded:
+            log.warning("download_file_to(%s) aborted: exceeds max_bytes=%d", file_id, max_bytes)
+            self._cleanup_partial(dest_path)
+            return None
+        except TimeoutError:
+            log.warning("download_file_to(%s) timed out after 30 min", file_id)
+            self._cleanup_partial(dest_path)
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.warning("download_file_to(%s) failed: %s", file_id, e)
+            self._cleanup_partial(dest_path)
+            return None
+        if out is None:
+            self._cleanup_partial(dest_path)
+            return None
+        return await self._finalize_download_to(out, dest_path, progress_callback)
+
+    async def _fetch_media_message(self, file_id: str, *, op: str) -> tuple[Any, Any] | None:
+        """解析 file_id → 取消息 → (msg, thumb 参数);任何失败返 None(不抛)。
+
+        供 download_file / download_file_to 共用;失败细节进 warning 日志。
+        """
+        self._check_alive()
+        parsed = parse_file_id(file_id)
+        if parsed is None:
+            log.warning("%s: invalid file_id %r", op, file_id)
+            return None
+        chat_id, msg_id, is_thumb = parsed
+        assert self._client is not None
+        try:
+            msg = await self._client.get_messages(chat_id, ids=msg_id)
+        except ClientClosingError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s: get_messages(%s,%s) failed: %s", op, chat_id, msg_id, e)
+            return None
+        if msg is None or getattr(msg, "media", None) is None:
+            log.warning("%s: message %s has no media", op, file_id)
+            return None
+        thumb = self._pick_thumb_arg(msg.media) if is_thumb else None
+        return msg, thumb
+
+    @staticmethod
+    def _make_dl_to_progress(
+        progress_callback: Callable[[int, int | None], Awaitable[None]] | None,
+        max_bytes: int | None,
+    ) -> Callable[[int, int | None], None] | None:
+        """download_file_to 的 Telethon 同步 progress_callback。
+
+        max_bytes 非 None 时包一层逐 chunk 守卫 — 超限抛 `_MaxBytesExceeded`
+        中止下载(Telethon 分块循环不吞回调异常);用户 callback 仍走 0.5s
+        节流包装。
+        """
+        if max_bytes is None:
+            return (
+                TelethonTelegramClient._make_progress_wrapper(progress_callback)
+                if progress_callback is not None
+                else None
+            )
+        throttled = (
+            TelethonTelegramClient._make_progress_wrapper(progress_callback)
+            if progress_callback is not None
+            else None
+        )
+
+        def guarded_progress(downloaded: int, total: int | None) -> None:
+            if downloaded > max_bytes:
+                raise _MaxBytesExceeded(f"{downloaded} > {max_bytes}")
+            if throttled is not None:
+                throttled(downloaded, total)
+
+        return guarded_progress
+
+    async def _finalize_download_to(
+        self,
+        out: Any,
+        dest_path: Path,
+        progress_callback: Callable[[int, int | None], Awaitable[None]] | None,
+    ) -> Path | None:
+        """下载成功后的收尾:补名归位 → 存在性校验 → 终值回调 → 返 dest_path。
+
+        `out` 是 Telethon `download_media` 的返回值(落盘路径 str/Path 或 None)。
+        """
+        # Telethon 对无后缀 dest 会补扩展名写别处 — 把产物归位回契约 dest_path。
+        # 本地小文件 exists/replace/stat 同步操作,与 export/ 各导出器同款豁免。
+        if isinstance(out, (str, Path)):
+            final = Path(out)
+            if final != dest_path and final.exists():  # noqa: ASYNC240 — 本地产物改名,同步即可
+                try:
+                    final.replace(dest_path)  # noqa: ASYNC240 — 同上
+                except OSError:
+                    log.warning("download_file_to: rename %s → %s failed", final, dest_path)
+                    self._cleanup_partial(final)
+                    return None
+        if not dest_path.exists():  # noqa: ASYNC240 — 本地文件存在性,同步即可
+            self._cleanup_partial(dest_path)
+            return None
+        if progress_callback is not None:
+            try:
+                size = dest_path.stat().st_size  # noqa: ASYNC240 — 本地 stat,同步即可
+                await progress_callback(size, size)
+            except Exception:  # noqa: BLE001
+                log.exception("progress final emit failed")
+        return dest_path
+
+    @staticmethod
+    def _cleanup_partial(path: Path) -> None:
+        """失败 / 超时 / 超限后删半成品(不存在则静默)。"""
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning("download_file_to: failed to remove partial %s", path)
 
     @staticmethod
     def _pick_thumb_arg(media: Any) -> Any:
@@ -851,14 +1032,6 @@ class TelethonTelegramClient:
     # ============================================================
     # 批量操作
     # ============================================================
-
-    async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
-        """批量标已读 — send_read_acknowledge(max_id=最大 id)。"""
-        if not msg_ids:
-            return
-        self._check_alive()
-        assert self._client is not None
-        await self._client.send_read_acknowledge(channel_id, max_id=max(msg_ids))
 
     async def forward_messages(
         self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]

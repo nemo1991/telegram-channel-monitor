@@ -5,16 +5,21 @@
 - 鉴权:二维码扫码(start_qr_login / wait_qr_login)/ start / logout
 - lifecycle:stop / close / _check_alive
 - 频道:list_joined_channels(best-effort)/ get_channel_metadata / join_channel
-- iter_chat_history:ChatUnavailableError / FloodWaitError → TelegramRateLimitError
-- download_file:非法 id / 无媒体 / 成功 / 缩略图 / 进度终值
+- iter_chat_history:limit 直传 / ChatUnavailableError / FloodWaitError → TelegramRateLimitError
+- download_file(bytes 版):非法 id / 无媒体 / 成功 / 缩略图 / 进度终值
+- download_file_to(流式):落盘 / max_bytes 中止删半成品 / 失败清理 / 进度终值
 - 实时 handler:new/edited → stream;deleted/views/reactions/pin/title/photo → bus
-- 批量操作:mark_read / forward / pin / unpin / add/remove reaction
-- watchdog:ConnectionStateChanged 合成
+- 更新流反压:maxsize=2000 阻塞 + 过半 warning 一次(P2-29)
+- watchdog:ConnectionStateChanged 合成 + 重连防重入守卫(P2-28)
+- 批量操作:forward / pin / unpin / add/remove reaction
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -41,7 +46,7 @@ from tgmonitor.core.telegram.errors import (
     TelegramNotConfiguredError,
     TelegramRateLimitError,
 )
-from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient
+from tgmonitor.core.telegram.telethon_client import TelethonTelegramClient, _TelethonUpdateStream
 from tgmonitor.core.telegram.telethon_messages import encode_file_id
 
 _DATE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -76,7 +81,6 @@ def _make_mock_client() -> MagicMock:
     c.download_media = AsyncMock(return_value=b"data")
     c.iter_dialogs = MagicMock(return_value=_async_iter([]))
     c.iter_messages = MagicMock(return_value=_async_iter([]))
-    c.send_read_acknowledge = AsyncMock()
     c.forward_messages = AsyncMock()
     c.pin_message = AsyncMock()
     c.unpin_message = AsyncMock()
@@ -339,6 +343,20 @@ async def test_stop_keeps_client_resets_state(wrapper) -> None:
     mock.disconnect.assert_awaited()
 
 
+async def test_stop_publishes_state_change(wrapper, bus) -> None:
+    """P2-25:stop() 走 _set_state 唯一写入口 — UI 收到 uninit 状态变更
+    (旧实现直写 _state 绕过状态机,不发 LoginStateChanged,UI 停留 ready)。"""
+    w, _ = wrapper
+    w._set_state("ready")
+    received: list[LoginStateChanged] = []
+    bus.subscribe(LoginStateChanged, lambda e: _collect(received, e))
+    await bus.flush()
+    received.clear()
+    await w.stop()
+    await bus.flush()
+    assert received[-1].state == "uninit"
+
+
 async def test_stop_closes_streams(wrapper) -> None:
     w, _ = wrapper
     s = w.subscribe_updates()
@@ -484,6 +502,24 @@ async def test_iter_chat_history_flood_wait_translated(wrapper) -> None:
     assert ei.value.retry_after_seconds == 30
 
 
+async def test_iter_chat_history_passes_limit_to_iter_messages(wrapper) -> None:
+    """P2-23:limit 真实直传 Telethon iter_messages(旧实现收了不传、恒全量)。"""
+    w, mock = wrapper
+    mock.get_entity.return_value = _channel()
+    mock.iter_messages.return_value = _async_iter([])
+    _ = [m async for m in w.iter_chat_history(_CID, limit=42)]
+    assert mock.iter_messages.call_args.kwargs["limit"] == 42
+
+
+async def test_iter_chat_history_default_limit_none_full_pull(wrapper) -> None:
+    """limit=None(默认)= 全量拉 — 向后兼容旧行为。"""
+    w, mock = wrapper
+    mock.get_entity.return_value = _channel()
+    mock.iter_messages.return_value = _async_iter([])
+    _ = [m async for m in w.iter_chat_history(_CID)]
+    assert mock.iter_messages.call_args.kwargs["limit"] is None
+
+
 # ---- download_file ----
 
 
@@ -572,6 +608,99 @@ async def test_download_file_failure_returns_none(wrapper) -> None:
     mock.get_messages.return_value = SimpleNamespace(media=types.MessageMediaDocument(document=doc))
     mock.download_media.side_effect = RuntimeError("network")
     assert await w.download_file(encode_file_id(_CID, 10)) is None
+
+
+# ---- download_file_to(P2-27 流式落盘)----
+
+
+def _doc() -> types.Document:
+    return types.Document(
+        id=1,
+        access_hash=1,
+        file_reference=b"\x00",
+        date=_DATE,
+        mime_type="video/mp4",
+        size=4,
+        dc_id=2,
+        attributes=[],
+    )
+
+
+def _msg_with_media() -> SimpleNamespace:
+    return SimpleNamespace(media=types.MessageMediaDocument(document=_doc()))
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    """sync 落盘桩 — 模拟 Telethon 分块同步写文件(模块级避开 ASYNC240)。"""
+    Path(path).write_bytes(data)
+
+
+async def test_download_file_to_writes_dest(wrapper, tmp_path: Path) -> None:
+    """成功路径:download_media(file=dest_path) 落盘,返 dest_path,发终值回调。"""
+    w, mock = wrapper
+    mock.get_messages.return_value = _msg_with_media()
+    payload = b"video-bytes"
+
+    async def _fake_download(message, file=None, thumb=None, progress_callback=None):
+        _write_bytes(file, payload)
+        if progress_callback is not None:
+            progress_callback(len(payload), len(payload))  # 模拟 Telethon 每 chunk 调
+        return str(file)
+
+    mock.download_media.side_effect = _fake_download
+    dest = tmp_path / "media.mp4"
+    calls: list[tuple[int, int | None]] = []
+
+    async def cb(downloaded: int, total: int | None) -> None:
+        calls.append((downloaded, total))
+
+    out = await w.download_file_to(encode_file_id(_CID, 10), dest, progress_callback=cb)
+    assert out == dest
+    assert dest.read_bytes() == payload
+    assert mock.download_media.call_args.kwargs["file"] == dest
+    assert (len(payload), len(payload)) in calls  # 完成终值
+
+
+async def test_download_file_to_max_bytes_aborts(wrapper, tmp_path: Path) -> None:
+    """P2-27:max_bytes 超限 — 中途中止(回调内抛哨兵)、删半成品、返 None 不抛。"""
+    w, mock = wrapper
+    mock.get_messages.return_value = _msg_with_media()
+
+    async def _huge_download(message, file=None, thumb=None, progress_callback=None):
+        _write_bytes(file, b"x" * 100)
+        if progress_callback is not None:
+            progress_callback(100, None)
+        _write_bytes(file, b"x" * 300)  # 半成品继续增长
+        if progress_callback is not None:
+            progress_callback(300, None)  # 这里应触发中止
+        _write_bytes(file, b"x" * 900)  # 不应执行到
+        return str(file)
+
+    mock.download_media.side_effect = _huge_download
+    dest = tmp_path / "huge.mp4"
+    out = await w.download_file_to(encode_file_id(_CID, 10), dest, max_bytes=200)
+    assert out is None
+    assert not dest.exists()  # 半成品已删
+
+
+async def test_download_file_to_failure_cleans_and_returns_none(wrapper, tmp_path: Path) -> None:
+    """下载异常 → 返 None 不抛;半成品被清理。"""
+    w, mock = wrapper
+    mock.get_messages.return_value = _msg_with_media()
+
+    async def _broken_download(message, file=None, thumb=None, progress_callback=None):
+        _write_bytes(file, b"partial")
+        raise RuntimeError("network down")
+
+    mock.download_media.side_effect = _broken_download
+    dest = tmp_path / "broken.mp4"
+    assert await w.download_file_to(encode_file_id(_CID, 10), dest) is None
+    assert not dest.exists()
+
+
+async def test_download_file_to_invalid_id_returns_none(wrapper, tmp_path: Path) -> None:
+    w, _ = wrapper
+    assert await w.download_file_to("12345", tmp_path / "x.mp4") is None
 
 
 # ---- 实时 handler ----
@@ -685,18 +814,6 @@ async def test_on_channel_updated_refreshes(wrapper, bus) -> None:
 # ---- 批量操作 ----
 
 
-async def test_mark_messages_read(wrapper) -> None:
-    w, mock = wrapper
-    await w.mark_messages_read(_CID, [3, 1, 2])
-    mock.send_read_acknowledge.assert_awaited_with(_CID, max_id=3)
-
-
-async def test_mark_messages_read_empty_noop(wrapper) -> None:
-    w, mock = wrapper
-    await w.mark_messages_read(_CID, [])
-    mock.send_read_acknowledge.assert_not_awaited()
-
-
 async def test_forward_messages_sorted(wrapper) -> None:
     w, mock = wrapper
     await w.forward_messages(_CID, -100999, [3, 1, 2])
@@ -785,7 +902,70 @@ async def test_watchdog_publishes_connection_state(wrapper, bus, monkeypatch) ->
     await w._cancel_watchdog()
 
 
-# ---- UpdateStream 契约 ----
+async def test_watchdog_reconnect_guard_flag(wrapper) -> None:
+    """P2-28:重连守卫 — connect 进行中 _reconnecting=True(防并发重入),
+    完成后清 False(旧实现无此标志)。"""
+    w, mock = wrapper
+    w._WATCHDOG_INTERVAL = 0.01
+    w._state = "ready"
+    mock.is_connected.return_value = False
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_connect() -> None:
+        started.set()
+        await release.wait()
+
+    mock.connect.side_effect = _slow_connect
+    w._start_watchdog()
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    assert w._reconnecting is True
+    assert mock.connect.await_count == 1  # 挂起期间不重入
+    release.set()
+    await asyncio.sleep(0.05)
+    assert w._reconnecting is False
+    await w._cancel_watchdog()
+
+
+# ---- UpdateStream 契约 / 反压(P2-29)----
+
+
+def _dto() -> Any:
+    from tgmonitor.core.dto import MessageDTO
+
+    return MessageDTO(
+        id=1,
+        channel_id=-1001,
+        telegram_msg_id=1,
+        text="m",
+        date=datetime.now(UTC),
+    )
+
+
+async def test_update_stream_backpressure_blocks_when_full() -> None:
+    """P2-29:Queue maxsize=2000,满后 push 阻塞反压(旧实现无界,永不阻塞)。"""
+    s = _TelethonUpdateStream()
+    for _ in range(s._QUEUE_MAXSIZE):
+        await s.push(_dto())
+    task = asyncio.create_task(s.push(_dto()))
+    await asyncio.sleep(0.05)
+    assert not task.done()  # 满时阻塞 — 宁慢勿丢
+    await s.__anext__()  # 消费一条腾位
+    await asyncio.sleep(0.05)
+    assert task.done()
+
+
+async def test_update_stream_backlog_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    """P2-29:过半(>1500)warning 一次,防刷屏。"""
+    s = _TelethonUpdateStream()
+    with caplog.at_level(logging.WARNING, logger="tgmonitor.core.telegram.telethon_client"):
+        for _ in range(s._QUEUE_WARN_AT + 2):
+            await s.push(_dto())
+    warns = [r for r in caplog.records if "backlog" in r.getMessage()]
+    assert len(warns) == 1
+
+
+# ---- UpdateStream aclose 幂等 ----
 
 
 async def test_stream_aclose_idempotent(wrapper) -> None:

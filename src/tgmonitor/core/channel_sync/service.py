@@ -358,7 +358,7 @@ class ChannelSyncService:
         async for m in self.client.iter_chat_history(
             cid,
             before_msg_id=0,  # 从最新开始(P1-4:向旧方向拉,锚点停)
-            limit=100,
+            limit=None,  # 全量语义;P2-23 limit 落实后 100 会被当"最新 100 条"截断
         ):
             if self._cancel.is_set():
                 return  # outer 检测 cancel 写 ch_result.error

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
@@ -87,7 +88,7 @@ class TelegramClient(Protocol):
 
     # ---- 消息流 ----
     def iter_chat_history(
-        self, channel_id: int, *, before_msg_id: int = 0, limit: int = 100
+        self, channel_id: int, *, before_msg_id: int = 0, limit: int | None = None
     ) -> AsyncIterator[MessageDTO]:
         """分页拉取频道历史消息(ChannelSyncService 续拉用)。
 
@@ -96,10 +97,16 @@ class TelegramClient(Protocol):
         `subscribe_updates()` 的实时流。
 
         参数:
-          - `before_msg_id=0`:拉该频道最新 N 条(反向翻页直到耗尽)
+          - `before_msg_id=0`:从最新消息开始向旧方向拉
           - `before_msg_id>0`:从 `before_msg_id` 之前(更早的)消息开始拉
             —— 续拉场景把已知的最小 id 传进来,实现会把本批**最后**一条
-            (id 最小)的 id 作为下次入参,直到消息耗尽(返回 <limit 条时结束)
+            (id 最小)的 id 作为下次入参
+          - `limit=None`(默认):全量拉,反向翻页直到耗尽
+          - `limit=N`:从起点向旧方向最多 N 条(`before_msg_id=0` 时即
+            最新 N 条);实现把 N 直传 Telethon `iter_messages(limit=N)`
+
+        2026-11-25 修 P2-23:此前 `limit` 收了不传(恒全量),与文档
+        "最新 N 条"矛盾;现按本 docstring 语义真实传递。
         """
         ...
 
@@ -118,10 +125,40 @@ class TelegramClient(Protocol):
           - 失败(网络 / 权限 / 30 min hard cap)→ 返 None,monitor 循环继续。
           - 真拿到 bytes 才返非 None bytes。
 
+        **适用范围**(2026-11-25 P2-27):整文件进内存 — 只给缩略图等
+        小文件(≤ 几十 KB)用;主媒体大文件请用 `download_file_to`(流式
+        落盘,不占内存且支持 `max_bytes` 提前止损)。
+
         `progress_callback`(2026-09-01 v1.5.1 PR #B3):可选 `await
         callback(downloaded: int, total: int | None)`;实现约 0.5s 节流
         一次,完成时发终值。`total=None` 表示 file_size 未知(只显示已
         下载字节)。默认 None = 不上报(老调用方零改动)。
+        """
+        ...
+
+    async def download_file_to(
+        self,
+        file_id: str,
+        dest_path: Path,
+        *,
+        progress_callback: Callable[[int, int | None], Awaitable[None]] | None = None,
+        max_bytes: int | None = None,
+    ) -> Path | None:
+        """流式下载媒体到 `dest_path`;失败 / 超时 / 超 max_bytes 返 None,**不抛**。
+
+        契约与 `download_file` 一致(不抛、None=失败),差异:
+          - 数据流式写入 `dest_path`(Telethon `download_media(file=dest_path)`
+            原生落盘),内存占用恒定 — 主媒体大文件(数 GB 视频)用这个。
+          - `dest_path` 由 caller 管理临时名(实现直写 dest,不做 .part/rename);
+            **请传带扩展名的路径** — Telethon 对无后缀路径会自动补
+            `.jpg` / `.mp4` 等,实现会把补名产物归位回 `dest_path`。
+          - `max_bytes` 超限:下载**中途**即中止(经 progress_callback 抛
+            内部异常打断 Telethon 分块循环),删除半成品后返 None — 比
+            bytes 版(下完才能查 len)提前止损。
+          - `dest_path` 已存在会被覆盖(与 Telethon 默认行为一致)。
+
+        `progress_callback`:签名同 `download_file`,完成时发终值
+        `(total, total)`;默认 None = 不上报。
         """
         ...
 
@@ -136,16 +173,6 @@ class TelegramClient(Protocol):
         """
         ...
 
-    async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-08 v1.7.0:批量标已读。
-
-        `msg_ids` 长度无硬限制;实现内部 batch。fire-and-forget,
-        抛错由调用方捕获(典型:client paused / 网络断)。
-
-        Out of scope:本地 inbox counter UI(不读 inbound ack)。
-        """
-        ...
-
     async def forward_messages(
         self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]
     ) -> None:
@@ -153,8 +180,10 @@ class TelegramClient(Protocol):
 
         `from_chat_id` / `to_chat_id` 是 Telegram chat id(频道 id 或私聊 id);
         `msg_ids` 长度上限 100,且必须 sorted 递增(API 约束)。
-        实现内部 `sorted()` 兜底,UI 可任意顺序传入。失败抛
-        `TelegramAPIError`,调用方走 per-item 异常隔离。
+        实现内部 `sorted()` 兜底,UI 可任意顺序传入。失败直接冒泡 Telethon
+        的 RPCError(如 FloodWaitError / ChatWriteForbiddenError — 2026-11-25
+        修 P2-26:原文档引用的 `TelegramAPIError` 类型并不存在),调用方按
+        per-item 异常隔离自行捕获。
         """
         ...
 
