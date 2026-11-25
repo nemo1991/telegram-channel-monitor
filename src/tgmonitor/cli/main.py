@@ -1,13 +1,13 @@
-"""CLI 入口:argparse 子命令(2.1.0 完备命令体系,2.1.1 独立命令名)。
+"""CLI 入口:argparse 子命令(2.1.0 完备命令体系,2.1.2 唯一 CLI 命令)。
 
-不动 GUI:`__main__` 识别到 `CLI_SUBCOMMANDS` 中的子命令时调用;2.1.1 起
-console script `tgmon` / `tgmon-cli` 直接指向本模块的 `main_tgmon*` 入口,
-从进程起点就不 import `tgmonitor.app`,任何分支都加载不到 PySide6 / qasync。
+不动 GUI:console script `tgmon-cli` 直连本模块 `main_tgmon_cli`,从进程起点
+就不 import `tgmonitor.app`,任何分支都加载不到 PySide6 / qasync。GUI 命令
+`tgmon` 完全不碰 CLI(见 `tgmonitor.__main__`)。
 
-`CLI_SUBCOMMANDS` 是命令注册表单一真源 — `__main__.main()` 据此分流,
-新增子命令只需在 `build_parser()` 注册 + 加入该 frozenset。
+`CLI_SUBCOMMANDS` + `_DISPATCH` 是命令注册表单一真源,新增子命令需在
+`build_parser()` 注册 + 两个集合同步。
 
-2.1.1:`help` 子命令打印帮助总览;未知参数由 argparse 报用法错误,绝不回退 GUI。
+`help` 子命令打印帮助总览;未知参数由 argparse 报用法错误(退出码 2)。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import sys
 
 from tgmonitor.cli._common import CliError
 
-# 命令注册表单一真源(__main__ 分流依赖此常量)
+# 命令注册表单一真源(新增子命令需与 _DISPATCH 同步)
 CLI_SUBCOMMANDS: frozenset[str] = frozenset(
     {
         "sync",
@@ -73,11 +73,10 @@ _MEDIA_TYPES = [
 ]
 
 
-def build_parser(prog: str = "tgmonitor") -> argparse.ArgumentParser:
+def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
     """构造 argparse:顶层 + 全部子命令。
 
-    `prog` 由入口函数传入:`tgmonitor` / `tgmon` / `tgmon-cli` 各自显示自己的
-    名字,避免脚本用户看到与实际输入不符的 usage。
+    `prog` 默认 `tgmon-cli`(唯一 CLI 命令);测试可传别名以核对 usage。
     """
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -288,14 +287,14 @@ _DISPATCH = {
 }
 
 
-def main(argv: list[str] | None = None, *, prog: str = "tgmonitor") -> int:
+def main(argv: list[str] | None = None, *, prog: str = "tgmon-cli") -> int:
     """CLI 主入口:解析 argv,路由到子命令实现。
 
     退出码:0 成功 / 1 业务错误(CliError) / 2 用法错误(argparse) /
     130 KeyboardInterrupt。
 
-    `help` 与无子命令都打印帮助总览;未知参数由 argparse 拒绝(退出码 2),
-    不回退 GUI —— 这正是 2.1.1 修掉的「打错命令误唤醒 UI」。
+    `help` 与无子命令都打印帮助总览;未知参数由 argparse 拒绝(退出码 2)。
+    本模块从不加载 Qt,与 GUI 命令 `tgmon` 完全解耦。
     """
     _ensure_utf8_stdio()
     parser = build_parser(prog=prog)
@@ -316,11 +315,6 @@ def main(argv: list[str] | None = None, *, prog: str = "tgmonitor") -> int:
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr, flush=True)
         return 130
-
-
-def main_tgmon(argv: list[str] | None = None) -> int:
-    """`tgmon` console script — 纯 CLI,usage 显示 tgmon。"""
-    return main(argv, prog="tgmon")
 
 
 def main_tgmon_cli(argv: list[str] | None = None) -> int:

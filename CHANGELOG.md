@@ -5,6 +5,24 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.2] - 2026-11-24
+
+主题:**命令体系收敛** — `tgmon` 只做 GUI,`tgmon-cli` 独占 CLI,`tgmonitor` 命令移除。
+
+### 变更
+
+- **`tgmonitor` 命令移除**:console script 只剩 `tgmon` 与 `tgmon-cli` 两个。
+- **`tgmon` 只启动桌面界面**:无参数 / `gui` 启动 GUI;传入 `status` 等任何 CLI
+  子命令一律 stderr 报错 + 退出码 2,并提示用 `tgmon-cli`,不再兼容 CLI 写法。
+- **`tgmon-cli` 独占全部 CLI**:13 个子命令(含 `help` 帮助总览)与全部选项不变;
+  从进程起点就不加载 Qt。
+
+### 注意
+
+- 2.1.1 引入的 `tgmonitor <cmd>` / `tgmon <cmd>` CLI 兼容写法在 2.1.2 一并移除。
+- `python -m tgmonitor` 等价 `tgmon`(纯 GUI);CLI 也可用 `python -m tgmonitor.cli.main`。
+- 无数据库 schema 变更,无需重新登录。
+
 ## [2.1.1] - 2026-11-24
 
 主题:**CLI 命令独立化** — 修掉「打错 `tgmonitor` 参数就弹桌面窗口」,新增纯

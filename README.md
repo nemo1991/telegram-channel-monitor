@@ -39,7 +39,7 @@ git clone https://github.com/nemo1991/telegram-channel-monitor.git
 cd telegram-channel-monitor
 uv sync --all-extras        # 含 PostgreSQL / S3 后端(可选;默认 SQLite 无需额外依赖)
 cp .env.example .env        # 填下面的 3 个变量
-uv run tgmonitor
+uv run tgmon
 ```
 
 最小配置(凭据在 [my.telegram.org/apps](https://my.telegram.org/apps) 申请):
@@ -60,21 +60,21 @@ TG_API_HASH=abcdef0123456789abcdef0123456789
 2.1.0 起 CLI 具备完整功能,可替代桌面 UI 的大部分操作,适用于服务器 / SSH / cron /
 systemd。CLI 路径不加载 Qt,冷启动快;与 GUI 共用同一套配置与数据库。
 
-2.1.1 起 CLI 使用**独立命令名** `tgmon`(也可写 `tgmon-cli`),从进程起点就不加载
-Qt。直接运行 `tgmonitor` 仍按原习惯启动桌面界面,但打错参数不会再误弹窗口 ——
-会报用法错误并提示改用 `tgmon`。
+2.1.2 起命令彻底分离:**`tgmon` 只启动桌面界面,所有命令行操作走 `tgmon-cli`**
+(从进程起点就不加载 Qt,冷启动快)。误把 CLI 子命令传给 `tgmon` 只会报用法错误,
+不会再弹窗口。
 
 ```bash
-uv run tgmon help                      # 帮助总览
-uv run tgmon <command> --help          # 查看某命令的完整参数
+uv run tgmon-cli help                  # 帮助总览
+uv run tgmon-cli <command> --help      # 查看某命令的完整参数
 ```
 
 **会话与状态**
 
 ```bash
-uv run tgmon status --json                         # 登录/监听状态 + 统计
-uv run tgmon login --api-id 123 --api-hash xxxx    # headless 二维码登录(二维码直接打到终端)
-uv run tgmon logout --yes                          # 登出(清 session)
+uv run tgmon-cli status --json                         # 登录/监听状态 + 统计
+uv run tgmon-cli login --api-id 123 --api-hash xxxx    # headless 二维码登录(二维码直接打到终端)
+uv run tgmon-cli logout --yes                          # 登出(清 session)
 ```
 
 > 二维码 URL 含一次性登录 token,默认只渲染成终端二维码打到 stderr;仅在终端可信时
@@ -83,50 +83,51 @@ uv run tgmon logout --yes                          # 登出(清 session)
 **频道 / 监听 / 同步**
 
 ```bash
-uv run tgmon channels list --source monitored --json   # joined / monitored / subscribed
-uv run tgmon channels refresh                           # 从 TG 拉取已加入频道落库
-uv run tgmon channels add 100 200 --yes                 # 加入监听白名单
-uv run tgmon channels remove 100 --yes                  # 移出监听
-uv run tgmon monitor                                    # 前台监听(SIGINT / SIGTERM 干净退出)
-uv run tgmon pause / resume --json                     # 暂停 / 恢复监听(写 TG_PAUSED)
-uv run tgmon sync 100 200 --resume --media-policy metadata   # 全量同步历史
+uv run tgmon-cli channels list --source monitored --json   # joined / monitored / subscribed
+uv run tgmon-cli channels refresh                           # 从 TG 拉取已加入频道落库
+uv run tgmon-cli channels add 100 200 --yes                 # 加入监听白名单
+uv run tgmon-cli channels remove 100 --yes                  # 移出监听
+uv run tgmon-cli monitor                                    # 前台监听(SIGINT / SIGTERM 干净退出)
+uv run tgmon-cli pause / resume --json                     # 暂停 / 恢复监听(写 TG_PAUSED)
+uv run tgmon-cli sync 100 200 --resume --media-policy metadata   # 全量同步历史
 ```
 
 **消息 / 媒体 / 导出**
 
 ```bash
-uv run tgmon messages list --channel 100 --search 关键词 --json
-uv run tgmon messages get 100 5 --json
-uv run tgmon messages favorite 100 5 [--off]
-uv run tgmon messages tag 100 5 --tags a,b
-uv run tgmon messages note 100 5 --text "备注"
-uv run tgmon messages delete 100 5 6 --yes
+uv run tgmon-cli messages list --channel 100 --search 关键词 --json
+uv run tgmon-cli messages get 100 5 --json
+uv run tgmon-cli messages favorite 100 5 [--off]
+uv run tgmon-cli messages tag 100 5 --tags a,b
+uv run tgmon-cli messages note 100 5 --text "备注"
+uv run tgmon-cli messages delete 100 5 6 --yes
 
-uv run tgmon media list --undownloaded --json              # 输出含 channel/msg/idx 三元组
-uv run tgmon media download 100 5 0
-uv run tgmon media download-all --yes
-uv run tgmon media retry 100 5 0
-uv run tgmon media delete 100 5 0 --yes
-uv run tgmon media reconcile                                # 孤儿对账(默认 dry-run)
-uv run tgmon media reconcile --apply --yes                  # 实际清理
+uv run tgmon-cli media list --undownloaded --json              # 输出含 channel/msg/idx 三元组
+uv run tgmon-cli media download 100 5 0
+uv run tgmon-cli media download-all --yes
+uv run tgmon-cli media retry 100 5 0
+uv run tgmon-cli media delete 100 5 0 --yes
+uv run tgmon-cli media reconcile                                # 孤儿对账(默认 dry-run)
+uv run tgmon-cli media reconcile --apply --yes                  # 实际清理
 
-uv run tgmon export messages --format html -o out.html --channel 100
-uv run tgmon export media --format csv -o media.csv
+uv run tgmon-cli export messages --format html -o out.html --channel 100
+uv run tgmon-cli export media --format csv -o media.csv
 ```
 
 **配置管理**
 
 ```bash
-uv run tgmon config show --json              # 有效配置(敏感项打码)
-uv run tgmon config get media_policy
-uv run tgmon config set sync_chat_delay_ms 750 --yes   # 校验 + 热重载 + 写 .env
-uv run tgmon config validate                  # 校验存储 / 对象存储后端可达
+uv run tgmon-cli config show --json              # 有效配置(敏感项打码)
+uv run tgmon-cli config get media_policy
+uv run tgmon-cli config set sync_chat_delay_ms 750 --yes   # 校验 + 热重载 + 写 .env
+uv run tgmon-cli config validate                  # 校验存储 / 对象存储后端可达
 ```
 
 **约定**
 
-- 命令名:`tgmon` / `tgmon-cli` 为纯 CLI(完全同义);`tgmonitor` 无参数 / `gui`
-  启动桌面界面,打错参数只报用法错误,不会再弹 UI。
+- 命令名:`tgmon` 仅启动桌面界面(无参数 / `gui`),不接任何 CLI 子命令;
+  全部 CLI 操作走 `tgmon-cli <cmd>`,`tgmon-cli help` 查看总览。
+  `python -m tgmonitor` 等价 `tgmon`,CLI 也可 `python -m tgmonitor.cli.main`。
 - 退出码:`0` 成功 / `1` 业务错误(未登录、校验失败等) / `2` 用法错误 / `130` 用户中断;
   `monitor` 收到 SIGINT 按守护进程约定返回 `0`。
 - stdout 只输出数据(可被重定向或管道消费),进度 / 错误 / 二维码走 stderr。
