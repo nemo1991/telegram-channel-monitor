@@ -31,6 +31,7 @@ class MarkdownExporter(Exporter):
     """
 
     format = ExportFormat.MARKDOWN
+    extension = ".md"
 
     async def render(
         self,

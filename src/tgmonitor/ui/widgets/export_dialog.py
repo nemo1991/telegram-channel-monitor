@@ -22,15 +22,15 @@ from PySide6.QtWidgets import (
 )
 
 from tgmonitor.core.dto import ExportFormat, ExportRequest
+from tgmonitor.core.export import service as _export_service  # noqa: F401 — 触发 @exporter 注册
+from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.ui.widgets.form_row import combo_field, path_field
 
-_FORMAT_EXT = {
-    ExportFormat.JSON: ".json",
-    ExportFormat.CSV: ".csv",
-    ExportFormat.MARKDOWN: ".md",
-    ExportFormat.HTML: ".html",
-    ExportFormat.ZIP: ".zip",  # 2026-09-01 v1.5.1 PR #B4:ZIP 导出
-}
+# 2026-11-25 P1-E:格式下拉 / 扩展名改由 Exporter 注册表元数据驱动。
+# 顶部 import service 确保所有 @exporter 装饰器执行完(注册 ready),
+# 否则只 import base 拿到的是空注册表。service 纯 core 无 Qt 依赖。
+_MESSAGE_FORMATS = EXPORTERS.message_formats()  # 排除 MEDIA_CSV(不同 DTO)
+_FORMAT_EXT = {fmt: EXPORTERS.extension(fmt) for fmt in _MESSAGE_FORMATS}
 
 
 class ExportDialog(QDialog):
@@ -114,7 +114,8 @@ class ExportDialog(QDialog):
         form.addRow(self.tr("时间范围:"), row)
 
         # 格式(combo_field 禁用滚轮切换 — 防滚动误改导出格式)
-        self.cmb_fmt = combo_field(form, self.tr("格式:"), ExportFormat)
+        # P1-E:从注册表取消息格式(排除 MEDIA_CSV,后者走不同 DTO)
+        self.cmb_fmt = combo_field(form, self.tr("格式:"), _MESSAGE_FORMATS)
 
         # 选项 — HTML(内嵌缩略图)+ ZIP(打包缩略图)都用到;其它格式
         # 忽略该字段。2026-09-01 v1.5.1 PR #B4 加 ZIP 共享同一 checkbox。

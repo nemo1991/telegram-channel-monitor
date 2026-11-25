@@ -18,6 +18,11 @@ import sys
 
 from tgmonitor.cli._common import CliError
 
+# 2026-11-25 P1-E:export choices 由 Exporter 注册表驱动(单一真源)。
+# service 是纯 core 模块(已验证不 import Qt/qasync),不破坏 CLI"零 GUI 依赖"。
+from tgmonitor.core.export import service as _export_service  # noqa: F401
+from tgmonitor.core.export.base import EXPORTERS
+
 # 命令注册表单一真源(新增子命令需与 _DISPATCH 同步)
 CLI_SUBCOMMANDS: frozenset[str] = frozenset(
     {
@@ -232,7 +237,9 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
     exp_sub = exp_p.add_subparsers(dest="export_cmd")
     exp_msg = exp_sub.add_parser("messages", help="导出消息")
     exp_msg.add_argument(
-        "--format", required=True, choices=["json", "csv", "markdown", "html", "zip"]
+        "--format",
+        required=True,
+        choices=[f.value for f in EXPORTERS.message_formats()],
     )
     exp_msg.add_argument("-o", "--out", required=True, help="输出路径")
     exp_msg.add_argument("--channel", type=int, action="append", dest="channel_ids")

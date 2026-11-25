@@ -111,7 +111,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 
 - **`core/` 禁止 import PySide6 / qasync** — 保持领域逻辑与 UI 框架解耦,可离线单测。
 - **跨边界只传 DTO**(`dto.py` 里的 ChannelDTO / MediaDTO / MessageDTO / ExportRequest / ExportResult / SyncOptions / SyncResult 等),不传 Telethon 对象、ORM 对象、Qt 对象。
-- 四套可插拔抽象:`StorageRepository`(7 个按域 ABC 组合)、`ObjectStore`(ABC)、`TelegramClient`(runtime_checkable Protocol)、`Exporter`(ABC + 注册表)。新增实现见下文「扩展点」。
+- 四套可插拔抽象:`StorageRepository`(8 个按域 ABC 组合)、`ObjectStore`(ABC + local_path/uri 能力方法)、`TelegramClient`(runtime_checkable Protocol)、`Exporter`(ABC + 注册表)。新增实现见下文「扩展点」。
 - **AppService 不再是 god facade**:只保留生命周期 / 热重载 / 导出 + 后端持有;域操作 UI 直调 `app.auth/channels/messages/media/batch/channel_sync`。公开表面由 `tests/test_app_service_surface.py` allowlist 锁死,新增域转发会被守护测试拒绝。
 - UI 跨线程调 coroutine 必须走 `ui/async_bridge.py` 的 `run_coro(loop, coro, *, on_success, on_error, error_label)`,不要自己套 `asyncio.run_coroutine_threadsafe` + try/except 模板。
 
@@ -134,7 +134,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 | `core/settings_store.py` | `.env` 保形读写(`.part` + rename 原子写),`EditableSettings` 供 UI |
 | `core/telegram/` | Telethon 封装:`client`(Protocol)/ `telethon_client`(TelethonTelegramClient)/ `telethon_messages`(归一化)/ `proxy`(python-socks)/ `errors` / `factory`;`unconfigured.py` 是凭据缺失时 factory 返回的占位 client(启动不崩);`fake_client.py` 是测试用假客户端 |
 | `core/monitor/` | MonitorService(**显式组合**,非 mixin):`service` + `orchestrator`(主循环 + 退避重连 1s→30s)/ `whitelist` / `event_handlers` / `downloader`(MediaDownloader 单文件 200MB 上限)/ `backfill` / `delete` |
-| `core/storage/` | 7 个按域 ABC(SchemaLifecycle / ChannelStore / MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore)组合成 `StorageRepository`;`sqlite_repo`(默认,aiosqlite WAL)/ `postgres_repo`(asyncpg,+ `_*_pg` 分域 helper)+ 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
+| `core/storage/` | 8 个按域 ABC(SchemaLifecycle / ChannelStore / MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore / ActivityStore)组合成 `StorageRepository`;`sqlite_repo`(默认,aiosqlite WAL)/ `postgres_repo`(asyncpg,+ `_*_pg` 分域 helper)+ 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
 | `core/objectstore/` | base ABC + local_store(平铺)/ folder_store(两级分片)/ s3_store + factory,默认 **FOLDER** |
 | `core/export/` | base 注册表 `EXPORTERS` + `@exporter` 装饰器 + json/csv/markdown/html + 流式导出 service |
 | `cli/` | argparse 全部 2.1.2 子命令(含 `help`);裸 `asyncio.run()` 事件循环,无 PySide6。`main.py` 是注册表单一真源(`CLI_SUBCOMMANDS` + `_DISPATCH`);`tgmon-cli` 直连 `main_tgmon_cli`,从进程起点就不 import `app` |
@@ -248,7 +248,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## 扩展点
 
-- **新增存储后端**(如 MySQL):在 `core/storage/` 实现 7 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。
+- **新增存储后端**(如 MySQL):在 `core/storage/` 实现 8 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。
 - **新增对象存储后端**:在 `core/objectstore/` 实现 `ObjectStore` ABC,注册 factory(默认 FOLDER,平铺/分片可切换)。
 - **新增导出格式**:在 `core/export/` 用 `@exporter` 装饰器注册到 `EXPORTERS`,service 流式导出自动可见;含模板的(如 HTML)用 Jinja2。
 - **新增 Telegram 后端/假客户端**:实现 `TelegramClient` Protocol;测试用 `fake_client.FakeTelegramClient`。改 Protocol 签名必须同步 telethon_client / fake_client / unconfigured 三实现(见 CONTRIBUTING.md checklist;v2.0.0 无自动签名守护测试,靠 mypy + 离线测试 + 人工)。

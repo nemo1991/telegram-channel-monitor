@@ -163,12 +163,13 @@ session 不兼容 — 升级需重新登录。
 ### 3.5 `core/storage/` — 消息持久化
 
 v2.0.0 默认 **SQLite**(aiosqlite,WAL),**PostgreSQL** 可选(asyncpg);MongoDB 已删。
-`StorageRepository` 由 **7 个按域 ABC** 组合而成,两套实现共享同一组方法签名,
+`StorageRepository` 由 **8 个按域 ABC** 组合而成,两套实现共享同一组方法签名,
 查询语义对齐(按 `date ASC, id ASC` 排序):
 
 ```
 SchemaLifecycle · ChannelStore · MetaStore · MessageStore ·
-MediaStore · ThumbnailStore · UserMetaStore  →  StorageRepository
+MediaStore · ThumbnailStore · UserMetaStore · ActivityStore
+  →  StorageRepository (8 个按域 ABC;2026-11-25 P1 对齐实测,旧文档漏列 ActivityStore)
 ```
 
 | 概念 | SQLite(默认) | PostgreSQL(可选) |
@@ -319,7 +320,7 @@ ExportDialog 选参数 ──► AppService.export(req)
 - **SQLite 默认**:单文件零部署,桌面单机场景无需外部 DB;WAL 模式并发读不阻塞。
   PostgreSQL 留给多设备 / 大规模 / 全文搜索(`pg_trgm`)场景
 - **不引入 ORM**(SQLAlchemy 之类):手写 SQL 更清晰,跨 SQLite/PG 的语义对齐也得自己控
-- **存储接口按域切 7 个 ABC**:每个后端只实现自己需要的域,组合门面保持调用面不变
+- **存储接口按域切 8 个 ABC**:每个后端只实现自己需要的域,组合门面保持调用面不变
 - **门面拆按域服务**:god facade 难维护、表面膨胀;域服务职责单一,UI 直调,allowlist 守护防回潮
 - **HTML 缩略图 base64 内嵌**:打开文件即可看图,代价是文件变大;CSV/JSON/MD 不内嵌
 - **DB 唯一键用 `(channel_id, telegram_msg_id)`**:跨频道不冲突;删除频道用 `ON DELETE CASCADE` 级联

@@ -23,6 +23,7 @@ class JsonExporter(Exporter):
     """
 
     format = ExportFormat.JSON
+    extension = ".json"
 
     async def render(
         self,

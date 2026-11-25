@@ -138,6 +138,54 @@ async def test_registry_has_all_six():
     }
 
 
+def test_registry_metadata_drives_formats():
+    """P1-E:注册表元数据是 GUI 下拉 / CLI choices 单一真源。
+
+    - message_formats 排除 MEDIA_CSV(不同 DTO),顺序按枚举声明
+    - media_formats 只含 MEDIA_CSV
+    - 每个格式的 extension / supports_thumbnails 由 exporter 类声明
+    """
+    assert EXPORTERS.message_formats() == [
+        ExportFormat.JSON,
+        ExportFormat.CSV,
+        ExportFormat.MARKDOWN,
+        ExportFormat.HTML,
+        ExportFormat.ZIP,
+    ]
+    assert EXPORTERS.media_formats() == [ExportFormat.MEDIA_CSV]
+    assert EXPORTERS.extension(ExportFormat.JSON) == ".json"
+    assert EXPORTERS.extension(ExportFormat.MEDIA_CSV) == ".csv"
+    assert EXPORTERS.supports_thumbnails(ExportFormat.HTML) is True
+    assert EXPORTERS.supports_thumbnails(ExportFormat.ZIP) is True
+    assert EXPORTERS.supports_thumbnails(ExportFormat.JSON) is False
+
+
+def test_new_message_format_auto_appears_in_registry():
+    """P1-E 契约:新增消息格式只需 @exporter 注册,自动进 message_formats。
+
+    不直接改全局注册表(会污染其它测试),而是用独立 registry 实例验证
+    `uses_media_dto` 元数据把消息格式与媒体格式分开的契约。
+    """
+    from tgmonitor.core.export.base import ExporterRegistry
+
+    reg = ExporterRegistry()
+
+    class FakeExporter:
+        extension = ".fake"
+        supports_thumbnails = False
+        needs_object_store = False
+        uses_media_dto = False
+
+        def __init__(self, fmt):
+            self.format = fmt
+
+    fake_fmt = "fake_fmt"  # type: ignore[assignment]
+    reg.register(FakeExporter(fake_fmt))  # type: ignore[arg-type]
+    assert fake_fmt in reg.message_formats()
+    assert fake_fmt not in reg.media_formats()
+    assert reg.extension(fake_fmt) == ".fake"
+
+
 # ---- 2026-08-25 v1.3.0 PR #7:per-media CSV exporter + dispatcher ----------
 
 
