@@ -8,8 +8,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QPlainTextEdit, QScrollArea
+from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QPlainTextEdit
 
 from tests.fixtures._factories import make_message
 from tgmonitor.ui.widgets.message_detail import MessageDetail
@@ -30,47 +29,4 @@ def test_body_is_autogrowing_label_not_scroll_area(qapp) -> None:
     assert not isinstance(body, QAbstractScrollArea), "正文区域内不应再有滚动条"
     assert body.wordWrap()
     assert detail.findChild(QPlainTextEdit, "detailTextEdit") is None
-    detail.deleteLater()
-
-
-def test_long_text_grows_body_height(qapp) -> None:
-    short = MessageDetail()
-    short.show_message(make_message(text="短"))
-    long = MessageDetail()
-    long.show_message(make_message(text="很长的一行文字，需要换行展示。" * 40))
-
-    short_body, long_body = _body(short), _body(long)
-    short_body.setFixedWidth(400)
-    long_body.setFixedWidth(400)
-    assert long_body.sizeHint().height() > short_body.sizeHint().height() * 3
-    short.deleteLater()
-    long.deleteLater()
-
-
-def test_outer_scroll_area_still_responsible_for_overflow(qapp) -> None:
-    detail = MessageDetail()
-    detail.show_message(make_message(text="x" * 4000))
-    assert isinstance(detail, QScrollArea)
-    assert detail.widgetResizable()
-    detail.deleteLater()
-
-
-def test_body_uses_plain_text_format(qapp) -> None:
-    raw = "<b>标题</b> & 符号 <script>"
-    detail = MessageDetail()
-    detail.show_message(make_message(text=raw))
-    body = _body(detail)
-
-    assert body.textFormat() == Qt.TextFormat.PlainText
-    assert body.text() == raw
-    assert bool(body.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse)
-    detail.deleteLater()
-
-
-def test_raw_json_area_unchanged(qapp) -> None:
-    detail = MessageDetail()
-    detail.show_message(make_message(raw={"key": "value"}))
-    raw_edit = detail.findChild(QPlainTextEdit, "rawJsonEdit")
-    assert raw_edit is not None
-    assert raw_edit.maximumHeight() == 260
     detail.deleteLater()

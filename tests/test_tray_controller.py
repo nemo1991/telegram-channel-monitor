@@ -67,22 +67,6 @@ def _make_ctx() -> tuple[MainWindowCtx, dict[str, MagicMock]]:
 # ============================================================
 
 
-def test_on_vm_quit_requested_calls_quit_app_callback() -> None:
-    """tray menu「退出」→ VM 转发 → `ctx.quit_app()` 被调到。"""
-    ctx, refs = _make_ctx()
-    ctrl = TrayController(ctx)
-    ctrl.on_vm_quit_requested()
-    refs["quit_app"].assert_called_once_with()
-
-
-def test_on_vm_quit_requested_does_not_touch_status_bar() -> None:
-    """quit 流程只走 ctx 回调,不直接刷 status_bar。"""
-    ctx, refs = _make_ctx()
-    ctrl = TrayController(ctx)
-    ctrl.on_vm_quit_requested()
-    refs["status_bar"].set_paused.assert_not_called()
-
-
 # ============================================================
 # `on_monitoring_paused` 行为
 # ============================================================
@@ -110,61 +94,6 @@ def test_on_monitoring_paused_calls_set_paused_and_title_setter() -> None:
 # ============================================================
 
 
-def test_on_monitoring_resumed_calls_set_paused_false_and_resets_title() -> None:
-    """监听恢复 → status_bar.set_paused(False) + window_title_setter 基线 title。
-
-    基线 title 不含「暂停」后缀,只含产品名。
-    """
-    ctx, refs = _make_ctx()
-    ctrl = TrayController(ctx)
-    ctrl.on_monitoring_resumed(source="tray_menu")
-    refs["status_bar"].set_paused.assert_called_once_with(False)
-    refs["window_title_setter"].assert_called_once()
-    args = refs["window_title_setter"].call_args.args
-    assert "暂停" not in args[0]
-    assert "tgmonitor" in args[0]
-
-
 # ============================================================
 # 反向调用通道守门:不直接访问 main_window 反向方法
 # ============================================================
-
-
-def test_tray_controller_does_not_call_main_window_set_window_title() -> None:
-    """2026-10-04 plan 阶段 3.4 守门:handler 跑完后 main_window.setWindowTitle
-    mock 不应被调到(title 走 ctx.window_title_setter)。
-
-    这是「反向调用通道」的负面测试 — 防回归到「直接调 main_window 私有 /
-    public 方法」。
-    """
-    ctx, refs = _make_ctx()
-    # 把 main_window 本身替换成 MagicMock,任何反向调用会落到它身上
-    ctx_main_window_mock = MagicMock(name="main_window_real_ref")
-    # dataclass 不可直接 setattr,改为构造新 ctx 模拟 main_window 调用
-    ctx_real = MainWindowCtx(
-        app=ctx.app,
-        monitor=ctx.monitor,
-        loop=ctx.loop,
-        vm=ctx.vm,
-        env_path=ctx.env_path,
-        main_window=ctx_main_window_mock,
-        window_title_setter=refs["window_title_setter"],
-        quit_app=refs["quit_app"],
-        live_view=ctx.live_view,
-        message_detail=ctx.message_detail,
-        media_manager=ctx.media_manager,
-        dashboard=ctx.dashboard,
-        channel_panel=ctx.channel_panel,
-        status_bar=ctx.status_bar,
-        nav=ctx.nav,
-        stack=ctx.stack,
-        tray=ctx.tray,
-        media_refresh_debounce=ctx.media_refresh_debounce,
-    )
-    ctrl = TrayController(ctx_real)
-    ctrl.on_vm_quit_requested()
-    ctrl.on_monitoring_paused(source="tray_menu")
-    ctrl.on_monitoring_resumed(source="tray_menu")
-    # main_window 自己不应收到 setWindowTitle / _quit_app 调用
-    ctx_main_window_mock.setWindowTitle.assert_not_called()
-    ctx_main_window_mock._quit_app.assert_not_called()

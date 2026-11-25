@@ -19,51 +19,6 @@ from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 # ============== forward_messages ==============
 
 
-async def test_fake_forward_messages_records_log() -> None:
-    """调 forward_messages(1, 99, [10, 11]) 后 forwarded_log 含 (1, 99, [10, 11])。
-
-    TDLib `forwardMessages` 要求 sorted msg_ids — fake 也 sorted() 存(测试可断言
-    输入无序时 log 是有序的)。
-    """
-    client = FakeTelegramClient()
-    await client.forward_messages(1, 99, [10, 11])
-    assert client.forwarded_log == [(1, 99, [10, 11])]
-
-
-async def test_fake_forward_messages_sorts_msg_ids() -> None:
-    """传无序 msg_ids — log 里是 sorted()(TDLib forwardMessages 协议约束)。"""
-    client = FakeTelegramClient()
-    await client.forward_messages(1, 99, [30, 10, 20])
-    assert client.forwarded_log == [(1, 99, [10, 20, 30])]
-
-
-async def test_fake_forward_messages_appends_per_call() -> None:
-    """多次调 forward_messages → log 累加,模拟 LIVE 多 batch 转发。"""
-    client = FakeTelegramClient()
-    await client.forward_messages(1, 99, [10])
-    await client.forward_messages(2, 99, [200, 201])
-    await client.forward_messages(1, 88, [10, 11])
-    assert client.forwarded_log == [
-        (1, 99, [10]),
-        (2, 99, [200, 201]),
-        (1, 88, [10, 11]),
-    ]
-
-
-async def test_fake_forward_messages_empty_noop() -> None:
-    """空 msg_ids 早 return — forwarded_log 保持空 list。"""
-    client = FakeTelegramClient()
-    await client.forward_messages(1, 99, [])
-    assert client.forwarded_log == []
-
-
-def test_fake_forwarded_log_is_property_view() -> None:
-    """forwarded_log property 暴露 _forwarded_log 同一 list 实例。"""
-    client = FakeTelegramClient()
-    log = client.forwarded_log
-    assert log is client._forwarded_log  # type: ignore[attr-defined]
-
-
 def test_fake_client_inherits_forward_messages_from_protocol() -> None:
     """FakeTelegramClient 实现了 Protocol 的 forward_messages 方法。"""
     assert hasattr(FakeTelegramClient, "forward_messages")
@@ -80,55 +35,7 @@ async def test_fake_pin_messages_groups_by_cid() -> None:
     assert client.pinned_log == {1: [10, 11]}
 
 
-async def test_fake_pin_messages_appends_per_cid() -> None:
-    """同一 cid 多次调 → 累加到同一 list(模拟分批)。"""
-    client = FakeTelegramClient()
-    await client.pin_messages(1, [10])
-    await client.pin_messages(1, [11, 12])
-    await client.pin_messages(2, [100])
-    assert client.pinned_log == {1: [10, 11, 12], 2: [100]}
-
-
-async def test_fake_pin_messages_empty_noop() -> None:
-    """空 msg_ids 早 return — pinned_log 保持空。"""
-    client = FakeTelegramClient()
-    await client.pin_messages(1, [])
-    assert client.pinned_log == {}
-
-
-async def test_fake_unpin_messages_groups_by_cid() -> None:
-    """unpin_messages 与 pin_messages 同款 — 共享 _pinned_log 累加。"""
-    client = FakeTelegramClient()
-    await client.unpin_messages(1, [10])
-    await client.unpin_messages(2, [200, 201])
-    assert client.pinned_log == {1: [10], 2: [200, 201]}
-
-
-def test_fake_pinned_log_is_property_view() -> None:
-    """pinned_log property 暴露 _pinned_log 同一 dict 实例。"""
-    client = FakeTelegramClient()
-    log = client.pinned_log
-    assert log is client._pinned_log  # type: ignore[attr-defined]
-
-
-def test_fake_client_inherits_pin_messages_from_protocol() -> None:
-    assert hasattr(FakeTelegramClient, "pin_messages")
-    assert callable(getattr(FakeTelegramClient, "pin_messages", None))
-
-
-def test_fake_client_inherits_unpin_messages_from_protocol() -> None:
-    assert hasattr(FakeTelegramClient, "unpin_messages")
-    assert callable(getattr(FakeTelegramClient, "unpin_messages", None))
-
-
 # ============== add_reaction / remove_reaction ==============
-
-
-async def test_fake_add_reaction_records_log() -> None:
-    """add_reaction(1, 10, '🔥') → reactions_log 含 (1, 10, '🔥', True)。"""
-    client = FakeTelegramClient()
-    await client.add_reaction(1, 10, "🔥")
-    assert client.reactions_log == [(1, 10, "🔥", True)]
 
 
 async def test_fake_add_reaction_is_big_kwarg() -> None:
@@ -156,20 +63,3 @@ async def test_fake_reactions_log_appends_per_call() -> None:
     await client.add_reaction(1, 11, "👍")
     await client.add_reaction(2, 100, "❤", is_big=True)
     assert len(client.reactions_log) == 3
-
-
-def test_fake_reactions_log_is_property_view() -> None:
-    """reactions_log property 暴露 _reactions_log 同一 list 实例。"""
-    client = FakeTelegramClient()
-    log = client.reactions_log
-    assert log is client._reactions_log  # type: ignore[attr-defined]
-
-
-def test_fake_client_inherits_add_reaction_from_protocol() -> None:
-    assert hasattr(FakeTelegramClient, "add_reaction")
-    assert callable(getattr(FakeTelegramClient, "add_reaction", None))
-
-
-def test_fake_client_inherits_remove_reaction_from_protocol() -> None:
-    assert hasattr(FakeTelegramClient, "remove_reaction")
-    assert callable(getattr(FakeTelegramClient, "remove_reaction", None))

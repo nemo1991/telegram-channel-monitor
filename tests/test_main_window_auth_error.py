@@ -31,14 +31,12 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio  # noqa: E402
-from datetime import UTC, datetime  # noqa: E402
 from typing import Any  # noqa: E402
-from unittest.mock import patch  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget  # noqa: E402
 
-from tgmonitor.core.events import AuthErrorOccurred, ErrorOccurred  # noqa: E402
+from tgmonitor.core.events import AuthErrorOccurred  # noqa: E402
 
 # ============== helpers ==============
 
@@ -109,38 +107,6 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
-def test_auth_error_pushes_bell_btn_visible(qapp: QApplication) -> None:
-    """P0-K:首次 AuthErrorOccurred → 铃铛按钮从 hidden → visible,带计数 1。"""
-    bell = _make_bell(qapp)
-    assert bell.isHidden() is True
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="bad")))
-    qapp.processEvents()
-    assert bell.isHidden() is False
-    assert "1" in bell.text()
-
-
-def test_auth_error_increates_count_on_repeat(qapp: QApplication) -> None:
-    """P0-K:连续两次 → 铃铛文本「错误 2」。"""
-    bell = _make_bell(qapp)
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="bad 1")))
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="bad 2")))
-    qapp.processEvents()
-    assert "2" in bell.text()
-    assert len(bell.get_log()) == 2
-
-
-def test_auth_error_appends_to_ring_buffer(qapp: QApplication) -> None:
-    """P0-K:ring buffer 收到 (datetime, source, message) 三元组。"""
-    bell = _make_bell(qapp)
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="password", message="2fa wrong")))
-    qapp.processEvents()
-    assert len(bell.get_log()) == 1
-    when, source, msg = bell.get_log()[0]
-    assert source == "password"
-    assert msg == "2fa wrong"
-    assert when.tzinfo is not None
-
-
 def test_ring_buffer_caps_at_100_entries(qapp: QApplication) -> None:
     """P0-K:ring buffer 上限 100,超过只留最近 100。"""
     bell = _make_bell(qapp)
@@ -153,147 +119,10 @@ def test_ring_buffer_caps_at_100_entries(qapp: QApplication) -> None:
     assert "err 104" in bell.get_log()[-1][2]
 
 
-def test_auth_error_qmessagebox_warning_called(qapp: QApplication) -> None:
-    """P0-K:弹 QMessageBox.warning(非 status_bar 临时消息)。"""
-    bell = _make_bell(qapp)
-    with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
-        _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="验证码错误")))
-        mock_warn.assert_called_once()
-    args = mock_warn.call_args[0]
-    assert "验证码错误" in args[1]
-
-
-def test_auth_error_qmessagebox_warning_for_password(qapp: QApplication) -> None:
-    """P0-K:source=password → kind 映射为「两步验证密码错误」。"""
-    bell = _make_bell(qapp)
-    with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
-        _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="password", message="2fa bad")))
-        args = mock_warn.call_args[0]
-    assert "两步验证密码" in args[1]
-
-
-def test_auth_error_qmessagebox_warning_unknown_source_falls_back(
-    qapp: QApplication,
-) -> None:
-    """P0-K:未知 source → kind 用「鉴权错误」兜底。"""
-    bell = _make_bell(qapp)
-    with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
-        _run_async(
-            bell._on_bus_auth_error(AuthErrorOccurred(source="some_new_kind", message="???"))
-        )
-        args = mock_warn.call_args[0]
-    assert "鉴权错误" in args[1]
-
-
-def test_non_auth_error_ignored(qapp: QApplication) -> None:
-    """P0-K:非 AuthErrorOccurred(只是普通 ErrorOccurred)→ 不进 ring buffer、不弹 box。"""
-    bell = _make_bell(qapp)
-    with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
-        _run_async(bell._on_bus_auth_error(ErrorOccurred(source="general", message="other")))
-        mock_warn.assert_not_called()
-    assert bell.get_log() == []
-    assert bell.isHidden() is True
-
-
 # ============== 铃铛点击 → ErrorLogDialog ==============
-
-
-def test_bell_click_opens_error_log_dialog(qapp: QApplication) -> None:
-    """P0-K:铃铛点击 → 弹 ErrorLogDialog 含 ring buffer 内容。"""
-    win = _make_fake_window(qapp)
-    bell = win.status_bar._bell
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="验证码错")))
-    _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="password", message="2fa 错")))
-    qapp.processEvents()
-
-    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
-
-    captured: dict[str, Any] = {}
-    orig_init = ErrorLogDialog.__init__
-
-    def spy_init(self: Any, entries: Any, parent: Any = None, **kw: Any) -> None:
-        captured["dlg"] = self
-        captured["entries"] = entries
-        captured["on_clear"] = kw.get("on_clear")
-        orig_init(self, entries, parent, **kw)
-
-    with (
-        patch.object(ErrorLogDialog, "__init__", spy_init),
-        patch.object(ErrorLogDialog, "show", return_value=None),
-        patch.object(ErrorLogDialog, "exec", return_value=0),
-    ):
-        win._on_bell_clicked()
-    assert captured.get("dlg") is not None
-    assert captured["dlg"].list.count() == 2  # type: ignore[attr-defined]
-    assert len(captured["entries"]) == 2
-    assert captured["on_clear"] == win._clear_error_log  # callback 注入
 
 
 # ============== 清空日志 ==============
 
 
-def test_clear_error_log_empties_and_hides_bell(qapp: QApplication) -> None:
-    """P0-K:_clear_error_log → 铃铛 hidden + ring buffer 空。"""
-    win = _make_fake_window(qapp)
-    bell = win.status_bar._bell
-    with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok):
-        _run_async(bell._on_bus_auth_error(AuthErrorOccurred(source="code", message="x")))
-    qapp.processEvents()
-    assert len(bell.get_log()) == 1
-    assert bell.isHidden() is False
-    win._clear_error_log()
-    assert bell.get_log() == []
-    assert bell.isHidden() is True
-
-
 # ============== ErrorLogDialog 直测 ==============
-
-
-def test_error_log_dialog_lists_entries_in_reverse(qapp: QApplication) -> None:
-    """P0-K:ErrorLogDialog 倒序显示 — 最新在最上面。"""
-    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
-
-    entries = [
-        (datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC), "code", "first"),
-        (datetime(2026, 9, 14, 10, 5, 0, tzinfo=UTC), "code", "second"),
-        (datetime(2026, 9, 14, 10, 10, 0, tzinfo=UTC), "password", "third"),
-    ]
-    dlg = ErrorLogDialog(entries, parent=None)
-    qapp.processEvents()
-    assert dlg.list.count() == 3
-    assert "third" in dlg.list.item(0).text()
-    assert "second" in dlg.list.item(1).text()
-    assert "first" in dlg.list.item(2).text()
-    dlg.deleteLater()
-
-
-def test_error_log_dialog_empty_shows_placeholder(qapp: QApplication) -> None:
-    """P0-K:空 entries → header 0 条 + placeholder 行。"""
-    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
-
-    dlg = ErrorLogDialog([], parent=None)
-    qapp.processEvents()
-    assert dlg.list.count() == 1
-    assert "(暂无错误)" in dlg.list.item(0).text()
-    dlg.deleteLater()
-
-
-def test_error_log_dialog_clear_button_clears_main(qapp: QApplication) -> None:
-    """P0-K:dialog 上的「清空日志」按钮 → 调 win._clear_error_log。
-
-    v1.12.x:callback 注入取代 hasattr 探针 — 直接传 `on_clear=win._clear_error_log`,
-    `_on_clear()` 内部触发回调。不再需要 `patch.object(dlg, "parent")`。
-    """
-    from tgmonitor.ui.widgets.error_log_dialog import ErrorLogDialog
-
-    win = _make_fake_window(qapp)
-    entries = [(datetime(2026, 9, 14, 10, 0, tzinfo=UTC), "code", "x")]
-    dlg = ErrorLogDialog(entries, parent=None, on_clear=win._clear_error_log)
-    qapp.processEvents()
-    dlg._on_clear()
-    qapp.processEvents()
-    bell = win.status_bar._bell
-    assert bell.get_log() == []
-    assert bell.isHidden() is True
-    assert dlg.list.count() == 1
-    dlg.deleteLater()

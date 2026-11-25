@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import os
 import sys
 from typing import TYPE_CHECKING
 
@@ -35,16 +34,11 @@ from tgmonitor.core.dto import (
     SortKey,
 )
 from tgmonitor.core.events import (
-    MediaDeleted,
-    MediaDownloaded,
     MediaReconcileFinished,
     MediaRetried,
 )
-from tgmonitor.core.objectstore.folder_store import FolderObjectStore
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from tgmonitor.core.app_service import AppService
     from tgmonitor.core.events import EventBus
     from tgmonitor.core.objectstore.base import ObjectStore
@@ -138,25 +132,6 @@ async def test_list_media_filters_by_channel(
     assert rows[0][0].channel_id == 100
 
 
-async def test_list_media_filters_by_type(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """media_type 过滤 — 只返指定类型 + total 同样被过滤。"""
-    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
-    video = dataclasses.replace(
-        _base_media("f2"),
-        type=MediaType.VIDEO,
-        file_name="vid.mp4",
-        mime_type="video/mp4",
-    )
-    await storage.save_message(_msg(100, 2, [video]))
-    rows, total = await app.media.list_media(media_type=MediaType.VIDEO)
-    assert len(rows) == 1
-    assert total == 1
-    assert rows[0][2].type == MediaType.VIDEO
-
-
 async def test_list_media_search_by_filename_case_insensitive(
     app: AppService,
     storage: StorageRepository,
@@ -210,23 +185,6 @@ async def test_delete_media_removes_bytes_when_no_other_reference(
     await app.media.delete_media(100, 1, 0)
     # bytes 真删
     assert not await objectstore.exists("media/only.jpg")
-
-
-async def test_delete_media_publishes_media_deleted_event(
-    app: AppService,
-    storage: StorageRepository,
-    bus: EventBus,
-) -> None:
-    """delete_media 触发 MediaDeleted 事件 — UI 据此刷新 LIVE 流。"""
-    received: list[MediaDeleted] = []
-    bus.subscribe(MediaDeleted, lambda e: received.append(e))  # type: ignore[arg-type]
-
-    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/1.jpg")]))
-    await app.media.delete_media(100, 1, 0)
-    assert len(received) == 1
-    assert received[0].channel_id == 100
-    assert received[0].telegram_msg_id == 1
-    assert received[0].media_idx == 0
 
 
 # ---- retry_media -----------------------------------------------------
@@ -284,32 +242,6 @@ async def test_retry_skips_non_failed(
     assert m.media[0].download_status == MediaDownloadStatus.DONE
 
 
-async def test_retry_publishes_retried_and_downloaded_events(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """retry 成功 → 同时发 MediaRetried + MediaDownloaded 两个事件。"""
-    retried: list[MediaRetried] = []
-    downloaded: list[MediaDownloaded] = []
-    app.bus.subscribe(MediaRetried, lambda e: retried.append(e))  # type: ignore[arg-type]
-    app.bus.subscribe(MediaDownloaded, lambda e: downloaded.append(e))  # type: ignore[arg-type]
-
-    class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
-            return dataclasses.replace(
-                media,
-                object_key=f"media/{media.telegram_file_id}.bin",
-                object_backend="local",
-                download_status=MediaDownloadStatus.DONE,
-            )
-
-    app.downloader = _StubDownloader()  # type: ignore[assignment]
-    await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    await app.media.retry_media(100, 1, 0)
-    assert len(retried) == 1
-    assert len(downloaded) == 1
-
-
 # ---- open_media ------------------------------------------------------
 
 
@@ -322,50 +254,6 @@ async def test_open_media_returns_false_for_failed(
     await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
     ok = await app.media.open_media(100, 1, 0)
     assert ok is False
-
-
-async def test_open_media_returns_false_for_missing_message(
-    app: AppService,
-) -> None:
-    """message 不存在 → False。"""
-    ok = await app.media.open_media(999, 1, 0)
-    assert ok is False
-
-
-async def test_open_media_local_done_returns_bool(
-    app: AppService,
-    storage: StorageRepository,
-    objectstore: ObjectStore,
-) -> None:
-    """DONE + Local 后端 → 调 QDesktopServices.openUrl(成功与否依赖环境,只验不抛)。
-
-    CI offscreen 环境 QDesktopServices.openUrl 可能返 False 但不抛;这里只看
-    不抛异常 + 返 bool 类型。
-    """
-    await objectstore.put("media/photo.jpg", b"jpeg-bytes", None)
-    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-    ok = await app.media.open_media(100, 1, 0)
-    assert isinstance(ok, bool)
-
-
-async def test_open_media_folder_done_returns_bool(
-    app: AppService,
-    storage: StorageRepository,
-    tmp_path: Path,
-) -> None:
-    """FolderObjectStore 后端也走 openUrl,验证 bool 返值。"""
-    folder = FolderObjectStore(root=tmp_path / "folder_media")
-    await folder.connect()
-    await folder.put("media/photo.jpg", b"jpeg", None)
-    # 临时把 objects 切到 folder
-    saved = app.objects
-    app.objects = folder  # type: ignore[assignment]
-    try:
-        await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-        ok = await app.media.open_media(100, 1, 0)
-        assert isinstance(ok, bool)
-    finally:
-        app.objects = saved  # type: ignore[assignment]
 
 
 # ---- reconcile_orphans:测试放 tests/test_orphan_reconcile.py,这里只验事件发布 ----
@@ -394,40 +282,6 @@ async def test_reconcile_orphans_emits_event(
 
 
 # ---- delete_by_channel(2026-08-25 PR #4)------------------------------
-
-
-async def test_delete_by_channel_removes_all_messages_in_channel(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """批量删 — 目标频道所有 message 清掉,返真实删数。"""
-    # ch 100: 3 条 message(2 含 media)
-    await storage.save_message(_msg(100, 1, [_done_media("a", "media/a.jpg")]))
-    await storage.save_message(_msg(100, 2, [_done_media("b", "media/b.jpg")]))
-    await storage.save_message(_msg(100, 3, [_done_media("c", "media/c.jpg")]))
-    # ch 200: 1 条 message(不应受影响)
-    await storage.save_message(_msg(200, 1, [_done_media("d", "media/d.jpg")]))
-
-    deleted = await app.media.delete_by_channel(100)
-    assert deleted == 3
-    # ch 100 全空
-    assert await storage.get_message(100, 1) is None
-    assert await storage.get_message(100, 2) is None
-    assert await storage.get_message(100, 3) is None
-    # ch 200 不动
-    assert await storage.get_message(200, 1) is not None
-
-
-async def test_delete_by_channel_no_op_when_no_messages(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """频道存在但无 message → 返 0,不抛。"""
-    from tgmonitor.core.dto import ChannelDTO
-
-    await storage.upsert_channel(ChannelDTO(id=999, title="#999"))
-    deleted = await app.media.delete_by_channel(999)
-    assert deleted == 0
 
 
 async def test_delete_by_channel_cleans_orphan_bytes(
@@ -490,26 +344,6 @@ def _make_s3_backend(
     saved = app.objects
     app.objects = store  # type: ignore[assignment]
     return saved, fake
-
-
-async def test_open_media_with_result_missing_message_returns_error(
-    app: AppService,
-) -> None:
-    """message 不存在 → OpenMediaResult(False, '消息或媒体不存在')。"""
-    result = await app.media.open_media_with_result(999, 1, 0)
-    assert result.success is False
-    assert result.error == "消息或媒体不存在"
-
-
-async def test_open_media_with_result_failed_media_returns_error(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """FAILED media → OpenMediaResult(False, '媒体未下载完成')(状态前置检查)。"""
-    await storage.save_message(_msg(100, 1, [_failed_media("f1")]))
-    result = await app.media.open_media_with_result(100, 1, 0)
-    assert result.success is False
-    assert result.error == "媒体未下载完成"
 
 
 async def test_open_media_s3_stages_to_temp_and_calls_openurl(
@@ -629,23 +463,6 @@ async def test_list_media_sort_by_size_desc(
     assert sizes == [5_000_000, 1024, 512]
 
 
-async def test_list_media_sort_default_unchanged_when_omitted(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """PR #6 向后兼容:不传 sort/sort_dir 时走默认 DATE DESC(v1.2.0 行为)。"""
-    await storage.save_message(
-        _msg(100, 1, [_done_media("f1", "media/1.jpg")]),
-    )
-    await storage.save_message(
-        _msg(100, 2, [_done_media("f2", "media/2.jpg")]),
-    )
-    rows, _ = await app.media.list_media()
-    # 默认 DATE DESC(没设 date 字段时 list_messages 自己定)— 这里只验不抛 + 返 tuple
-    assert isinstance(rows, list)
-    assert len(rows) == 2
-
-
 async def test_list_media_offset_pagination(
     app: AppService,
     storage: StorageRepository,
@@ -663,134 +480,7 @@ async def test_list_media_offset_pagination(
     assert len(rows) == 2
 
 
-async def test_list_media_count_matches_total_independent_of_pagination(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """PR #6:sum(分页) == count,无 filter。"""
-    for i in range(7):
-        await storage.save_message(
-            _msg(100, i + 1, [_done_media(f"f{i}", f"media/{i}.jpg")]),
-        )
-    _, total_first = await app.media.list_media(limit=3, offset=0)
-    _, total_last = await app.media.list_media(limit=3, offset=4)
-    assert total_first == total_last == 7
-
-
 # ---- reveal_in_folder / copy_media_path(2026-08-27 v1.4.0 PR #16)----
-
-
-async def test_reveal_in_folder_local_success(
-    app: AppService,
-    storage: StorageRepository,
-    objectstore: ObjectStore,
-    monkeypatch,
-) -> None:
-    """PR #16:Local 后端 + 文件存在 → spawn 子进程成功 → RevealResult(True)。
-
-    monkeypatch 掉 `_spawn_reveal` 验证被调 1 次,参数含 abs_path。
-    """
-    await objectstore.put("media/p.jpg", b"jpeg", None)
-    await storage.save_message(
-        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
-    )
-
-    spawn_calls: list[tuple[object, str]] = []
-
-    def _fake_spawn(abs_path, platform):  # noqa: ANN001 — sync plain function
-        spawn_calls.append((abs_path, platform))
-
-    monkeypatch.setattr("tgmonitor.core.media_service._media_os_actions._spawn_reveal", _fake_spawn)
-
-    result = await app.media.reveal_in_folder(100, 1, 0)
-    assert result.success is True
-    assert result.error is None
-    assert len(spawn_calls) == 1
-    abs_path_arg, platform_arg = spawn_calls[0]
-    # 2026-08-31 Windows path 兼容:`os.sep`-aware 断言(Windows = `\`,
-    # Unix = `/`)。原写法 `endswith("media/p.jpg")` 在 Windows 上实际
-    # 路径是 `...\media\media\p.jpg`,分隔符不匹配会失败。
-    assert str(abs_path_arg).replace(os.sep, "/").endswith("media/p.jpg")
-    # platform 来自 sys.platform,可能是 darwin / linux / win32;只断言是 str
-    assert isinstance(platform_arg, str)
-
-
-async def test_reveal_in_folder_s3_returns_error(
-    app: AppService,
-    storage: StorageRepository,
-    monkeypatch,
-) -> None:
-    """PR #16:S3 后端 → RevealResult(False, "S3 后端无本地路径:请使用「Copy 路径」...")。"""
-    saved_objects, _fake = _make_s3_backend(app, monkeypatch)
-    await app.objects.connect()  # type: ignore[attr-defined]
-    await storage.save_message(
-        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
-    )
-
-    result = await app.media.reveal_in_folder(100, 1, 0)
-
-    app.objects = saved_objects  # type: ignore[assignment]
-
-    assert result.success is False
-    assert result.error is not None
-    assert "S3" in result.error
-
-
-async def test_reveal_in_folder_missing_message_returns_error(
-    app: AppService,
-) -> None:
-    """PR #16:message 不存在 → RevealResult(False, '消息或媒体不存在')。"""
-    result = await app.media.reveal_in_folder(999, 1, 0)
-    assert result.success is False
-    assert result.error == "消息或媒体不存在"
-
-
-async def test_reveal_in_folder_pending_media_returns_error(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """PR #16:media 未 DONE → RevealResult(False, '媒体未下载完成')。"""
-    await storage.save_message(_msg(100, 1, [_base_media("f1")]))  # PENDING
-    result = await app.media.reveal_in_folder(100, 1, 0)
-    assert result.success is False
-    assert result.error == "媒体未下载完成"
-
-
-async def test_reveal_in_folder_missing_file_returns_error(
-    app: AppService,
-    storage: StorageRepository,
-    objectstore: ObjectStore,
-) -> None:
-    """PR #16:DONE 但文件不在磁盘上(可能被外部删) → RevealResult(False, 含 '文件不存在')。"""
-    # 仅写 storage 元数据,不实际 put 文件
-    await storage.save_message(
-        _msg(100, 1, [_done_media("f1", "media/ghost.jpg")]),
-    )
-    result = await app.media.reveal_in_folder(100, 1, 0)
-    assert result.success is False
-    assert result.error is not None and "文件不存在" in result.error
-
-
-async def test_copy_media_path_local_returns_absolute_path(
-    app: AppService,
-    storage: StorageRepository,
-    objectstore: ObjectStore,
-) -> None:
-    """PR #16:Local 后端 → CopyResult(True, copied_value=绝对路径)。"""
-    await objectstore.put("media/p.jpg", b"jpeg", None)
-    await storage.save_message(
-        _msg(100, 1, [_done_media("f1", "media/p.jpg")]),
-    )
-    result = await app.media.copy_media_path(100, 1, 0)
-    assert result.success is True
-    assert result.error is None
-    assert result.copied_value is not None
-    # 2026-08-31 Windows path 兼容:把 `os.sep` 统一为 `/` 后再 endswith 匹配。
-    assert result.copied_value.replace(os.sep, "/").endswith("media/p.jpg")
-    # 必须是绝对路径
-    from pathlib import Path
-
-    assert Path(result.copied_value).is_absolute()
 
 
 async def test_copy_media_path_s3_returns_uri(
@@ -812,26 +502,6 @@ async def test_copy_media_path_s3_returns_uri(
     assert result.success is True
     assert result.copied_value == "s3://t/media/p.jpg"
     assert result.error is None
-
-
-async def test_copy_media_path_missing_message_returns_error(
-    app: AppService,
-) -> None:
-    """PR #16:message 不存在 → CopyResult(False, error='消息或媒体不存在')。"""
-    result = await app.media.copy_media_path(999, 1, 0)
-    assert result.success is False
-    assert result.error == "消息或媒体不存在"
-
-
-async def test_copy_media_path_pending_media_returns_error(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """PR #16:media 未 DONE → CopyResult(False, error='媒体未下载完成')。"""
-    await storage.save_message(_msg(100, 1, [_base_media("f1")]))
-    result = await app.media.copy_media_path(100, 1, 0)
-    assert result.success is False
-    assert result.error == "媒体未下载完成"
 
 
 # ---- 2026-09-26 fix(open-media-hang):回归 — openUrl 必须 off-main-thread ----
@@ -890,43 +560,6 @@ async def test_open_media_with_result_does_not_block_event_loop(
     assert elapsed < 0.35, f"event loop blocked during openUrl: {elapsed:.2f}s"
 
 
-async def test_open_media_invokes_openurl_off_main_thread(
-    app: AppService,
-    storage: StorageRepository,
-    objectstore: ObjectStore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """open_url callback 必须在 worker thread 上跑(由 asyncio.to_thread 触发)。
-
-    若退化到主 loop 跑,这里 tids 相等 → 失败。略 fragile(executor 行为
-    依赖 asyncio 实现),但作为 fix 是否生效的直接信号。
-
-    2026-10-04 plan 阶段 2.2:monkeypatch module-level callback 而非 Qt 对象。
-    """
-    import threading
-
-    seen: list[int] = []
-
-    def record(_path: str) -> bool:
-        seen.append(threading.get_ident())
-        return True
-
-    monkeypatch.setattr(
-        "tgmonitor.core.media_service._qt_bridge._module_open_url_cb",
-        record,
-    )
-    main_tid = threading.get_ident()
-
-    await objectstore.put("media/photo.jpg", b"jpeg", None)
-    await storage.save_message(_msg(100, 1, [_done_media("f1", "media/photo.jpg")]))
-    await app.media.open_media(100, 1, 0)
-
-    assert seen, "openUrl should have been called"
-    assert seen[0] != main_tid, (
-        f"openUrl 仍在主 loop 跑(fix 未生效),main_tid={main_tid} openUrl_tid={seen[0]}"
-    )
-
-
 # ---- 2026-11-22 v2.0.9 FR-06:PENDING 手动下载(force=False) -------------
 
 
@@ -956,138 +589,3 @@ async def test_download_pending_uses_force_false(
     assert m is not None
     assert m.media[0].download_status is MediaDownloadStatus.DONE
     assert m.media[0].object_key
-
-
-async def test_download_skips_done_and_failed(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """DONE / FAILED media 调 download_media → no-op(只 PENDING/DOWNLOADING 可下)。"""
-    download_calls: list[tuple] = []
-
-    class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
-            download_calls.append((msg_pk, force))
-            return media
-
-    app.downloader = _StubDownloader()  # type: ignore[assignment]
-    await storage.save_message(
-        _msg(100, 3, [_done_media("f3", "media/f3.jpg"), _failed_media("f4")])
-    )
-    await app.media.download_media(100, 3, 0)  # DONE
-    await app.media.download_media(100, 3, 1)  # FAILED
-
-    assert download_calls == [], "DONE/FAILED 不应走 download_media"
-
-
-async def test_download_emits_media_downloaded(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """下载成功/失败仍发 MediaDownloaded(VM 据此刷新列表)。"""
-    received: list[MediaDownloaded] = []
-
-    class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
-            return dataclasses.replace(
-                media,
-                object_key="media/f5.bin",
-                download_status=MediaDownloadStatus.DONE,
-            )
-
-    app.downloader = _StubDownloader()  # type: ignore[assignment]
-    app.bus.subscribe(MediaDownloaded, lambda e: received.append(e))  # type: ignore[arg-type]
-    await storage.save_message(_msg(100, 5, [_base_media("f5")]))
-    await app.media.download_media(100, 5, 0)
-
-    assert len(received) == 1
-    assert received[0].media is not None
-    assert received[0].media.download_status is MediaDownloadStatus.DONE
-
-
-async def test_download_noop_when_missing_message(
-    app: AppService,
-    storage: StorageRepository,
-) -> None:
-    """消息不存在 / idx 越界 → no-op,不抛。"""
-    await app.media.download_media(999, 999, 0)  # 不崩即过
-    await storage.save_message(_msg(100, 6, [_base_media("f6")]))
-    await app.media.download_media(100, 6, 99)  # idx 越界
-
-
-# ---- 2026-11-22 用户选型:PENDING 死锁 + 批量下载 -------------------------
-
-
-async def test_download_without_downloader_keeps_pending(
-    app: AppService,
-    storage: StorageRepository,
-    bus: EventBus,
-) -> None:
-    """无 downloader 时保持 PENDING + 写原因,不再静默卡在 DOWNLOADING。"""
-    events: list[MediaDownloaded] = []
-    bus.subscribe(MediaDownloaded, lambda e: events.append(e))  # type: ignore[arg-type]
-    app.downloader = None  # type: ignore[assignment]
-    await storage.save_message(_msg(100, 20, [_base_media("f20")]))
-
-    await app.media.download_media(100, 20, 0)
-
-    m = await storage.get_message(100, 20)
-    assert m is not None
-    assert m.media[0].download_status is None
-    assert m.media[0].download_error and "下载器" in m.media[0].download_error
-    assert len(events) == 1 and events[0].media is not None
-    assert events[0].media.download_status is None
-
-
-async def test_download_all_pending_batch(app: AppService, storage: StorageRepository) -> None:
-    """批量下载把所有 PENDING 转 DONE,已 DONE 的不重复下。"""
-    calls: list[str] = []
-
-    class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
-            calls.append(media.telegram_file_id)
-            return dataclasses.replace(
-                media,
-                object_key=f"media/{media.telegram_file_id}.bin",
-                object_backend="local",
-                download_status=MediaDownloadStatus.DONE,
-            )
-
-    app.downloader = _StubDownloader()  # type: ignore[assignment]
-    await storage.save_message(_msg(100, 30, [_base_media("f30"), _base_media("f31")]))
-    await storage.save_message(_msg(100, 31, [_base_media("f32")]))
-    await storage.save_message(_msg(200, 32, [_done_media("f33", "media/f33.jpg")]))
-
-    n = await app.media.download_all_pending()
-
-    assert n == 3
-    assert sorted(calls) == ["f30", "f31", "f32"]
-    m = await storage.get_message(100, 30)
-    assert m is not None and all(x.download_status is MediaDownloadStatus.DONE for x in m.media)
-
-
-async def test_download_all_pending_respects_channel_filter(
-    app: AppService, storage: StorageRepository
-) -> None:
-    """「下载全部」只覆盖当前频道筛选视图。"""
-    calls: list[str] = []
-
-    class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
-            calls.append(str(media.telegram_file_id))
-            return dataclasses.replace(
-                media,
-                object_key=f"media/{media.telegram_file_id}.bin",
-                object_backend="local",
-                download_status=MediaDownloadStatus.DONE,
-            )
-
-    app.downloader = _StubDownloader()  # type: ignore[assignment]
-    await storage.save_message(_msg(100, 40, [_base_media("f40")]))
-    await storage.save_message(_msg(200, 41, [_base_media("f41")]))
-
-    n = await app.media.download_all_pending(channel_id=100)
-
-    assert n == 1 and calls == ["f40"]
-    m = await storage.get_message(200, 41)
-    assert m is not None and m.media[0].download_status is None

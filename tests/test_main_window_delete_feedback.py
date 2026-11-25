@@ -27,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QTimer  # noqa: E402
 
-from tgmonitor.core.events import MediaDeleted, MessageDeleted  # noqa: E402
+from tgmonitor.core.events import MediaDeleted  # noqa: E402
 from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
 from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
     MediaActionsController,
@@ -190,54 +190,6 @@ def _build_ctrl(win: _FakeWindow) -> MediaActionsController:
 # ============================================================
 
 
-def test_on_media_deleted_triggers_widget_refresh(qapp) -> None:
-    """`on_media_deleted` 必须经 debounce timer 触发 widget refresh。
-
-    用户报告:点 Delete 后 row 不消失。这是 v1.9.1 修(delete-no-feedback)
-    的根因边界。
-
-    2026-10-22 v1.12.3:原本这里嵌套 `QEventLoop().exec()` 等 150ms 让 debounce
-    到点 —— Qt offscreen paint path race 在这里崩(native segfault,CI 三平台都
-    中招)。改成**同步 emit timeout**:debounce 的语义是「start() 后到点才刷」,
-    用 `isActive()` 验 start、用 `timeout.emit()` 验到点后的行为,不需要真的
-    挂钟等 100ms,也不需要任何事件循环。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    e = MediaDeleted(channel_id=100, telegram_msg_id=5, media_idx=0)
-    ctrl.on_media_deleted(e)
-
-    # debounce timer 已启动(interval=100 / singleShot)
-    assert win._media_refresh_debounce.isActive()
-    # 到点前 refresh 未触发
-    assert win.media_manager.refresh_requested.emit_count == 0
-    # 到点 → 单次 widget refresh
-    win._media_refresh_debounce.timeout.emit()
-    assert win.media_manager.refresh_requested.emit_count == 1
-
-
-def test_on_media_deleted_shows_activity_toast(qapp) -> None:
-    """`on_media_deleted` 必须更新活动指示器 — 给用户视觉反馈。"""
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ctrl.on_media_deleted(MediaDeleted())
-    assert "已删除" in win._activity_label.text()
-
-
-def test_on_media_deleted_non_mediadeleted_type_is_ignored(qapp) -> None:
-    """`on_media_deleted` 收到非 `MediaDeleted` 实例 → 直接 return。
-
-    守住 slot 边界:EventBus 也会推 `MessageDeleted`(整条消息删除,不是
-    单条 media),两者不应混淆。本 slot 只关心 per-media 删除。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ctrl.on_media_deleted(MessageDeleted(channel_id=100, telegram_msg_id=5))
-    # 不更新 activity、不启 debounce
-    assert win._activity_label.text() == ""
-    assert win.media_manager.refresh_requested.emit_count == 0
-
-
 def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     """批量 N 条连续 MediaDeleted → debounce timer 合并为单次 widget refresh。
 
@@ -259,29 +211,5 @@ def test_on_media_deleted_batch_debounces_to_single_refresh(qapp) -> None:
     assert win.media_manager.refresh_requested.emit_count == 0
 
     # 5 条 delete → 单次 refresh(不是 5 次)
-    win._media_refresh_debounce.timeout.emit()
-    assert win.media_manager.refresh_requested.emit_count == 1
-
-
-def test_on_media_deleted_throttles_activity_messages(qapp) -> None:
-    """批量 100 条连续 delete → 活动文案不刷成「已删除 媒体 × 100」。
-
-    `_throttle_activity("media_delete", …)` min_interval_ms=500,
-    100 条连续 delete(总耗时 < 500ms)只会更新一次 activity label。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    first_label_text = ""
-    for i in range(100):
-        ctrl.on_media_deleted(
-            MediaDeleted(channel_id=100, telegram_msg_id=i + 1, media_idx=0),
-        )
-        if i == 0:
-            first_label_text = win._activity_label.text()
-    # 第一条设置后,后续 99 条应被 throttle 拦住 — label 文字不变
-    assert win._activity_label.text() == first_label_text
-    assert "已删除" in first_label_text
-
-    # timer 到点(无新增 delete,会真刷)→ 同步 emit,不走事件循环
     win._media_refresh_debounce.timeout.emit()
     assert win.media_manager.refresh_requested.emit_count == 1

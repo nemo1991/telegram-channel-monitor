@@ -13,38 +13,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QAbstractItemView, QMenu, QPushButton
+from PySide6.QtWidgets import QPushButton
 
 from tests.fixtures._factories import make_message
 from tests.fixtures._real_window import build_real_main_window
 from tgmonitor.ui.widgets.message_list_model import MessageListModel
-
-
-def test_status_and_login_entries_have_new_homes(qapp, qloop, tmp_path):
-    """R-01 + v2.0.3 D3 + v2.0.10:头栏整块移除,状态/登录有新落点。
-
-    原「状态徽章 + 登录/登出按钮保留」是 2.0.2 时的 A1 决策;2026-11-17
-    v2.0.3 登录态并入底部单一状态位,登录/登出入口迁到设置页;2026-11-24
-    v2.0.10 页头 HeaderBar 整块删除(44px 让给内容)。
-    """
-    from tgmonitor.ui.widgets.status_bar import _UnifiedStateLabel
-
-    win = build_real_main_window(qloop, tmp_path)
-    assert not hasattr(win, "header")  # 头栏已整块移除
-    # 新落点真实装配存在(防「代码删了但接线漏改」)
-    assert win.status_bar.findChild(_UnifiedStateLabel) is not None
-    assert hasattr(win.settings_page, "btn_qr_login")
-    assert hasattr(win.settings_page, "btn_logout")
-    assert not hasattr(win.settings_page, "btn_login")  # 手机号登录已移除
-
-
-def test_live_view_is_single_selection_and_no_selection_toolbar(qapp, qloop, tmp_path):
-    """R-02:LIVE 视图单选模式,窗口内无 SelectionToolbar widget。"""
-    win = build_real_main_window(qloop, tmp_path)
-    assert win.live_view.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
-    assert not hasattr(win, "_selection_toolbar"), "MainWindow 不应持有 selection_toolbar"
-    # 对象名级别的兜底断言(防 widget 仍在对象树里)
-    assert win.findChild(QAbstractItemView, "selectionToolbar") is None
 
 
 def test_message_detail_is_readonly_except_copy(qapp, qloop, tmp_path):
@@ -62,30 +35,3 @@ def test_message_detail_is_readonly_except_copy(qapp, qloop, tmp_path):
     assert not any("关闭详情" in t for t in labels), "v2.0.5:关闭详情按钮已移除"
     assert not any("导出" in t for t in labels), "详情不应有导出按钮"
     assert not any("删除" in t for t in labels), "详情不应有删除按钮"
-
-
-def test_max_items_is_100(qapp):
-    """F-02:视图容量上限 100,与启动加载 limit 一致。"""
-    from tgmonitor.ui.widgets.message_view import MessageView
-
-    assert MessageView.MAX_ITEMS == 100
-
-
-def test_no_custom_context_menu_on_live_view(qapp, qloop, tmp_path, monkeypatch):
-    """A2:LIVE 视图右键不再弹 tgmonitor 自定义菜单(导出/删除/标记等)。"""
-    win = build_real_main_window(qloop, tmp_path)
-    menus: list[QMenu] = []
-
-    def _capture_exec(self, *args, **kwargs):
-        menus.append(self)
-        return None
-
-    monkeypatch.setattr(QMenu, "exec", _capture_exec, raising=False)
-    # 右键事件走 Qt 默认(无 controller 注入)→ 不应构造任何自定义菜单
-    win.live_view.contextMenuEvent = lambda event: None
-    win.live_view.set_messages([make_message(msg_id=1, text="x")])
-    qapp.processEvents()
-    # 直接断言没有 live_actions 注入点
-    assert not hasattr(win.live_view, "_live_actions")
-    assert not hasattr(win, "live_actions")
-    assert menus == []

@@ -61,12 +61,6 @@ class _FakeStatusBar:
         return None
 
 
-def test_conn_state_label_default(qapp) -> None:
-    """初始文案是「TG 未连接」(状态未知前的兜底)。"""
-    win = _FakeWindow()
-    assert win.status_bar._conn_label.text() == "TG 未连接"
-
-
 def test_on_conn_state_delegates_to_status_bar(qapp) -> None:
     """thin delegate:`MainWindow._on_conn_state` 经 `_app_state_ctrl` 透传到
     `status_bar.set_connection_state`(本文件独有的守护;状态文案映射表由

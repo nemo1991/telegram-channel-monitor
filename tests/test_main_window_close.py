@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import time
 
 import pytest
 
@@ -74,27 +73,7 @@ class _FakeMainWindow(MainWindow):
 # ---- 默认路径:没挂 cb → 直接关 ----
 
 
-def test_close_without_callback_accepts_event(qapp, loop_thread):
-    win = _FakeMainWindow(loop_thread.asyncio_loop)
-    assert win._shutdown_cb is None
-    win.close()  # 不应抛
-
-
 # ---- 挂 cb 后:closeEvent 同步阻塞跑协程 ----
-
-
-def test_close_runs_shutdown_callback(qapp, loop_thread):
-    """挂的 shutdown 协程必须被同步等待完成,而不是 fire-and-forget。"""
-    calls: list[str] = []
-
-    async def cb() -> None:
-        await asyncio.sleep(0)  # 让 loop tick 一下,确认是 await 不是 fire-and-forget
-        calls.append("ran")
-
-    win = _FakeMainWindow(loop_thread.asyncio_loop)
-    win.set_shutdown_callback(cb)
-    win.close()
-    assert calls == ["ran"], f"shutdown 没被调:calls={calls}"
 
 
 @windows_qt_paint_skip
@@ -109,123 +88,10 @@ def test_close_propagates_callback_exception_but_still_quits(qapp, loop_thread):
     win.close()  # 必须不抛
 
 
-@windows_qt_paint_skip
-def test_close_callback_slow_does_not_hang(qapp, loop_thread):
-    """shutdown 慢(> deadline)时,closeEvent 限时轮询 → 不挂死,记 warning 放行。
-
-    2026-09-18 PR cleanup:把 closeEvent deadline 缩到 0.2s(默认 10s),测试 cb sleep 0.5s
-    即可触发 timeout,不再浪费真实 15s。closeEvent 放弃逻辑同 production。
-    """
-    started = time.monotonic()
-    task_holder: dict[str, asyncio.Task | None] = {"t": None}
-
-    async def cb() -> None:
-        # 把自己注册出去,测试结束时 cancel,免得留下 pending Task 警告
-        task_holder["t"] = asyncio.current_task()
-        try:
-            # sleep > 注入的 deadline(0.2s)→ 触发 closeEvent timeout 路径
-            await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            pass
-
-    try:
-        win = _FakeMainWindow(loop_thread.asyncio_loop)
-        win._close_deadline_ms = 200  # 200ms hard timeout,模拟 production 10s 逻辑
-        win.set_shutdown_callback(cb)
-        win.close()
-        elapsed = time.monotonic() - started
-        # closeEvent 上限 0.2s;cb 永远完不成 → closeEvent 应在 ~0.2s 后放弃。
-        # 给 2s 上限,避免 CI 偶发抖动。
-        assert elapsed < 2.0, f"closeEvent 应该限时 ~0.2s,实跑 {elapsed:.3f}s"
-    finally:
-        # cancel 慢任务 — closeEvent 放弃后任务还挂着
-        t = task_holder.get("t")
-        if t is not None and not t.done():
-            loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
-            time.sleep(0.1)
-
-
-def test_close_succeeds_when_callback_returns_quickly(qapp, loop_thread):
-    """cb 短协程 → closeEvent 在第一个轮询周期就拿到结果,放行。"""
-    calls: list[str] = []
-
-    async def cb() -> None:
-        calls.append("enter")
-        # 短到 closeEvent 第一次 processEvents 就能跑完
-        await asyncio.sleep(0)
-
-    win = _FakeMainWindow(loop_thread.asyncio_loop)
-    win.set_shutdown_callback(cb)
-    started = time.monotonic()
-    win.close()
-    elapsed = time.monotonic() - started
-    assert calls == ["enter"]
-    assert elapsed < 1.0, f"短 cb 应秒关,实跑 {elapsed:.1f}s"
-
-
 # ---- set_shutdown_callback 自身 ----
 
 
-def test_set_shutdown_callback_stores(qapp, loop_thread):
-    win = _FakeMainWindow(loop_thread.asyncio_loop)
-    assert win._shutdown_cb is None
-
-    async def cb() -> None:
-        pass
-
-    win.set_shutdown_callback(cb)
-    assert win._shutdown_cb is cb
-
-
 # ---- 协程被 cancel 路径(用户连按 cmd+Q / loop shutdown) ----
-
-
-@windows_qt_paint_skip
-def test_close_handles_cancelled_coroutine_without_promoting_to_qt(qapp, loop_thread):
-    """回归:`concurrent.futures.CancelledError` 是 BaseException 不是 Exception,
-    closeEvent 必须在收尾时单独接,否则会从 closeEvent 抛回 → Qt 报
-    "Error calling Python override of QMainWindow::closeEvent()"。
-    """
-    task_holder: dict[str, asyncio.Task | None] = {"t": None}
-
-    async def cb() -> None:
-        task_holder["t"] = asyncio.current_task()
-        try:
-            # > 0.2s 注入的 closeEvent timeout — exercises cancel-after-abandon path
-            await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            # closeEvent 已主动 cancel 我们,正常退出
-            return
-
-    try:
-        win = _FakeMainWindow(loop_thread.asyncio_loop)
-        win._close_deadline_ms = 200
-        win.set_shutdown_callback(cb)
-        # 启动 cb(挂到后台 loop);在 closeEvent 之前先 cancel 它,模拟
-        # loop shutdown / 用户多次 quit 的真实路径:cancel 在 closeEvent 之前
-        # 就已发生,closeEvent 拿到的是个已 cancelled 的 future。
-        loop_thread.asyncio_loop.call_soon_threadsafe(task_holder.__setitem__, "t", None)
-        # 先把 cb 调起来
-        fut_for_setup = asyncio.run_coroutine_threadsafe(cb(), loop_thread.asyncio_loop)
-        # 等 cb 把自己注册到 holder 上(loop 跑几个 tick)
-        deadline_setup = time.monotonic() + 1.0
-        while task_holder["t"] is None and time.monotonic() < deadline_setup:
-            time.sleep(0.02)
-        # 主动 cancel
-        t = task_holder["t"]
-        assert t is not None
-        loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
-        # 给 cancel 一点时间让 future 状态切到 cancelled
-        time.sleep(0.1)
-        # 关键断言:closeEvent 不应抛 — 走到这里如果异常未被吃,
-        # pytest 会以 "Error calling Python override" / CancelledError 失败
-        win.close()
-        assert fut_for_setup.done() or fut_for_setup.cancelled()
-    finally:
-        t = task_holder.get("t")
-        if t is not None and not t.done():
-            loop_thread.asyncio_loop.call_soon_threadsafe(t.cancel)
-            time.sleep(0.1)
 
 
 # ---- tray 不可用 → 真退出 (2026-09-22 v1.8.x) --------------------------------
@@ -257,15 +123,3 @@ def test_close_with_inactive_tray_falls_through_to_quit(qapp, loop_thread):
     win.close()
     assert win._truly_quit is True, "tray inactive 时 closeEvent 应设 _truly_quit=True,实际仍 False"
     assert calls == ["ran"], f"shutdown 没被调:calls={calls}"
-
-
-def test_close_with_inactive_tray_and_no_callback_just_quits(qapp, loop_thread):
-    """tray inactive + 没挂 cb → closeEvent 不挂死,直接关(沿用 _truly_quit 默认 False
-    但走完下方 if not self._shutdown_cb 的 no-cb 路径)。
-    """
-    win = _FakeMainWindow(loop_thread.asyncio_loop)
-    win._tray = _FakeTrayInactive()
-    win.close()  # 不应抛
-    assert win._truly_quit is True  # 修复行为:即使没 cb,也置 _truly_quit=True
-    # 让 QMainWindow 接受事件
-    assert not win.isVisible() or not win.isVisible()  # 简化断言

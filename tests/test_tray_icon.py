@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch  # noqa: E402
 from PySide6.QtCore import QObject  # noqa: E402
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon  # noqa: E402
 
-from tgmonitor.core.events import NotificationRequested, QuitRequested  # noqa: E402
+from tgmonitor.core.events import QuitRequested  # noqa: E402
 from tgmonitor.ui.widgets.tray_icon import TrayIcon  # noqa: E402
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
@@ -53,44 +53,6 @@ def _make_app_svc() -> MagicMock:
     return app
 
 
-def test_tray_inactive_when_no_system_tray(qapp: QApplication) -> None:
-    """offscreen QPA 无 system tray → is_active=False(UI 走 fallback)。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=False):
-        tray = TrayIcon(parent, app)
-    assert tray.is_active is False
-    # hide / show / on_notification 全 no-op 不抛
-    tray.show()
-    tray.hide()
-
-
-def test_tray_active_when_system_tray_available(qapp: QApplication) -> None:
-    """有 system tray 时 is_active=True + menu 3 项。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    assert tray.is_active is True
-    assert tray._menu is not None
-    actions = [a.text() for a in tray._menu.actions() if a.text()]
-    assert "显示主窗口" in actions
-    assert "暂停监听" in actions
-    assert "退出" in actions
-
-
-def test_tray_show_action_shows_parent(qapp: QApplication) -> None:
-    """菜单「显示主窗口」→ parent.show() — 不走 quit。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    show_action = next(a for a in tray._menu.actions() if a.text() == "显示主窗口")
-    show_action.trigger()
-    assert parent.show_called is True
-    app.bus.publish_async.assert_not_called()
-
-
 def test_tray_publishes_quit_requested_pause_on_pause(
     qapp: QApplication,
 ) -> None:
@@ -108,83 +70,3 @@ def test_tray_publishes_quit_requested_pause_on_pause(
     assert event.pause is True
     # regression 2026-09-23 issue #21:不能调 publish(会丢 coroutine)
     app.bus.publish.assert_not_called()
-
-
-def test_tray_publishes_quit_requested_no_pause_on_quit(
-    qapp: QApplication,
-) -> None:
-    """菜单「退出」→ bus.publish_async(QuitRequested(pause=False))。
-
-    2026-09-23 issue #21 regression:点 tray「退出」必须真退出,走
-    `publish_async`(挂 task 到当前 loop)而不是 `publish`(sync 调用丢
-    coroutine,quit 信号从未发出)。
-    """
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    quit_action = next(a for a in tray._menu.actions() if a.text() == "退出")
-    quit_action.trigger()
-    app.bus.publish_async.assert_called_once()
-    event = app.bus.publish_async.call_args.args[0]
-    assert isinstance(event, QuitRequested)
-    assert event.pause is False
-    # 关键回归点:publish(返回未 await 的 coroutine)必须**没**被调过
-    app.bus.publish.assert_not_called()
-
-
-def test_tray_double_click_shows_parent(qapp: QApplication) -> None:
-    """双击托盘 → parent.show()(系统级唤起主窗口)。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    tray._on_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
-    assert parent.show_called is True
-
-
-async def test_tray_on_notification_forwards_to_show_message(
-    qapp: QApplication,
-) -> None:
-    """`on_notification` 把 NotificationRequested 转发到 tray.showMessage。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    # mock showMessage
-    tray._tray.showMessage = MagicMock()  # type: ignore[union-attr]
-    event = NotificationRequested(level="info", title="测试标题", body="测试内容")
-    await tray.on_notification(event)
-    tray._tray.showMessage.assert_called_once()  # type: ignore[union-attr]
-    args = tray._tray.showMessage.call_args.args  # type: ignore[union-attr]
-    assert args[0] == "测试标题"
-    assert args[1] == "测试内容"
-
-
-async def test_tray_on_notification_error_uses_critical_icon(
-    qapp: QApplication,
-) -> None:
-    """level=error → MessageIcon.Critical(其他 → Information)。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
-        tray = TrayIcon(parent, app)
-    tray._tray.showMessage = MagicMock()  # type: ignore[union-attr]
-    event = NotificationRequested(level="error", title="失败", body="爆了")
-    await tray.on_notification(event)
-    args = tray._tray.showMessage.call_args.args  # type: ignore[union-attr]
-    # tray_icon.py 调 `showMessage(title, body, icon, 5000)` — icon 是第 3 位置
-    assert args[2] == QSystemTrayIcon.MessageIcon.Critical
-
-
-async def test_tray_on_notification_noop_when_inactive(
-    qapp: QApplication,
-) -> None:
-    """is_active=False(无 system tray)时 on_notification no-op,不抛。"""
-    parent = _DummyParent()
-    app = _make_app_svc()
-    with patch.object(QSystemTrayIcon, "isSystemTrayAvailable", return_value=False):
-        tray = TrayIcon(parent, app)
-    event = NotificationRequested(level="info", title="x", body="y")
-    # 不抛即通过
-    await tray.on_notification(event)

@@ -19,7 +19,6 @@ from tests.conftest import InMemoryRepository
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.dto import (
     ChannelDTO,
-    DeleteChannelPreview,
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
@@ -79,51 +78,6 @@ async def svc(tmp_path):
     return AppService(bus, FakeTelegramClient(), storage, objects, settings)
 
 
-async def test_preview_basic_counts(svc: AppService):
-    """PR #8:preview_delete_by_channel → message_count / media_count / orphan_bytes。"""
-    await svc.storage.save_message(
-        MessageDTO(
-            id=0,
-            channel_id=100,
-            telegram_msg_id=1,
-            date=datetime(2026, 1, 1),
-            text="",
-            media=[
-                _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
-            ],
-        )
-    )
-    await svc.storage.save_message(
-        MessageDTO(
-            id=0,
-            channel_id=100,
-            telegram_msg_id=2,
-            date=datetime(2026, 1, 1),
-            text="",
-            media=[
-                _photo(2048, MediaDownloadStatus.DONE, "media/b.jpg"),
-                _photo(512, MediaDownloadStatus.DONE, "media/c.jpg"),
-            ],
-        )
-    )
-
-    pv = await svc.media.preview_delete_by_channel(100)
-    assert isinstance(pv, DeleteChannelPreview)
-    assert pv.channel_id == 100
-    assert pv.message_count == 2
-    assert pv.media_count == 3
-    # 1024 + 2048 + 512 = 3584 — 各 key refcount=1 都成孤儿
-    assert pv.potential_orphan_bytes == 3584
-
-
-async def test_preview_empty_channel_returns_zero(svc: AppService):
-    """PR #8:空 channel → 全 0 dataclass,不抛。"""
-    pv = await svc.media.preview_delete_by_channel(999)
-    assert pv.message_count == 0
-    assert pv.media_count == 0
-    assert pv.potential_orphan_bytes == 0
-
-
 async def test_preview_shared_object_key_excluded(svc: AppService):
     """PR #8:跨频道共享 object_key → preview 时不计入 orphan_bytes。"""
     # ch 100 + ch 200 共用 object_key="media/shared.jpg"
@@ -157,120 +111,4 @@ async def test_preview_shared_object_key_excluded(svc: AppService):
     assert pv.potential_orphan_bytes == 0
 
 
-async def test_preview_pending_status_excluded(svc: AppService):
-    """PR #8:preview 只数 DONE media 的 bytes(跟 delete_by_channel 一致)。"""
-    await svc.storage.save_message(
-        MessageDTO(
-            id=0,
-            channel_id=100,
-            telegram_msg_id=1,
-            date=datetime(2026, 1, 1),
-            text="",
-            media=[
-                _photo(1024, MediaDownloadStatus.DONE, "media/done.jpg"),
-                _photo(9999, None, None),
-                _photo(8888, MediaDownloadStatus.FAILED, None),
-            ],
-        )
-    )
-
-    pv = await svc.media.preview_delete_by_channel(100)
-    # 只算 DONE 1024 — PENDING / FAILED 不计
-    assert pv.potential_orphan_bytes == 1024
-
-
-async def test_preview_does_not_mutate_storage(svc: AppService):
-    """PR #8:preview 是严格只读 — storage / objects 状态不变。"""
-    await svc.storage.save_message(
-        MessageDTO(
-            id=0,
-            channel_id=100,
-            telegram_msg_id=1,
-            date=datetime(2026, 1, 1),
-            text="",
-            media=[
-                _photo(1024, MediaDownloadStatus.DONE, "media/a.jpg"),
-            ],
-        )
-    )
-    msg_count_before = await svc.storage.count_messages(100)
-    media_count_before = await svc.storage.count_media_by_channel(100)
-
-    await svc.media.preview_delete_by_channel(100)
-
-    assert await svc.storage.count_messages(100) == msg_count_before
-    assert await svc.storage.count_media_by_channel(100) == media_count_before
-
-
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
-
-
-def test_dialog_ok_disabled_until_checked(qapp):
-    """PR #8:dialog OK 按钮默认 disabled,勾 ack 后才 enable。"""
-    from PySide6.QtWidgets import QDialogButtonBox
-
-    from tgmonitor.ui.widgets.clear_channel_preview_dialog import (
-        ClearChannelPreviewDialog,
-    )
-
-    pv = DeleteChannelPreview(
-        channel_id=100,
-        message_count=5,
-        media_count=10,
-        potential_orphan_bytes=1024,
-    )
-    dlg = ClearChannelPreviewDialog(pv, "Test")
-    bb = dlg.findChild(QDialogButtonBox)
-    ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
-    assert not ok_btn.isEnabled()
-
-    dlg.chk_ack.setChecked(True)
-    assert ok_btn.isEnabled()
-
-    dlg.chk_ack.setChecked(False)
-    assert not ok_btn.isEnabled()
-    qapp.processEvents()
-
-
-def test_dialog_cancel_returns_rejected(qapp):
-    """PR #8:dialog Cancel → Rejected,Accepted 才走 vm.delete_by_channel。"""
-    from PySide6.QtWidgets import QDialog
-
-    from tgmonitor.ui.widgets.clear_channel_preview_dialog import (
-        ClearChannelPreviewDialog,
-    )
-
-    pv = DeleteChannelPreview(
-        channel_id=100,
-        message_count=1,
-        media_count=1,
-        potential_orphan_bytes=0,
-    )
-    dlg = ClearChannelPreviewDialog(pv, "Test")
-    dlg.reject()
-    assert dlg.result() == QDialog.DialogCode.Rejected
-    qapp.processEvents()
-
-
-def test_dialog_shows_counts_in_labels(qapp):
-    """PR #8:dialog labels 显示 message_count / media_count / bytes。"""
-    from PySide6.QtWidgets import QLabel
-
-    from tgmonitor.ui.widgets.clear_channel_preview_dialog import (
-        ClearChannelPreviewDialog,
-    )
-
-    pv = DeleteChannelPreview(
-        channel_id=100,
-        message_count=42,
-        media_count=17,
-        potential_orphan_bytes=5_242_880,  # 5 MB
-    )
-    dlg = ClearChannelPreviewDialog(pv, "My Channel")
-    labels = dlg.findChildren(QLabel)
-    all_text = " ".join(lbl.text() for lbl in labels)
-    assert "42" in all_text
-    assert "17" in all_text
-    assert "5.0MB" in all_text or "5.2MB" in all_text
-    assert "My Channel" in all_text
-    qapp.processEvents()

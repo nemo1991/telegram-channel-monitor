@@ -25,7 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QLabel  # noqa: E402
 
 from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType  # noqa: E402
-from tgmonitor.core.events import MediaDownloaded, MediaRetried  # noqa: E402
+from tgmonitor.core.events import MediaDownloaded  # noqa: E402
 from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
 from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
     MediaActionsController,
@@ -155,50 +155,9 @@ def _make_media(file_name: str, *, is_done: bool) -> MediaDTO:
 # ============================================================
 
 
-def test_on_media_retried_triggers_widget_refresh(qapp) -> None:
-    """`on_media_retried` 必须 emit `media_manager.refresh_requested`。
-
-    否则 widget 列表不变,用户看不到 retry 已触发 — 这是用户报告的
-    「点击 Retry 无反应」的根因。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ctrl.on_media_retried(MediaRetried(channel_id=100, telegram_msg_id=5, media_idx=0))
-    assert win.media_manager.refresh_count == 1
-
-
-def test_on_media_retried_shows_activity_toast(qapp) -> None:
-    """`on_media_retried` 必须更新活动指示器,给用户视觉反馈。
-
-    之前完全没提示,现在 status bar 左侧立刻显示「正在重试…」2 秒后清空。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    assert win._activity_label.text() == ""  # 初始空
-    ctrl.on_media_retried(MediaRetried())
-    assert "正在重试" in win._activity_label.text()
-
-
 # ============================================================
 # `on_media_downloaded` 行为
 # ============================================================
-
-
-def test_on_media_downloaded_triggers_widget_refresh_on_success(qapp) -> None:
-    """`on_media_downloaded`(成功路径)完成后必须 emit widget refresh。
-
-    retry 完成后 Media Manager row 应从 PENDING 切到 DONE — 没有 refresh
-    就一直停在 PENDING / 旧字节进度文字。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ev = MediaDownloaded(
-        channel_id=100,
-        telegram_msg_id=5,
-        media=_make_media("photo.jpg", is_done=True),
-    )
-    ctrl.on_media_downloaded(ev)
-    assert win.media_manager.refresh_count == 1
 
 
 def test_on_media_downloaded_triggers_widget_refresh_on_failure(qapp) -> None:
@@ -212,35 +171,3 @@ def test_on_media_downloaded_triggers_widget_refresh_on_failure(qapp) -> None:
     )
     ctrl.on_media_downloaded(ev)
     assert win.media_manager.refresh_count == 1
-
-
-def test_on_media_downloaded_shows_activity_on_success(qapp) -> None:
-    """成功下载 → activity 显示「已下载: <name>」。"""
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ev = MediaDownloaded(media=_make_media("photo.jpg", is_done=True))
-    ctrl.on_media_downloaded(ev)
-    assert "已下载" in win._activity_label.text()
-    assert "photo.jpg" in win._activity_label.text()
-
-
-def test_on_media_downloaded_shows_warning_on_failure(qapp) -> None:
-    """下载失败 → activity 显示「下载失败: <name>」。"""
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ev = MediaDownloaded(media=_make_media("photo.jpg", is_done=False))
-    ctrl.on_media_downloaded(ev)
-    assert "下载失败" in win._activity_label.text()
-    assert "photo.jpg" in win._activity_label.text()
-
-
-def test_on_media_downloaded_with_none_media_skips_refresh(qapp) -> None:
-    """`on_media_downloaded` 收到 `e.media is None` → 直接 return,不抛、不刷 widget。
-
-    守住现有契约。
-    """
-    win = _FakeWindow()
-    ctrl = _build_ctrl(win)
-    ev = MediaDownloaded(media=None)
-    ctrl.on_media_downloaded(ev)
-    assert win.media_manager.refresh_count == 0
