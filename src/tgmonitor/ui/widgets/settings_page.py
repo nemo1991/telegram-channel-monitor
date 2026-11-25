@@ -931,7 +931,7 @@ class SettingsPage(QWidget):
                 return self.tr(f"可达: {host}:{port}")
             except TimeoutError:
                 return self.tr("超时: 3 秒未响应")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — 连通性探测错误一律转用户可读文案
                 return self.tr(f"失败: {exc}")
 
         def _show(msg: str) -> None:

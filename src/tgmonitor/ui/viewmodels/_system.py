@@ -6,16 +6,17 @@ plan-batch9-γ + 2026-10-19 plan-batch9-δ 归位修正 + 2026-10-20
 plan-batch9-η 收口):system 域 = 9 facade-level signal + 1 statusbar
 sub-component signal + 7 handler。
 
-- handler(7):`_on_login_state` / `_on_conn_state` /
+- handler(5):`_on_login_state` / `_on_conn_state` /
   `_on_quit_requested`(含 pause 调 `app.pause_monitor` /
   `resume_monitor`)/ `_on_error` / `_on_settings_changed`(emit
-  `settings_changed` + `backend_label_changed`)/ `_on_sync_progress` /
-  `_on_sync_done`
-- 9 facade-level signal(C-η 2026-10-20 从 facade 下沉 — plan §8 #3
+  `settings_changed` + `backend_label_changed`)
+  (2026-11-25 v2.1.3 P0-C1:`_on_sync_progress` / `_on_sync_done` 已删 —
+  GUI 全量同步入口 v2.0.5 移除后无事件源,且读的事件字段不存在)
+- 7 facade-level signal(C-η 2026-10-20 从 facade 下沉 — plan §8 #3
   「字段与 emit 该字段的 signal 同 mixin 持有」):
-  - 7 active(由本 mixin 7 handler 内部 `self.<signal>.emit(...)` 触发):
+  - 5 active(由本 mixin 5 handler 内部 `self.<signal>.emit(...)` 触发):
     `login_state` / `conn_state` / `error` / `settings_changed` /
-    `sync_progress` / `sync_done` / `quit_requested`
+    `quit_requested`
   - 2 dead(无人 emit,MainWindow connect chain 仍订阅,留 signal 保持
     `getattr` 不报缺属性):`monitoring_paused` / `monitoring_resumed`
 - 1 status bar sub-component signal(2026-10-19 plan-batch9-δ 归位):
@@ -63,8 +64,6 @@ from PySide6.QtCore import Signal
 
 from tgmonitor.core.config import Settings
 from tgmonitor.core.events import (
-    ChannelSyncDone,
-    ChannelSyncProgress,
     ConnectionStateChanged,
     ErrorOccurred,
     LoginStateChanged,
@@ -83,22 +82,21 @@ log = logging.getLogger(__name__)
 
 
 class SystemMixin(_Base):
-    """系统顶层 signal + 状态栏 + 7 handler 集合 — 2026-10-20 plan-batch9-η。
+    """系统顶层 signal + 状态栏 + 5 handler 集合 — 2026-10-20 plan-batch9-η。
 
     公开 API 1:1 保留原 `MonitorViewModel` system 域:
-    - 9 facade-level system signal(2026-10-20 plan-batch9-η 从 facade 下沉):
+    - 7 facade-level system signal(2026-10-20 plan-batch9-η 从 facade 下沉):
       `login_state` / `conn_state` / `error` / `settings_changed` /
-      `sync_progress` / `sync_done` / `quit_requested`(7 active,本 mixin
-      7 handler 内部 emit)+ `monitoring_paused` / `monitoring_resumed`
+      `quit_requested`(5 active,本 mixin 5 handler 内部 emit)
+      + `monitoring_paused` / `monitoring_resumed`
       (2 dead — `_on_quit_requested` 路径不 emit,MainWindow 仍订阅)
     - 1 status bar sub-component signal(系统子组件):
       `backend_label_changed`
     - 2026-10-19 plan-batch9-δ 归位:`last_message_received` /
       `stats_changed` 2 signal 已搬到 MessagesMixin(语义由
       MessageReceived 触发)
-    - 7 EventBus handler:LoginStateChanged / ConnectionStateChanged /
-      QuitRequested / ErrorOccurred / SettingsChanged /
-      ChannelSyncProgress / ChannelSyncDone
+    - 5 EventBus handler:LoginStateChanged / ConnectionStateChanged /
+      QuitRequested / ErrorOccurred / SettingsChanged
     """
 
     # 2026-10-01 v1.11.x 状态栏组件化:系统子组件 Qt signal — payload 透传
@@ -122,9 +120,6 @@ class SystemMixin(_Base):
     settings_changed = Signal(
         str, bool, bool, str
     )  # (what, needs_relogin, needs_restart, backend_label)
-    # 全量同步进度(sync dialog 订阅)
-    sync_progress = Signal(object)  # ChannelSyncProgress
-    sync_done = Signal(object)  # ChannelSyncDone(带 result)
     # 2026-08-30 v1.5.0 PR #A4:tray menu「退出」事件转发 — MainWindow
     # 接到 → qt_app.quit() 走 aboutToQuit → _shutdown_then_quit。
     # `pause=True` 路径不发此 signal(VM 内部 log 即可)。
@@ -145,11 +140,9 @@ class SystemMixin(_Base):
         QuitRequested: "_on_quit_requested",
         ErrorOccurred: "_on_error",
         SettingsChanged: "_on_settings_changed",
-        ChannelSyncProgress: "_on_sync_progress",
-        ChannelSyncDone: "_on_sync_done",
     }
 
-    # ---- 7 EventBus handler ----
+    # ---- 5 EventBus handler ----
 
     async def _on_login_state(self, e: object) -> None:
         if not isinstance(e, LoginStateChanged):
@@ -208,15 +201,5 @@ class SystemMixin(_Base):
         # 2026-10-01 v1.11.x 状态栏组件化:状态栏 _BackendLabel 订阅本
         # 信号,自管更新,不再需要 MainWindow 转发。
         self.backend_label_changed.emit(backend_label)
-
-    async def _on_sync_progress(self, e: object) -> None:
-        if not isinstance(e, ChannelSyncProgress):
-            return
-        self.sync_progress.emit(e)
-
-    async def _on_sync_done(self, e: object) -> None:
-        if not isinstance(e, ChannelSyncDone):
-            return
-        self.sync_done.emit(e)
 
     # ---- 1 public method ----

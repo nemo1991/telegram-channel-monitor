@@ -340,8 +340,9 @@ class UiAssembler:
         mw._vm.channels_changed.connect(mw._refresh_state)
         mw._vm.export_done.connect(mw._on_export_done)
         mw._vm.settings_changed.connect(mw._on_settings_changed)
-        # 2026-09-25 v1.8.x:同步/导出进度 → 状态栏左侧活动指示器。
-        mw._vm.sync_progress.connect(mw._on_sync_progress)
-        mw._vm.sync_done.connect(mw._on_sync_done)
+        # 2026-09-25 v1.8.x:导出进度 → 状态栏左侧活动指示器。
+        # v2.1.3 P0-C1:同步进度/完成两条 VM signal 已删(GUI 全量同步入口
+        # v2.0.5 移除,该链路读取的事件字段亦不存在);ChannelSyncDone 仍由
+        # DashboardWidget 直接订阅 bus 走 format_activity 正确消费。
         mw._vm.export_progress.connect(mw._on_export_progress)
         # 2026-11-16 v2.0.2:VM 搜索结果信号随顶部搜索功能移除。

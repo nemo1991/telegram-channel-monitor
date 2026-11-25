@@ -147,7 +147,7 @@ def _show_config_warning_dialog(warnings: list[str], parent: QWidget | None = No
         log.exception("config-warning dialog raised")
 
 
-def run() -> None:
+def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编排(0~7 步),已知复杂且有意保留
     """启动 GUI。
 
     事件循环模式(单 loop 持续运行,绝不暂停):

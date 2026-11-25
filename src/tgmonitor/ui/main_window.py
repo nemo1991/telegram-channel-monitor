@@ -592,14 +592,6 @@ class MainWindow(QMainWindow):
         """2026-10-01 v1.12.x:委托 `ExportController`。"""
         self._export_ctrl.on_export_progress(progress)
 
-    def _on_sync_progress(self, e) -> None:
-        """2026-10-01 v1.12.x:委托 `SyncController`。"""
-        self._sync_ctrl.on_sync_progress(e)
-
-    def _on_sync_done(self, e) -> None:
-        """2026-10-01 v1.12.x:委托 `SyncController`。"""
-        self._sync_ctrl.on_sync_done(e)
-
     def _on_export_done(self, result: dict | None, error: str | None) -> None:
         """2026-10-01 v1.12.x:委托 `ExportController`。"""
         self._export_ctrl.on_export_done(result, error)

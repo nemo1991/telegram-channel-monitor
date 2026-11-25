@@ -118,12 +118,11 @@ async def bootstrap(
     except Exception:  # noqa: BLE001
         log.exception("[bootstrap] reset_stuck_downloads failed; continuing startup")
 
-    # 2026-11-17 v2.0.4 FR-05:活动持久化订阅者 —— bus + storage 均已就绪,
-    # 通配订阅把覆盖的运维事件归一化后落库。订阅者内部吞异常,落库失败不
-    # 阻断主流程;formatter 不含 Qt 依赖(core 架构守门)。
-    from tgmonitor.core.activity import make_persistence_subscriber  # noqa: PLC0415
-
-    bus.subscribe_all(make_persistence_subscriber(storage))
+    # 2026-11-17 v2.0.4 FR-05:活动持久化订阅者 —— 注册下移到 app 构造之后,
+    # 订阅者经 getter 访问 app.storage(见下方),使 reconfigure 切库后自动写新库。
+    # 2026-11-25 v2.1.3 P0-C2:旧实现在构造期闭包捕获具体 storage 实例,
+    # 切到 PG 后活动仍写旧 SQLite 且失败被吞成 warning(完全静默)。
+    # formatter 不含 Qt 依赖(core 架构守门)。
 
     t = time.monotonic()
     objects = build_object_store(settings)
@@ -193,6 +192,13 @@ async def bootstrap(
         # 2026-09-04 v1.6.6:pause 持久化要写 .env,透传 env_path。
         env_path=env_path,
     )
+    # 活动持久化订阅者 —— 传 getter(lambda)而非实例:reconfigure 替换
+    # app.storage 后,订阅者每次落库重新求值,自动写新库(见 P0-C2 注释)。
+    # 订阅者内部吞异常,落库失败不阻断主流程。
+    from tgmonitor.core.activity import make_persistence_subscriber  # noqa: PLC0415
+
+    bus.subscribe_all(make_persistence_subscriber(lambda: app.storage))
+
     log.info(
         "[bootstrap] full bootstrap done in %.2fs",
         time.monotonic() - t0,

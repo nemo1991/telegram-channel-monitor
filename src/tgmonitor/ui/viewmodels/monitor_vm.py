@@ -5,13 +5,14 @@
 `__init__` + 3 字段初始化 + `wire_bus()` 调 21 events)。
 
 facade 不再持:
-- 9 system signal(`login_state` / `conn_state` / `error` /
-  `settings_changed` / `sync_progress` / `sync_done` / `quit_requested` /
+- 7 system signal(`login_state` / `conn_state` / `error` /
+  `settings_changed` / `quit_requested` /
   `monitoring_paused` / `monitoring_resumed`)— 已下沉到 `_system.py`
-  (plan §8 #3 「字段与 emit 该字段的 signal 同 mixin 持有」)
+  (plan §8 #3 「字段与 emit 该字段的 signal 同 mixin 持有」;
+  v2.1.3 P0-C1 删 `sync_progress` / `sync_done` — GUI 同步入口已移除)
 - `__init__` — `BusMixin.__init__` 接管:`super().__init__()` →
   赋 3 引用(`app` / `monitor` / `loop`)→ `self.wire_bus()` 自动挂
-  21 events(channels 2 + system 7 + messages 3 + media 5 + export 4)
+  19 events(channels 2 + system 5 + messages 3 + media 5 + export 4)
 - `_wire_bus` — 1 行 `super().wire_bus()` 委派也由 `BusMixin.__init__`
   内部 `self.wire_bus()` 调,facade 不需要再声明
 - 3 字段初始化:`monitored_channels` / `_export_task` / `_message_count` —
@@ -67,11 +68,11 @@ class MonitorViewModel(
     # (`monitored_channels` / `_export_task` / `_message_count`)由各自 mixin
     # 类体 default 初值兜底。
     #
-    # 32 Signal 分布:
+    # 30 Signal 分布:
     # - ChannelsMixin(1):`channels_changed`
-    # - SystemMixin(11):9 facade-level(`login_state` / `conn_state` /
-    #   `error` / `settings_changed` / `sync_progress` / `sync_done` /
-    #   `quit_requested` / `monitoring_paused` / `monitoring_resumed`)
+    # - SystemMixin(8):7 facade-level(`login_state` / `conn_state` /
+    #   `error` / `settings_changed` / `quit_requested` /
+    #   `monitoring_paused` / `monitoring_resumed`)
     #   + 1 statusbar sub-component(`backend_label_changed`)
     # - MessagesMixin(5):`message_received` / `message_edited` /
     #   `message_interactions_changed` / `last_message_received` / `stats_changed`

@@ -611,7 +611,7 @@ class SqliteRepository(StorageRepository):
             async with self._lock:
                 await self._db.execute("SELECT 1")
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — ping 契约:任何异常一律返 False
             return False
 
     # ---- 频道 ----

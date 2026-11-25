@@ -121,6 +121,32 @@ async def test_persistence_subscriber_skips_unmapped_events() -> None:
     assert await store.list_activities() == []
 
 
+@pytest.mark.asyncio
+async def test_persistence_subscriber_follows_storage_after_swap() -> None:
+    """热重载换 storage 后,活动必须写新库 —— 回归 `runtime.bootstrap` 闭包捕获旧实例的 bug。
+
+    旧实现 `make_persistence_subscriber(store)` 在构造时闭包捕获具体实例,
+    `reconfigure` 替换 `app.storage` 后订阅者仍写旧库,失败被吞成 warning
+    完全静默。惰性版每次落库时经 getter 取当前 storage,切换后自动指向新库。
+    """
+    old_store = InMemoryRepository()
+    new_store = InMemoryRepository()
+    current = {"store": old_store}
+    subscriber = make_persistence_subscriber(lambda: current["store"])
+
+    await subscriber(SettingsChanged(what="before-swap"))
+    before = await old_store.list_activities()
+    assert len(before) == 1
+    assert before[0].event_type == "settings_changed"
+
+    current["store"] = new_store
+    await subscriber(SettingsChanged(what="after-swap"))
+    assert len(await old_store.list_activities()) == 1, "切换后不应再写旧库"
+    after = await new_store.list_activities()
+    assert len(after) == 1
+    assert after[0].detail == "after-swap"
+
+
 # ---------------------------------------------------------------- storage roundtrip
 
 
