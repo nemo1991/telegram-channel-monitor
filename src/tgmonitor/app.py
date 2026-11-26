@@ -5,7 +5,7 @@
 
 2026-09-27 refactor:`_bootstrap` 与 `_shutdown_async` 抽到 `core.runtime`
 后,本模块顶层**不**import PySide6 / qasync / MainWindow — CLI 模式
-(`tgmonitor sync` / `tgmonitor monitor`)调用 `__main__.py` 走 `cli.main`,
+(`tgmon-cli sync` / `tgmon-cli monitor`)调用 `__main__.py` 走 `cli.main`,
 完全不加载本模块,验证见 `tests/test_cli.py::test_cli_does_not_import_qt_or_qasync`。
 
 GUI 启动走 `run()`:lazy import `MainWindow`(函数体内),事件循环走 qasync。
@@ -232,7 +232,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
     env_path = _user_data_dir() / ".env"
 
     # 2026-09-27 refactor:`MainWindow` 改在函数体内 lazy import —
-    # 之前在模块顶,CLI 模式(`python -m tgmonitor sync`)会被迫加载 PySide6。
+    # 之前在模块顶,CLI 模式(`tgmon-cli sync`)会被迫加载 PySide6。
     # 现在 `__main__.py:main()` 在子命令分支直接调 `cli.main` 不进 `run()`,
     # PySide6 永不加载(验证见 `tests/test_cli.py::test_cli_does_not_import_qt_or_qasync`)。
     from tgmonitor.ui.main_window import MainWindow
@@ -263,7 +263,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
             # 2026-10-04 plan 阶段 2.2:core/media_service.py 完全无 Qt 依赖,
             # Qt 调用通过 module-level callback 注入。GUI bootstrap 完成后
             # 立即注册,后续 `open_media_with_result` / `_stage_s3_to_tmp`
-            # 走 Qt 实现。CLI 路径(`tgmonitor sync` / `monitor`)不调本函数,
+            # 走 Qt 实现。CLI 路径(`tgmon-cli sync` / `monitor`)不调本函数,
             # callback 保持 None,与 `objects=None` 失败语义一致。
             from tgmonitor.ui._qt_callbacks import register as _register_qt_callbacks
 

@@ -95,6 +95,6 @@ async def run_channels(
             )
 
         else:
-            raise CliError("用法:tgmonitor channels {list|refresh|add|remove} ...")
+            raise CliError("用法:tgmon-cli channels {list|refresh|add|remove} ...")
 
     return 0

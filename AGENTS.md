@@ -1,8 +1,11 @@
 # AGENTS.md — tgmonitor 项目指南
 
-> 本文件为 AI agent 与人类开发者快速上手而写。内容基于仓库现有代码与文档
-> (README、pyproject.toml、docs/ARCHITECTURE.md、CONTRIBUTING.md、.github/ workflows)
-> 归纳,改代码时如与本文件矛盾,以实际代码为准并顺手更新本文件。
+> 本文件为 AI agent 与人类开发者快速上手而写,**只写现状**。历史归因、已完成的
+> 计划与点时间快照统一放 `docs/history/`(索引见 `docs/README.md`)。改代码时如与
+> 本文件矛盾,以实际代码为准并顺手更新本文件。
+>
+> 最后校准:2026-11-26(2.1.7)。文中的数字(用例数 / job 数 / 覆盖率)会漂移,
+> 标注了「以 … 为准」的地方请现查,不要照抄。
 
 ## 项目概述
 
@@ -10,14 +13,10 @@
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
 - 当前版本 **2.1.6**(以 `pyproject.toml` 为准)。
-- 包管理/构建:uv + hatchling,src 布局,console script 两个入口(2.1.2 起):`tgmon = tgmonitor.__main__:main`(**只启动 GUI**)、`tgmon-cli = tgmonitor.cli.main:main_tgmon_cli`(**独占 CLI**)。`tgmonitor` 命令已移除。
+- 包管理/构建:uv + hatchling,src 布局,console script 两个入口:`tgmon = tgmonitor.__main__:main`(**只启动 GUI**)、`tgmon-cli = tgmonitor.cli.main:main_tgmon_cli`(**独占 CLI**,13 个子命令含 `help`)。`tgmonitor` 命令 2.1.2 已删除 —— 新写文档 / 提示语不要再出现它。
 - 桌面打包:PyInstaller(`tgmonitor.spec`)→ Linux AppImage + macOS .app + Windows onedir zip;发布走 GitHub Release + SHA256SUMS。**纯 Python 后端,三平台均无需编译原生引擎**。
 - 许可证 MIT,作者 forcetone;项目注释与文档均用中文,新代码注释随项目习惯用中文。
-
-> **v2.0.0 重大变化**(相对 v1.x):TDLib(自编译 libtdjson + `tdlib_json` 子项目)→ **Telethon**;
-> 默认数据库 PostgreSQL → **SQLite**(WAL),**MongoDB 后端删除**;745 行 god facade → **按域服务**;
-> MonitorService 5 mixin → **显式组合**;CI 去掉 libtdjson 编译 / warm-cache / vcpkg,纯 `uv sync` + PyInstaller。
-> session 格式不兼容,升级需重新登录。
+- **登录只有二维码扫码一种方式**:只需 `api_id` / `api_hash`,不涉及手机号 / 验证码 / 2FA。GUI 在登录对话框扫码;headless 用 `tgmon-cli login`(二维码画在 stderr)。
 
 ## 技术栈与运行架构
 
@@ -25,7 +24,7 @@
 
 | 依赖 | 版本 | 用途 |
 |---|---|---|
-| PySide6 | >=6.6,<6.13 | Qt GUI(6.12 已解禁,见下方结论) |
+| PySide6 | >=6.6,<6.13 | Qt GUI(6.12 解禁的归因史见 `docs/history/pyside6-6.12-unban.md`) |
 | qasync | >=0.27 | Qt 事件循环接 asyncio |
 | telethon | >=1.45.0 | 纯 Python MTProto Telegram 后端 |
 | cryptg | >=0.6.1 | Telethon 加密加速(C 扩展,可选但默认装) |
@@ -35,67 +34,8 @@
 | platformdirs | >=4.11.0 | 平台数据目录 |
 | aiosqlite | >=0.22.1 | 默认 SQLite 后端(WAL) |
 
-> **PySide6 6.12 已解禁**(2026-11-14 PR #44,上限现为 `<6.13`):以下 6.12.0
-> 破坏性变更记录保留作历史依据 —— `QPixmap.loadFromData` format
-> 参数**运行时**由 `bytes` 改为 `str`(不只是 mypy stub 变严),显式传 `b"GIF"` 直接
-> `TypeError`;解释器 shutdown 时 Qt 对象销毁顺序收紧;meta 包还新增 WebEngine/PDF
-> 硬依赖。GIF 首帧解码已改为省略 format 让 Qt 自动探测,跨版本成立。
->
-> **归因结论(同日,6.12.0 隔离 worktree 实测,详见归因 PR 与
-> `scripts/diagnostics/pyside6_shutdown_probe.py`)**:不跑 pytest 的探针三档(纯 Qt /
-> 生产 MainWindow / 跨线程残留)共 60 次**零崩**;全套 pytest 5 次里 4 次 SIGSEGV
-> (3 次在 100% 后的纯 C++ 析构 `<no Python frame>`,1 次在 17% 的 `qloop_16` fixture
-> teardown)、1 次 timeout hang;UI 三文件合跑 8/8 崩、非 Qt 四文件 8/8 正常、三个 UI
-> 文件各自单跑 5/5 正常;faulthandler 栈指向 `qloop` / `LoopThread` 的跨线程 future
-> 等待或 fixture teardown,无生产代码帧 → **直接触发者是测试侧跨线程 loop fixture +
-> widget 累积到进程退出**,生产启动/退出路径本次未复现。但被析构对象是生产 widget
-> 实例,且 6.11 时代生产侧另有未根治的 segfault 记录(`ui/shutdown.py` / `closeEvent` /
-> `processEvents`),不能 100% 排除参与,需单独治理。
->
-> **2026-11-14 结论修正**(基于 PR #38 反向验证 + 生产退出路径探针):
-> - 治理后崩溃在 6.12 完全消失(`qloop` 共享 + per-test `deleteLater`),触发条件
->   就是测试侧累积状态 —— 已从"推断"升为"实测坐实"。
-> - 生产退出路径探针(真 `MainWindow` → `closeEvent` → `run_shutdown_coro_sync`
->   → `processEvents`,60 次独立进程)在 6.12 下**零崩**,证明生产对象图在
->   "启动 → 关闭 → 退出"路径上 6.12 可用。
-> - 那批"历史 segfault"是 6.11 时代且**已有绕开**:Windows offscreen `processEvents`
->   必崩 → 已改 `windows` 插件;嵌套 `QEventLoop.exec()` segfault → 已改 `processEvents`
->   而非 exec;`test_login_dialog` 跨线程 asyncio GC race → 已 `skipif(win32)`。
->   **均不阻塞 6.12 解禁**,但属独立质量债(CHANGELOG:300 那个 `skipif` 根因原文
->   "留给 v1.12.3")仍建议后续单独治理,不在解禁阻塞项内。
->
-> **反向验证(2026-11-14,治理后,6.12.0 隔离 worktree)**:`tests/fixtures/_qt_runtime.py`
-> 把 4 处 `qloop` + 1 处 `bg_loop` 统一成**全会话共享 1 个后台 loop**,并 per-test
-> `deleteLater()` 顶层 widget(不调 `close()`,避开 PR #35 的 `closeEvent` 报错)、
-> `pytest_sessionfinish` 停掉 loop 线程。同一组实验:UI 三文件合跑 3/3 `rc=0`
-> (基线 8/8 SIGSEGV)、全套 3/3 `rc=0` 且跑到 100%、无 fatal 无 hang(基线
-> 4× SIGSEGV + 1× hang)、非 Qt 四文件 1/1 正常 → **归因结论被反向验证坐实**。
->
-> **解禁前剩余动作**(2026-11-14 收尾):
-> - ① ②(治理 `qloop` 共享 + per-test `deleteLater`)已完成并被反向验证坐实。
-> - ③ 三平台 CI 复验共享 loop + widget 清理 —— 将在"去掉 `<6.12`"那一步的 PR 由
->   CI 三平台(含 Windows `windows` QPA 的 `sendPostedEvents(DeferredDelete)`)实跑
->   承担,无需单独预跑。
-> - ④ 评估 6.12 新增 WebEngine/PDF 对打包体积的影响 —— **实测结论:无影响,划掉**。
->   6.12 隔离环境打包 `dist/` = 361M(与 6.11 基线完全一致),WebEngine **0 文件**
->   进包(PyInstaller 按 import 收集,本应用不 import `QtWebEngine`);QtPdf 被拉入
->   但体积不变。且 6.11 的 `PySide6` 包本身已含 606M 的 `QtWebEngineCore`
->   (6.11 总 1.2G / 6.12 总 1.2G 一致)——"6.12 新增硬依赖致体积膨胀"是 PR #37 的
->   误判,特此纠正。**`tgmonitor.spec` 的 `excludes=[]` 保持不动,无需为 6.12 加排除**。
-> - ⑤ 生产侧历史 segfault(`CHANGELOG:300/1414`、`ui/shutdown.py` 嵌套 exec /
->   Windows `processEvents`)—— 诊断结论:**不阻塞解禁**(均有绕开:
->   `skipif(win32)` / 改 `windows` 插件 / 用 `processEvents` 而非 exec;生产退出
->   路径真 `MainWindow` 探针 60 次零崩)。属独立质量债,建议后续单独治理。
-> - ⑥ 去掉 `<6.12>` 属重大依赖升级,需用户拍板;解禁 PR 的 CI 三平台即为跨平台
->   验证(6.12 反证目前只在 macOS / Python 3.13.14 做过)。
->   **2026-11-14 用户已拍板解禁,PR #44 合并**:上限改 `<6.13`,dependabot
->   ignore 删除,`uv.lock` 升 6.12.0;CI 三平台 8/8 全绿 + 本地 PyInstaller
->   bundle 体积与 6.11 基线一致。
-> - 临时保险:`.github/dependabot.yml` 已加 `pyside6 >=6.12` 的 `ignore`,评估期
->   间挡住 dependabot 强行提 6.12+;真正解禁时连同本 ignore 一起删除。
-
 可选依赖组:`postgres`(asyncpg)、`objectstore`(aioboto3,配 S3)、`all`。**无 mongo**。
-dev 组:pytest、pytest-asyncio、ruff、mypy>=2.3.0、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=3.7、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。
+dev 组(以 pyproject `[dependency-groups]` 为准):pytest、pytest-asyncio、ruff、mypy>=2.4.1、coverage、pyinstaller>=6.21.0、moto[s3]>=5、pre-commit>=4.7.0、testcontainers[postgres]>=4.8、hypothesis>=6.100、pytest-timeout>=2.3。**没有 pytest-cov** —— 覆盖率用 `coverage run`。
 
 ### 分层与边界(最重要的架构约束)
 
@@ -109,8 +49,9 @@ core(AppService 组合根/生命周期 + 领域服务)
 存储(sqlite_repo / postgres_repo) · 对象存储(local/folder/s3) · 导出(json/csv/markdown/html)
 ```
 
-- **`core/` 禁止 import PySide6 / qasync** — 保持领域逻辑与 UI 框架解耦,可离线单测。
+- **`core/` 禁止 import PySide6 / qasync** — 保持领域逻辑与 UI 框架解耦,可离线单测。`tests/test_architecture.py` 用 AST 守护(含延迟 import)。
 - **跨边界只传 DTO**(`dto.py` 里的 ChannelDTO / MediaDTO / MessageDTO / ExportRequest / ExportResult / SyncOptions / SyncResult 等),不传 Telethon 对象、ORM 对象、Qt 对象。
+- **datetime 约定:aware UTC 是规范形,naive 一律视为 UTC**(`MessageDTO.date` 默认工厂就是 `datetime.now(UTC)`)。读回的形状因后端而异 —— PG(`TIMESTAMPTZ`)返回 aware,SQLite 原样 round-trip,InMemory 保留原对象 —— 所以比较时间要比「瞬时」,不要比 tzinfo 有无(见 `tests/test_storage_backends.py::_instant`)。PG 写路径的 datetime 参数先过 `_sqlite_common._ensure_utc`。
 - 四套可插拔抽象:`StorageRepository`(8 个按域 ABC 组合)、`ObjectStore`(ABC + local_path/uri 能力方法)、`TelegramClient`(runtime_checkable Protocol)、`Exporter`(ABC + 注册表)。新增实现见下文「扩展点」。
 - **AppService 不再是 god facade**:只保留生命周期 / 热重载 / 导出 + 后端持有;域操作 UI 直调 `app.auth/channels/messages/media/batch/channel_sync`。公开表面由 `tests/test_app_service_surface.py` allowlist 锁死,新增域转发会被守护测试拒绝。
 - UI 跨线程调 coroutine 必须走 `ui/async_bridge.py` 的 `run_coro(loop, coro, *, on_success, on_error, error_label)`,不要自己套 `asyncio.run_coroutine_threadsafe` + try/except 模板。
@@ -119,55 +60,48 @@ core(AppService 组合根/生命周期 + 领域服务)
 
 | 路径 | 职责 |
 |---|---|
-| `__main__.py` / `app.py` | 入口。`run()` 是 GUI 组合根:构建 qasync `QEventLoop` 后**单 loop `run_forever` + `ensure_future`**(历史坑:不要用 `run_until_complete`);凭据未配置时 factory 返回占位 client,应用正常启动显示未登录引导;真 client 构造失败弹 QMessageBox;退出码 0/1/130。`__main__.main()` 是 **纯 GUI 入口**(2.1.2 起不再分流 CLI):无参数 / `gui` → `app.run()`;其余参数(含 `status` 等 CLI 子命令)→ stderr 报错 + 退出码 2 并提示 `tgmon-cli`。CLI 全部走 `tgmon-cli` |
-| `core/runtime.py` | **CLI / GUI 共享 composition root**:`bootstrap()` 与 `shutdown()`(配套清理),`core/` 内禁止 import PySide6 / qasync |
-| `core/config.py` | pydantic-settings 配置,`TG_` 环境变量前缀;`DBBackend` SQLITE(默认)/ POSTGRES |
+| `__main__.py` / `app.py` | 入口。`run()` 是 GUI 组合根:构建 qasync `QEventLoop` 后**单 loop `run_forever` + `ensure_future`**(历史坑:不要用 `run_until_complete`);凭据未配置时 factory 返回占位 client,应用正常启动显示未登录引导;真 client 构造失败弹 QMessageBox;退出码 0/1/130。`__main__.main()` 是 **纯 GUI 入口**:无参数 / `gui` → `app.run()`;其余参数 → stderr 报错 + 退出码 2 并提示 `tgmon-cli`。CLI 全部走 `tgmon-cli` |
+| `core/runtime.py` | **CLI / GUI 共享 composition root**:`bootstrap()` 与 `shutdown()`(配套清理) |
+| `core/config.py` | pydantic-settings 配置,`TG_` 环境变量前缀;`DBBackend` SQLITE(默认)/ POSTGRES;完整字段见 `.env.example` |
 | `core/events.py` | EventBus:async pub/sub,订阅者异常被吞掉(不崩主流程)。领域事件如 LoginStateChanged / ConnectionStateChanged / ChannelSubscribed / MessageReceived / MessageEdited / MessageDeleted / MediaDownloaded / ExportDone / BatchDone / ChannelSyncProgress / ErrorOccurred / AuthErrorOccurred / SettingsChanged |
 | `core/dto.py` | 跨边界数据传输对象 |
-| `core/app_service/` | **组合根 + 生命周期**(app_service.py + _lifecycle / _reconfigure / _backend_sync)。装配域服务,不再是 god facade |
-| `core/auth_service.py` | AuthService:登录/登出与登录状态管理(`app.auth`) |
+| `core/app_service/` | **组合根 + 生命周期**(`app_service.py` + `_lifecycle` / `_reconfigure` / `_backend_sync`)。装配域服务,不再是 god facade |
+| `core/auth_service.py` | AuthService:二维码登录 / 登出与登录状态管理(`app.auth`) |
 | `core/channel_service.py` | ChannelService:订阅 / 退订 / 白名单(`app.channels`) |
 | `core/message_service.py` | MessageService:消息查询 / 收藏 / 标签 / 备注 / 单删(`app.messages`) |
-| `core/media_service/` | MediaService:媒体列表 / CRUD / 打开 / retry / reconcile(`app.media`) |
-| `core/batch_service.py` | BatchService:7 批量 op + 取消,自持 cancel event(`app.batch`) |
+| `core/media_service/` | MediaService:媒体列表 / CRUD / 打开 / retry / reconcile(`app.media`)。「打开」只放行白名单扩展名(2.1.7) |
+| `core/batch_service.py` | BatchService:6 个批量 op(删 / 转发 / 置顶 / 取消置顶 / 加 / 减回应)+ `cancel_current_batch`,每个 op 自持 cancel event(`app.batch`) |
 | `core/channel_sync/` | ChannelSyncService:手动全量同步,`chat_delay_ms` / `page_delay_ms` 节流,断点续拉(`app.channel_sync`) |
-| `core/settings_store.py` | `.env` 保形读写(`.part` + rename 原子写),`EditableSettings` 供 UI |
+| `core/settings_store.py` | 数据目录 `.env` 保形读写(临时文件 + rename 原子写,文件权限 `0600`),`EditableSettings` 供 UI |
 | `core/telegram/` | Telethon 封装:`client`(Protocol)/ `telethon_client`(TelethonTelegramClient)/ `telethon_messages`(归一化)/ `proxy`(python-socks)/ `errors` / `factory`;`unconfigured.py` 是凭据缺失时 factory 返回的占位 client(启动不崩);`fake_client.py` 是测试用假客户端 |
-| `core/monitor/` | MonitorService(**显式组合**,非 mixin):`service` + `orchestrator`(主循环 + 退避重连 1s→30s)/ `whitelist` / `event_handlers` / `downloader`(MediaDownloader 单文件 200MB 上限)/ `backfill` / `delete` |
-| `core/storage/` | 8 个按域 ABC(SchemaLifecycle / ChannelStore / MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore / ActivityStore)组合成 `StorageRepository`;`sqlite_repo`(默认,aiosqlite WAL)/ `postgres_repo`(asyncpg,+ `_*_pg` 分域 helper)+ 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
+| `core/monitor/` | MonitorService(**显式组合**,非 mixin):`service`(宿主 facade)+ `_runtime`(`MonitorRuntime`,组件间共享状态,5 组件只依赖它、不反向持有宿主)+ `orchestrator`(主循环 + 退避重连 1s→30s)+ `whitelist` / `event_handlers` / `downloader`(MediaDownloader 单文件 200MB 上限)/ `backfill` / `delete` |
+| `core/storage/` | 8 个按域 ABC(SchemaLifecycle / ChannelStore / MetaStore / MessageStore / MediaStore / ThumbnailStore / UserMetaStore / ActivityStore)组合成 `StorageRepository`;`sqlite_repo`(默认,aiosqlite WAL)/ `postgres_repo`(asyncpg),两者都是 facade + 按域 helper 模块(`_*_sqlite.py` / `_*_pg.py`)+ 懒加载 factory;唯一键 `(channel_id, telegram_msg_id)`;media 只存引用不存二进制 |
 | `core/objectstore/` | base ABC + local_store(平铺)/ folder_store(两级分片)/ s3_store + factory,默认 **FOLDER** |
 | `core/export/` | base 注册表 `EXPORTERS` + `@exporter` 装饰器 + json/csv/markdown/html + 流式导出 service |
-| `cli/` | argparse 全部 2.1.2 子命令(含 `help`);裸 `asyncio.run()` 事件循环,无 PySide6。`main.py` 是注册表单一真源(`CLI_SUBCOMMANDS` + `_DISPATCH`);`tgmon-cli` 直连 `main_tgmon_cli`,从进程起点就不 import `app` |
-| `ui/` | PySide6 界面:main_window、widgets/、viewmodels/、theme.py、icon.py、nav_bar、ui_assembler;`async_bridge.py` 为跨线程样板(`run_coro`) |
+| `cli/` | argparse 13 个子命令(含 `help`);裸 `asyncio.run()` 事件循环,无 PySide6。`main.py` 是注册表单一真源(`CLI_SUBCOMMANDS` + `_DISPATCH`);`_common.py` 收口 `cli_context` / `emit_json` / `progress` / `CliError` |
+| `ui/` | PySide6 界面:`main_window.py`、`widgets/`、`viewmodels/`、`controllers/`、`icon.py`、`nav_bar.py`、`ui_assembler.py`、`shutdown.py`、`thumbnail.py`、`state_labels.py`;`async_bridge.py` 是跨线程样板;全局样式表 `ui/resources/style.qss` |
 
 ## 目录结构
 
 ```
 ├── src/tgmonitor/              # 全部源码(src 布局,见上表)
-├── tests/                      # pytest 测试(1604 用例);conftest.py + fixtures/ 提供公共 fixtures
-│   ├── fixtures/               # settings/storage/objectstore/bus/client/monitor/app/make_* 等
-│   └── integration/            # 真 PG 集成(testcontainers,CI-only,默认 skip)
+├── tests/                      # pytest 测试(约 1180 个默认用例 + 105 个 integration 标记;以 pytest --collect-only 为准)
+│   ├── fixtures/               # settings/storage/objectstore/bus/client/monitor/app/make_* 等;_pg.py 是真 PG DSN
+│   ├── integration/            # 真 PG 集成(testcontainers,CI 跑,本地无 Docker 自动 skip)
+│   └── perf/                   # 本地手工基准,默认不收集,显式 `pytest tests/perf/<文件>` 跑
 ├── scripts/build_appimage.sh   # Linux AppImage 构建(唯一脚本;无 libtdjson 编译)
 ├── tgmonitor.spec              # PyInstaller 打包配置(纯 Python,binaries=[])
-├── docs/ARCHITECTURE.md        # 架构详解
+├── docs/                       # 文档:README.md 是索引;history/ 是点时间快照
 ├── .github/workflows/          # ci / build / audit
-└── pyproject.toml              # 构建 + 工具配置(ruff/mypy/pytest 全在这里)
+└── pyproject.toml              # 构建 + 工具配置(ruff/mypy/pytest/coverage 全在这里)
 ```
-
-> v2.0.0 已删除 `packages/tdlib_json/` 子项目与 `scripts/build_libtdjson.{sh,ps1}`。
 
 ## 常用命令
 
-> 运行/开发所需工具(macOS 已全部就位):
-> - **uv**(必须,包管理 + 自动下载 Python;CI 同步)
-> - **git**(克隆/提交)
-> - **Python 3.13** — 由 uv 自动装(`uv python list`),不依赖系统 Python
-> - **无需任何原生编译工具链**(Telethon 纯 Python;cryptg 有 wheel)
-> - macOS 跑 PySide6 无需额外系统库(wheel 自带);Linux 打包才需要 appimagetool / rsvg-convert
-> - 可选 DB/S3 后端(extra)非运行必需;不装也能用默认 SQLite + Folder 存储
+> 运行/开发所需工具:uv(必须)、git。Python 3.13 由 uv 自动装,无需任何原生编译工具链;macOS 跑 PySide6 无需额外系统库,Linux 打包才需要 appimagetool / rsvg-convert。
 
 ```bash
-# 安装依赖(dev 全量 + 可选 DB/S3 后端,与 CONTRIBUTING.md 一致)
+# 安装依赖(dev 全量 + 可选 DB/S3 后端;少了 extras 会有测试模块收集失败)
 uv sync --all-groups --all-extras
 
 # 运行应用(GUI)
@@ -176,87 +110,99 @@ uv run tgmon
 # 命令行(全部 CLI 操作)
 uv run tgmon-cli help
 
-# 跑全部测试(核心单测全离线;UI 测试需要 offscreen 平台)
+# 跑测试(核心单测全离线;UI 测试需要 offscreen 平台)
 PYTHONPATH=src uv run pytest -v
-PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest -v   # 含 UI 测试
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest -v            # 含 UI 测试
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest tests/<文件> -v -k <名字>
 
-# 只跑某文件 / 某个测试
-PYTHONPATH=src uv run pytest tests/test_channel_sync.py -v -k <名字>
+# 只跑集成测试(需 Docker;没有则自动 skip)
+uv run pytest -m integration
 
-# lint / typecheck
-uv tool run --from "ruff>=0.5" ruff check src tests
-uv tool run --from "ruff>=0.5" ruff format --check src tests
-uv run mypy src/tgmonitor          # 本地全量;CI 单 job 整包跑(见下)
+# lint / typecheck —— 用锁定版 ruff,与 CI 同版本(别用 `uv tool run --from "ruff>=0.5"`,那是最新的浮动版)
+uv run ruff check src tests
+uv run ruff format --check src tests          # 只跑 check 不跑 format 会漏格式问题
+uv run mypy src/tgmonitor                    # 只跑 src;tests 目录有既有类型噪声,别 `mypy src tests`
 
-# 覆盖率(有分支覆盖,但 CI 不设阈值)
-PYTHONPATH=src uv run pytest --cov=tgmonitor
+# 覆盖率(分支覆盖;CI coverage job 同款,阈值 70)
+PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run coverage run -m pytest && uv run coverage report --fail-under=70
 
 # 打包
 uv run pyinstaller --clean -y tgmonitor.spec   # 产物在 dist/
 bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 ```
 
-> 全套测试约 140~150s(含一个注入 60s rate-limit sleep 的 channel_sync 用例),
-> 用 Bash 跑时 timeout 设 ≥ 600000ms,别用默认 120s(会被墙钟杀掉,误判 hang)。
+> 全套测试本地约 100~150s。`addopts` 已带 `-q`,命令行再加一个 `-q` 等于 `-qq`,**汇总行会被吞掉**。
+> 用 Bash 跑时 timeout 设 ≥ 600000ms。
 
 ## 代码风格与约定(详见 CONTRIBUTING.md)
 
 - 每个模块文件第一行 `from __future__ import annotations`;公共方法全量 type hints。
 - 语法按 Python 3.10+ 写:`dataclass(slots=True)`、`str | None` 联合类型等。
 - 函数第一行是 docstring(中文);`core/` 内日志用 `logging` 模块,不要 `print`。
-- **ruff**:line-length 100,`select=["E","F","I","B","UP","N","SIM","ASYNC"]`,ignore E501/UP042/UP035/SIM105/N818/B008,零容忍(CI 不通过即报错)。
-- **mypy**:低严格度(`disallow_untyped_defs=false`),第三方模块按 overrides 忽略(telethon / python_socks / PySide6 / qasync / pydantic 等);PySide6 的 stub 噪声(扁平 enum 别名 / form helper 返回 QWidget)用文件头 `# mypy: disable-error-code="attr-defined"` 屏蔽。CI mypy 单 job 整包跑 `uv run mypy src/tgmonitor`(ubuntu;原 8 模块 × 2 OS 矩阵已收敛)。
-- **UI 资源**:`style.qss` 由 `app.py` 启动加载并替换 `{accent}` / `{accentHover}` 占位符;无翻译文件编译步骤。
-- commit 格式:`type(scope): subject`,type ∈ feat/fix/docs/refactor/test/chore/perf。
-- 分支/tag:`main` 唯一长期分支;主题分支 `<type>/<kebab-描述>`(不带版本号/PR 号),合并即删;tag `vX.Y.Z` 只打 main,历史 v1.x tag 永久保留。详见 CONTRIBUTING.md「🌿 分支与 tag 规范」。
+- **ruff**:line-length 100,`select=["E","F","I","B","UP","N","SIM","ASYNC","BLE","C90","RUF100"]`,ignore E501/UP042/UP035/SIM105/N818/B008,零容忍。圈复杂度上限 15(唯一豁免:`app.py:run()`);静默吞任意异常必须写 `# noqa: BLE001` 知情抑制;**失效的 `# noqa` 即错误**(RUF100)—— 加豁免前先确认规则真的触发。ANN 暂不开启。
+- **mypy**:低严格度(`disallow_untyped_defs=false`),第三方模块按 overrides 忽略;PySide6 的 stub 噪声用文件头 `# mypy: disable-error-code="attr-defined"` 屏蔽。CI 单 job 整包跑 `uv run mypy src/tgmonitor`。
+- **UI 资源**:`ui/resources/style.qss` 由 `app.py` 启动加载并替换 `{accent}` / `{accentHover}` 占位符;无翻译文件编译步骤。
+- commit 格式:`type(scope): subject`,type ∈ feat/fix/docs/refactor/test/ci/chore/perf。
+- 分支/tag:`main` 唯一长期分支(禁直推);主题分支 `<type>/<kebab-描述>`(不带版本号/PR 号),合并即删;tag `vX.Y.Z` 只打 main,历史 v1.x tag 永久保留。详见 CONTRIBUTING.md「🌿 分支与 tag 规范」。
 - 编码约定:4 空格缩进、LF 行尾、100 列上限(.editorconfig)。
 
 ## 测试策略
 
-- **离线原则**:`core/` 单测不碰网络/真实 Telegram/真实数据库,全靠 fake — `FakeTelegramClient`、`InMemoryRepository`、`LocalObjectStore`。v2.0.0 起**无 `stub_tdlib_init`**(TDLib 已删,Telethon 测试直接 mock)。
+- **离线原则**:`core/` 单测不碰网络/真实 Telegram/真实数据库,全靠 fake — `FakeTelegramClient`、`InMemoryRepository`、`LocalObjectStore`、fake S3(moto)。
 - pytest-asyncio 全局 `asyncio_mode="auto"`,`addopts="-ra -q -m 'not integration'"`,`timeout=300` / `timeout_method="thread"`(配置在 pyproject;防 CI fixture hang)。
 - `tests/fixtures/` 常用 fixtures:`settings`(stub 配置)、`storage`(InMemoryRepository)、`objectstore`、`bus`、`client`(FakeTelegramClient)、`monitor`、`app`、`make_message` / `make_photo` 工厂。`Settings.for_test()` 默认 SQLite + METADATA + LOCAL,离线可跑。
-- **UI 测试必须 `QT_QPA_PLATFORM=offscreen`**(无头环境跑 Qt;Windows CI 用原生 `windows` 插件);测试系统库依赖见 CI workflow。
-- 集成测试(`tests/integration/`,真 PG via testcontainers)默认 skip,CI 用 `-m integration` 显式跑;本地无 Docker 自动 skip。
+- **UI 测试必须 `QT_QPA_PLATFORM=offscreen`**(无头环境跑 Qt;Windows CI 用原生 `windows` 插件);测试系统库依赖见 CI workflow。全会话共享 1 个后台 loop,per-test `deleteLater()` 顶层 widget(不要 `close()`)。
+- **存储 parity 三后端通吃**:`tests/test_storage_backends.py` 的 `seeded_repo` / `meta_seeded_repo` 参数化 `inmemory` / `sqlite` / `pg`。`pg` 参数带 `integration` marker,默认 deselect;CI integration job 用 `-m integration` 选中在真 PG 上跑。
+- **集成测试**(`tests/integration/` + 上述 `pg` 参数,真 PG via testcontainers):本地无 Docker 自动 skip;**CI 断言零 skip**(`pg_engine` 起不来时 job 会红,不会静默全绿)。
+- **守护测试清单已改自动发现**(2.1.7):存储层「无裸 `subscribed` 列」、monitor「组件不反向持有宿主」、CLI「零 GUI 依赖 + 注册表三重对齐」都按目录 glob 扫描 —— **新增模块自动纳入,不需要登记**;若目录结构大改,先看对应的 inventory 元测试。
 - 新增领域逻辑尽量走纯 core 单测(offline),不靠 UI 测试覆盖。
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main):test 矩阵(ubuntu + macOS + windows × 3.13,三平台统一裸 `python -m pytest`)、coverage 独立 job(仅 ubuntu,`coverage run -m pytest` 收分支覆盖率 → 单份 `coverage.xml` artifact,不设阈值、`continue-on-error` 与平台门控隔离)、ruff job(check + format)、mypy 单 job 整包。各 job 设 timeout-minutes。Linux/macOS 装 Qt offscreen 系统库并设 `QT_QPA_PLATFORM=offscreen`;Windows 用原生插件。coverage 插桩曾在 runner 上引发无限 hang,故只保留在观测 job,平台门控一律裸跑。
-- **build.yml**(tag `v*` + 手动触发):三平台 `uv sync` → PyInstaller 打包 → Linux AppImage(`scripts/build_appimage.sh`,appimagetool + rsvg-convert)+ macOS .app zip + Windows onedir zip → `release` job 建 GitHub Release + SHA256SUMS。**纯 Python,无原生库编译,分钟级完成**。
-- **audit.yml**(每周一 09:30 UTC):`uv export --no-emit-project --no-hashes` → `pip-audit --strict -r`(全量供应链含 dev)。pip-audit 不直接读 uv.lock,必须先 export;裸 `pip-audit --strict` 会误审计工具自身环境。
+- **ci.yml**(push/PR → main,7 个 job,全部阻塞合并,无 `continue-on-error`;以文件为准):
+  - `pytest` × 3 平台(ubuntu / macOS / Windows × 3.13,裸 `python -m pytest`)
+  - `coverage`(ubuntu,分支覆盖率,`coverage report --fail-under=70` **是门禁**)。插桩曾在 runner 上 hang,所以只放独立 job;hang 由 `pytest-timeout` 兜底成一次带线程栈的失败
+  - `integration`(ubuntu,`-m integration` 跑真 PG;输出 junit 并断言用例数 > 0、零 skip、`[pg]` 参数化项实跑过)
+  - `ruff`(check + format;**版本取自 `uv.lock`**,另跑 `uv lock --check`)
+  - `mypy`(单 job 整包)
+  - 改 console script 入口必须同步 `ci.yml` 的 "Verify CLI entry" 步骤,否则三平台 pytest job 会秒红。
+- **build.yml**(tag `v*` + 手动触发):三平台 `uv sync` → PyInstaller 打包 → Linux AppImage + macOS .app zip + Windows onedir zip → `release` job 建 GitHub Release + SHA256SUMS。**纯 Python,无原生库编译**。
+- **audit.yml**(每周一 09:30 UTC):`uv export` → `pip-audit --strict -r`(全量供应链含 dev)。pip-audit 不直接读 uv.lock,必须先 export;裸 `pip-audit --strict` 会误审计工具自身环境。
 - **dependabot.yml**:uv 生态 + GitHub Actions 每周一(Asia/Shanghai)扫描依赖,前缀 `deps` / `ci`。
-- 发布流程(打 tag 前):本地过全部测试 → CI 全绿 → 打 `v<version>` tag 推远端 → build.yml 出产物。
-- v2.0.0 已删除 `warm-cache` 预热 job 与 libtdjson / vcpkg 缓存 key(TDLib 时代产物)。
+- 发布流程(打 tag 前):本地过全部测试 → CI 全绿 → 只推 lightweight `v<version>` tag → build.yml 出产物。版本落点 6 处:`pyproject` / `__init__.py` / `uv.lock` / `tgmonitor.spec` 两字段 / 本文件 / `CHANGELOG.md`。
 
 ## 配置与数据目录
 
-- 配置走环境变量(`TG_` 前缀,见 `core/config.py` 与 `.env.example`),运行期修改会保形写回数据目录的 `.env`。
-- 数据目录由 platformdirs 决定(`platformdirs.user_data_dir`):
+- 配置走环境变量(`TG_` 前缀,字段清单与默认值见 `.env.example`),运行期修改会保形写回数据目录的 `.env`。
+- **`.env` 在平台数据目录,不在仓库根、不相对 cwd** —— 往仓库根放 `.env` 不会被读取。完整清单见 `.env.example`;日常改配置走设置页。
+- 数据目录由 platformdirs 决定(`user_data_dir("tgmonitor", appauthor=False)`):
   - macOS:`~/Library/Application Support/tgmonitor`
   - Linux:`$XDG_DATA_HOME/tgmonitor`(默认 `~/.local/share/tgmonitor`)
-  - Windows:`%APPDATA%/tgmonitor`
-- 子目录:`session/`(Telethon session,`tgmonitor.session`)、`media/`;SQLite 数据库文件 `tgmonitor.db` 与 `.env` 也在该目录。
-- 数据库:`TG_DB_BACKEND=sqlite`(默认)/ `postgres`;`TG_SQLITE_PATH` 自定义 SQLite 路径;`TG_DB_DSN` 配 PG。旧 `mongo` / `jsonl` 等非法值启动时由 `Settings.load_tolerant()` 回退默认 SQLITE 并弹提示,不阻断启动(GUI);CLI 路径仍严格校验。
+  - Windows:`%LOCALAPPDATA%\tgmonitor`(Local,非 Roaming)
+- 子目录:`session/`(Telethon session,`tgmonitor.session`)、`media/`、`logs/tgmonitor.log`(5MB × 3 轮转);SQLite 数据库 `tgmonitor.db` 与 `.env` 也在该目录。
+- `TG_LOG_LEVEL` 只读**进程环境变量**(不走 `.env`),排查监听问题时设 `DEBUG` 能看到 monitor 心跳。
+- 数据库:`TG_DB_BACKEND=sqlite`(默认)/ `postgres`;`TG_SQLITE_PATH` 自定义 SQLite 路径;`TG_DB_DSN` 配 PG。旧 `mongo` / `jsonl` 等非法值启动时由 `Settings.load_tolerant()` 回退默认 SQLITE 并弹提示,不阻断启动。
 - 代理:SOCKS5 走 `TG_PROXY`(`parse_socks5_proxy` → python-socks tuple → Telethon `proxy=`)。
 
 ## 安全注意事项
 
-- **session 文件等同账号密码**:Telethon session 文件(`tgmonitor.session`)、`.env`(可能含 api_id / api_hash / 数据库口令)一律不得提交进 git(`.gitignore` 已覆盖,但新增凭据类文件要自觉)。
+- **session 文件等同账号密码**:Telethon session 文件(`tgmonitor.session`)、`.env`(含 api_id / api_hash / 数据库口令 / S3 密钥 / 代理口令)一律不得提交进 git(`.gitignore` 已覆盖,但新增凭据类文件要自觉)。
+- 日志 / CLI 输出里不得出现凭据:`config show` 对 URL 类字段脱敏(`redact_url_credentials`),其余敏感项打码;二维码 token 不进日志。新增会打印配置或 URL 的代码,沿用同一套 helper。
+- 「打开媒体」只放行白名单扩展名(远端频道可任意控制文件名 / 扩展名,`.bat` / `.html` / `.svg` 等一律拒绝)。
 - CI 无任何凭据注入,测试全部用 fake;不要为了「让测试过」往 CI 塞真凭据。
 - 安全漏洞报告走 `SECURITY.md` 的渠道。
 
 ## 扩展点
 
-- **新增存储后端**(如 MySQL):在 `core/storage/` 实现 8 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。
+- **新增存储后端**(如 MySQL):在 `core/storage/` 实现 8 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。写路径的 datetime 参数过 `_ensure_utc`。
 - **新增对象存储后端**:在 `core/objectstore/` 实现 `ObjectStore` ABC,注册 factory(默认 FOLDER,平铺/分片可切换)。
 - **新增导出格式**:在 `core/export/` 用 `@exporter` 装饰器注册到 `EXPORTERS`,service 流式导出自动可见;含模板的(如 HTML)用 Jinja2。
-- **新增 Telegram 后端/假客户端**:实现 `TelegramClient` Protocol;测试用 `fake_client.FakeTelegramClient`。改 Protocol 签名必须同步 telethon_client / fake_client / unconfigured 三实现(见 CONTRIBUTING.md checklist;v2.0.0 无自动签名守护测试,靠 mypy + 离线测试 + 人工)。
-- **新增领域事件**:在 `core/events.py` 定义,EventBus 发布;UI 侧订阅刷新。
+- **新增 Telegram 后端/假客户端**:实现 `TelegramClient` Protocol;测试用 `fake_client.FakeTelegramClient`。改 Protocol 签名必须同步 telethon_client / fake_client / unconfigured 三实现(v2.0.0 无自动签名守护测试,靠 mypy + 离线测试 + 人工)。
+- **新增领域事件**:在 `core/events.py` 定义,EventBus 发布;UI 侧订阅刷新。EventBus 订阅者必须是 async。
 - **新增域操作**:加在对应域服务(auth/channels/messages/media/batch/channel_sync)上,**不要**加回 AppService facade(allowlist 守护测试会拒)。
 - **UI 侧新增跨线程异步调用**:一律走 `ui/async_bridge.py` 的 `run_coro`,不要另起模板。
-- **新增 CLI 子命令**:在 `src/tgmonitor/cli/` 加 `xxx.py`,仿 `sync.py` / `monitor.py` 写 `async def run_xxx(args, *, app=None, monitor=None)`;然后在 `cli/main.py` 三处同步注册表:`build_parser()` 加 `sub.add_parser("xxx", …)`、`CLI_SUBCOMMANDS` 加 `"xxx"`、`_DISPATCH` 加 `"xxx": ("tgmonitor.cli.xxx", "run_xxx")`。`tgmon-cli` 按注册表自动路由(`__main__.py` 只管 GUI,无需改动)。**约束**:
-  - CLI 子包内任何模块禁止 import PySide6 / qasync / `tgmonitor.ui.*`(`tests/test_cli.py::test_cli_does_not_import_qt_or_qasync` 是子进程断言守门,跨 conftest 隔离)
-  - CLI 入口走 `core/runtime.py:bootstrap()`,与 GUI 共用 composition root;`run_xxx(args, *, app, monitor)` 入参允许测试注入 fakes,生产路径 `None` → 自动走 bootstrap()
-  - 鉴权失败(`state != "ready"`):CLI 没有 phone/code 输入面板,直接退出码 1 + stderr 提示去 GUI 完成登录
-  - 进度反馈走 stdout `print` + `EventBus.subscribe(ChannelSyncProgress, ...)`,与 GUI 共用事件流
+- **新增 CLI 子命令**:在 `src/tgmonitor/cli/` 加 `xxx.py`,仿 `sync.py` 写 `async def run_xxx(args, *, app=None, monitor=None)`;然后在 `cli/main.py` 三处同步注册表:`build_parser()` 加 `sub.add_parser("xxx", …)`、`CLI_SUBCOMMANDS` 加 `"xxx"`、`_DISPATCH` 加 `"xxx": ("tgmonitor.cli.xxx", "run_xxx")`。`__main__.py` 只管 GUI,无需改动。**约束**:
+  - CLI 子包内任何模块禁止 import PySide6 / qasync / `tgmonitor.ui.*`。`tests/test_cli.py::test_cli_does_not_import_qt_or_qasync` **按目录自动发现** `cli/*.py` 逐个 import,并断言 磁盘模块 == `_DISPATCH` 模块 + `_common`/`main`、`CLI_SUBCOMMANDS` == `_DISPATCH` 键 + `help`、parser 认得每个命令 —— 漏任何一处都会红。
+  - CLI 入口走 `core/runtime.py:bootstrap()`,与 GUI 共用 composition root;`run_xxx(args, *, app, monitor)` 入参允许测试注入 fakes,生产路径 `None` → 自动走 bootstrap()。
+  - 鉴权失败(`state != "ready"`):退出码 1 + stderr 提示执行 `tgmon-cli login`(headless 可用,不必去 GUI)。
+  - 进度反馈走 stderr,stdout 只输出数据(`--json` 可机读);写操作强制 `--yes`。

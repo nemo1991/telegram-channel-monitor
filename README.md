@@ -133,7 +133,7 @@ uv run tgmon-cli config validate                  # 校验存储 / 对象存储�
 - 查询 / 状态命令统一支持 `--json`。
 - 会改变远端或本地状态的写操作必须显式加 `--yes`:`channels add / remove / refresh`、`logout`、
   `messages delete`、`media delete / download-all / reconcile --apply`、`config set`。
-- 完整设计见 [`docs/PRD-2.1.0-CLI.md`](docs/PRD-2.1.0-CLI.md)。
+- 完整设计见 [`docs/history/PRD-2.1.0-CLI.md`](docs/history/PRD-2.1.0-CLI.md)。
 
 ---
 

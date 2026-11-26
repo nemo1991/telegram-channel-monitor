@@ -109,7 +109,7 @@ async def run_config(
     if cmd == "set":
         return await _config_set(args, app=app, monitor=monitor)
 
-    raise CliError("用法:tgmonitor config {show|get|set|validate} ...")
+    raise CliError("用法:tgmon-cli config {show|get|set|validate} ...")
 
 
 async def _config_set(

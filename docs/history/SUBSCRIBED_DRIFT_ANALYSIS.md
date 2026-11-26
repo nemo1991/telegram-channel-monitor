@@ -1,5 +1,9 @@
 # `_subscribed` set 漂移风险专项分析
 
+> **历史文档**(点时间快照,2026-11-26 自 `docs/` 归档到 `docs/history/`)。描述的是当时的设计与
+> 决策,其中的命令 / 路径 / 模块可能已随版本变更;现状以 `AGENTS.md`、`README.md`、
+> `docs/ARCHITECTURE.md` 为准。索引见 `docs/README.md`。
+
 > 时间: 2026-07-31
 > 触发: REVIEW.md M7 列出 `core/app_service.py` 4 个 site(`_subscribed`)
 >       跟 storage 之间在 reload / 退订失败 / reconfigure 路径可能漏同步

@@ -90,7 +90,7 @@
   
   footer (optional, e.g. Closes #123)
   ```
-  `type` ∈ {`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`}
+  `type` ∈ {`feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `chore`, `perf`}
 - 一个 PR 一个主题;避免巨型 diff
 - 跑过 `pytest` + `ruff check` + `ruff format --check` 再 push
 - pre-commit install 后本地 commit 前自动跑同一套检查
@@ -110,7 +110,7 @@
 **分支**
 
 - `main` — 唯一长期分支,始终可发布;改动经 PR squash merge 进入。
-- 主题分支 — 短命,命名 `<type>/<kebab-描述>`,type ∈ {feat, fix, refactor, docs, chore, test, perf}。
+- 主题分支 — 短命,命名 `<type>/<kebab-描述>`,type ∈ {feat, fix, refactor, docs, ci, chore, test, perf}。
   例:`feat/sqlite-default`、`fix/telethon-reconnect`。**不带版本号 / PR 号**
   (旧 `feat/v1.5.2-pr-b5`、`v175-pr1` 式命名已废弃)。一分支一主题,合并后立即删(本地 + 远端)。
 - `dependabot/*` — bot 自动管理,有活跃 PR 时保留,合并后自删。
@@ -291,8 +291,8 @@ git push origin v2.0.0
 
 **请勿**在 issue / PR / commit 中粘贴:
 
-- ❌ `TG_API_ID` / `TG_API_HASH` / `TG_PHONE`
-- ❌ 验证码 / 2FA 密码
+- ❌ `TG_API_ID` / `TG_API_HASH` / `TG_DB_DSN` / S3 密钥
+- ❌ `.env` 文件内容(含数据库口令、代理口令)
 - ❌ session 文件
 - ❌ 个人 Telegram 聊天截图
 

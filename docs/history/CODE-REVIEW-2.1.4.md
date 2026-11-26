@@ -1,5 +1,9 @@
 # 2.1.4 重度代码审核报告
 
+> **历史文档**(点时间快照,2026-11-26 自 `docs/` 归档到 `docs/history/`)。描述的是当时的设计与
+> 决策,其中的命令 / 路径 / 模块可能已随版本变更;现状以 `AGENTS.md`、`README.md`、
+> `docs/ARCHITECTURE.md` 为准。索引见 `docs/README.md`。
+
 > 审核日期：2026-11-25。范围：v2.1.3（main `ea61ad2`）全量生产代码，分三路并行深审——
 > ① core 领域服务层（app_service / monitor / channel_sync / media_service / batch / auth / events）；② 存储与基础设施层（storage 双后端 / objectstore 三后端 / telegram 封装 / export）；③ UI 与 CLI 层（ui/ 全部 / cli/ 13 子命令 / 入口）。
 > 全程只读，未修改任何生产代码。本文为三路报告合并去重后的结论。

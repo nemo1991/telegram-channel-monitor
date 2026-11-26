@@ -52,11 +52,14 @@ Contributors)。
 
 `app_icon.svg` 是项目自有设计(信号塔 + 频道条),不属于 Lucide。
 
-## tdlib_json(自编译 libtdjson 的 ctypes 绑定)
+## 历史:tdlib_json(自编译 libtdjson 的 ctypes 绑定)
 
-`packages/tdlib_json/` 子项目中的 `tdjson.py` 改编自
+> **已移除的历史组件**(v2.0.0 起后端换成纯 Python 的 Telethon,`packages/tdlib_json/`
+> 与当前代码库无关)。保留本节是对 v1.x 及更早发布版所含代码的出处致谢。
+
+v1.x 的 `packages/tdlib_json/` 子项目中,`tdjson.py` 改编自
 [aiotdlib](https://github.com/pylakey/aiotdlib)(MIT License,Copyright (c)
-pylakey)。`_vendor_ref/aiotdlib/` 是参考源码备份,仅作对照阅读,**不随包分发**。
+pylakey)。当时的 `_vendor_ref/aiotdlib/` 是参考源码备份,仅作对照阅读,**不随包分发**。
 
-aiotdlib 仓库已归档,本项目以自编译 libtdjson(锁定 TDLib 1.8.46)+ ctypes
+aiotdlib 仓库已归档,v1.x 后期以自编译 libtdjson(锁定 TDLib 1.8.46)+ ctypes
 绑定替代,不再依赖 aiotdlib 及其安装期下载的 TDLib 二进制。

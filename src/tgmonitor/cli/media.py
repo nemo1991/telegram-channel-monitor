@@ -128,7 +128,7 @@ async def run_media(
 
         else:
             raise CliError(
-                "用法:tgmonitor media {list|download|download-all|retry|delete|reconcile} ..."
+                "用法:tgmon-cli media {list|download|download-all|retry|delete|reconcile} ..."
             )
 
     return 0

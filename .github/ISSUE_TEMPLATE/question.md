@@ -12,8 +12,8 @@ assignees: ""
 
 ## 你已尝试过的
 
-- [ ] 看了 [README](../README.md)
-- [ ] 看了 [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+- [ ] 看了 [README](../../README.md)
+- [ ] 看了 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 - [ ] 搜了现有 issue
 - [ ] 跑了 `pytest` / `ruff check`
 

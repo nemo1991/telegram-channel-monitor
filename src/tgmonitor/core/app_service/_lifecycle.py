@@ -48,7 +48,7 @@ async def bootstrap(app: AppService) -> tuple[str, str | None]:
 
     注意:历史上有 in-memory `self._subscribed` cache(2026-07-31 删),
     现在所有「订阅真理」都走 `storage.list_monitored_channels()` —
-    详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
+    详见 `docs/history/SUBSCRIBED_DRIFT_ANALYSIS.md` #A/#B/#C。
 
     2026-09-04 v1.6.6:paused-startup 时 (`_is_paused=True`) 直接返
     `("ready", None)` 不连 Telegram — 正常路径由 `app.py:_setup_then_show`
