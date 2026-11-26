@@ -19,9 +19,9 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QLabel  # noqa: E402
+from PySide6.QtWidgets import QLabel
 
-from tgmonitor.ui.main_window import MainWindow  # noqa: E402
+from tgmonitor.ui.main_window import MainWindow
 
 
 class _FakeWindow:

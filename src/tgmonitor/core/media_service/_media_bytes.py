@@ -128,7 +128,7 @@ async def load_media_bytes(ms: MediaService, media: MediaDTO) -> bytes | None:
             except Exception:  # noqa: BLE001
                 pass
         return data
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.warning(
             "load_media_bytes failed: backend=%s key=%s",
             backend,

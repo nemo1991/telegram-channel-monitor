@@ -21,7 +21,7 @@ from tgmonitor.ui.widgets.channel_widget import ChannelListCard, ChannelWidget
 _BIG_ID = -1001375475051  # 真实 Telegram chat_id
 
 
-def _widget(qapp, qloop_16):  # noqa: ANN001 - 测试 helper
+def _widget(qapp, qloop_16):
     app = MagicMock()
     app.bus = EventBus()
 

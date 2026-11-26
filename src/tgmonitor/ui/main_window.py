@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
         # 不依赖 cwd。
         from tgmonitor.core.config import _user_data_dir
 
-        self.env_path = env_path or (_user_data_dir() / ".env")  # noqa: F841 — _user_data_dir already imported
+        self.env_path = env_path or (_user_data_dir() / ".env")
         self.setWindowTitle(self.tr("tgmonitor · Telegram 频道监听"))
         self.resize(1180, 740)
 
@@ -325,7 +325,7 @@ class MainWindow(QMainWindow):
             self._message_stream_ctrl.on_message_interactions_changed
         )
         # ---- EventBus MessageDeleted 订阅(LIVE 流删行) ----
-        from tgmonitor.core.events import MessageDeleted  # noqa: PLC0415
+        from tgmonitor.core.events import MessageDeleted
 
         self.app.bus.subscribe(MessageDeleted, self._message_stream_ctrl.on_bus_message_deleted)
         # 2026-10-09 v1.12.x:`AppStateController` 5 个 wire(原 `_wire_events` /
@@ -428,7 +428,7 @@ class MainWindow(QMainWindow):
                     self._shutdown_cb,
                     deadline_ms=getattr(self, "_close_deadline_ms", 10_000),
                 )
-            except BaseException:  # noqa: BLE001
+            except BaseException:
                 # 最后一道闸:任何意外(包括 CancelledError)都不应让
                 # Qt closeEvent 抛回主循环导致 "Error calling Python override"。
                 log.exception("closeEvent: unexpected error in shutdown")

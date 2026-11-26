@@ -35,7 +35,7 @@ from tgmonitor.core.events import EventBus
 # ---------------------------------------------------------------------------
 
 
-def _build_widget(qapp, qloop_16):  # noqa: ANN001 — 测试 helper
+def _build_widget(qapp, qloop_16):
     """造一个 ChannelWidget(无 storage 依赖 — 仅 UI 层测试)。"""
     # 简化版:不接 AppService,直接 mock 一个;ChannelWidget.__init__ 接受
     # (app, loop, parent) — 我们用最小的 MagicMock 替代 app 属性。

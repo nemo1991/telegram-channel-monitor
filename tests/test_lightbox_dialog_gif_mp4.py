@@ -27,11 +27,11 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtMultimediaWidgets import QVideoWidget  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+import pytest
+from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem  # noqa: E402
+from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog, MediaItem
 
 # ---- GIF fixture:42-byte 1x1 GIF89a(Wikipedia 「smallest valid GIF89a」) ----
 
@@ -162,7 +162,7 @@ class _FakeSignal:
     def __init__(self, parent: _FakeMediaPlayer) -> None:
         self.parent = parent
 
-    def connect(self, handler) -> None:  # noqa: ANN001 — Qt slot signature
+    def connect(self, handler) -> None:
         self.parent.error_signal_connect_count += 1
 
 

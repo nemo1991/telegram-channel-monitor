@@ -143,7 +143,7 @@ async def reconcile_orphans(
                 try:
                     await ms._objects.delete(k)
                     deleted += 1
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.warning("reconcile delete %s failed", k, exc_info=True)
         evt = MediaReconcileFinished(
             backend=backend,

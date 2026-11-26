@@ -69,7 +69,7 @@ def _setup_file_logging(level: int) -> None:
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         logging.getLogger().addHandler(handler)
         log.info("file logging enabled: %s", log_dir / "tgmonitor.log")
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("failed to enable file logging")
 
 
@@ -89,7 +89,7 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
     """
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("PySide6 import failed in setup-failure dialog")
         return
     app = QApplication.instance()
@@ -117,7 +117,7 @@ def _show_setup_failure_dialog(err: BaseException) -> None:
         box.setDetailedText(str(log_dir))
         ret = box.exec()
         del ret  # 不用返回值
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("setup-failure dialog raised")
 
 
@@ -143,7 +143,7 @@ def _show_config_warning_dialog(warnings: list[str], parent: QWidget | None = No
         )
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.show()
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("config-warning dialog raised")
 
 
@@ -289,7 +289,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
                 try:
                     await asyncio.sleep(2.0)
                     await app_svc.media.reconcile_orphans(dry_run=True)
-                except Exception:  # noqa: BLE001 — startup reconcile 不能让 UI 崩溃
+                except Exception:
                     log.exception("startup orphan reconcile failed")
 
             asyncio.create_task(_startup_reconcile())
@@ -302,7 +302,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
             # 监听服务已在后台拉起;弹窗是非致命提示,不影响启动流程。
             if config_warnings:
                 _show_config_warning_dialog(config_warnings, win)
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:
             # 不能 raise 出 setup_then_show —— 没人在 await 它,异常会被
             # asyncio 吞成 "Task exception was never retrieved"。改成显式记录 + 退出
             setup_failed.append(e)
@@ -313,7 +313,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
             _show_setup_failure_dialog(e)
             try:
                 qt_app.quit()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("qt_app.quit() raised during setup failure")
 
     async def _background_startup(

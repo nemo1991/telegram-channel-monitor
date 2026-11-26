@@ -60,7 +60,7 @@ def _build_setup(
     返回前)— 让 line 132/209 这种需要在 monitor 创建前后做 storage.seed 或
     set_whitelist 的 test 也能用 temp_loop 模式跑 setup_async。
     """
-    from tgmonitor.core.app_service import AppService  # noqa: PLC0415
+    from tgmonitor.core.app_service import AppService
 
     async def _go():
         await storage.connect()

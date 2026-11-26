@@ -36,7 +36,7 @@ class _StubDownloader:
         self.callbacks: list[object] = []
         self.kwargs: list[dict] = []
 
-    async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
+    async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):
         self.kwargs.append({"force": force})
         if progress_callback is not None:
             self.callbacks.append(progress_callback)
@@ -105,7 +105,7 @@ class _SlowDownloader:
         self.started = 0
         self.gate = asyncio.Event()
 
-    async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
+    async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):
         self.started += 1
         await self.gate.wait()  # 卡住,直到测试放行
         return dataclasses.replace(

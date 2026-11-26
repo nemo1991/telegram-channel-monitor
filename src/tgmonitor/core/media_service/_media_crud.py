@@ -105,13 +105,13 @@ async def delete_media(
     if object_key:
         try:
             n = await ms._storage.count_media_by_object_key(object_key)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("count media by key failed: %s", object_key)
             n = 0
         if n == 0 and ms._objects is not None:
             try:
                 await ms._objects.delete(object_key)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning(
                     "delete bytes %s failed (already gone?)",
                     object_key,
@@ -166,7 +166,7 @@ async def preview_delete_by_channel(
         seen.add(med.object_key)
         try:
             n = await ms._storage.count_media_by_object_key(med.object_key)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception(
                 "preview count_media_by_object_key failed: %s",
                 med.object_key,
@@ -207,7 +207,7 @@ async def delete_by_channel(ms: MediaService, channel_id: int) -> int:
         ]
         try:
             await ms._storage.delete_message(channel_id, msg.telegram_msg_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception(
                 "delete_by_channel partial failure: channel=%s msg=%s",
                 channel_id,
@@ -219,13 +219,13 @@ async def delete_by_channel(ms: MediaService, channel_id: int) -> int:
         for key in keys:
             try:
                 n = await ms._storage.count_media_by_object_key(key)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("count media by key failed: %s", key)
                 continue
             if n == 0 and ms._objects is not None:
                 try:
                     await ms._objects.delete(key)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.warning(
                         "delete_by_channel bytes %s failed",
                         key,

@@ -22,9 +22,9 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QMainWindow  # noqa: E402
+from PySide6.QtWidgets import QMainWindow
 
-from tgmonitor.ui.main_window import MainWindow  # noqa: E402
+from tgmonitor.ui.main_window import MainWindow
 
 # 2026-10-02 v1.12.1:`test_close_propagates_callback_exception_but_still_quits`
 # (line 101) 在 GH Actions ubuntu/macos runner 偶发 hang:`_LoopThread` 后台线

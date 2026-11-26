@@ -16,26 +16,12 @@ from pathlib import Path
 from tgmonitor.core.storage.sqlite_repo import EXPECTED_SCHEMA, SqliteRepository
 
 # 迁移逻辑必须保留旧列名作为「源」;除此之外存储层不应再出现裸 subscribed 列。
-_STORAGE_MODULES = (
-    "sqlite_repo.py",
-    # 2026-11-25 P2-N1:SQLite 按域拆出 free-function module,迁移 SQL 移到
-    # _lifecycle_sqlite.py;全部纳入扫描以维持「无裸 subscribed 列」守门覆盖。
-    "_lifecycle_sqlite.py",
-    "_channels_sqlite.py",
-    "_messages_sqlite.py",
-    "_media_sqlite.py",
-    "_thumbnails_sqlite.py",
-    "_user_meta_sqlite.py",
-    "_activity_sqlite.py",
-    "_sqlite_common.py",
-    "_lifecycle_pg.py",
-    "_channels_pg.py",
-    "_messages_pg.py",
-    "_media_pg.py",
-    "_thumbnails_pg.py",
-    "_user_meta_pg.py",
-    "_activity_pg.py",
-)
+#
+# 2026-11-26 2.1.7:扫描范围从手写清单改为按目录自动发现。手写清单 16 个、
+# 目录实有 22 个 —— 2.1.3 N1 拆分后新增的模块若忘了登记,守卫就对它静默失守
+# (这正是本守护在 2.1.3 期间踩过的坑)。数量下限防止目录被误挪空后守卫变绿。
+_STORAGE_DIR = Path(__file__).resolve().parents[1] / "src/tgmonitor/core/storage"
+_STORAGE_MIN_MODULES = 20
 _MIGRATION_MARKERS = (
     "RENAME COLUMN",  # ALTER TABLE ... RENAME COLUMN subscribed TO monitored
     "column_name=",  # information_schema 探测旧列是否存在
@@ -45,12 +31,29 @@ _MIGRATION_MARKERS = (
 _BARE_SUBSCRIBED = re.compile(r"(?<!tg_)\bsubscribed\b")
 
 
+def test_storage_module_inventory_is_complete() -> None:
+    """守卫自身的元测试:目录被误挪 / 大批模块被移走时,下面的 SQL 守卫必须先红。"""
+    modules = sorted(_STORAGE_DIR.glob("*.py"))
+    assert len(modules) >= _STORAGE_MIN_MODULES, (
+        f"core/storage 只找到 {len(modules)} 个模块(下限 {_STORAGE_MIN_MODULES}),"
+        "目录结构变了请同步核对 test_no_legacy_physical_column_in_storage_sql"
+    )
+    # 两类实现都必须在扫描范围内,缺一类就是单后端盲区
+    names = {p.name for p in modules}
+    assert {
+        "sqlite_repo.py",
+        "postgres_repo.py",
+        "_lifecycle_sqlite.py",
+        "_lifecycle_pg.py",
+    } <= names
+
+
 def test_no_legacy_physical_column_in_storage_sql() -> None:
     """SQL 字面量中不得再用 subscribed 物理列,防只在 PG integration 暴露漏改。"""
-    root = Path(__file__).resolve().parents[1] / "src/tgmonitor/core/storage"
     offenders: list[str] = []
-    for name in _STORAGE_MODULES:
-        tree = ast.parse((root / name).read_text(encoding="utf-8"))
+    for path in sorted(_STORAGE_DIR.glob("*.py")):
+        name = path.name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue

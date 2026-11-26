@@ -43,7 +43,7 @@ def make_test_settings(**overrides) -> Settings:
     """
     base = Path(tempfile.mkdtemp(prefix="tgmon-test-"))
     defaults = dict(
-        _env_file=None,  # noqa: SLF001 — pydantic private kwarg,跳过 .env
+        _env_file=None,
         api_id=1,
         api_hash="x" * 32,
         session_dir=base / "session",

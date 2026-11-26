@@ -18,11 +18,11 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtGui import QColor, QPixmap  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
+import pytest
+from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtWidgets import QApplication, QDialog
 
-from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog  # noqa: E402
+from tgmonitor.ui.widgets.lightbox_dialog import LightboxDialog
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
 

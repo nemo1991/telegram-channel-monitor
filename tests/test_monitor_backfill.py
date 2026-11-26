@@ -143,7 +143,7 @@ async def test_backfill_silent_when_client_closing(bus, storage, objectstore, se
             self, channel_id: int, *, before_msg_id: int = 0, limit: int = 100
         ) -> AsyncIterator[MessageDTO]:
             raise ClientClosingError()
-            yield  # noqa: B018  — 让函数成为 async generator(否则 async for 拿不到异常)
+            yield
 
     mon = MonitorService(bus, _ClosingClient({100: [1]}), storage, objectstore, settings)
     mon.set_whitelist([100])

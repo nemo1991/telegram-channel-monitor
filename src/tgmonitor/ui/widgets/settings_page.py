@@ -451,7 +451,7 @@ class SettingsPage(QWidget):
 
     def _open_qr_dialog(self, url: str) -> None:
         """二维码生成成功 → 主线程弹扫码对话框(登录成功自动关闭)。"""
-        from tgmonitor.ui.widgets.qr_login_dialog import QrLoginDialog  # noqa: PLC0415
+        from tgmonitor.ui.widgets.qr_login_dialog import QrLoginDialog
 
         dlg = QrLoginDialog(self._app, self._loop, url, self.window())
         dlg.exec()
@@ -461,7 +461,7 @@ class SettingsPage(QWidget):
             state = self._app.client.state
             if isinstance(state, str):
                 self.set_login_state(state)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("sync login state after QR dialog failed", exc_info=True)
 
     def _show_login_failed(self, msg: str) -> None:
@@ -866,7 +866,7 @@ class SettingsPage(QWidget):
         """保存:后端校验通过后才写 .env + 热重载。"""
         try:
             e = self._collect()
-        except Exception as exc:  # noqa: BLE001 — Qt 槽内异常只打 stderr,用户无感知
+        except Exception as exc:
             log.exception("collect settings failed")
             QMessageBox.critical(self, self.tr("保存失败"), self.tr(f"读取表单失败: {exc}"))
             return

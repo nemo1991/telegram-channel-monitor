@@ -21,13 +21,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+import pytest
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.core.auth_service import AuthService  # noqa: E402
-from tgmonitor.core.config import Settings  # noqa: E402
-from tgmonitor.core.events import ErrorOccurred, EventBus, LoginStateChanged  # noqa: E402
-from tgmonitor.core.telegram.fake_client import FakeTelegramClient  # noqa: E402
+from tgmonitor.core.auth_service import AuthService
+from tgmonitor.core.config import Settings
+from tgmonitor.core.events import ErrorOccurred, EventBus, LoginStateChanged
+from tgmonitor.core.telegram.fake_client import FakeTelegramClient
 
 
 def _wait_until(pred, *, timeout: float = 3.0) -> None:

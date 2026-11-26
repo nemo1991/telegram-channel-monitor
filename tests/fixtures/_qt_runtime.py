@@ -74,7 +74,7 @@ def _drain_shared_loop() -> None:
     try:
         fut = asyncio.run_coroutine_threadsafe(_cancel_pending(), lt.loop)
         fut.result(timeout=_DRAIN_TIMEOUT_S)
-    except Exception:  # noqa: BLE001
+    except Exception:
         if fut is not None:
             fut.cancel()
         # 不抛:cleanup 失败不应让用例变红,下一个用例仍能调度到活 loop。
@@ -84,8 +84,8 @@ def _drain_shared_loop() -> None:
 def _cleanup_top_level_widgets() -> None:
     """用 deleteLater 释放本用例创建的顶层窗口,绕开 closeEvent 依赖。"""
     try:
-        from PySide6.QtCore import QCoreApplication, QEvent  # noqa: PLC0415
-        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
     except ImportError:
         return
 

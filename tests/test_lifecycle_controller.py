@@ -17,11 +17,11 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtCore import QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+import pytest
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.ui.controllers.lifecycle_controller import LifecycleController  # noqa: E402
+from tgmonitor.ui.controllers.lifecycle_controller import LifecycleController
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +33,7 @@ def _make_ctx(qapp: QApplication) -> tuple[Any, dict[str, Any]]:
     """构造 LifecycleController 用的最小 ctx,返回 ctx + 各 mock 引用。"""
     # main_window stub — QApplication 上下文下的 QObject 派生(QWidget 是
     # QObject),允许调 showNormal / raise_ / activateWindow / tr。
-    from PySide6.QtWidgets import QMainWindow  # noqa: PLC0415
+    from PySide6.QtWidgets import QMainWindow
 
     mw = QMainWindow()
     mw._truly_quit = False
@@ -108,7 +108,7 @@ def test_main_window_thin_delegates_preserved() -> None:
     """2026-10-10:thin delegate 7 个 method 全保留,以保持 signal wire /
     `_ACTION_SLOTS` 工厂 / 测试夹具 / 其他内部 call site 引用稳定。
     """
-    from tgmonitor.ui.main_window import MainWindow  # noqa: PLC0415
+    from tgmonitor.ui.main_window import MainWindow
 
     for name in (
         "_show_and_raise",

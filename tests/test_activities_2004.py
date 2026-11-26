@@ -18,13 +18,13 @@ import pytest_asyncio
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-from tests.fixtures._in_memory_repository import InMemoryRepository  # noqa: E402
-from tgmonitor.core.activity import format_activity, make_persistence_subscriber  # noqa: E402
-from tgmonitor.core.events import (  # noqa: E402
+from tests.fixtures._in_memory_repository import InMemoryRepository
+from tgmonitor.core.activity import format_activity, make_persistence_subscriber
+from tgmonitor.core.events import (
     ErrorOccurred,
     SettingsChanged,
 )
-from tgmonitor.core.storage.sqlite_repo import SqliteRepository  # noqa: E402
+from tgmonitor.core.storage.sqlite_repo import SqliteRepository
 
 # ---------------------------------------------------------------- formatter
 

@@ -14,13 +14,13 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from unittest.mock import MagicMock  # noqa: E402
+from unittest.mock import MagicMock
 
-import pytest  # noqa: E402
-from PySide6.QtGui import QCloseEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMainWindow, QStatusBar  # noqa: E402
+import pytest
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QApplication, QMainWindow, QStatusBar
 
-from tgmonitor.ui.main_window import MainWindow  # noqa: E402
+from tgmonitor.ui.main_window import MainWindow
 
 
 class _MinimalMainWindow(MainWindow):
@@ -31,7 +31,7 @@ class _MinimalMainWindow(MainWindow):
     / `self._wire_events()` 等(会拉真 SettingsPage / ChannelWidget)。
     """
 
-    def __init__(self) -> None:  # noqa: D401 — 故意不走 super().__init__
+    def __init__(self) -> None:
         QMainWindow.__init__(self)
         self.app = MagicMock()
         self.app.bus = MagicMock()

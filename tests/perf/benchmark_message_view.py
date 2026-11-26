@@ -25,12 +25,12 @@ from datetime import UTC, datetime
 # offscreen 平台 — CI / 无显示器 macOS 也能跑
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtCore import QRect  # noqa: E402
-from PySide6.QtWidgets import QApplication, QStyleOptionViewItem  # noqa: E402
+import pytest
+from PySide6.QtCore import QRect
+from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
 
-from tgmonitor.core.dto import MessageDTO  # noqa: E402
-from tgmonitor.ui.widgets.message_view import (  # noqa: E402
+from tgmonitor.core.dto import MessageDTO
+from tgmonitor.ui.widgets.message_view import (
     MessageItemDelegate,
     MessageListModel,
     MessageView,

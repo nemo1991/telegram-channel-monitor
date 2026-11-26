@@ -1,109 +1,40 @@
 """集成测试 fixtures — 真 PG(testcontainers)。
 
 提供:
-- `pg_engine`:session-scope 真 PG(testcontainers 启动,跑完销毁)
-- `pg_repo`:function-scope,基于 `pg_engine` 创 schema + 返
-  `PostgresRepository` 实例
+- `pg_repo`:function-scope,基于 session 级 DSN 创 schema + 返
+  `PostgresRepository` 实例(建扩展 / 建 schema / 清表逻辑在
+  `tests/fixtures/_pg.py:open_pg_repo`,与三后端 parametrize 共用)。
 
 设计要点:
-- PG fixture 用 session-scope(启动 PG 容器慢,30-60s),function-scope
-  走 schema drop + recreate 隔离
+- `pg_engine`(session-scope 真 PG DSN)2026-11-26 2.1.7 起上提到
+  `tests/fixtures/_pg.py`,经 `tests/conftest.py` 的 `pytest_plugins` 对整个
+  tests 目录生效 —— `tests/test_storage_backends.py` 的 `seeded_repo` /
+  `meta_seeded_repo` 三后端 parametrize 与本目录共用同一个容器。
+- PG 容器用 session-scope(启动慢,30-60s),function-scope 走 schema
+  drop + recreate 隔离。
 - 没有 Docker 时 `pg_engine` 自动 skip(DockerNotFoundError → pytest.skip),
-  不会让 `pytest -m integration` 整链路炸
+  不会让本地 `pytest -m integration` 整链路炸;CI integration job 则断言
+  skipped == 0。
 """
 
 from __future__ import annotations
 
-import logging
-import re
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
-import pytest
 import pytest_asyncio
 
-from tgmonitor.core.storage.postgres_repo import PostgresRepository
+from tests.fixtures._pg import open_pg_repo
 
-logger = logging.getLogger(__name__)
-
-
-# ---- Postgres (testcontainers) ----
-
-
-def _pg_container_or_skip():
-    """起 PostgresContainer;无 Docker → skip 整 PG fixture 模块。
-
-    2026-08-31 v1.5.0 PR #A7 修复:`testcontainers>=4` 把 `PostgresContainer`
-    从顶层 `testcontainers.postgres` 搬到 `testcontainers.community.postgres`,
-    顶层路径仍兼容但 DeprecationWarning 噪声大;先试 community 路径,
-    fallback 顶层路径(老版 testcontainers 没 community 子包)。
-    """
-    import warnings
-
-    try:
-        try:
-            from testcontainers.community.postgres import PostgresContainer
-        except ImportError:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", DeprecationWarning)
-                from testcontainers.postgres import PostgresContainer
-    except ImportError:
-        pytest.skip("testcontainers[postgres] 未装", allow_module_level=False)
-    try:
-        return PostgresContainer("postgres:16-alpine")
-    except Exception as e:  # noqa: BLE001 — DockerNotFoundError / ImageNotFoundError / 权限问题一律跳过
-        pytest.skip(f"Docker 不可用,跳过 PG 集成测试: {type(e).__name__}: {e}")
-
-
-@pytest.fixture(scope="session")
-def pg_engine() -> Iterator[str]:
-    """启动 PostgresContainer,跑完 session 后销毁。
-
-    返 DSN 字符串(asyncpg 只认 `postgresql://` 或 `postgres://`),`pg_repo`
-    拿去造 PostgresRepository 实例。
-
-    2026-08-31 v1.5.0 PR #A7 修复:testcontainers 4.x 默认返
-    `postgresql+psycopg2://`(SQLAlchemy 风格 DSN),asyncpg 只接受 plain
-    `postgresql://` — 需要剥离 `+psycopg2` 后缀。
-    """
-    container = _pg_container_or_skip()
-    container.start()
-    try:
-        sync_dsn = container.get_connection_url()
-        # 兼容多种 scheme:testcontainers 4.x 默认 `postgresql+psycopg2`,
-        # 老版本可能 `postgresql`,偶有 `postgres`。统一剥成 plain asyncpg scheme。
-        async_dsn = re.sub(r"^(postgres(?:ql)?)\+\w+://", r"\1://", sync_dsn, count=1)
-        if async_dsn == sync_dsn and not sync_dsn.startswith(("postgresql://", "postgres://")):
-            # 仍未匹配 — 强插 scheme
-            async_dsn = "postgresql://" + sync_dsn.split("://", 1)[-1]
-        yield async_dsn
-    finally:
-        container.stop()
+if TYPE_CHECKING:
+    from tgmonitor.core.storage.postgres_repo import PostgresRepository
 
 
 @pytest_asyncio.fixture
 async def pg_repo(pg_engine) -> AsyncIterator[PostgresRepository]:
-    """function-scope:每次测试全新 schema,避免 case 间状态泄漏。
-
-    2026-09-03 v1.6.0 PR #Q1:`CREATE EXTENSION pg_trgm` 需 superuser —
-    testcontainers PG 默认 root 账号是 superuser,所以扩展能装。fixture
-    在 repo.connect() 后、init_schema() 前显式 `CREATE EXTENSION` 一次
-    (idempotent),保证 schema.sql 的 `CREATE EXTENSION IF NOT EXISTS`
-    走过完整路径(包括 PermissionDenied 兜底)。
-    """
-    repo = PostgresRepository(dsn=pg_engine)
-    await repo.connect()
+    """function-scope:每次测试全新 schema,避免 case 间状态泄漏。"""
+    repo = await open_pg_repo(pg_engine)
     try:
-        # 显式建扩展,确保后续 init_schema 的 GIN 索引能正常创建
-        async with repo._pool.acquire() as conn:  # type: ignore[attr-defined]
-            try:
-                await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-            except Exception:  # noqa: BLE001 — 兜底:init_schema 内部也会再试,这里 best-effort
-                pass
-        await repo.init_schema()
-        # 清理 schema:直接 drop tables + recreate,比 TRUNCATE 更快也更彻底
-        async with repo._pool.acquire() as conn:  # type: ignore[attr-defined]
-            await conn.execute("DROP TABLE IF EXISTS media, messages, channels, meta CASCADE")
-        await repo.init_schema()
         yield repo
     finally:
         await repo.close()

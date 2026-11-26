@@ -22,12 +22,12 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QLabel  # noqa: E402
+from PySide6.QtWidgets import QLabel
 
-from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType  # noqa: E402
-from tgmonitor.core.events import MediaDownloaded  # noqa: E402
-from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
-from tgmonitor.ui.controllers.media_actions_controller import (  # noqa: E402
+from tgmonitor.core.dto import MediaDownloadStatus, MediaDTO, MediaType
+from tgmonitor.core.events import MediaDownloaded
+from tgmonitor.ui.controllers._base import MainWindowCtx
+from tgmonitor.ui.controllers.media_actions_controller import (
     MediaActionsController,
 )
 

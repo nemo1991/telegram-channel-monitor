@@ -222,7 +222,7 @@ def make_persistence_subscriber(
             return
         try:
             await get_store().append_activity(activity)
-        except Exception:  # noqa: BLE001 — 落库失败不阻断事件主流程
+        except Exception:
             log.warning("append_activity failed for %s", activity.event_type, exc_info=True)
 
     return _subscriber

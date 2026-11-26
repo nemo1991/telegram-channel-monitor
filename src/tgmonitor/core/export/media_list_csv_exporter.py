@@ -91,7 +91,7 @@ class MediaListCsvExporter(Exporter):
         P2-2.1.4 #11:encoding 用 `utf-8-sig`(带 BOM)—— Windows Excel
         双击打开中文不乱码。
         """
-        with out_path.open("w", encoding="utf-8-sig", newline="") as f:  # noqa: ASYNC240 — 渲染写盘同步
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=MEDIA_CSV_COLUMNS)
             w.writeheader()
             for m in messages:

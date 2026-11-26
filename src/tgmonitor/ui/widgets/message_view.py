@@ -225,5 +225,5 @@ class MessageView(MessageViewAPIMixin, QListView):
 # `from tgmonitor.ui.widgets.message_view import MessageItemDelegate`
 # 测试 / 调用面零改动(class 已搬到 message_item_delegate.py)。
 # 2026-10-15 plan-batch7-B:re-export MessageEmptyOverlay — 旧 import 路径兼容
-from tgmonitor.ui.widgets.message_empty_overlay import MessageEmptyOverlay  # noqa: E402,F401
-from tgmonitor.ui.widgets.message_item_delegate import MessageItemDelegate  # noqa: E402,F401
+from tgmonitor.ui.widgets.message_empty_overlay import MessageEmptyOverlay  # noqa: E402
+from tgmonitor.ui.widgets.message_item_delegate import MessageItemDelegate  # noqa: E402

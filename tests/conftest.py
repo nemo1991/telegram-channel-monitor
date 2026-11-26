@@ -50,6 +50,9 @@ pytest_plugins = [
     "tests.fixtures._monitor_app",
     "tests.fixtures._app_service_batch",
     "tests.fixtures._qt_runtime",
+    # 真 PG DSN(session 级、惰性);无 Docker 时自动 skip。2026-11-26 2.1.7
+    # 从 tests/integration/conftest.py 上提,三后端 parametrize 复用。
+    "tests.fixtures._pg",
 ]
 # 注意:`_in_memory_repository` / `_factories` **不**在 pytest_plugins 里 —
 # 两者都无 `@pytest.fixture`,纯类 / 纯函数;测试代码
@@ -72,7 +75,7 @@ def qapp():
 
     本地变体 `qapp_16`(test_channel_widget.py)只是命名过时,改用 `qapp`。
     """
-    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -103,7 +106,7 @@ def fixed_zh_cn_locale() -> None:
 
     autouse 自动应用到所有 test;QLocale.setDefault 不依赖 QApplication 是否已创建。
     """
-    from PySide6.QtCore import QLocale  # noqa: PLC0415
+    from PySide6.QtCore import QLocale
 
     QLocale.setDefault(QLocale("zh_CN"))
 

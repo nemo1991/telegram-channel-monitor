@@ -34,7 +34,7 @@ def _make_dashboard() -> tuple[DashboardWidget, MagicMock]:
     return dash, app
 
 
-def _spy_deletelater(widget) -> list:  # noqa: ANN001 — Qt widget
+def _spy_deletelater(widget) -> list:
     """把 widget.deleteLater 替换成 spy(记录调用),返回调用记录列表。"""
     calls: list = []
     widget.deleteLater = lambda *args, **kwargs: calls.append(widget)  # type: ignore[method-assign]

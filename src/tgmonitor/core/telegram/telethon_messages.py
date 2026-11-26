@@ -280,7 +280,7 @@ def _action_text(action: Any) -> str:
     if handler is not None:
         try:
             return handler(action)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("action text mapping failed: %s", type(action).__name__)
     return f"[service: {type(action).__name__}]"
 

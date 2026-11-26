@@ -234,7 +234,7 @@ class MediaMixin(_Base):
             for cid, mid, idx in items:
                 try:
                     await self.app.media.delete_media(cid, mid, idx)
-                except Exception:  # noqa: BLE001 — 单条失败不影响 batch
+                except Exception:
                     log.exception(
                         "delete_media batch failed: %s/%s/%d",
                         cid,

@@ -126,10 +126,11 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
     subprocess 模式,完整覆盖 cli 包全部模块。
     """
     code = textwrap.dedent("""
+        import argparse
+        import importlib
         import sys
 
-        # 入口 + 全部 2.1.2 子命令模块都触发 import(模拟 CLI 所有代码路径)
-        import importlib
+        # 入口 + 全部子命令模块都触发 import(模拟 CLI 所有代码路径)
         from tgmonitor.cli.main import CLI_SUBCOMMANDS, build_parser
         from tgmonitor.cli.sync import run_sync
         from tgmonitor.cli.monitor import run_monitor
@@ -141,13 +142,29 @@ def test_cli_does_not_import_qt_or_qasync() -> None:
         # 此刻已经泄漏到 sys.modules
         del run_sync, run_monitor, build_parser
 
-        # 遍历全部命令模块(单一真源),确保没有任何一个顶层 import Qt
-        for mod_name in (
-            '_common', 'sync', 'monitor', 'status', 'auth',
-            'channels', 'control', 'messages', 'media', 'export', 'config',
-        ):
+        # 注册表单一真源:磁盘上每个模块都 import 一遍(2026-11-26 2.1.7 起按目录自动
+        # 发现,原手写 11 个模块名 + `len == 13` 的魔数断言已删)。三重对齐:
+        #   磁盘模块 == _DISPATCH 用到的模块 + {_common, main}
+        #   CLI_SUBCOMMANDS == _DISPATCH 键 + {help}
+        #   parser 能识别 CLI_SUBCOMMANDS 里每个命令
+        import pathlib
+        import tgmonitor.cli as cli_pkg
+        from tgmonitor.cli.main import _DISPATCH
+
+        cli_dir = pathlib.Path(cli_pkg.__file__).parent
+        on_disk = {p.stem for p in cli_dir.glob('*.py')} - {'__init__'}
+        dispatched = {mod.rsplit('.', 1)[-1] for mod, _fn in _DISPATCH.values()}
+        assert on_disk == dispatched | {'_common', 'main'}, (on_disk, dispatched)
+        for mod_name in sorted(on_disk):
             importlib.import_module('tgmonitor.cli.' + mod_name)
-        assert len(CLI_SUBCOMMANDS) == 13
+        assert set(CLI_SUBCOMMANDS) == set(_DISPATCH) | {'help'}, CLI_SUBCOMMANDS
+
+        subparsers = next(
+            a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+        )
+        assert CLI_SUBCOMMANDS <= set(subparsers.choices), CLI_SUBCOMMANDS - set(
+            subparsers.choices
+        )
 
         # 关键断言
         leaked = []

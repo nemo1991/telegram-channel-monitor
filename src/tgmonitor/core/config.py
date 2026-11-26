@@ -90,7 +90,9 @@ class Settings(BaseSettings):
     sqlite_path: Path = Field(default_factory=lambda: _user_data_dir() / "tgmonitor.db")
     # 历史字段,删 JSONL 后不再使用;保留只为兼容旧 .env。`EditableSettings`
     # 与 settings_page 都不再编辑/显示此字段。
-    db_root: Path = Field(default_factory=lambda: _user_data_dir() / "messages")  # noqa: ARG003  # legacy: 删 JSONL 后无 consumer
+    db_root: Path = Field(
+        default_factory=lambda: _user_data_dir() / "messages"
+    )  # legacy: 删 JSONL 后无 consumer
 
     # ---- 对象存储后端 ----
     # 默认 FOLDER:两级分片,文件多时不慢;亦可改 local(平铺)
@@ -173,7 +175,7 @@ class Settings(BaseSettings):
 
         base = Path(tempfile.mkdtemp(prefix="tgmon-test-"))
         defaults: dict = dict(
-            _env_file=None,  # noqa: SLF001 — pydantic private kwarg
+            _env_file=None,
             api_id=1,
             api_hash="x" * 32,
             session_dir=base / "session",
@@ -195,7 +197,7 @@ class Settings(BaseSettings):
         `ensure_dirs()` 已被调用。
         """
         defaults: dict = dict(
-            _env_file=str(env_file),  # noqa: SLF001
+            _env_file=str(env_file),
             api_id=1,
             api_hash="x" * 32,
         )

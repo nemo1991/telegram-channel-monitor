@@ -41,7 +41,7 @@ async def on_new_message(host: Any, event: Any) -> None:
         dto = map_message(msg)
         for s in list(host._streams):
             await s.push(dto)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("NewMessage handling failed")
 
 
@@ -53,7 +53,7 @@ async def on_message_edited(host: Any, event: Any) -> None:
         dto = map_message(msg)
         for s in list(host._streams):
             await s.push(dto)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("MessageEdited handling failed")
 
 
@@ -64,7 +64,7 @@ async def on_message_deleted(host: Any, event: Any) -> None:
             return
         for mid in event.deleted_ids or []:
             host._publish(MessageDeleted(channel_id=chat_id, telegram_msg_id=int(mid)))
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("MessageDeleted handling failed")
 
 
@@ -78,7 +78,7 @@ async def on_chat_action(host: Any, event: Any) -> None:
             host._publish(ChannelTitleChanged(channel_id=chat_id, new_title=event.new_title))
         if event.new_photo:
             await handle_chat_photo(host, chat_id, event.photo)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("ChatAction handling failed")
 
 
@@ -100,7 +100,7 @@ async def handle_chat_photo(host: Any, chat_id: int, photo: Any) -> None:
         if pid is not None:
             host._photo_cache[chat_id] = pid
         host._publish(ChannelPhotoChanged(channel_id=chat_id, local_path=str(path)))
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.debug("chat photo download failed for %s", chat_id, exc_info=True)
 
 
@@ -115,7 +115,7 @@ async def on_views(host: Any, update: types.UpdateChannelMessageViews) -> None:
                 reactions=None,
             )
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("UpdateChannelMessageViews handling failed")
 
 
@@ -132,7 +132,7 @@ async def on_reactions(host: Any, update: types.UpdateMessageReactions) -> None:
                 reactions=map_reactions(update.reactions),
             )
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("UpdateMessageReactions handling failed")
 
 
@@ -144,7 +144,7 @@ async def on_pinned_channel(host: Any, update: types.UpdatePinnedChannelMessages
             host._publish(
                 MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("UpdatePinnedChannelMessages handling failed")
 
 
@@ -158,7 +158,7 @@ async def on_pinned(host: Any, update: types.UpdatePinnedMessages) -> None:
             host._publish(
                 MessagePinChanged(channel_id=marked, telegram_msg_id=int(mid), is_pinned=pinned)
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("UpdatePinnedMessages handling failed")
 
 
@@ -192,5 +192,5 @@ async def refresh_channel_metadata(host: Any, marked: int) -> None:
                 has_protected_content=dto.has_protected_content,
             )
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.debug("channel metadata refresh failed for %s", marked, exc_info=True)
