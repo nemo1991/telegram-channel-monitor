@@ -8,7 +8,7 @@ v2.0.0:`seeded_repo` / `meta_seeded_repo` parametrize `inmemory` + `sqlite`
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -144,6 +144,24 @@ async def _seed_meta_messages(repo: StorageRepository) -> None:
     await repo.save_message(_meta_msg(channel_id=1, msg_id=101, is_favorite=True))
     await repo.save_message(_meta_msg(channel_id=1, msg_id=102, tags=["tech", "ai"]))
     await repo.save_message(_meta_msg(channel_id=2, msg_id=200, is_pinned=True))
+
+
+def _instant(dt: datetime | None) -> datetime | None:
+    """三个后端读回的 datetime 形状不同,折算成 UTC 瞬时再比较。
+
+    契约(见 `message_list_model_format._format` 与 `_sqlite_common._ensure_utc`):
+    **aware UTC 是规范形,naive 一律视为 UTC**。但读回的形状因后端而异 ——
+    PG(`TIMESTAMPTZ`)返回 aware UTC;SQLite 原样 round-trip(种子里是 naive
+    就读回 naive);InMemory 保留原对象。parity 断言只应约束「同一个瞬时」,
+    不应约束 tzinfo 有无。
+
+    这不是放松:naive 入参若被后端按非 UTC 时区解释,瞬时偏移,照样失败。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 # ---- parametrize fixtures ----
@@ -538,7 +556,10 @@ async def test_aggregate_per_channel(seeded_repo):
     assert bucket[100].messages == 2
     assert bucket[100].media == 3
     assert bucket[100].done_media == 2
-    assert bucket[100].last_date == datetime(2026, 1, 2, 10)
+    # 2026-11-26 2.1.7:三后端读回的 datetime「形状」不同,按 DTO 契约折算成
+    # UTC 瞬时再比 —— 见 `_instant`。直接 `== naive` 只在 InMemory / SQLite 成立,
+    # 加 `pg` 参数后首次在真 PG 上暴露(CI integration job)。
+    assert _instant(bucket[100].last_date) == datetime(2026, 1, 2, 10, tzinfo=UTC)
     # ch200:1 msg, 1 media, 1 done
     assert bucket[200].messages == 1
     assert bucket[200].media == 1
