@@ -9,7 +9,7 @@
 **tgmonitor** — Telegram 频道监听桌面应用:监听白名单频道的新消息,自动落库并下载媒体,提供桌面 UI 查看、检索与导出。
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
-- 当前版本 **2.1.5**(以 `pyproject.toml` 为准)。
+- 当前版本 **2.1.6**(以 `pyproject.toml` 为准)。
 - 包管理/构建:uv + hatchling,src 布局,console script 两个入口(2.1.2 起):`tgmon = tgmonitor.__main__:main`(**只启动 GUI**)、`tgmon-cli = tgmonitor.cli.main:main_tgmon_cli`(**独占 CLI**)。`tgmonitor` 命令已移除。
 - 桌面打包:PyInstaller(`tgmonitor.spec`)→ Linux AppImage + macOS .app + Windows onedir zip;发布走 GitHub Release + SHA256SUMS。**纯 Python 后端,三平台均无需编译原生引擎**。
 - 许可证 MIT,作者 forcetone;项目注释与文档均用中文,新代码注释随项目习惯用中文。
