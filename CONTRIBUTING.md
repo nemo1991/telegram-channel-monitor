@@ -48,6 +48,9 @@
    uv run pre-commit install
    uv run pre-commit run --all-files  # 首次手动跑一遍,之后自动
    ```
+   ruff 钩子直接执行 `uv run --frozen ruff`,版本取自 `uv.lock`(与 CI 同一版本);
+   升级 ruff 只需更新 lock,不要在 `.pre-commit-config.yaml` 里另写版本号。前提是
+   `uv` 在 PATH 中(其他钩子仍需首次联网安装环境)。
 5. 跑测试确保基线绿:
    ```bash
    PYTHONPATH=src uv run pytest
