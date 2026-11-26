@@ -18,9 +18,8 @@ from tgmonitor.core.events import EventBus
 
 ALLOWED_METHODS = {
     # 生命周期
+    "start",
     "bootstrap",
-    "subscribe_updates",
-    "start_monitor",
     "stop_monitor",
     "pause_monitor",
     "resume_monitor",

@@ -180,10 +180,10 @@ async def test_cli_sync_progress_and_done_go_to_stderr(
 
 
 async def test_cli_monitor_handles_not_ready(app, monitor, monkeypatch) -> None:
-    """bootstrap 返 state != ready 时退出码 1,不调 monitor.start。
+    """start 返 state != ready 时退出码 1,并回滚已启动的 monitor。
 
-    注入 `app` / `monitor`,monkeypatch `app.bootstrap` 返 phone_required,
-    验证 CLI monitor 守门逻辑。
+    ADR-002 统一顺序为白名单 → monitor → bootstrap:bootstrap 失败时 monitor
+    已经起来,CLI 退出前必须显式 stop(注入路径不走 shutdown)。
     """
     from tgmonitor.cli.monitor import run_monitor
 
@@ -191,18 +191,24 @@ async def test_cli_monitor_handles_not_ready(app, monitor, monkeypatch) -> None:
         return ("phone_required", "no session")
 
     monkeypatch.setattr(app, "bootstrap", fake_bootstrap)
-    started = False
+    monkeypatch.setattr(app, "_is_paused", False)
 
     async def fake_start():
-        nonlocal started
-        started = True
+        pass
 
     monkeypatch.setattr(monitor, "start", fake_start)
+    stopped = False
+
+    async def fake_stop():
+        nonlocal stopped
+        stopped = True
+
+    monkeypatch.setattr(monitor, "stop", fake_stop)
 
     args = SimpleNamespace(no_resume=False)
     rc = await run_monitor(args, app=app, monitor=monitor)
     assert rc == 1
-    assert not started
+    assert stopped, "bootstrap 失败时 CLI 应回滚已启动的 monitor"
 
 
 async def test_cli_monitor_status_lines_go_to_stderr(app, monitor, capsys, monkeypatch) -> None:

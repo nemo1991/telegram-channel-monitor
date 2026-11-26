@@ -35,7 +35,7 @@ mut state 共享契约:
 4 个 method 直接读写 `app.settings` / `app.storage` / `app.objects` /
 `app.monitor` / `app.downloader` / `app.channel_sync` / `app.client` /
 `app.bus` / `app.channels` / `app.messages` / `app.media` / `app.auth` /
-`app._running` / `app._reconfiguring`,不在 module 内持副本。
+`app._reconfiguring`,不在 module 内持副本。
 
 reconfigure 是唯一会重建 `app.channels` / `app.messages` / `app.media` /
 `app.auth` 的入口 — 这些域服务持旧 storage / objects / client 引用,

@@ -1,22 +1,23 @@
 """AppService 生命周期 — 2026-10-12 plan-batch3 目标 2 step 2.4。
 
-从 `AppService` 抽提 6 个生命周期 method + 1 个启动 guard:
+从 `AppService` 抽提 5 个生命周期 method(plain module-level function):
 
 - `bootstrap` — 应用启动调一次:client.start() + 401 rotate 重建
-- `start_monitor` / `stop_monitor` — 实时流生命周期 + update stream 关
+- `stop_monitor` — 幂等 no-op(实时流由 `runtime.shutdown()` 统一 stop)
 - `pause_monitor` / `resume_monitor` — 暂停 / 恢复监听(.env 持久化)
 - `shutdown` — app exit:停 monitor → 关 client → storage → objects
+
+参数化启动序列 `start()` 在 `_startup.py` — 本模块只管单点生命周期动作。
 
 设计原则(同 `_backend_sync`):
 - plain module-level function(非 class)
 - 第一参数 `app: AppService`(走 mutable state 引用)
 - 公共方法签名 1:1 保留 — UI 现有调用面零变化
 
-mut state 共享契约:
-6 个 method 直接读写 `app._is_paused` / `app._running` /
-`app._update_streams` / `app.monitor` / `app.client` / `app.bus` /
-`app.env_path` / `app.settings` / `app.storage` / `app.objects`,
-不在 module 内持副本(同 plan-batch2 monitor/service.py 拆 facade 模式)。
+mut state 共享契约:各 method 直接读写 `app._is_paused` / `app.monitor` /
+`app.client` / `app.bus` / `app.env_path` / `app.settings` / `app.storage` /
+`app.objects`,不在 module 内持副本(同 plan-batch2 monitor/service.py 拆
+facade 模式)。
 
 `bootstrap` 不做 client swap — 401 / session 失效由 client 内部自愈
 (Telethon 实现捕获 UnauthorizedError → 删 session 重建 → 重试一次)。
@@ -77,22 +78,13 @@ async def bootstrap(app: AppService) -> tuple[str, str | None]:
     return state, detail
 
 
-async def start_monitor(app: AppService) -> None:
-    """订阅 client 的实时更新并消费(MonitorService 的细节后续接入)。"""
-    if app._running:
-        return
-    app._running = True
+async def stop_monitor(_app: AppService) -> None:
+    """幂等 no-op — 实时流由 `runtime.shutdown()` 统一 stop(ADR-002)。
 
-
-async def stop_monitor(app: AppService) -> None:
-    """停 monitor + 关所有 update stream;幂等。"""
-    app._running = False
-    for s in app._update_streams:
-        try:
-            await s.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-    app._update_streams.clear()
+    原实现翻 `_running` + 关 `_update_streams`,两者都是空壳(生产零调用,
+    只有空壳 `subscribe_updates` 会往 streams 里塞东西)。公开方法保留作为
+    生命周期契约的一部分,surface allowlist 不因此变更。
+    """
 
 
 async def pause_monitor(app: AppService, source: str = "tray") -> None:
@@ -104,8 +96,7 @@ async def pause_monitor(app: AppService, source: str = "tray") -> None:
     2. `client.stop()` — 完整断开,释放连接资源
     3. `_is_paused = True` + 发 `MonitoringPaused` 事件
 
-    幂等:已 paused 时再调 no-op。`_running` 仍保持 True(暂停 ≠ 退出),
-    resume 走 `resume_monitor()` 走同一份 _running 状态。
+    幂等:已 paused 时再调 no-op。暂停 ≠ 退出 — 恢复走 `resume_monitor()`。
     """
     if app._is_paused:
         log.debug("pause_monitor: already paused, no-op")
@@ -228,7 +219,6 @@ async def shutdown(app: AppService) -> None:
 
 __all__ = [
     "bootstrap",
-    "start_monitor",
     "stop_monitor",
     "pause_monitor",
     "resume_monitor",

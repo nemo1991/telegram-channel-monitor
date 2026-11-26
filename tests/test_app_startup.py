@@ -8,8 +8,11 @@
 1. `_background_startup` 函数存在
 2. `_setup_then_show` 里 `win.show()` 在 `_background_startup` 调用之前
 3. `_setup_then_show` 不直接 `await monitor.start()` 或 `await app.bootstrap()`
-4. `_background_startup` 顺序执行 list_subbed → set_whitelist → monitor.start → app.bootstrap
+4. `_background_startup` 把三步收敛到 `app_svc.start(StartOptions(...))`,paused
+   终态由调用方提示(步骤顺序由 `test_app_start.py` 的 start() 单测守护)
 5. `_background_startup` 出错时 publish ErrorOccurred 事件
+
+2026-11-26 ADR-002:原「源码正则断步骤顺序」改为「断委托给 start()」。
 
 为何不用运行时测:`_setup_then_show` 强依赖 qasync + Qt + 真 storage 装配,
 构造 fixture 太重;静态分析足以锁住结构,且未来重构时易追踪。
@@ -101,45 +104,38 @@ def test_setup_then_show_does_not_directly_await_bootstrap(
     assert "await app.bootstrap()" not in body
 
 
-def test_background_startup_runs_steps_in_order(app_source: str) -> None:
-    """`_background_startup` 必须按顺序执行:
-    list_monitored_channels → monitor.set_whitelist → monitor.start → app.bootstrap。
-    顺序乱了会导致白名单未建好 monitor 就开始收消息。
+def test_background_startup_delegates_to_app_start(app_source: str) -> None:
+    """`_background_startup` 必须把三步收敛到 `app_svc.start(StartOptions(...))` —
+    ADR-002 后步骤顺序由 `start()` 单测守护,调用方不再手写(否则顺序又分裂)。
     """
     body = _extract_function_body(app_source, "_background_startup")
     assert body is not None, "_background_startup 函数体未找到"
 
-    # 提取关键调用位置
-    steps = {
-        "list_subscribed": re.search(r"list_monitored_channels\(\)", body),
-        "set_whitelist": re.search(r"monitor\.set_whitelist\(", body),
-        "monitor_start": re.search(r"await\s+monitor\.start\(\)", body),
-        "app_bootstrap": re.search(r"app_svc\.bootstrap\(\)", body),
-    }
-    for name, m in steps.items():
-        assert m is not None, f"_background_startup 缺 {name} 调用"
-
-    positions = [(name, m.start()) for name, m in steps.items()]
-    positions.sort(key=lambda x: x[1])
-    sorted_names = [p[0] for p in positions]
-    assert sorted_names == [
-        "list_subscribed",
-        "set_whitelist",
-        "monitor_start",
-        "app_bootstrap",
-    ], (
-        f"_background_startup 步骤顺序错 — 实际 {sorted_names},"
-        f"应为 ['list_subscribed', 'set_whitelist', 'monitor_start', 'app_bootstrap']"
+    assert re.search(r"app_svc\.start\(\s*StartOptions\(", body) is not None, (
+        "_background_startup 未调用 app_svc.start(StartOptions(...))"
     )
+    # 三步骤不再由 GUI 手写 — 手写会让顺序重新分裂
+    for pattern in (
+        r"list_monitored_channels\(\)",
+        r"monitor\.set_whitelist\(",
+        r"await\s+monitor\.start\(\)",
+        r"app_svc\.bootstrap\(\)",
+    ):
+        assert re.search(pattern, body) is None, (
+            f"_background_startup 仍有手写步骤 {pattern} — 收敛被还原了?"
+        )
 
 
 def test_background_startup_handles_paused(app_source: str) -> None:
-    """`_background_startup` 必须处理 `app.is_paused` 分支 — 用户启动即暂停
-    时跳过 libtdlib 启动,client 保持 uninit。
+    """paused 是 `start()` 返回的终态,调用方只做提示 — client 保持 uninit,
+    用户点 tray「继续监听」走 resume_monitor。
     """
     body = _extract_function_body(app_source, "_background_startup")
     assert body is not None
-    assert "is_paused" in body, "_background_startup 缺 is_paused 检查 — 启动即暂停场景未处理"
+    assert 'result.state == "paused"' in body, (
+        "_background_startup 缺 paused 终态处理 — 启动即暂停场景未处理"
+    )
+    assert "继续监听" in body, "paused 分支缺 tray 恢复提示"
 
 
 def test_background_startup_publishes_error_on_failure(app_source: str) -> None:
@@ -154,19 +150,19 @@ def test_background_startup_publishes_error_on_failure(app_source: str) -> None:
 
 
 def test_background_startup_updates_activity_label(app_source: str) -> None:
-    """`_background_startup` 每步必须调 `win.status_bar.show_activity(...)` —
-    否则状态栏左侧看不到启动进度。
+    """步骤名经 `on_step` 回调映射到 status_bar 活动文案 — 四个步骤都要有
+    文案(含 paused),否则状态栏左侧看不到启动进度。
 
-    2026-10-01 v1.11.x 状态栏组件化:`_show_activity` 改走 `status_bar.show_activity`。
+    2026-11-26 ADR-002:回调替代原先三处手写 `show_activity(...)`。
     """
     body = _extract_function_body(app_source, "_background_startup")
     assert body is not None
-    activity_calls = re.findall(r"win\.status_bar\.show_activity\(", body)
-    # 至少 3 处:加载白名单 / 启动 monitor / bootstrap(或 paused 提示)
-    assert len(activity_calls) >= 3, (
-        f"_background_startup 应至少调 3 次 win.status_bar.show_activity(...),"
-        f"实际 {len(activity_calls)} 次"
+    assert "on_step" in body, "_background_startup 缺 on_step 回调"
+    assert re.search(r"win\.status_bar\.show_activity\(", body) is not None, (
+        "on_step 未转调 status_bar.show_activity"
     )
+    for label in ("加载已订阅频道", "启动监听服务", "连接 Telegram", "监听已暂停"):
+        assert label in body, f"步骤 {label} 缺状态栏文案"
 
 
 # ---- helper ----

@@ -1,6 +1,8 @@
-"""CLI `sync` 子命令:bootstrap → 加载已订阅 → sync_channels → 进度打印 → shutdown。
+"""CLI `sync` 子命令:参数化 start → sync_channels → 进度打印 → shutdown。
 
 2026-09-27 refactor:CLI 第一批子命令之一,与 GUI 共用 `core.runtime` 装配。
+2026-11-26 ADR-002:`start(start_monitor=False, respect_paused=False)` 统一跑
+白名单 → bootstrap;本模块只保留 CLI 策略(显式 channel_ids / 退出码 / stderr)。
 """
 
 from __future__ import annotations
@@ -9,7 +11,7 @@ import argparse
 import logging
 import sys
 
-from tgmonitor.core.app_service import AppService
+from tgmonitor.core.app_service import AppService, StartOptions
 from tgmonitor.core.config import MediaPolicy
 from tgmonitor.core.dto import SyncOptions
 from tgmonitor.core.events import ChannelSyncProgress
@@ -41,18 +43,27 @@ async def run_sync(
     if own_bootstrap:
         app, monitor, settings, _ = await bootstrap()
     assert app is not None and monitor is not None
+    # 测试注入路径的 app 可能未装配 monitor(生产路径 runtime.bootstrap 已注入);
+    # start() 走 app.monitor,这里对齐引用,白名单才写到调用方传入的实例。
+    if app.monitor is not monitor:
+        app.monitor = monitor
     try:
+        # 白名单 = CLI 显式指定的 channel_ids;sync 不启实时流、不检查 paused
+        start_result = await app.start(
+            StartOptions(
+                whitelist=args.channel_ids,
+                start_monitor=False,
+                respect_paused=False,
+            )
+        )
         # CLI 假定 .env + session 有效;启动后未 ready → 提示去 GUI
-        state, detail = await app.bootstrap()
-        if state != "ready":
+        if start_result.state != "ready":
             print(
-                f"[cli.sync] bootstrap state={state} detail={detail};请先在 GUI 完成登录后重试",
+                f"[cli.sync] bootstrap state={start_result.state} "
+                f"detail={start_result.detail};请先在 GUI 完成登录后重试",
                 file=sys.stderr,
             )
             return 1
-
-        # 白名单 = CLI 显式指定的 channel_ids
-        monitor.set_whitelist(args.channel_ids)
 
         # 进度事件 → stderr(stdout 只数据;P1-7 契约与 cli/_common.progress 一致)
         async def on_progress(e: ChannelSyncProgress) -> None:
