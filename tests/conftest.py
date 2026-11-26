@@ -14,9 +14,13 @@
 4. `qapp` 中心 fixture — session-scope QApplication 单例。原 21 个测试文件
    各自重定义 `def qapp()`(body 完全相同);集中到 conftest.py,删本地副本。
    保留本地变体 `qapp_16`(test_channel_widget.py 用过时的命名)。
-5. `legacy` marker + `pytest_collection_modifyitems` hook — 自动给
-   `tests/test_*_pr*.py` PR 编号文件打 `@pytest.mark.legacy`,默认 skip。
-   `--include-legacy` 显式启用(保留 git 历史回归)。
+
+2026-11-26(2.1.7 审核 P1-4)删掉了 PR 1a 引入的 `legacy` marker hook 与
+`--include-legacy` 选项:它用子串 `"_pr"` 判定"PR 编号 frozen 文件",误伤了
+`test_proxy.py` 等在用测试;而"默认 skip"那半在 pytest 9 下恒不触发,靠两个
+bug 对冲才让这 23 项照常执行。hook 本意的目标文件早已删除。`tests/perf/`
+是本地手工基准(文件名不以 `test_` 开头,默认不收集),需要时显式跑:
+`uv run pytest tests/perf/benchmark_message_view.py`。
 
 注意:**不要**在 conftest.py 里再定义 fixture — 全部放 `tests.fixtures.*`,
 否则 pytest 行为不一致(同一 fixture 两份定义会冲突)。
@@ -71,50 +75,6 @@ def qapp():
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
 
     return QApplication.instance() or QApplication([])
-
-
-# ---- legacy marker hook(PR 1a) ---------------------------------------
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """PR 1a:自动给 PR 编号文件打 `@pytest.mark.legacy`,默认 skip。
-
-    文件命名约定:`tests/test_*_prN.py`(N 是数字)或 `tests/test_*_prNX.py`(N+X)。
-    这些是各 PR 当时的 frozen regression file,行为已被 main `test_*.py` 覆盖,
-    CI 默认 skip 节省时间;`--include-legacy` 显式启用。
-
-    同时跳过 `tests/perf/`(local-only,无 pytest-benchmark)。
-    """
-    legacy_marker = pytest.mark.legacy
-    skip_legacy = pytest.mark.skip(reason="PR 编号 frozen file — pass --include-legacy to enable")
-
-    for item in items:
-        path = str(item.fspath)
-        if "/perf/" in path:
-            item.add_marker(legacy_marker)
-        elif "_pr" in item.name.split("[")[0] or any(
-            segment.startswith("test_") and "_pr" in segment for segment in path.split("/")
-        ):
-            # Match test_message_view_pr5.py / test_message_detail_pr4.py / test_search_bar_pr2.py
-            stem = path.rsplit("/", 1)[-1]
-            if "_pr" in stem and stem.endswith(".py"):
-                item.add_marker(legacy_marker)
-
-    # Default behavior: skip legacy unless --include-legacy
-    if not config.getoption("--include-legacy", default=False):
-        for item in items:
-            if legacy_marker in item.iter_markers():
-                item.add_marker(skip_legacy)
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """注册 --include-legacy CLI flag(PR 1a)。"""
-    parser.addoption(
-        "--include-legacy",
-        action="store_true",
-        default=False,
-        help="Include PR-numbered frozen regression files (test_*_pr*.py) and perf/.",
-    )
 
 
 # ---- 区域 / Qt 回调 autouse fixture ------------------------------------
