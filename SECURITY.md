@@ -48,7 +48,8 @@
 
 **请勿**通过公开 issue 报告安全漏洞。
 
-请走 GitHub [Security Advisories](https://github.com/nemo1991/telegram-channel-monitor/security/advisories/new)(私密上报,仅维护者可见)。
+请走 GitHub [Security Advisories](https://github.com/nemo1991/telegram-channel-monitor/security/advisories/new)(私密上报,仅维护者可见,已开启)。
+也可以邮件联系维护者:**keepnemo@hotmail.com**(请只用于安全报告,一般问题走 issue)。
 
 请包含:
 

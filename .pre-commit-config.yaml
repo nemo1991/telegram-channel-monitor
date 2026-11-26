@@ -32,20 +32,26 @@ repos:
         # tgmonitor.spec 内嵌长 docstring 不算大文件,阈值 500KB
         args: [--maxkb=500]
 
-  # 注意(2026-11-26 记)—— ruff 版本漂移:CI 与 `uv.lock` 用的是 ruff 0.17.6(2.1.7 起
-  # CI 从 uv.lock 解析版本),这里的 rev 还停在 v0.6.9。两边 format 口径可能不同,
-  # **以 CI 为准**。对齐方法:把 rev 改成与 uv.lock 里 ruff 相同的 tag(当前 v0.17.6),
-  # 再跑 `uv run pre-commit run --all-files` 确认全绿。
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+  # ruff 不写死版本:用 local hook 走 `uv run --frozen`,每次从 uv.lock 解析版本,
+  # 与 CI 的 ruff job（`uv.lock` 同一版本）天然一致 —— 升级 ruff 只需更新 uv.lock。
+  # pre-commit 的 `rev` 是静态字符串,无法引用 lock 文件,故不再用 ruff-pre-commit 仓库;
+  # 附带好处:不联网克隆钩子仓库。前提:`uv` 在 PATH 中(项目本身就用 uv 管理)。
+  - repo: local
     hooks:
       # 与 CI `ruff check src tests` 一致(读 pyproject.toml [tool.ruff.lint])
       - id: ruff
-        args: [check, --fix]
+        name: ruff check (uv.lock)
+        entry: uv run --frozen ruff check --fix --force-exclude
+        language: system
         types_or: [python, pyi]
+        require_serial: true
       # 与 CI `ruff format --check src tests` 一致(读 pyproject.toml [tool.ruff.format])
       - id: ruff-format
+        name: ruff format (uv.lock)
+        entry: uv run --frozen ruff format --force-exclude
+        language: system
         types_or: [python, pyi]
+        require_serial: true
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.23.3
