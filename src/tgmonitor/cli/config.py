@@ -18,15 +18,26 @@ from tgmonitor.core.settings_store import (
     EditableSettings,
     update_env_with_settings,
 )
+from tgmonitor.core.telegram.proxy import redact_url_credentials
 
 # 敏感字段(展示打码)
 _SENSITIVE = {"api_hash", "objectstore_access_key", "objectstore_secret_key"}
+# URL 型字段:可能内嵌账号密码(`postgresql://u:p@h/db` / `socks5://u:p@h:port`)。
+# 2026-11-26 2.1.7 P1-8:此前不在打码范围,带密码的 DSN / 代理 URL 明文进
+# stdout。不整体打码 —— host / 库名 / 端口留着便于核对"生效的是哪个"。
+_URL_FIELDS = frozenset({"db_dsn", "proxy"})
 # 不接受设置(paused 用 pause/resume;db_root 遗留无 consumer)
 _BLOCKED = {"paused", "db_root"}
 
 
 def _mask(key: str, value: object) -> object:
-    return "****" if key in _SENSITIVE and value else value
+    if not value:
+        return value
+    if key in _URL_FIELDS:
+        return redact_url_credentials(str(value))
+    if key in _SENSITIVE:
+        return "****"
+    return value
 
 
 def _settings_to_dict(settings: Settings, *, mask: bool) -> dict:

@@ -25,7 +25,7 @@
 - 🔌 **纯 Python Telegram 后端** — Telethon MTProto + cryptg 加密加速 + python-socks 代理,零原生编译
 - 📤 **多格式导出** — JSON / CSV / Markdown / HTML,后台流式,大消息量不占内存
 - 🔁 **自动重连** — 监听遇错指数退避后自动重订阅
-- ⚙️ **运行时热重载** — 设置对话框改后端 / 代理 / 媒体策略,无需重启
+- ⚙️ **运行时热重载** — 设置对话框改数据库 / 对象存储后端与代理,无需重启;媒体策略改后需重启
 - 🧪 **全离线可测** — 4 套抽象接口 + fake 实现,core 完全可脱网单测
 
 ---
@@ -38,20 +38,19 @@
 git clone https://github.com/nemo1991/telegram-channel-monitor.git
 cd telegram-channel-monitor
 uv sync --all-extras        # 含 PostgreSQL / S3 后端(可选;默认 SQLite 无需额外依赖)
-cp .env.example .env        # 填下面的 3 个变量
-uv run tgmon
+uv run tgmon                # 首次启动后在「设置 → 账户凭证」填 API ID / Hash,点「二维码登录」
 ```
 
-最小配置(凭据在 [my.telegram.org/apps](https://my.telegram.org/apps) 申请):
+凭据在 [my.telegram.org/apps](https://my.telegram.org/apps) 申请。也可以用环境变量(或在**数据目录**里放 `.env`,见下方 [数据目录](#️-数据目录);仓库根目录的 `.env` 不会被读取):
 
-```env
-TG_API_ID=123456
-TG_API_HASH=abcdef0123456789abcdef0123456789
+```bash
+TG_API_ID=123456 TG_API_HASH=abcdef0123456789abcdef0123456789 uv run tgmon
 ```
 
-启动后:设置页「账户凭证」填 API ID / Hash → 点「二维码登录」用手机 Telegram App 扫码;
-左栏「频道」双击订阅 / 退订,右侧实时消息流。
-国内网络需代理:设置 → 网络代理,填 `socks5://user:pass@host:port` → 测试连接 → 保存并应用。
+启动后:「设置 → 账户凭证」填好 API ID / Hash → 点「二维码登录」用手机 Telegram App 扫码;
+在「设置 → 监听频道管理」里把频道加入 / 移出监听,新消息实时出现在「大盘」,
+「消息」「媒体」页可检索与导出。
+国内网络需代理:设置 → 网络代理,填 `socks5://user:pass@host:port` → 测试连接 → 保存。
 
 ---
 
@@ -84,7 +83,7 @@ uv run tgmon-cli logout --yes                          # 登出(清 session)
 
 ```bash
 uv run tgmon-cli channels list --source monitored --json   # joined / monitored / subscribed
-uv run tgmon-cli channels refresh                           # 从 TG 拉取已加入频道落库
+uv run tgmon-cli channels refresh --yes                     # 从 TG 拉取已加入频道落库(会级联停掉已退出频道的监听)
 uv run tgmon-cli channels add 100 200 --yes                 # 加入监听白名单
 uv run tgmon-cli channels remove 100 --yes                  # 移出监听
 uv run tgmon-cli monitor                                    # 前台监听(SIGINT / SIGTERM 干净退出)
@@ -132,7 +131,8 @@ uv run tgmon-cli config validate                  # 校验存储 / 对象存储�
   `monitor` 收到 SIGINT 按守护进程约定返回 `0`。
 - stdout 只输出数据(可被重定向或管道消费),进度 / 错误 / 二维码走 stderr。
 - 查询 / 状态命令统一支持 `--json`。
-- 所有写操作(delete / reconcile --apply / config set)必须显式加 `--yes`。
+- 会改变远端或本地状态的写操作必须显式加 `--yes`:`channels add / remove / refresh`、`logout`、
+  `messages delete`、`media delete / download-all / reconcile --apply`、`config set`。
 - 完整设计见 [`docs/PRD-2.1.0-CLI.md`](docs/PRD-2.1.0-CLI.md)。
 
 ---
@@ -180,7 +180,7 @@ core(组合根 + 领域服务)
 | 平台 | 状态 |
 |---|---|
 | **Linux**(Ubuntu 22.04+ / Debian 12+ / Fedora 39+) | ✅ CI 验证 |
-| **macOS 12+**(Intel + Apple Silicon) | ✅ CI 验证 |
+| **macOS 13+**(Intel + Apple Silicon) | ✅ CI 验证 |
 | **Windows 11 + WSL2** | ✅(在 Ubuntu 里跑,体验同 Linux) |
 | **Windows 原生 x64** | ✅ CI 验证 |
 

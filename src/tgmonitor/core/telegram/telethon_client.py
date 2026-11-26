@@ -85,10 +85,20 @@ class _TelethonUpdateStream(UpdateStream):
     消费端消化 — 反压沿 Telethon update 分发链上游传导,不丢消息。
     代价是高频频道 + 消费慢时消息延迟上升;过半(>1500)时 warning
     一次提示消费端跟不上(只发一次防刷屏)。
+
+    关闭语义(2026-11-26 2.1.7 P1-3,修 #29 引入的挂死):`close()` 不再
+    `await put(None)`。队列满且消费端已停时(暂停 / 退出正是先置 stop 再
+    关流)那个 await 永远等不到位置,调用方后续的 2s 硬取消永远到不了。
+    现在哨兵用 `put_nowait`,满了直接丢弃 —— `__anext__` 另有 `_closed`
+    检查兜底;生产端阻塞在 `push` 上时按 `_PUT_WAIT_INTERVAL` 分段等待,
+    每段醒来先看 `_closed`,关流后自行退出。
     """
 
     _QUEUE_MAXSIZE = 2000
     _QUEUE_WARN_AT = 1500
+    # 满队列时 `push` 每段 `wait_for` 的秒数 —— 只为让关流能及时把阻塞的
+    # 生产端放出来,取值对正常路径无影响(队列不满时 `put_nowait` 直达)。
+    _PUT_WAIT_INTERVAL = 0.5
 
     def __init__(self, on_close: Callable[[_TelethonUpdateStream], None] | None = None) -> None:
         self._queue: asyncio.Queue[MessageDTO | None] = asyncio.Queue(maxsize=self._QUEUE_MAXSIZE)
@@ -97,22 +107,44 @@ class _TelethonUpdateStream(UpdateStream):
         self._warned_full = False
 
     async def push(self, msg: MessageDTO) -> None:
-        if not self._closed:
-            if self._queue.qsize() > self._QUEUE_WARN_AT and not self._warned_full:
-                self._warned_full = True
-                log.warning(
-                    "update stream backlog %d > %d — 消费端跟不上,生产端将阻塞反压 (宁慢勿丢)",
-                    self._queue.qsize(),
-                    self._QUEUE_WARN_AT,
-                )
+        if self._closed:
+            return
+        if self._queue.qsize() > self._QUEUE_WARN_AT and not self._warned_full:
+            self._warned_full = True
+            log.warning(
+                "update stream backlog %d > %d — 消费端跟不上,生产端将阻塞反压 (宁慢勿丢)",
+                self._queue.qsize(),
+                self._QUEUE_WARN_AT,
+            )
+        while True:
+            try:
+                self._queue.put_nowait(msg)
+                return
+            except asyncio.QueueFull:
+                pass
+            if self._closed:
+                return
             # 满时阻塞等待消费端腾位(反压,不丢消息)。
-            await self._queue.put(msg)
+            try:
+                await asyncio.wait_for(self._queue.put(msg), timeout=self._PUT_WAIT_INTERVAL)
+                return
+            except TimeoutError:
+                if self._closed:
+                    log.info("update stream closed with a full queue; one queued update dropped")
+                    return
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        await self._queue.put(None)
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            # 满了就不塞哨兵:`__anext__` 的 `_closed` 检查会让消费端退出。
+            log.warning(
+                "update stream closed with %d queued updates — 消费端已停,积压的更新不再被处理",
+                self._queue.qsize(),
+            )
         if self._on_close is not None:
             try:
                 self._on_close(self)

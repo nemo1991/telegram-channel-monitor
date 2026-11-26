@@ -17,10 +17,10 @@ event"供 `cancel_current_batch()` 定位,op 结束(含异常)时在 finally
 置回 None。旧实现是单一 Event + 各 op 开头 clear() — 两个批量并发时,
 后启动的 op 一 clear 就把前一个的取消信号抹掉。新语义:
 
-- 单线程 asyncio loop 下,"op 开头赋值 / finally 置 None"是顺序一致的;
-- 并发两个 op 时,`cancel_current_batch()` 只保证作用于**最近注册**
-  (仍在跑)的那个 op — 前一个 op 的取消窗口已过,语义由 UI 单批量
-  dialog 前提兜底(同一时刻至多一个可见批量);
+- 并发两个 op 时,`cancel_current_batch()` 作用于**最近注册**的那个 op
+  (前一个 op 的取消窗口已过,语义由 UI 单批量 dialog 前提兜底:同一时刻
+  至多一个可见批量);最近注册的 op 结束后引用才清 —— 先注册的那个先
+  结束不会清掉它(2.1.7 修);
 - 无 op 进行时调用 `cancel_current_batch()` 是 no-op(置 None 防悬挂
   set 落到下一个 op 上 — 下一个 op 用自己的新 Event,旧 set 自然失效)。
 
@@ -123,9 +123,17 @@ class BatchService:
         self._start_batch_timer()
         return cancel_event
 
-    def _end_op(self) -> None:
-        """op 退出(含异常):清"当前 op"引用 — 之后的 cancel 调用变 no-op。"""
-        self._cancel_event = None
+    def _end_op(self, cancel_event: asyncio.Event) -> None:
+        """op 退出(含异常):**只在本 op 仍是"当前 op"时**清引用。
+
+        2026-11-26 2.1.7(修 P2 #31 引入的回归):旧实现无条件置 None。
+        两个 op 并发时,先注册的那个先结束 → 把后注册、仍在跑的 op 的
+        取消信号一并清掉,此时点取消变 no-op。带上自己的 Event 做身份
+        比较,后注册的 op 结束前引用一直在,`cancel_current_batch()` 能
+        落到它头上。
+        """
+        if self._cancel_event is cancel_event:
+            self._cancel_event = None
 
     # ---------- 6 批量 op ----------
 
@@ -171,7 +179,7 @@ class BatchService:
             )
             return deleted
         finally:
-            self._end_op()
+            self._end_op(cancel_event)
 
     async def forward_messages(self, items: list[tuple[int, int]], to_chat_id: int) -> int:
         """批量转发 — 按 from_cid group,各走 `_chunks(mids, 100)`(API 上限)。
@@ -219,7 +227,7 @@ class BatchService:
             )
             return success
         finally:
-            self._end_op()
+            self._end_op(cancel_event)
 
     async def pin_messages(self, items: list[tuple[int, int]]) -> int:
         """批量钉选 — 按 cid group(per-msg RPC,异常隔离粒度到单条)。"""
@@ -259,7 +267,7 @@ class BatchService:
             )
             return success
         finally:
-            self._end_op()
+            self._end_op(cancel_event)
 
     async def unpin_messages(self, items: list[tuple[int, int]]) -> int:
         """批量取消钉选 — 同 pin_messages 模式。"""
@@ -299,7 +307,7 @@ class BatchService:
             )
             return success
         finally:
-            self._end_op()
+            self._end_op(cancel_event)
 
     async def add_reaction(
         self,
@@ -341,7 +349,7 @@ class BatchService:
             )
             return success
         finally:
-            self._end_op()
+            self._end_op(cancel_event)
 
     async def remove_reaction(self, items: list[tuple[int, int]], emoji: str) -> int:
         """批量取消 emoji 回应 — 同 add_reaction 模式。"""
@@ -377,4 +385,4 @@ class BatchService:
             )
             return success
         finally:
-            self._end_op()
+            self._end_op(cancel_event)

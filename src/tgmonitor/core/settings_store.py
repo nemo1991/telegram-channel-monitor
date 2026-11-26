@@ -92,8 +92,11 @@ def write_env_file(env: EnvFile, path: Path) -> None:
             lines.append(f"{k}={_quote(env.pairs[k])}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
+    # 2.1.7:临时文件从创建那一刻就是 0600。旧实现 `write_text` 先按 umask
+    # 以 0644 落盘密文、再 chmod —— 中间有一个其它用户可读的窗口。
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     tmp.replace(path)
     os.chmod(path, 0o600)
 

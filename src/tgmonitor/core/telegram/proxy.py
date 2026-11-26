@@ -22,17 +22,33 @@ log = logging.getLogger(__name__)
 ProxyTuple = tuple[ProxyType, str, int, bool, str | None, str | None]
 
 
+def redact_url_credentials(url: str) -> str:
+    """抹掉 URL 里的 `user:pass@`,其余(scheme / host:port / path)原样保留。
+
+    2026-11-26 2.1.7 P1-8:代理 / DSN 这类 URL 可能带账号密码。解析失败的
+    错误信息会进日志、回显到设置页、也会被贴进 issue —— 一律先过这里。
+    没有 `@` 时原样返回。
+    """
+    scheme, sep, rest = url.partition("://")
+    if "@" not in rest:
+        return url
+    hostpart = rest.rsplit("@", 1)[1]
+    return f"{scheme}{sep}****@{hostpart}"
+
+
 def parse_socks5_proxy(url: str | None) -> ProxyTuple | None:
     """`socks5://[user:pass@]host:port` → python-socks 代理 tuple;空/None → None。
 
     username/password 缺省给 None(python-socks 接受 None = 无认证)。
     rdns=True:域名解析交给代理端(国内网络本地 DNS 污染场景必须)。
+    解析失败抛 `ValueError`,message 里的 URL 已抹掉凭据。
     """
     if not url or not url.strip():
         return None
     s = url.strip()
+    shown = redact_url_credentials(s)
     if not (s.startswith("socks5://") or s.startswith("SOCKS5://")):
-        raise ValueError(f"unsupported proxy scheme: {s!r}(仅支持 socks5)")
+        raise ValueError(f"unsupported proxy scheme: {shown!r}(仅支持 socks5)")
     rest = s.split("://", 1)[1]
     user: str | None = None
     password: str | None = None
@@ -45,10 +61,10 @@ def parse_socks5_proxy(url: str | None) -> ProxyTuple | None:
     else:
         hostport = rest
     if ":" not in hostport:
-        raise ValueError(f"proxy missing port: {s!r}")
+        raise ValueError(f"proxy missing port: {shown!r}")
     host, _, port_s = hostport.rpartition(":")
     if not host or not port_s.isdigit():
-        raise ValueError(f"invalid proxy host:port: {s!r}")
+        raise ValueError(f"invalid proxy host:port: {shown!r}")
     return (ProxyType.SOCKS5, host, int(port_s), True, user, password)
 
 
