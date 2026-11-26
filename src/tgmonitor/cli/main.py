@@ -245,7 +245,10 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
     exp_msg.add_argument(
         "--format",
         required=True,
-        choices=[f.value for f in EXPORTERS.message_formats()],
+        # 2026-11-26:不能在 build_parser 时锁死 choices —— 插件在 bootstrap
+        # 才激活,那时 parser 已构造完。改为运行时由 ExporterRegistry 校验,
+        # help 里只列内置格式并说明可扩展。
+        help=f"导出格式(内置: {', '.join(EXPORTERS.message_formats())};插件可扩展)",
     )
     exp_msg.add_argument("-o", "--out", required=True, help="输出路径")
     exp_msg.add_argument("--channel", type=int, action="append", dest="channel_ids")

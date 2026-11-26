@@ -2,11 +2,17 @@
 
 新增格式 = 写一个 Exporter 子类 + `EXPORTERS.register(YourExporter)`。
 UI 之下拉框 / 调度都通过注册表拿,无需改 if/elif。
+
+2026-11-26 插件系统阶段 2:注册 key 从 `ExportFormat` 放宽到 `str`。
+`ExportFormat(str, Enum)` 的值与同名 str 哈希 / 相等,但 `.value` 访问与
+`ExportFormat(name)` 反解对插件格式会炸 —— 注册表内部统一规范化为纯 str,
+下游消费方(result / UI / CLI)不再依赖枚举实例。
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -17,15 +23,28 @@ if TYPE_CHECKING:
     from tgmonitor.core.storage.repository import StorageRepository
 
 
+def _format_key(fmt: str | ExportFormat) -> str:
+    """把 `str` / `str`-Enum 统一规范化为纯 str key。
+
+    `ExportFormat` 是 `str, Enum`,枚举 member 的 hash 与 `.value` 相同,
+    所以内置格式查询天然兼容;但插件 str 格式没有 `.value`,必须在唯一
+    入口收敛,否则下游 `.value` / `ExportFormat(...)` 会炸。
+    """
+    return fmt.value if isinstance(fmt, Enum) else str(fmt)
+
+
 class Exporter(ABC):
     """导出器接口。
 
     2026-11-25 P1-E:类级元数据描述格式能力,由注册表驱动 GUI 下拉 / CLI
     choices,消除"注册表非唯一真源"漂移(M2)。默认值保持向后兼容 ——
     现有 exporter 不声明也能工作。
+
+    2026-11-26:`format` 注解放宽到 `str` —— 插件可提供 `ExportFormat`
+    枚举之外的新格式,内置 exporter 继续用枚举成员(它是 str 子类)。
     """
 
-    format: ExportFormat
+    format: str
     extension: str = ""  # 输出文件扩展名(含点),如 ".json";空 = 调用方自定
     needs_object_store: bool = False  # render 是否必须有 object_store(ZIP=True)
     supports_thumbnails: bool = False  # 是否消费 include_thumbnails(HTML/ZIP=True)
@@ -60,64 +79,86 @@ class Exporter(ABC):
 
 
 class ExporterRegistry:
-    """Exporter 注册表:format → Exporter 实例,进程内单例 (`EXPORTERS`)。"""
+    """Exporter 注册表:format(str) → Exporter 实例,进程内单例 (`EXPORTERS`)。"""
 
     def __init__(self) -> None:
         """空注册;由 `@exporter(...)` 装饰器填充。"""
-        self._items: dict[ExportFormat, Exporter] = {}
+        self._items: dict[str, Exporter] = {}
 
-    def register(self, exporter: Exporter) -> None:
-        """注册 Exporter;format 重复抛 `ValueError`(防双注册)。"""
-        if exporter.format in self._items:
-            raise ValueError(f"format {exporter.format} already registered")
-        self._items[exporter.format] = exporter
+    def register(self, exporter: Exporter) -> str:
+        """注册 Exporter,返回规范化 format key;重复抛 `ValueError`。
 
-    def get(self, fmt: ExportFormat) -> Exporter:
+        归一化在唯一入口完成 —— 传 `ExportFormat.JSON` 与传 `"json"` 落到
+        同一个 key,重名保护因此不会漏判。插件停用后 host 用返回的 key
+        调 `unregister`,保证重激活不撞这里的保护。
+        """
+        fmt = _format_key(exporter.format)
+        if fmt in self._items:
+            raise ValueError(f"format {fmt} already registered")
+        self._items[fmt] = exporter
+        return fmt
+
+    def unregister(self, fmt: str) -> bool:
+        """注销 format;返回是否确有移除(不存在时静默 False,幂等)。
+
+        2026-11-26:`EventBus.subscribe_all` 没有对称的 unsubscribe 导致
+        host 必须自己记账 —— exporter 侧不重蹈覆辙,注册 / 注销成对提供,
+        `deactivate_all` 与激活失败回滚都走这里。
+        """
+        return self._items.pop(_format_key(fmt), None) is not None
+
+    def get(self, fmt: str) -> Exporter:
         """取 Exporter;无注册时抛 `KeyError`(消息含 available 列表)。"""
+        key = _format_key(fmt)
         try:
-            return self._items[fmt]
+            return self._items[key]
         except KeyError as e:
-            raise KeyError(f"no exporter for format {fmt}; available: {list(self._items)}") from e
+            raise KeyError(f"no exporter for format {key}; available: {list(self._items)}") from e
 
-    def available(self) -> list[ExportFormat]:
+    def available(self) -> list[str]:
         """所有已注册 format(供 UI 下拉框用)。"""
         return list(self._items.keys())
 
-    def message_formats(self) -> list[ExportFormat]:
+    def message_formats(self) -> list[str]:
         """走 `ExportRequest`(per-message)的格式 —— GUI 消息导出下拉 / CLI 用。
 
         P1-E:`MEDIA_CSV` 走 `MediaExportRequest`(per-media 行),不属消息导出,
         从这里排除;新增消息格式只要 `@exporter` 注册即自动出现,无需改 UI/CLI。
-        按 `ExportFormat` 枚举声明顺序排,保持下拉顺序向后兼容(不受 import 顺序影响)。
+        按 `ExportFormat` 枚举声明顺序排,保持下拉顺序向后兼容;插件格式没有
+        枚举序,排末尾。
         """
-        order = {f: i for i, f in enumerate(ExportFormat)}
+        order = {_format_key(f): i for i, f in enumerate(ExportFormat)}
         return sorted(
             (f for f, ex in self._items.items() if not ex.uses_media_dto),
             key=lambda f: order.get(f, len(order)),
         )
 
-    def media_formats(self) -> list[ExportFormat]:
+    def media_formats(self) -> list[str]:
         """走 `MediaExportRequest`(per-media)的格式 —— CLI `export media` 用。"""
-        order = {f: i for i, f in enumerate(ExportFormat)}
+        order = {_format_key(f): i for i, f in enumerate(ExportFormat)}
         return sorted(
             (f for f, ex in self._items.items() if ex.uses_media_dto),
             key=lambda f: order.get(f, len(order)),
         )
 
-    def extension(self, fmt: ExportFormat) -> str:
+    def extension(self, fmt: str) -> str:
         """格式的默认扩展名(含点),由 exporter 元数据声明。"""
-        return self._items[fmt].extension
+        return self._items[_format_key(fmt)].extension
 
-    def supports_thumbnails(self, fmt: ExportFormat) -> bool:
+    def supports_thumbnails(self, fmt: str) -> bool:
         """格式是否消费 include_thumbnails(驱动 GUI 缩略图勾选框启用态)。"""
-        return self._items[fmt].supports_thumbnails
+        return self._items[_format_key(fmt)].supports_thumbnails
+
+    def needs_object_store(self, fmt: str) -> bool:
+        """格式是否必须有 object_store 才能 render(驱动 service 传参)。"""
+        return self._items[_format_key(fmt)].needs_object_store
 
 
 EXPORTERS = ExporterRegistry()
 
 
-def exporter(fmt: ExportFormat) -> Callable[[type[Exporter]], type[Exporter]]:
-    """类装饰器:`@exporter(ExportFormat.JSON)`。"""
+def exporter(fmt: str | ExportFormat) -> Callable[[type[Exporter]], type[Exporter]]:
+    """类装饰器:`@exporter(ExportFormat.JSON)`(插件也可传普通 str)。"""
 
     def _wrap(cls: type[Exporter]) -> type[Exporter]:
         cls.format = fmt

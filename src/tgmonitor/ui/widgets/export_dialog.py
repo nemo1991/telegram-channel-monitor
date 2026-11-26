@@ -21,16 +21,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tgmonitor.core.dto import ExportFormat, ExportRequest
+from tgmonitor.core.dto import ExportRequest
 from tgmonitor.core.export import service as _export_service  # noqa: F401 — 触发 @exporter 注册
 from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.ui.widgets.form_row import combo_field, path_field
 
-# 2026-11-25 P1-E:格式下拉 / 扩展名改由 Exporter 注册表元数据驱动。
-# 顶部 import service 确保所有 @exporter 装饰器执行完(注册 ready),
-# 否则只 import base 拿到的是空注册表。service 纯 core 无 Qt 依赖。
-_MESSAGE_FORMATS = EXPORTERS.message_formats()  # 排除 MEDIA_CSV(不同 DTO)
-_FORMAT_EXT = {fmt: EXPORTERS.extension(fmt) for fmt in _MESSAGE_FORMATS}
+# 2026-11-25 P1-E:格式下拉 / 扩展名由 Exporter 注册表元数据驱动。
+# 顶部 import service 确保内置 @exporter 装饰器执行完(注册 ready)。
+# 2026-11-26:不再做模块级快照 —— 插件在 bootstrap 才激活,模块若先被
+# import 就拿不到插件格式;改为每次构造 dialog 时从注册表实时派生。
 
 
 class ExportDialog(QDialog):
@@ -114,8 +113,12 @@ class ExportDialog(QDialog):
         form.addRow(self.tr("时间范围:"), row)
 
         # 格式(combo_field 禁用滚轮切换 — 防滚动误改导出格式)
-        # P1-E:从注册表取消息格式(排除 MEDIA_CSV,后者走不同 DTO)
-        self.cmb_fmt = combo_field(form, self.tr("格式:"), _MESSAGE_FORMATS)
+        # P1-E:从注册表取消息格式(排除 MEDIA_CSV,后者走不同 DTO)。
+        # 2026-11-26:运行时派生,含插件注册的格式;combo_field 对非 tuple
+        # 选项取 `.value`,纯 str 没有该属性,故显式传 (data, display) 对。
+        self._formats = EXPORTERS.message_formats()
+        self._format_ext = {fmt: EXPORTERS.extension(fmt) for fmt in self._formats}
+        self.cmb_fmt = combo_field(form, self.tr("格式:"), [(fmt, fmt) for fmt in self._formats])
 
         # 选项 — HTML(内嵌缩略图)+ ZIP(打包缩略图)都用到;其它格式
         # 忽略该字段。2026-09-01 v1.5.1 PR #B4 加 ZIP 共享同一 checkbox。
@@ -124,7 +127,7 @@ class ExportDialog(QDialog):
         form.addRow("", self.chk_thumbs)
         self.cmb_fmt.currentIndexChanged.connect(
             lambda i: self.chk_thumbs.setEnabled(
-                self.cmb_fmt.currentData() in (ExportFormat.HTML, ExportFormat.ZIP)
+                EXPORTERS.supports_thumbnails(self.cmb_fmt.currentData())
             )
         )
 
@@ -151,7 +154,8 @@ class ExportDialog(QDialog):
 
     def _set_default_filename(self) -> None:
         self.in_path.setText(
-            f"./export-{datetime.now().strftime('%Y%m%d-%H%M%S')}{_FORMAT_EXT[ExportFormat.JSON]}"
+            f"./export-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            f"{self._format_ext.get('json', '.json')}"
         )
 
     def _on_ok(self) -> None:
@@ -167,14 +171,14 @@ class ExportDialog(QDialog):
         else:
             ids = self._channel_ids
         # 格式
-        fmt: ExportFormat = self.cmb_fmt.currentData()
+        fmt: str = self.cmb_fmt.currentData()
         out = self.in_path.text().strip()
         if not out:
             return
         # 自动补扩展名
         p = Path(out)
         if p.suffix == "":
-            out = str(p.with_suffix(_FORMAT_EXT[fmt]))
+            out = str(p.with_suffix(self._format_ext.get(fmt, "")))
         # 时间(多选 / 单条导出时,date 范围无意义 — 强制 None)
         if self._selected_messages is not None or self._single_message_id is not None:
             df: datetime | None = None
@@ -190,9 +194,7 @@ class ExportDialog(QDialog):
             out_path=out,
             # 2026-09-01 v1.5.1 PR #B4:ZIP 与 HTML 共用同一 checkbox,
             # 都把缩略图作为可选附件;其它格式该字段被 dispatcher 忽略。
-            include_thumbnails=(
-                fmt in (ExportFormat.HTML, ExportFormat.ZIP) and self.chk_thumbs.isChecked()
-            ),
+            include_thumbnails=(EXPORTERS.supports_thumbnails(fmt) and self.chk_thumbs.isChecked()),
             # 2026-09-10 v1.7.3:用户元数据开关 — JSON / ZIP 永远含,
             # CSV / Markdown / HTML / MEDIA_CSV 据此加列 / 加 block。
             include_metadata=self.chk_metadata.isChecked(),

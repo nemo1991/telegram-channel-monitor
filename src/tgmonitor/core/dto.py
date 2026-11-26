@@ -320,7 +320,7 @@ class ExportRequest:
     channel_ids: list[int]
     date_from: datetime | None = None
     date_to: datetime | None = None
-    format: ExportFormat = ExportFormat.JSON
+    format: str = ExportFormat.JSON
     out_path: str = ""
     include_media_meta: bool = True
     include_thumbnails: bool = False  # HTML/ZIP 用:内嵌缩略图 / 打包缩略图
@@ -364,7 +364,7 @@ class MediaExportRequest:
     limit: int = 100_000
     offset: int = 0
     out_path: str = ""
-    format: ExportFormat = ExportFormat.MEDIA_CSV
+    format: str = ExportFormat.MEDIA_CSV
     # 2026-09-10 v1.7.3:导出含用户元数据(per-media wrapper 含 message metadata)。
     # 含义与 `ExportRequest.include_metadata` 一致。
     include_metadata: bool = True

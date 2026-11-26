@@ -23,6 +23,7 @@ from typing import Any, Mapping
 
 from tgmonitor.core.config import _user_data_dir
 from tgmonitor.core.events import EventBus
+from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.plugins.api import (
     EventBusView,
     Plugin,
@@ -61,6 +62,8 @@ class PluginRecord:
     error: str | None = None
     plugin: Plugin | None = field(default=None, repr=False)
     context: PluginContext | None = field(default=None, repr=False)
+    # 本插件注册的导出格式 key — host 记账,deactivate 时逐个 unregister。
+    export_formats: tuple[str, ...] = ()
 
 
 class PluginHost:
@@ -133,6 +136,9 @@ class PluginHost:
             try:
                 plugin = item.factory()
                 plugin.activate(ctx)
+                # export 能力:activate 成功后才注册 —— 插件可能按 config
+                # 决定提供哪些格式,且激活失败时不应留下残留格式。
+                export_formats = self._register_exporters(plugin, item.manifest)
             except Exception as exc:
                 log.exception("插件 %s activate 失败,已隔离", pid)
                 ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
@@ -149,9 +155,34 @@ class PluginHost:
                     source=item.source,
                     plugin=plugin,
                     context=ctx,
+                    export_formats=export_formats,
                 )
                 activated.append(self._records[pid])
         return activated
+
+    def _register_exporters(self, plugin: Plugin, manifest: PluginManifest) -> tuple[str, ...]:
+        """把插件声明的 exporter 注册到全局注册表,返回注册到的 format key。
+
+        失败时回滚已注册的格式再上抛 —— 由 `activate_all` 的 except 收口
+        将该插件标记 FAILED。注册原语在 registry,生命周期驱动在 host。
+        """
+        if "export" not in manifest.capabilities:
+            return ()
+        providers = getattr(plugin, "exporters", ())
+        if not providers:
+            log.warning("插件 %s 声明 export 能力但未提供 exporters", manifest.id)
+            return ()
+        registered: list[str] = []
+        try:
+            for provider in providers:
+                instance = provider() if isinstance(provider, type) else provider
+                registered.append(EXPORTERS.register(instance))
+        except Exception:
+            for fmt in registered:
+                EXPORTERS.unregister(fmt)
+            raise
+        log.info("插件 %s 注册导出格式: %s", manifest.id, registered)
+        return tuple(registered)
 
     def _build_context(
         self,
@@ -170,11 +201,16 @@ class PluginHost:
         )
 
     def deactivate_all(self) -> None:
-        """停用全部插件:先退订事件,再调插件 deactivate。幂等。
+        """停用全部插件:注销导出格式 → 退订事件 → 调插件 deactivate。幂等。
 
         失败只记日志不抛,保证 shutdown 总能走完(与 runtime.shutdown 策略一致)。
         """
         for pid, rec in self._records.items():
+            for fmt in rec.export_formats:
+                try:
+                    EXPORTERS.unregister(fmt)
+                except Exception:
+                    log.exception("插件 %s 注销导出格式 %s 失败", pid, fmt)
             if rec.context is not None:
                 rec.context.deactivate_hooks()
             if rec.plugin is not None:
