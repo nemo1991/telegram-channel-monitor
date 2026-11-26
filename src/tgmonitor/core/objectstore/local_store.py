@@ -67,6 +67,8 @@ class LocalObjectStore(LocalFsStoreBase):
                     # 跳过探针文件(connect 时 probe_writable 创建/删除,可能短暂存在)
                     if ".tgmonitor_write_probe" in fn:
                         continue
+                    if fn.startswith(LocalFsStoreBase._TMP_PREFIX) and fn.endswith(".part"):
+                        continue
                     if prefix and not rel.startswith(prefix):
                         continue
                     yield rel

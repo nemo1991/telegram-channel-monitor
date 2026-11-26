@@ -65,6 +65,38 @@ _DATE_PRESETS = (
 )
 
 
+_DAY = timedelta(days=1)
+_ONE_US = timedelta(microseconds=1)
+
+
+def _local_day_start(year: int, month: int, day: int) -> datetime:
+    """本地某天 00:00,带本地时区(`astimezone()` 把 naive 解释为本地时间并挂 tzinfo)。"""
+    return datetime(year, month, day).astimezone()
+
+
+def _preset_date_range(
+    preset: str,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    """「今天 / 7 天 / 30 天」→ (起, 止),aware、本地时区。
+
+    2026-11-26 2.1.7 P1-6:此前返回 **naive** 本地时间,而存储层对 naive
+    原样比较、aware 才转 UTC(`_dt_to_db`)—— 落库的消息时间都是 UTC,
+    于是筛选窗口被整体平移了时区偏移:东八区每天 00:00–08:00 的消息
+    被「今天 / 7 天 / 30 天」全部漏掉。现在给 aware 值,存储层会正确转
+    UTC 再比较。
+
+    `now` 仅供测试注入;缺省取当前时间。
+    """
+    now = (now or datetime.now()).astimezone()
+    days = {"today": 1, "7d": 7, "30d": 30}[preset]
+    first = (now - timedelta(days=days - 1)).date()
+    today = now.date()
+    start = _local_day_start(first.year, first.month, first.day)
+    end = _local_day_start(today.year, today.month, today.day) + _DAY - _ONE_US
+    return start, end
+
+
 class MessageManagerWidget(QWidget):
     """消息管理页:筛选栏 + 结果表 + 详情。
 
@@ -300,28 +332,18 @@ class MessageManagerWidget(QWidget):
         self._page = 0
 
     def _selected_dates(self) -> tuple[datetime | None, datetime | None]:
-        """日期预设 → (起, 止) naive datetime,None 表示不过滤。"""
+        """日期预设 → (起, 止) aware datetime(本地时区),None 表示不过滤。"""
         preset = self.cmb_date.currentData()
         if preset == "all" or preset is None:
             return None, None
-        today = datetime.now()
-        if preset == "today":
-            start = today.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(days=1) - timedelta(microseconds=1)
-            return start, end
-        if preset in ("7d", "30d"):
-            days = 7 if preset == "7d" else 30
-            start = (today - timedelta(days=days - 1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            end = today.replace(hour=23, minute=59, second=59, microsecond=999999)
-            return start, end
-        # 自定义:QDate 的 year/month/day 构造 naive datetime —— storage
-        # 的 _dt_to_db 对 naive 原样编码 ISO。
+        if preset in ("today", "7d", "30d"):
+            return _preset_date_range(preset)
+        # 自定义:QDate 的 year/month/day 构造当天起止。同样按本地时区给
+        # aware 值 —— 用户点的是「本地这一天」。
         d1 = self.date_from.date()
         d2 = self.date_to.date()
-        start = datetime(d1.year(), d1.month(), d1.day(), 0, 0, 0)
-        end = datetime(d2.year(), d2.month(), d2.day(), 23, 59, 59, 999999)
+        start = _local_day_start(d1.year(), d1.month(), d1.day())
+        end = _local_day_start(d2.year(), d2.month(), d2.day()) + _DAY - _ONE_US
         return start, end
 
     # ---- 分页 ----

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import secrets
 from abc import abstractmethod
 from pathlib import Path
 from typing import AsyncIterator, BinaryIO
@@ -73,18 +74,40 @@ class LocalFsStoreBase(ObjectStore):
 
     # ---- 写入(Local / Folder 共用,#21 / #27)----
 
+    # 写入中的临时文件名前缀:`iter_keys` 据此跳过,不把半成品当对象。
+    # 合法对象的文件名是 `<hash>.<ext>`(见 `MediaDownloader.make_key`),
+    # 不会以 `.tgmonitor-` 开头 —— 不能只按 `.part` 后缀过滤:远端文件
+    # 完全可以叫 `video.mp4.part`,那样对象会被当成孤儿误删。
+    _TMP_PREFIX = ".tgmonitor-"
+
+    @classmethod
+    def _tmp_path_for(cls, path: Path) -> Path:
+        """同目录唯一临时名 `.tgmonitor-<12 位随机十六进制><ext>.part`。
+
+        2026-11-26 2.1.7:此前是固定的 `<name>.part` —— 同一 key 并发写
+        (monitor 下载 worker 与手动下载 / 全量同步撞车)时两个写者互相
+        截断。随机后缀让每个写者各写各的,`replace` 仍然原子,后完成者胜。
+        不用 `tempfile.mkstemp`:它以 0600 建文件,会让落盘对象权限偏离
+        umask 默认值;这里按常规 `open("wb")` 创建,权限行为不变。
+        """
+        return path.with_name(f"{cls._TMP_PREFIX}{secrets.token_hex(6)}{path.suffix}.part")
+
     @staticmethod
     def _write_bytes_atomic(path: Path, data: bytes, hash_needed: bool) -> str | None:
         """原子写:.part + rename;`hash_needed` 时顺手算 sha256。
 
         写盘 + sha256 是重 IO/CPU,由调用方放 `asyncio.to_thread` —
         否则 FULL 策略下下载 100MB+ 视频同步写盘会阻塞 qasync 主事件
-        循环,UI 卡顿。
+        循环,UI 卡顿。中途失败清掉 .part 半成品,对象本体不出现。
         """
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".part")
-        tmp.write_bytes(data)
-        tmp.replace(path)
+        tmp = LocalFsStoreBase._tmp_path_for(path)
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         if hash_needed:
             return hashlib.sha256(data).hexdigest()
         return None
@@ -129,13 +152,13 @@ class LocalFsStoreBase(ObjectStore):
         """
         path = self._path(key)
         self._ensure_inside_root(path)
-        tmp = path.with_suffix(path.suffix + ".part")
 
-        def _open_tmp():
+        def _open_tmp() -> tuple[BinaryIO, Path]:
             path.parent.mkdir(parents=True, exist_ok=True)
-            return tmp.open("wb")
+            tmp = self._tmp_path_for(path)
+            return tmp.open("wb"), tmp
 
-        f = await asyncio.to_thread(_open_tmp)
+        f, tmp = await asyncio.to_thread(_open_tmp)
         size = 0
         digest = hashlib.sha256()
         try:

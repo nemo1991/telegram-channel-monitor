@@ -51,6 +51,133 @@ from . import _qt_bridge as _bridge
 
 log = logging.getLogger(__name__)
 
+# ---- 「打开媒体」扩展名白名单(2026-11-26 2.1.7 P1-1)-----------------------------
+#
+# 扩展名来自频道发来的 `file_name` / `mime_type` —— **远端可控**;对象 key 也带
+# 这个扩展名(`MediaDownloader.make_key` → `media/<hash>.<ext>`)。于是:
+#   - Local / Folder 后端:「打开」直接把落盘文件交给系统默认程序;
+#   - S3 后端:先按同一个扩展名暂存到 tmp 再打开。
+# 恶意频道发一个 `x.bat` / `x.hta` / `x.jse`,用户点「打开」即执行。两条路都
+# 必须过这张白名单:只有已知的多媒体 / 文档 / 压缩包类型才直接打开;脚本、
+# 可执行文件、快捷方式,以及 html / svg 这类能携带脚本的容器一律拒绝,
+# 提示改用「打开所在文件夹」或「复制路径」自行处理。
+_SAFE_OPEN_SUFFIXES: frozenset[str] = frozenset(
+    {
+        # 图片
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "bmp",
+        "heic",
+        "heif",
+        "avif",
+        "tif",
+        "tiff",
+        "ico",
+        # 视频
+        "mp4",
+        "mkv",
+        "mov",
+        "avi",
+        "webm",
+        "m4v",
+        "mpg",
+        "mpeg",
+        "3gp",
+        "ts",
+        "m2ts",
+        "flv",
+        "wmv",
+        "ogv",
+        # 音频
+        "mp3",
+        "m4a",
+        "aac",
+        "ogg",
+        "oga",
+        "opus",
+        "wav",
+        "flac",
+        "wma",
+        "amr",
+        "mid",
+        "midi",
+        "aiff",
+        "aif",
+        # 文档(不含可带宏的 docm / xlsm / pptm)
+        "pdf",
+        "txt",
+        "md",
+        "rtf",
+        "epub",
+        "mobi",
+        "azw3",
+        "djvu",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "odt",
+        "ods",
+        "odp",
+        "csv",
+        "tsv",
+        "json",
+        "yaml",
+        "yml",
+        # 压缩包(交给归档管理器,不执行内容)
+        "zip",
+        "7z",
+        "rar",
+        "tar",
+        "gz",
+        "tgz",
+        "bz2",
+        "xz",
+    }
+)
+
+
+def _suffix_of(name: str | Path) -> str | None:
+    """文件名末尾扩展名(小写、不带点);没有扩展名返回 None。
+
+    系统默认程序就是按「最后一个扩展名」选的,所以取末尾这一个 ——
+    `a.jpg.bat` 取 `bat`,`x.BAT ` 这类带尾随空格的不会落进白名单。
+    """
+    suffix = os.path.splitext(str(name))[1].lower()
+    return suffix[1:] if suffix else None
+
+
+def _staged_suffix(med: MediaDTO) -> str:
+    """暂存文件的扩展名推断:`file_name` 后缀 > `mime_type` 查表 > `.bin`。"""
+    if med.file_name:
+        suffix = os.path.splitext(med.file_name)[1]
+        if suffix:
+            return suffix[1:].lower()
+    if med.mime_type:
+        guessed = mimetypes.guess_extension(med.mime_type, strict=False)
+        if guessed:
+            return guessed[1:].lower()
+    return "bin"
+
+
+def _is_safe_to_open(suffix: str | None) -> bool:
+    """扩展名是否在「直接打开」白名单内(None / 空串一律不安全)。"""
+    return bool(suffix) and suffix in _SAFE_OPEN_SUFFIXES
+
+
+def _unsafe_open_message(suffix: str | None) -> str:
+    shown = f".{suffix}" if suffix else "(无扩展名)"
+    return (
+        f"出于安全考虑,不直接打开 {shown} 类型的文件 —— "
+        "扩展名由频道发送方决定,可能被系统当作可执行内容。"
+        "请用「打开所在文件夹」或「复制路径」后自行处理。"
+    )
+
 
 def _guard_inflight(func: Any) -> Any:
     """下载/重下入口的 in-flight 守卫装饰器(2026-11-23)。
@@ -210,6 +337,14 @@ async def open_media_with_result(
         # 直接开本地文件;无本地路径但有 uri(远端后端)→ stage 到 tmp 再开。
         local = objects.local_path(med.object_key)
         if local is not None:
+            # P1-1:落盘文件的末尾扩展名决定系统用什么程序打开。key 的扩展名
+            # 取自远端 `file_name`,必须过白名单。兜底看 `_staged_suffix`:
+            # 无点文件名(`README`)的 key 扩展名就是整个文件名,系统不认识
+            # (只会让用户选程序),按 mime 推断的类型安全即可放行。
+            if not _is_safe_to_open(_suffix_of(local)) and not _is_safe_to_open(
+                _staged_suffix(med)
+            ):
+                return OpenMediaResult(False, _unsafe_open_message(_suffix_of(local)))
             # 2026-09-26 fix(open-media-hang):open_url 在 macOS 上同步走
             # `[NSWorkspace openURL:]` AppleEvent → LaunchServices,会卡
             # 主线程 100ms~数秒;放 worker thread 跑,UI 不冻。
@@ -225,6 +360,11 @@ async def open_media_with_result(
                 else OpenMediaResult(False, "系统调用失败:请检查是否已关联默认应用")
             )
         if objects.uri(med.object_key) is not None:
+            # P1-1:暂存文件的扩展名由远端 `file_name` / `mime_type` 决定,
+            # 写进 tmp 后交给系统默认程序 —— 先过白名单,再落盘。
+            staged = _staged_suffix(med)
+            if not _is_safe_to_open(staged):
+                return OpenMediaResult(False, _unsafe_open_message(staged))
             tmp = await _stage_s3_to_tmp(ms, med)
             # 同上 — 远端路径 open_url 也走 worker thread,见上注。
             ok = bool(
@@ -374,7 +514,9 @@ async def _stage_s3_to_tmp(ms: MediaService, med: MediaDTO) -> Path:
     `open_url callback`(等价 `QDesktopServices.openUrl(QUrl.fromLocalFile(...))`)。
 
     - 扩展名推断优先级:`med.file_name` 后缀 > `med.mime_type` 查
-      `mimetypes.guess_extension` > `.bin` fallback
+      `mimetypes.guess_extension` > `.bin` fallback(逻辑在
+      `_staged_suffix`;调用方 `open_media` 已先过 `_SAFE_OPEN_SUFFIXES`
+      白名单,本函数只负责落盘)
     - tmp 目录:`tmp_root callback` 返的路径(macOS = `QStandardPaths.
       writableLocation(QStandardPaths.StandardLocation.TempLocation)`),
       callback 未注册时回退 `~/.cache/tgmonitor`
@@ -385,16 +527,8 @@ async def _stage_s3_to_tmp(ms: MediaService, med: MediaDTO) -> Path:
     2026-10-04 plan 阶段 2.2:`QStandardPaths` 调用抽到 UI 层 callback,
     core 完全不 import PySide6。
     """
-    # 1. suffix
-    suffix = ""
-    if med.file_name:
-        suffix = os.path.splitext(med.file_name)[1]
-    if not suffix and med.mime_type:
-        guessed = mimetypes.guess_extension(med.mime_type, strict=False)
-        if guessed:
-            suffix = guessed
-    if not suffix:
-        suffix = ".bin"
+    # 1. suffix(白名单校验在调用方 open_media)
+    suffix = "." + _staged_suffix(med)
 
     # 2. tmp 目录 — callback 未注册时用 `~/.cache/tgmonitor` fallback
     # (CLI 路径 / 测试不调 open_url → 不会触发,fallback 不影响)

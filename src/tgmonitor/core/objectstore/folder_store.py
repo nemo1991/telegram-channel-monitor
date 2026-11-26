@@ -161,6 +161,8 @@ class FolderObjectStore(LocalFsStoreBase):
                 for fn in filenames:
                     if ".tgmonitor_write_probe" in fn:
                         continue
+                    if fn.startswith(LocalFsStoreBase._TMP_PREFIX) and fn.endswith(".part"):
+                        continue
                     full = Path(dirpath) / fn
                     files.append(full.relative_to(root).as_posix())
             file_set = set(files)

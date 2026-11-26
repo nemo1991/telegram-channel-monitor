@@ -204,11 +204,17 @@ class ExportDialog(QDialog):
 
     @staticmethod
     def _parse_date(s: str) -> datetime | None:
+        """`YYYY-MM-DD` / `YYYY-MM-DDTHH:MM:SS` → aware datetime(本地时区);空 / 非法 → None。
+
+        2.1.7 P1-6(同消息页日期预设):用户填的是本地时间,给 aware 值存储层
+        才会正确转 UTC;此前 naive 值被当成 UTC 比较,东八区下导出范围
+        整体偏移 8 小时。
+        """
         if not s:
             return None
         for fmt_str in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
             try:
-                return datetime.strptime(s, fmt_str)
+                return datetime.strptime(s, fmt_str).astimezone()
             except ValueError:
                 continue
         return None

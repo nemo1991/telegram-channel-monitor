@@ -20,7 +20,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
 
 from tgmonitor.core.events import (
     ChannelMetadataChanged,
@@ -43,13 +46,32 @@ def _require[C: Callable[..., Any]](cb: C | None) -> C:
     return cb
 
 
+def _late_bound(
+    getter: Callable[[], Callable[..., Awaitable[None]] | None],
+) -> Callable[..., Awaitable[None]]:
+    """把 bus 订阅包一层:调用时才解析回调槽。
+
+    `rt.handle_*` 是晚绑定槽(测试会 `monitor._handle_pin = stub` 换实现),
+    订阅只登记一次(见 `Orchestrator._subscribe_once`),所以不能在订阅时
+    把回调对象取走 —— 每次事件到来再读槽,换实现后新实现立即生效。
+    """
+
+    async def _dispatch(event: Any) -> None:
+        await _require(getter())(event)
+
+    return _dispatch
+
+
 class Orchestrator:
     """主循环 + 生命周期组件。集中 4 个 method:
 
-    - `start` — 启动主循环 task + 补拉 task + 异步下载 task + bus 订阅
+    - `start` — 启动主循环 task + 补拉 task + 异步下载 task(幂等)
     - `stop` — 逆序:停下载 → 停补拉 → 关流 → 停主
     - `_run` — 消息主循环(heartbeat + 退避重连)
     - `_log_heartbeat` — 周期 INFO 心跳
+
+    bus 订阅(`MessageInteractionsChanged` / `MessagePinChanged` /
+    `MessageDeleted` / 频道元数据 / 连接状态)只在首次 `start()` 登记一次。
 
     经 `self._rt` 访问共享状态:client / bus / downloader / stream /
     task / backfill_task / download_task / download_queue / stop /
@@ -58,6 +80,52 @@ class Orchestrator:
 
     def __init__(self, rt: MonitorRuntime) -> None:
         self._rt = rt
+        # 2026-11-26 2.1.7 P1-2:bus 订阅只登记一次。旧实现每次 start() 都
+        # 重新 subscribe、stop() 不退订 —— pause/resume 走 stop→start,
+        # 每轮暂停/继续同一 handler 多一份,之后的消息被重复处理。
+        self._subscribed = False
+
+    def _subscribe_once(self) -> None:
+        """登记 7 个 bus 订阅;重复调用 no-op(回调经 `_late_bound` 晚绑定)。"""
+        if self._subscribed:
+            return
+        rt = self._rt
+        rt.bus.subscribe(
+            # Telegram 高频推互动信息,落库走 bus → 单点 + 订阅者异常被吞,
+            # 比流内分发更安全。
+            MessageInteractionsChanged,
+            _late_bound(lambda: rt.handle_interactions_changed),
+        )
+        # Telegram 推送消息 pin / unpin → 落库 + republish MessageEdited
+        # 触发 UI 行置顶刷新(只有 republish 才能让 UI 实时感知外部 pin)。
+        rt.bus.subscribe(MessagePinChanged, _late_bound(lambda: rt.handle_pin_changed))
+        # TG 端消息删除事件:落库删 row + 减 object_key refcount,
+        # 与 `delete_message` 路径同语义。
+        rt.bus.subscribe(
+            MessageDeleted,
+            _late_bound(lambda: rt.handle_message_deleted),
+        )
+        # 频道元数据变更:`updateChannel` 直接落库;`updateSupergroup` 需要
+        # 先按用户名反查 channel_id。
+        rt.bus.subscribe(
+            ChannelMetadataChanged,
+            _late_bound(lambda: rt.handle_channel_metadata),
+        )
+        # 普通 chat 改名 / 改头像事件:直接落库(channel_id 即 chat_id,
+        # 无需反查);UI 端 `ChannelListCard` 也订阅同一事件实时刷新卡片。
+        rt.bus.subscribe(
+            ChannelTitleChanged,
+            _late_bound(lambda: rt.handle_channel_title_changed),
+        )
+        rt.bus.subscribe(
+            ChannelPhotoChanged,
+            _late_bound(lambda: rt.handle_channel_photo_changed),
+        )
+        rt.bus.subscribe(
+            ConnectionStateChanged,
+            _late_bound(lambda: rt.handle_connection_state),
+        )
+        self._subscribed = True
 
     async def start(self) -> None:
         """启动主循环;幂等(已启动时 no-op)。"""
@@ -73,47 +141,7 @@ class Orchestrator:
             _require(rt.backfill_loop)(),
             name="MonitorService.backfill",
         )
-        # 2026-08-27 v1.4.0 PR #10:订阅 reactions / views 增量更新事件。
-        # Telegram 高频推互动信息,落库走 bus → 单点 +
-        # 订阅者异常被吞,比 stream 更安全。
-        rt.bus.subscribe(
-            MessageInteractionsChanged,
-            _require(rt.handle_interactions_changed),
-        )
-        # 2026-09-10 v1.7.3:Telegram 推送消息 pin / unpin → 落库 + republish
-        # MessageEdited 触发 UI 行 置顶 刷新(只有 republish 才能让 UI 实时感知
-        # 外部 pin,而不依赖下次 reload)。
-        rt.bus.subscribe(
-            MessagePinChanged,
-            _require(rt.handle_pin_changed),
-        )
-        # 2026-08-27 v1.4.0 PR #11:订阅 TG 端消息删除事件。落库删 row +
-        # 减 object_key refcount,与 `delete_message` 路径同语义。
-        rt.bus.subscribe(
-            MessageDeleted,
-            _require(rt.handle_message_deleted),
-        )
-        # 2026-08-27 v1.4.0 PR #14:订阅频道元数据变更事件。`updateChannel`
-        # 直接落库;`updateSupergroup` 需要先查 channel_id(用户名匹配)。
-        rt.bus.subscribe(
-            ChannelMetadataChanged,
-            _require(rt.handle_channel_metadata),
-        )
-        # 2026-09-03 v1.6.0 PR #Q2:订阅普通 chat 改名 / 改头像事件。直接落库
-        # (channel_id 即 chat_id,无需反查);UI 端 `ChannelListCard` 也会
-        # 订阅同一事件实时刷新卡片。
-        rt.bus.subscribe(
-            ChannelTitleChanged,
-            _require(rt.handle_channel_title_changed),
-        )
-        rt.bus.subscribe(
-            ChannelPhotoChanged,
-            _require(rt.handle_channel_photo_changed),
-        )
-        rt.bus.subscribe(
-            ConnectionStateChanged,
-            _require(rt.handle_connection_state),
-        )
+        self._subscribe_once()
         # 异步下载 worker 仅在接了 MediaDownloader 时启动(FULL 策略)。
         if rt.downloader is not None:
             rt.download_queue = asyncio.Queue()
@@ -148,9 +176,12 @@ class Orchestrator:
             rt.backfill_task = None
         if rt.stream is not None:
             try:
-                await rt.stream.aclose()
-            except Exception:  # noqa: BLE001
-                pass
+                # 2.1.7 P1-3:关流加超时 —— `_TelethonUpdateStream.close()`
+                # 已改为满队列不阻塞,这里是给其它 UpdateStream 实现兜底,
+                # 保证下方的"2s 硬 cancel"真的能到。
+                await asyncio.wait_for(rt.stream.aclose(), timeout=2.0)
+            except Exception as e:  # noqa: BLE001
+                log.warning("monitor stream close failed or timed out: %s", e)
         if rt.task is not None:
             try:
                 await asyncio.wait_for(rt.task, timeout=2.0)
