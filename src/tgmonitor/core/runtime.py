@@ -199,6 +199,33 @@ async def bootstrap(
 
     bus.subscribe_all(make_persistence_subscriber(lambda: app.storage))
 
+    # 3.0.0 插件系统:全部组件就绪后激活已启用插件。失败在 PluginHost 内部
+    # 隔离(记日志、标 FAILED),不阻断启动。这里 lazy import + 显式传域服务,
+    # 不把 host 挂到 AppService 公开表面(surface allowlist 锁死),也不改本
+    # 函数的 4 元组返回签名(GUI / CLI 三处调用方零改动)。
+    t = time.monotonic()
+    from tgmonitor.plugins.host import PLUGIN_HOST
+
+    try:
+        activated = PLUGIN_HOST.activate_all(
+            bus,
+            app_services={
+                "messages": app.messages,
+                "media": app.media,
+                "channels": app.channels,
+            },
+            settings=settings,
+        )
+        if activated:
+            log.info(
+                "[bootstrap] activated %d plugin(s) in %.2fs: %s",
+                len(activated),
+                time.monotonic() - t,
+                ", ".join(r.manifest.id for r in activated),
+            )
+    except Exception:
+        log.exception("[bootstrap] plugin activation failed; continuing startup")
+
     log.info(
         "[bootstrap] full bootstrap done in %.2fs",
         time.monotonic() - t0,
@@ -216,6 +243,15 @@ async def shutdown(app: AppService, monitor: MonitorService) -> None:
     `AppService.shutdown` 内部已分阶段 2s 超时(client.close 断网偶发卡);
     `monitor.stop()` 内部 2s 超时硬 cancel。
     """
+    # 插件先退订事件 + 停自身任务,再关实时流 — 避免关闭期收到事件。
+    # 单例可能在没走 bootstrap 的测试路径里仍是未激活态,deactivate_all 幂等。
+    from tgmonitor.plugins.host import PLUGIN_HOST
+
+    try:
+        PLUGIN_HOST.deactivate_all()
+    except Exception:
+        log.exception("shutdown: plugin deactivate failed")
+
     if isinstance(monitor, MonitorService):
         try:
             await monitor.stop()

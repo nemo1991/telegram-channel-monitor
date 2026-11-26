@@ -15,6 +15,7 @@
 | [`../CHANGELOG.md`](../CHANGELOG.md) | 版本变更记录 | 所有人 |
 | [`../ATTRIBUTIONS.md`](../ATTRIBUTIONS.md) | 第三方资源与许可证致谢 | 维护者 |
 | [`CODE-REVIEW-2.1.7.md`](CODE-REVIEW-2.1.7.md) | 2.1.7 发版前全面审核报告(**本轮进行中**,各条目状态与对应 PR 见文内) | 维护者 |
+| [`ADR-001-plugin-system.md`](ADR-001-plugin-system.md) | 3.0.0 插件系统架构决策(已接受;进程内能力插件、双通道发现、窄写门面、五类能力) | 开发者 / 维护者 |
 
 ## 历史文档(`history/`)
 
