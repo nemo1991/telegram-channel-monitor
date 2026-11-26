@@ -1,7 +1,7 @@
 """CLI `status` 子命令:登录/监听状态 + 统计 + 后端信息。
 
 status 是诊断命令:未登录时**不报错**,仍输出实际状态,退出码 0。
-2.1.0 设计见 `docs/PRD-2.1.0-CLI.md` §5.1。
+2.1.0 设计见 `docs/history/PRD-2.1.0-CLI.md` §5.1。
 """
 
 from __future__ import annotations

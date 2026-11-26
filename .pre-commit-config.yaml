@@ -9,7 +9,7 @@
 # 钩子清单:
 #   - pre-commit-hooks:通用 hygiene(trailing-whitespace / end-of-file / yaml / toml / merge-conflict)
 #   - ruff:lint(与 CI ruff check 一致)+ format(与 CI ruff format --check 一致)
-#   - gitleaks:机密扫描(防止 TG_API_ID / TG_PHONE / session 文件误 commit)
+#   - gitleaks:机密扫描(防止 TG_API_ID / TG_API_HASH / session 文件误 commit)
 #
 # CI 兜底:即便本地没装 pre-commit,CI 的 ruff check + format --check
 # 步骤也会拦下同一类问题。两层防护。
@@ -32,6 +32,10 @@ repos:
         # tgmonitor.spec 内嵌长 docstring 不算大文件,阈值 500KB
         args: [--maxkb=500]
 
+  # 注意(2026-11-26 记)—— ruff 版本漂移:CI 与 `uv.lock` 用的是 ruff 0.17.6(2.1.7 起
+  # CI 从 uv.lock 解析版本),这里的 rev 还停在 v0.6.9。两边 format 口径可能不同,
+  # **以 CI 为准**。对齐方法:把 rev 改成与 uv.lock 里 ruff 相同的 tag(当前 v0.17.6),
+  # 再跑 `uv run pre-commit run --all-files` 确认全绿。
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
@@ -46,7 +50,7 @@ repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.23.3
     hooks:
-      # 主动扫描 commit 内容,拦截 TG_API_ID / TG_API_HASH / TG_PHONE /
-      # 验证码 / 2FA 密码 / session 文件等敏感字符串,见 CONTRIBUTING.md
-      # 「🔐 安全」段。CI 侧由 secret-scanning.yml 兜底。
+      # 主动扫描 commit 内容,拦截 TG_API_ID / TG_API_HASH / session 文件等敏感
+      # 字符串,见 CONTRIBUTING.md「🔐 安全」段。注意:CI 侧目前**没有**密钥扫描
+      # (只有 audit.yml 的每周 pip-audit),本钩子是唯一的自动化拦截点。
       - id: gitleaks

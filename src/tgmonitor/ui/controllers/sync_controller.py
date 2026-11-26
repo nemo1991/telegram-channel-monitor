@@ -7,7 +7,7 @@
 
 2026-11-19:桌面端「全量同步」按钮整体移除,`on_sync_all_channels` 与
 `SyncFlowController` / `sync_dialog` 一并删除。core `channel_sync` 能力保留
-(CLI `tgmonitor sync` 仍可用);其 progress/done 事件由 CLI 自己消费、由
+(CLI `tgmon-cli sync` 仍可用);其 progress/done 事件由 CLI 自己消费、由
 `DashboardWidget` 直接订阅 bus 经 `format_activity` 渲染活动账本。
 
 已删的 `on_sync_progress` / `on_sync_done` 读的是事件上不存在的字段

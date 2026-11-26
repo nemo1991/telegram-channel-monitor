@@ -1,6 +1,6 @@
 """CLI `login` / `logout` 子命令 — 2.1.0 headless 二维码登录。
 
-设计见 `docs/PRD-2.1.0-CLI.md` §5.2 / §6.1。
+设计见 `docs/history/PRD-2.1.0-CLI.md` §5.2 / §6.1。
 
 关键:二维码 URL 含一次性 token,只走 `start_qr_login()` 的 detail 返回值,
 渲染成终端二维码写到 stderr,**不进日志、不进事件、不写 stdout**。
@@ -68,7 +68,7 @@ async def run_login(
             info("登录成功")
             return 0
         if detail and "过期" in detail:
-            raise CliError("二维码已过期,请重新执行 tgmonitor login")
+            raise CliError("二维码已过期,请重新执行 tgmon-cli login")
         raise CliError(f"登录失败: {detail or wait_state}")
 
 

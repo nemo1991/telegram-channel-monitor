@@ -1,6 +1,6 @@
 """ChannelSyncService — 用户多选频道后的全量同步(元数据 + 历史消息)。
 
-触发:`AppService.sync_channels(channel_ids, options)` 由 UI "全量同步…"
+触发:`ChannelSyncService.sync_channels(channel_ids, options)` 由 UI "全量同步…"
 按钮经进度对话框调用。
 
 设计:
@@ -14,7 +14,7 @@
 - **取消**:`cancel()` 唤醒所有 `asyncio.sleep`,可中断长任务
 - **进度事件**:每阶段发 `ChannelSyncProgress` → UI 实时显示
 
-事件总线 依赖:由 `AppService.sync_channels` 拿 `bus` 发事件。
+事件总线 依赖:`ChannelSyncService` 经注入的 `bus` 发事件。
 
 # 结构(2026-08-02 拆分)
 

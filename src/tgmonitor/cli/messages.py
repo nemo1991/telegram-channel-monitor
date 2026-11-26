@@ -114,7 +114,7 @@ async def run_messages(
             )
 
         else:
-            raise CliError("用法:tgmonitor messages {list|get|favorite|tag|note|delete} ...")
+            raise CliError("用法:tgmon-cli messages {list|get|favorite|tag|note|delete} ...")
 
     return 0
 

@@ -83,7 +83,7 @@ async def run_export(
                 )
                 stream = ctx.export_media_list(media_request)
         else:
-            raise CliError("用法:tgmonitor export {messages|media} ...")
+            raise CliError("用法:tgmon-cli export {messages|media} ...")
 
         written = 0
         async for _ in stream:

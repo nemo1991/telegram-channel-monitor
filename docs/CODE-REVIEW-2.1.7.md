@@ -2,10 +2,27 @@
 
 > 审核日期：2026-11-26。范围：v2.1.6（main `e72ec0a`，tag `v2.1.6`）全量代码与文档。
 > 维度：架构 / 编码 / 单元测试 / 文档 / 工程化门禁，四路并行只读深审 + 本地全量测试带覆盖率实跑。
-> 全程未修改任何生产代码。上一轮（`CODE-REVIEW-2.1.4.md`）的 56 项不重复报告，只做修复质量回看（见第四节）。
+> 全程未修改任何生产代码。上一轮（`history/CODE-REVIEW-2.1.4.md`）的 56 项不重复报告，只做修复质量回看（见第四节）。
 >
 > **标注约定**：【复核】= 报告人亲自读码或跑复现确认；【取证】= 子审计脚本静态分析结果，未逐条二次复核。
 > 复现与分析脚本在 `/tmp/tgmon-audit/`（临时目录，不入库）。
+
+## 〇、处理状态（2026-11-26 回填）
+
+下文各节是**审核当时**的快照，保持原样不逐条改写；处理结果以本节为准。
+
+| PR | 内容 | 对应条目 |
+|---|---|---|
+| [#165](https://github.com/nemo1991/telegram-channel-monitor/pull/165) PR-A 止血 | 「打开媒体」扩展名白名单；事件订阅一次性化；关流哨兵改 `put_nowait` + `aclose` 加超时；日期预设 / 导出日期转 aware；`config show/get` 对 URL 类字段脱敏；README 三处失效；`.part` 唯一临时名 + Windows `os.replace` / `mkdir` 竞态重试；`.env` 以 `0600` 创建。新增 `tests/test_review_217_fixes.py` 61 项 | P1-1 / 2 / 3 / 6 / 7 / 8；P2-1 / 2 / 5；2.1.4 的 P2-38 |
+| [#166](https://github.com/nemo1991/telegram-channel-monitor/pull/166) A2 | 删除失效的 `legacy` marker hook 与 `--include-legacy` | P1-4 |
+| [#167](https://github.com/nemo1991/telegram-channel-monitor/pull/167) PR-B 门禁加固 | coverage 去掉 `continue-on-error` 并加 `--fail-under=70`；integration 输出 junit 并断言零 skip；`seeded_repo` / `meta_seeded_repo` 加第三后端 `pg`（42 项）；三份手写清单守卫改目录自动发现；删空转的 `windows-paint-probe`；ruff 版本取自 `uv.lock` + `uv lock --check`；RUF100 进门禁，清 256 条失效 noqa（74 个文件 AST 等价） | P1-5 / 10；P2-9 / 21 / 28；P2-23 的 CLI 部分；P2-41；P2-42 的 CI 侧 |
+| PR-C 文档校准 | AGENTS.md 重写（只写现状，6.12 归因史迁 `history/`）；SECURITY.md 重写；`.env.example` 补全到全部 22 个有效字段；CHANGELOG 2.1.6 数字勘误 + `[Unreleased]` 基点；10 份点时间文档迁 `docs/history/` 并加状态头 + `docs/README.md` 索引；陈旧文案清理（7 处 CLI 用法提示 + 2 处登录提示指向已删的 `tgmonitor` 命令、docstring / 模块头 / issue 模板坏链） | P2-30 / 31 / 32 / 34 / 35；P2-33 的勘误与链接 |
+
+**回填后的基线**：默认门禁收集 1177 项（1175 passed / 2 skipped），integration 标记 105 项；分支覆盖率 71%（13,533 语句），CI 阈值 70；CI 7 个 job，全部阻塞合并。
+
+**新门禁首跑的发现**：三后端参数化在真 PG 上第一次执行即命中 1 项 —— `aggregate_per_channel.last_date` 在 PG 是 aware UTC、SQLite / InMemory 是 naive。判定为断言未按「aware UTC 规范形、naive 视为 UTC」的契约比较，修在测试侧，未动 `src/`。**遗留**：三个后端读回的 datetime 形状不统一，目前靠各消费点兜底；在仓储边界统一是设计决定，留到后续。
+
+**未处理，留到 2.1.8+**（需设计，见第七节）：P1-9 `AppService.start()` 与 reconfigure 阶段 2 原子化；P2-3 / 4 / 6 / 7 / 8 / 10 / 11（编码）；P2-12 ~ 20（架构）；P2-22 / 24 / 25 / 26 / 27（测试）；P2-33 的 CHANGELOG 归档；P2-36 用户文档缺口；P2-37 ~ 40 / 43（CI）；P2-42 的 pre-commit 侧（`.pre-commit-config.yaml` 的 ruff 仍是 `v0.6.9`，需在有网络的环境下跑通钩子后再对齐）。
 
 ## 一、总体结论
 
@@ -194,4 +211,4 @@ P1-9 `AppService.start()` 与 reconfigure 阶段 2 原子化 → P2-13 异常基
 - 四路只读并行审计（架构 / 编码 / 测试 / 文档），脚本统一输出到 `/tmp/tgmon-audit/`。
 - 全量测试带覆盖率实跑：`coverage run -m pytest`，数据文件在 `/tmp`，未覆盖仓库内的 `.coverage`。
 - 三个运行时缺陷由独立复现脚本确认：`repro_stream_close.py`、`repro_batch_cancel2.py`、`repro_date_filter.py`。
-- 审计全程 `git status` 保持干净（本文件为唯一新增，未提交）。
+- 审计全程 `git status` 保持干净（审核阶段本文件为唯一新增、未提交；之后已随 #165 入库，处理状态见第〇节）。

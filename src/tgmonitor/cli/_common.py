@@ -1,7 +1,7 @@
 """CLI 公共基础设施 — 2.1.0。
 
 统一收口 cmd 之间重复的样板:上下文装配 / 输出通道 / 错误 / 进度订阅 /
-日期解析。设计见 `docs/PRD-2.1.0-CLI.md` §4.4。
+日期解析。设计见 `docs/history/PRD-2.1.0-CLI.md` §4.4。
 
 架构铁律:本模块(及整个 cli 包)绝不 import PySide6 / qasync / ui / app。
 """
@@ -150,7 +150,7 @@ async def cli_context(
             if state != "ready":
                 raise CliError(
                     f"未就绪(state={state}{', ' + detail if detail else ''});"
-                    "请先执行 tgmonitor login"
+                    "请先执行 tgmon-cli login"
                 )
         yield real_app, real_monitor, settings
     finally:

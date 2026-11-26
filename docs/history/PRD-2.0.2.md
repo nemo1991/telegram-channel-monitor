@@ -1,5 +1,9 @@
 # PRD — tgmonitor 2.0.2「实时流只读化」版本规划
 
+> **历史文档**(点时间快照,2026-11-26 自 `docs/` 归档到 `docs/history/`)。描述的是当时的设计与
+> 决策,其中的命令 / 路径 / 模块可能已随版本变更;现状以 `AGENTS.md`、`README.md`、
+> `docs/ARCHITECTURE.md` 为准。索引见 `docs/README.md`。
+
 ## 一、文档信息
 
 | 项 | 内容 |

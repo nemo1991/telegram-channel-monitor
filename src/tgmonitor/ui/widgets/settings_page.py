@@ -279,7 +279,7 @@ class SettingsPage(QWidget):
     # ============================================================
 
     def _build_account(self, root: QVBoxLayout) -> None:
-        """账户凭证 — API ID / Hash / Phone / Session 目录。"""
+        """账户凭证 — API ID / Hash / Session 目录。"""
         s = FormSection(
             title=self.tr("账户凭证"),
             fields=(

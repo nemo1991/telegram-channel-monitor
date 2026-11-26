@@ -8,7 +8,7 @@
 ## [2.1.6] - 2026-11-26
 
 主题:**修复** — 落地 2.1.4 审核报告全部 **P2 × 44**(7 个 commit 按归属分组,
-82 文件 +4697/-1678)。无 schema 迁移;新增 meta 标记 key 只影响迁移执行次数。
+85 文件 +4926/-1678;2026-11-26 勘误,原记 82 文件 +4697)。无 schema 迁移;新增 meta 标记 key 只影响迁移执行次数。
 
 ### 存储
 - 媒体搜索 `%`/`_`/`\` 通配符转义(与消息搜索一致,双后端);
@@ -57,7 +57,7 @@
 
 ## [2.1.5] - 2026-11-25
 
-主题:**修复** — 落地 2.1.4 审核报告(`docs/CODE-REVIEW-2.1.4.md`)全部 **P1 × 12**,每个修复
+主题:**修复** — 落地 2.1.4 审核报告(`docs/history/CODE-REVIEW-2.1.4.md`)全部 **P1 × 12**,每个修复
 带回归测试(17 个新测试均在旧代码上取证失败)。无 API/schema/命令变更,DB 无迁移。
 
 ### 修复
@@ -95,7 +95,7 @@
 ### 变更
 
 - **重度代码审核**:三路并行深审 core / storage+telegram / UI+CLI 全部生产代码,结论落盘
-  `docs/CODE-REVIEW-2.1.4.md` — **P1 × 12、P2 × 44**(合并去重),安全项(QR token 不泄露、
+  `docs/history/CODE-REVIEW-2.1.4.md` — **P1 × 12、P2 × 44**(合并去重),安全项(QR token 不泄露、
   退出码契约、双路径关闭幂等)验证通过,无 P0。P1 集中在:编辑推送覆盖媒体下载状态、
   save_message 清零用户标注、reconfigure 半完成态、全量同步续拉方向错误、reconcile 引用
   收集截断误删、QR 弹窗 EventBus 订阅泄漏、S3 KeyError 契约违约、假流式导出等;修复排期
@@ -185,7 +185,7 @@ CLI 命令名与帮助总览入口。
 ## [2.1.0] - 2026-11-24
 
 主题:**CLI 从两个补漏子命令升级为可替代桌面 UI 大部分功能的完备工具**,支持
-完整 headless(服务器 / SSH / cron / systemd)操作。设计见 `docs/PRD-2.1.0-CLI.md`。
+完整 headless(服务器 / SSH / cron / systemd)操作。设计见 `docs/history/PRD-2.1.0-CLI.md`。
 
 ### 新增
 
@@ -4762,7 +4762,7 @@ AppService facade 微切 + aiotdlib type stubs 35→0 + Qt visual regression
 
 ### 🐛 Fixed (2026-08-02)
 - **`AppService._subscribed` in-memory cache 漂移三连**(commits `8f660b3`
-  分析 + `4d42349` 修)— 详见 `docs/SUBSCRIBED_DRIFT_ANALYSIS.md`:
+  分析 + `4d42349` 修)— 详见 `docs/history/SUBSCRIBED_DRIFT_ANALYSIS.md`:
   - **#A unsubscribe_channel 静默失败**:之前 `set_channel_subscribed(False)`
     抛错被 `log.exception` 吞后仍 emit `ChannelUnsubscribed`,UI 移走视觉
     元素但 storage 持久记录还在,下次 reload 频道被「恢复订阅」。现在
@@ -5030,7 +5030,8 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - Session 文件落本地数据目录,**禁止**提交到 git(`.gitignore` 已配)
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
-[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.2...HEAD
+<!-- 维护备注:发版时把下面的 compare 基点改成上一个 tag(例:v2.1.6...HEAD → v2.1.7...HEAD),否则链接会像 v1.8.2 那样过期。 -->
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.6...HEAD
 [1.8.2]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.7.5...v1.8.0

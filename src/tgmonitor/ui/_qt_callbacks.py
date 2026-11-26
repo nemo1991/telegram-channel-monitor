@@ -65,7 +65,7 @@ def register() -> None:
     后续所有 `MediaService.open_media_with_result` / `_stage_s3_to_tmp`
     调用都走 Qt 实现。
 
-    CLI 路径(`tgmonitor sync` / `tgmonitor monitor`)**不**调本函数 —
+    CLI 路径(`tgmon-cli sync` / `tgmon-cli monitor`)**不**调本函数 —
     CLI 不调 `open_media`,core 模块级 callback 保持 None,直接返失败
     DTO(等价 `objects=None` 失败路径)。
     """

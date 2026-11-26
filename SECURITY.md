@@ -1,43 +1,54 @@
-# 🔐 Security Policy
+# 安全策略(Security Policy)
 
 ## 支持的版本
 
-下表说明本项目哪些版本接收安全更新:
+本项目只对**最新的发布线**提供安全修复;旧版本不再维护。
 
-| 版本 | 支持 |
+| 版本 | 安全修复 |
 |---|---|
-| 0.2.x | ✅ |
-| < 0.2 | ❌ |
+| 2.1.x(当前发布线,以 [Releases](https://github.com/nemo1991/telegram-channel-monitor/releases) 为准) | ✅ |
+| 更早的 2.0.x / 1.x / 0.x | ❌ 请先升级 |
 
 ## ⚠️ 重要提示:本应用处理敏感凭据
 
-`tgmonitor` 通过你的 **Telegram 用户账号** 登录(手机号 + 验证码 + 可选 2FA)。
-本应用会在本地数据目录生成 Telegram **session 文件**(默认 `./data/session/`),
-该文件能完整代表你的账号身份,等同密码级别。
+`tgmonitor` 用你的 **Telegram 用户账号**登录(二维码扫码,只需 `api_id` / `api_hash`,不涉及手机号、验证码或 2FA 密码)。
+登录后,本应用会在本地数据目录生成 Telegram **session 文件**,它能完整代表你的账号身份,**等同密码级别**。
+
+| 内容 | 位置(数据目录见下) |
+|---|---|
+| session 文件 | `<数据目录>/session/tgmonitor.session` |
+| 配置文件(含 `api_id` / `api_hash`、数据库口令、S3 密钥、代理口令) | `<数据目录>/.env` |
+| SQLite 数据库(消息、媒体元数据) | `<数据目录>/tgmonitor.db` |
+| 下载的媒体与缩略图 | `<数据目录>/media/` |
+| 运行日志 | `<数据目录>/logs/tgmonitor.log` |
+
+数据目录由平台决定:
+
+- macOS:`~/Library/Application Support/tgmonitor`
+- Linux:`$XDG_DATA_HOME/tgmonitor`(默认 `~/.local/share/tgmonitor`)
+- Windows:`%LOCALAPPDATA%\tgmonitor`
 
 ### 请务必
 
-- ✅ 在**可信的本机**运行;不要在公共 / 共享 / 服务器上跑
-- ✅ 把 `data/session/` 目录的权限设为仅本人可读(`chmod 700 data/session`)
-- ✅ `.gitignore` 已默认排除 `data/` 与 `.env`,不要 force-add
-- ✅ 定期检查 `TG_API_ID` / `TG_API_HASH` 是否泄露(my.telegram.org 可重置)
-- ✅ 怀疑泄露时,在 Telegram App → 设置 → 设备 → **终止其他会话**
+- ✅ 在**可信的本机**运行;不要在公共 / 共享的机器上用个人账号登录
+- ✅ 备份 / 迁移时,把**整个数据目录**当作密码文件对待(不只是 session)
+- ✅ 定期检查 `api_id` / `api_hash` 是否泄露(可在 [my.telegram.org](https://my.telegram.org/apps) 重置)
+- ✅ 怀疑泄露时,在 Telegram App → 设置 → 设备 → **终止其他会话**(这会让本地 session 失效,需重新扫码)
 
 ### 请勿
 
-- ❌ 把 `TG_API_ID` / `TG_API_HASH` 提交到 git 或粘贴到 issue
-- ❌ 把 `data/session/` 目录复制到云盘 / 邮件 / 聊天记录
-- ❌ 在 PR / issue 中粘贴验证码或 2FA 密码
-- ❌ 把 `.env` 上传到 CI(使用 CI 的 secrets 功能)
+- ❌ 把 `.env`、session 文件、`tgmonitor.db` 提交到 git,或粘贴到 issue / 聊天记录
+- ❌ 把数据目录复制到云盘、邮件、聊天记录
+- ❌ 在 PR / issue 中粘贴真实凭据、`.env` 内容或 session 文件
+- ❌ 把真实凭据上传到 CI(测试全部使用 fake,CI 不需要任何 Telegram 凭据)
+
+`.gitignore` 已排除 `.env` / `data/` / `*.db`。session 文件默认在平台数据目录(仓库之外);若用 `TG_SESSION_DIR` 把它指进仓库,请自行确认没被跟踪。
 
 ## 🐞 报告漏洞
 
 **请勿**通过公开 issue 报告安全漏洞。
 
-请通过以下任一方式私下联系:
-
-- 📧 Email: **security@forcetone.dev**(占位,实际使用前请替换为你自己的邮箱)
-- 或:GitHub [Security Advisories](https://github.com/nemo1991/telegram-channel-monitor/security/advisories/new)
+请走 GitHub [Security Advisories](https://github.com/nemo1991/telegram-channel-monitor/security/advisories/new)(私密上报,仅维护者可见)。
 
 请包含:
 
@@ -54,22 +65,28 @@
 
 ## 🛡️ 已实施的安全措施
 
-- **本地优先**:session 默认存本地,不上传任何远程
-- **DB 不存 BLOB**:媒体二进制全在 ObjectStore,DB 只存 key + 元数据
-- **接口/实现分离**:避免凭据跨层泄漏
-- **`.gitignore` 完备**:`.env` / `data/` / `*.db` / `__pycache__` 等
-- **类型与 DTO 边界**:Telegram 类型不跨 core↔UI 边界
-- **CI 无凭据**:GitHub Actions 不访问任何 Telegram 凭据,只跑单测
+- **本地优先**:消息、媒体、配置全部落在本地数据目录。除 Telegram 本身外,只有在设置页显式配置了 Postgres / S3 后端时才会与其它外部服务通信。
+- **凭据不进输出**:`config show` / `config get` 对敏感项打码,URL 类字段(`db_dsn` / `proxy`)单独做凭据脱敏;二维码登录 token 不写日志。
+- **「打开媒体」扩展名白名单**:媒体文件名由远端频道控制,本地落盘 / 暂存后只允许用系统默认程序打开图片 / 视频 / 音频 / 文档 / 压缩包等白名单扩展名;`.bat` / `.exe` / `.html` / `.svg` 等可执行或可脚本化的类型一律拒绝。
+- **路径安全**:对象存储与导出路径做 `resolve()` + 根目录约束,拒绝 `..` 穿越与越界键;ZIP 导出的条目名经净化。
+- **注入防护**:CSV 导出转义公式前缀;HTML 导出模板 autoescape;Markdown 导出转义用户内容。
+- **配置文件权限**:`.env` 以 `0600` 创建(临时文件写完后原子替换,不存在其它用户可读的窗口)。
+- **DB 不存二进制**:媒体二进制全在对象存储,数据库只存 key + 元数据。
+- **不使用危险原语**:无 `eval` / `pickle` / 内置 `exec`;临时文件名用 `secrets` 生成。
+- **CI 无凭据**:GitHub Actions 不访问任何 Telegram / 数据库凭据,只跑离线单测与容器化的真 PG 集成测试。
+- **依赖锁定与审计**:依赖由 `uv.lock` 锁定,CI 跑 `uv lock --check` 防漂移;`audit.yml` 每周跑 `pip-audit --strict`(含 dev 依赖),任何已知 CVE 即失败;本地可用 pre-commit 的 gitleaks 钩子拦截误提交的密钥。
 
-## 📜 依赖安全
+## 📜 依赖审计(手动)
 
-CI 通过 `uv` 锁 `uv.lock`(`requires-python = "~=3.13.0"`),自动解析
-PyPI 默认源。如需审计:
+CI 每周自动跑一次;想本地复现:
 
 ```bash
 uv tool install pip-audit
-pip-audit
+uv export --no-emit-project --no-hashes --format requirements-txt -o requirements-audit.txt
+pip-audit --strict -r requirements-audit.txt
 ```
+
+`pip-audit` 不读 `uv.lock`,必须先 `uv export`;直接裸跑 `pip-audit --strict` 审计的是工具自身的环境,不是本项目。
 
 ## 🙏 致谢
 
