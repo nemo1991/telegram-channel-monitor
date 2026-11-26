@@ -351,9 +351,7 @@ def test_close_on_exit_defaults_true_and_roundtrips(tmp_path: Path) -> None:
 
 # Windows 无 POSIX 权限位语义:os.chmod 只切只读位,stat 恒报 0o666,
 # 权限断言仅在 POSIX 平台有效(src 端 chmod 保留,Windows 上无害)。
-posix_only = pytest.mark.skipif(
-    sys.platform == "win32", reason="Windows 无 POSIX 0o600 权限位语义"
-)
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="Windows 无 POSIX 0o600 权限位语义")
 
 
 @posix_only
