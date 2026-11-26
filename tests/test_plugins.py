@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -101,7 +102,10 @@ def test_enabled_roundtrip_and_atomic(tmp_path):
     assert read_enabled(tmp_path) == frozenset()
     write_enabled(tmp_path, frozenset({"b", "a"}))
     assert read_enabled(tmp_path) == frozenset({"a", "b"})
-    assert (tmp_path / "enabled.json").stat().st_mode & 0o777 == 0o600
+    # Windows 无 POSIX 权限位语义(chmod 只切只读位,stat 恒报 0o666)— 与
+    # test_settings_store.py 的 posix_only 同因,权限断言只在 POSIX 有效。
+    if sys.platform != "win32":
+        assert (tmp_path / "enabled.json").stat().st_mode & 0o777 == 0o600
     assert not (tmp_path / "enabled.json.part").exists()
 
 
@@ -120,7 +124,8 @@ def test_config_namespace_isolation(tmp_path):
     all_data = read_all_config(tmp_path)
     assert all_data["plugin_a"]["token"] == "secret-a"
     assert all_data["plugin_b"]["token"] == "secret-b"
-    assert (tmp_path / "config.json").stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert (tmp_path / "config.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_config_set_preserves_other_keys(tmp_path):
