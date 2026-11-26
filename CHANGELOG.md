@@ -5,6 +5,56 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.6] - 2026-11-26
+
+主题:**修复** — 落地 2.1.4 审核报告全部 **P2 × 44**(7 个 commit 按归属分组,
+82 文件 +4697/-1678)。无 schema 迁移;新增 meta 标记 key 只影响迁移执行次数。
+
+### 存储
+- 媒体搜索 `%`/`_`/`\` 通配符转义(与消息搜索一致,双后端);
+  PG `init_schema` 核心 DDL 失败上抛(仅 pg_trgm 降级);启动 media done
+  迁移改 meta 标记 one-shot;`repair_schema` 补 subscribed→monitored 改名预检;
+  `list_media` limit=0 = 空结果;`delete_messages` 分批 ≤1000;
+  PG datetime 写路径 naive 统一按 UTC;size 排序双后端统一(IS NULL 前置键);
+  `list_messages` 新增 tag 过滤下推。
+
+### 导出
+- 排序键 UTC 化 + int tie-break;分页改快照边界(导出期间新消息不再
+  重复/漏导);CSV tags 公式注入防护 + `utf-8-sig` BOM(Excel 中文不再乱码);
+  JSON/ZIP manifest Enum→`.value`、datetime→isoformat;HTML 缩略图
+  改渲染行 dict 承载(不再依赖 dataclass 未开 slots)+ 批量查询。
+
+### CLI
+- 子命令组缺动作 argparse 期 exit 2(不再 bootstrap 后 exit 1);
+  `config set` 未知键抛 CliError;`channels refresh` 补 `--yes`
+  (会级联停掉已在 TG 退出频道的监听);`messages --tag` 过滤下推。
+
+### 对象存储
+- S3 `exists`/`stat` 区分 404(其他错误上抛,不再伪装"不存在"导致重复下载);
+  S3 put >8MB 走 multipart + client 长生命周期复用;Folder 落盘 `.origkey`
+  旁车编码原 key(多级子目录不再误判孤儿,旧数据 fallback 启发式);
+  sha256 回填上提基类(Folder 的 thumbnails.sha256 不再恒 NULL);
+  `exists`/`delete`/`stat` 走 `to_thread`;新增 `put_stream` 流式写接口。
+
+### Telegram
+- `iter_chat_history` limit 落实(None=全量);**删除标已读整链**
+  (纯监听定位,全仓无 UI/CLI 入口);`stop()` 走 `_set_state`;
+  新增 `download_file_to` 流式落盘 API(bytes 版保留给缩略图);
+  watchdog 重连防重入守卫;更新队列 maxsize=2000 满时反压(宁慢勿丢)。
+
+### 生命周期 / Batch
+- 下载 worker 主媒体改 `download_file_to` → `put_stream` → 删临时
+  (大文件不再 O(file_size) 内存);下载回写改 `update_message_media`
+  定向 UPDATE(不再覆盖并发编辑);shutdown close 包 2s 超时;
+  orchestrator 主 task cancel 后 await;`resume_monitor` 失败不再假恢复;
+  batch 每 op 局部 cancel_event + 部分失败填充 failures;
+  频道写路径原子入口;`.env` 落盘 chmod 0600(POSIX);死代码清理。
+
+### UI
+- lightbox 视频临时文件 `done()` 收口(Esc 路径不再残留 $TMPDIR);
+  dashboard 活动列表清理修复(原 takeItem→itemWidget 模式从未生效);
+  删除 `batch_progress_dialog` / `channel_picker_dialog` 死代码及 QSS 残留。
+
 ## [2.1.5] - 2026-11-25
 
 主题:**修复** — 落地 2.1.4 审核报告(`docs/CODE-REVIEW-2.1.4.md`)全部 **P1 × 12**,每个修复
