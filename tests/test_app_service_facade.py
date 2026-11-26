@@ -4,7 +4,6 @@
 `app.<domain>.<method>`。本文件不再测转发,改测组合根保留的接线契约:
 
   - backend swap 传播:`app.objects/storage = X` setter 必须同步到子 service
-  - `subscribe_updates` 直接代理 client 并登记 stream
   - `shutdown` 分阶段超时(client hang 不阻塞 storage/objects 关闭)
 
 公开表面本身由 `tests/test_app_service_surface.py` allowlist 锁死。
@@ -96,22 +95,6 @@ async def test_facade_storage_setter_syncs_to_sub_services(app: AppService) -> N
         )
         assert sub_svc is not None, f"未找到 {expected_cls} 子 service"
         assert sub_svc._storage is new_storage
-
-
-# ---- subscribe_updates(2026-11-11 Phase 3-C1:从 SubscriptionService 收回 facade)----
-
-
-async def test_facade_subscribe_updates_proxies_client(app: AppService) -> None:
-    """`subscribe_updates` 是 sync 方法,直接转 client.subscribe_updates 并登记 stream。"""
-    sentinel = MagicMock()
-    # client 是无 spec 的 AsyncMock — subscribe_updates 默认也是 async mock,
-    # 显式换成 sync MagicMock(Protocol 里它是 sync 方法)。
-    app.client.subscribe_updates = MagicMock(return_value=sentinel)
-
-    result = app.subscribe_updates()
-
-    assert result is sentinel
-    app.client.subscribe_updates.assert_called_once_with()
 
 
 # ---- shutdown 分阶段超时 (2026-09-22 v1.8.x) ----------------------------------

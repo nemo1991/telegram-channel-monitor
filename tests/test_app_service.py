@@ -8,7 +8,7 @@ facade 域转发删除后,list_messages / search 的 4 个「mock 自证」转�
 - login state machine(2):get_login_state 透传 client.state / 未填凭证 login 抛错
 - subscribe / unsubscribe(3):正常路径 + storage 抛错时 unsubscribe 不假成功 /
   失败不发 ErrorOccurred
-- start_monitor(1):不留 _subscribed 旧 attr
+- start(1):不留 _subscribed 旧 attr
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tgmonitor.core.app_service import AppService
+from tgmonitor.core.app_service import AppService, StartOptions
 from tgmonitor.core.dto import ChannelDTO
 from tgmonitor.core.events import ErrorOccurred
 
@@ -121,15 +121,16 @@ async def test_unsubscribe_failure_does_not_publish_event(batch_app: AppService,
 
 
 async def test_no_monitored_attribute_remains(batch_app: AppService) -> None:
-    """start_monitor / stop_monitor 不留下 _subscribed 旧私有 attr。
+    """start() 不留下 _subscribed 旧私有 attr。
 
     回归:v1.5.0 拆 facade 时留了 _subscribed 占位,后续 PR 删了它但忘了在测试
     里锁定。本测试确保该 attr 永远不被重建(若有说明回退)。
     """
-    await batch_app.start_monitor()
+    batch_app.client.start.return_value = ("ready", None)  # type: ignore[attr-defined]
+    result = await batch_app.start(StartOptions(whitelist=[]))
+    assert result.state == "ready"
     # 仅在 facade 显式管理时才算合规;若残留说明历史 cache 没删干净
     val = getattr(batch_app, "_subscribed", "__missing__")
     assert val in (None, False, "__missing__"), (
         f"AppService 不应有 _subscribed 残留(已删 cache);实际值 = {val!r}"
     )
-    await batch_app.stop_monitor()

@@ -21,7 +21,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, cast
 
-from tgmonitor.core.app_service import AppService
+from tgmonitor.core.app_service import AppService, StartOptions
 from tgmonitor.core.config import Settings
 from tgmonitor.core.events import ErrorOccurred
 from tgmonitor.core.monitor.service import MonitorService
@@ -296,7 +296,7 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
 
             # 后台启动服务(白名单 + monitor + bootstrap)— win 可见之后异步跑,
             # 不阻塞主窗口出现。activity label 滚动显示当前步骤。
-            asyncio.create_task(_background_startup(app_svc, monitor, win))
+            asyncio.create_task(_background_startup(app_svc, win))
 
             # 配置容错提示 — 放在后台启动 task 之后,用户阅读弹窗期间
             # 监听服务已在后台拉起;弹窗是非致命提示,不影响启动流程。
@@ -318,55 +318,47 @@ def run() -> None:  # noqa: C901 — GUI 组合根入口,启动步骤线性编�
 
     async def _background_startup(
         app_svc: AppService,
-        monitor: MonitorService,
         win: MainWindow,
     ) -> None:
-        """win.show() 之后在后台跑的启动步骤:
+        """win.show() 之后在后台跑启动序列 — 步骤统一由 `AppService.start()` 执行。
 
-        1. 加载白名单(list_subscribed + set_whitelist)
-        2. monitor.start()(起 asyncio worker)
-        3. app.bootstrap()(启动 Telegram 会话,触发 LoginStateChanged)
+        本函数只保留 GUI 策略代码:
 
-        每步通过 `win.status_bar.show_activity(...)` 更新状态栏左侧活动指示器,出错走
-        ErrorOccurred 事件(bus subscriber 已存在,自动弹窗/计数)。
+        - `on_step` 把步骤名翻成状态栏活动文案
+        - `state == "paused"` 时提示用户点 tray 恢复(client 保持 uninit)
+        - 异常走 `ErrorOccurred` 事件(bus subscriber 自动弹窗 / 计数)
 
-        2026-09-04 v1.6.6:启动即暂停 — 跳过 monitor.start + bootstrap。
-        client.state 保持 "uninit",用户点 tray「继续监听」走 resume_monitor。
+        2026-11-26 ADR-002:原三处手写的「白名单 → monitor → bootstrap」已收敛到
+        `AppService.start()`;本函数不再直接调这些步骤。
         """
+        step_labels = {
+            "whitelist": "加载已订阅频道...",
+            "monitor": "启动监听服务...",
+            "bootstrap": "连接 Telegram...",
+            "paused": "监听已暂停 — 点 tray「继续监听」启动",
+        }
+
+        def on_step(step: str) -> None:
+            label = step_labels.get(step, "")
+            win.status_bar.show_activity(label)
+            log.info("[startup-bg] step=%s %s", step, label)
+
+        t = time.monotonic()
         try:
-            # Step 1: 加载白名单
-            win.status_bar.show_activity("加载已订阅频道...")
-            t = time.monotonic()
-            subscribed = await app_svc.channels.list_monitored_channels()
-            monitor.set_whitelist(c.id for c in subscribed)
-            log.info(
-                "[startup-bg] loaded %d subscribed channels from storage in %.2fs",
-                len(subscribed),
-                time.monotonic() - t,
-            )
-
-            if app_svc.is_paused:
+            result = await app_svc.start(StartOptions(on_step=on_step))
+            if result.state == "paused":
                 log.info(
-                    "[startup-bg] settings.paused=true — skip monitor.start() + "
-                    "bootstrap() (client stays uninit, UI reads app.is_paused=True → ⏸)"
+                    "[startup-bg] paused — %d whitelist loaded, client stays uninit",
+                    result.whitelist_count,
                 )
-                win.status_bar.show_activity("监听已暂停 — 点 tray「继续监听」启动")
                 return
-
-            # Step 2: 启动 monitor
-            win.status_bar.show_activity("启动监听服务...")
-            t = time.monotonic()
-            await monitor.start()
-            log.info("[startup-bg] monitor.start() returned in %.2fs", time.monotonic() - t)
-
-            # Step 3: bootstrap Telegram 会话 — 触发 LoginStateChanged,header 自动跟进
-            win.status_bar.show_activity("连接 Telegram...")
-            t = time.monotonic()
-            login_state, login_detail = await app_svc.bootstrap()
             log.info(
-                "[startup-bg] app.bootstrap() done in %.2fs state=%s",
+                "[startup-bg] start done in %.2fs state=%s detail=%s whitelist=%d monitor=%s",
                 time.monotonic() - t,
-                login_state,
+                result.state,
+                result.detail,
+                result.whitelist_count,
+                result.monitor_started,
             )
 
             # 稳态:清空活动指示器(后续 LoginStateChanged / 错误事件会再次填充)

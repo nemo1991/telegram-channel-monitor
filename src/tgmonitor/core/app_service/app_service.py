@@ -3,8 +3,8 @@
 2026-11-11 v2.0.0 Phase 3:745 行 god facade 拆为按域服务。C2 起域转发
 全部删除,UI / CLI 直调域服务,本类只保留:
   - 组合根职责(构造 / 装配域服务)
-  - 生命周期:bootstrap / start_monitor / stop_monitor / pause / resume /
-    shutdown(跨 client / monitor / storage / objects,顺序敏感)
+  - 生命周期:start(参数化启动序列)/ bootstrap / stop_monitor / pause /
+    resume / shutdown(跨 client / monitor / storage / objects,顺序敏感)
   - 热重载:reconfigure / validate_backends(涉及全体服务 backend swap)
   - 后端持有:client / storage / objects / downloader / monitor
     (property setter 传播给域服务)
@@ -28,7 +28,7 @@ core 内部子系统(Monitor/Storage/ObjectStore/Export)不直接被 UI 引用�
     objects = build_object_store(settings); await objects.connect()
     client = build_telegram_client(settings)
     app = AppService(bus, client, storage, objects, settings, monitor=monitor)
-    # UI 启动时: app.bootstrap() / app.auth.start_qr_login() / app.start_monitor()
+    # UI 启动时: app.start(StartOptions(on_step=...)) — 统一白名单/monitor/bootstrap
 
 热重载:调用 `reconfigure(new_settings)` 可切换 storage / objects(无需重启 app);
        TelegramClient / session / 鉴权状态变更需要登出再登入,UI 应引导。
@@ -49,9 +49,10 @@ from tgmonitor.core.media_service import MediaService
 from tgmonitor.core.message_service import MessageService
 from tgmonitor.core.objectstore.base import ObjectStore
 from tgmonitor.core.storage.repository import StorageRepository
-from tgmonitor.core.telegram.client import TelegramClient, UpdateStream
+from tgmonitor.core.telegram.client import TelegramClient
 
 if TYPE_CHECKING:
+    from tgmonitor.core.app_service._startup import StartOptions, StartResult
     from tgmonitor.core.monitor.downloader import MediaDownloader
     from tgmonitor.core.monitor.service import MonitorService
 
@@ -60,7 +61,7 @@ class AppService:
     """组合根 + 生命周期协调。域操作走 `auth/channels/messages/media/batch`。
 
     本类公开方法分三类:
-    1. 生命周期(bootstrap / start_monitor / stop_monitor / pause_monitor /
+    1. 生命周期(start / bootstrap / stop_monitor / pause_monitor /
        resume_monitor / shutdown)— 跨子系统协调,留组合根
     2. 热重载(reconfigure / validate_backends)— 全体服务 backend swap
     3. 导出(export / export_media_list)— 每次新建轻量 ExportService
@@ -90,8 +91,6 @@ class AppService:
         self.settings = settings
         self._monitor: MonitorService | None = monitor
         # 内部状态(生命周期)
-        self._update_streams: list[UpdateStream] = []
-        self._running = False
         self._is_paused = settings.paused
         self.env_path: Path | None = env_path
         self._reconfiguring = False
@@ -174,26 +173,20 @@ class AppService:
 
     # ---------- 生命周期 ----------
 
+    async def start(self, options: StartOptions) -> StartResult:
+        """参数化启动序列(白名单 → monitor → bootstrap)— 详见 `_startup.start`。"""
+        from tgmonitor.core.app_service._startup import start as _start
+
+        return await _start(self, options)
+
     async def bootstrap(self) -> tuple[str, str | None]:
         """应用启动调一次:session 有效直接 ready,无效走 login — 详见 `_lifecycle.bootstrap`。"""
         from tgmonitor.core.app_service._lifecycle import bootstrap as _bootstrap
 
         return await _bootstrap(self)
 
-    def subscribe_updates(self) -> UpdateStream:
-        """订阅实时更新流(转给 UI;关 app 时 stop_monitor 统一 aclose)。"""
-        s = self.client.subscribe_updates()
-        self._update_streams.append(s)
-        return s
-
-    async def start_monitor(self) -> None:
-        """订阅 client 的实时更新并消费 — 详见 `_lifecycle.start_monitor`。"""
-        from tgmonitor.core.app_service._lifecycle import start_monitor as _start_monitor
-
-        await _start_monitor(self)
-
     async def stop_monitor(self) -> None:
-        """停 monitor + 关所有 update stream;幂等 — 详见 `_lifecycle.stop_monitor`。"""
+        """幂等 no-op(实时流由 runtime.shutdown 统一停)— 详见 `_lifecycle.stop_monitor`。"""
         from tgmonitor.core.app_service._lifecycle import stop_monitor as _stop_monitor
 
         await _stop_monitor(self)

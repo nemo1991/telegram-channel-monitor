@@ -1,7 +1,9 @@
-"""CLI `monitor` 子命令:bootstrap → 启动 monitor → SIGINT 等待 → shutdown。
+"""CLI `monitor` 子命令:参数化 start → SIGINT 等待 → shutdown。
 
 2026-09-27 refactor:CLI 第一批子命令之一,headless 守护模式运行,
-退出码 0(SIGINT 干净退出) / 1(bootstrap 未 ready)。
+退出码 0(SIGINT 干净退出) / 1(start 未 ready 或用户暂停)。
+2026-11-26 ADR-002:步骤顺序由 `AppService.start()` 统一为白名单 → monitor →
+bootstrap;本模块只保留 CLI 策略(paused 提示 / 退出码 / stderr 输出)。
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import logging
 import signal
 import sys
 
-from tgmonitor.core.app_service import AppService
+from tgmonitor.core.app_service import AppService, StartOptions
 from tgmonitor.core.monitor.service import MonitorService
 from tgmonitor.core.runtime import bootstrap, shutdown
 
@@ -43,6 +45,10 @@ async def run_monitor(
     if own_bootstrap:
         app, monitor, settings, _ = await bootstrap()
     assert app is not None and monitor is not None
+    # 测试注入路径的 app 可能未装配 monitor(生产路径 runtime.bootstrap 已注入);
+    # start() 走 app.monitor,这里对齐引用,避免白名单 / 实时流写到不同实例。
+    if app.monitor is not monitor:
+        app.monitor = monitor
     stop = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -59,36 +65,39 @@ async def run_monitor(
             pass
 
     try:
-        state, detail = await app.bootstrap()
-        if state != "ready":
-            print(
-                f"[cli.monitor] bootstrap state={state};请先在 GUI 完成登录后重试",
-                file=sys.stderr,
-            )
-            return 1
-
-        # 默认行为:从 storage 重载白名单(与 GUI 一致)
-        subscribed = await app.channels.list_monitored_channels()
-        monitor.set_whitelist(c.id for c in subscribed)
-
-        # --no-resume 标志:覆盖 settings.paused=True 强制启动 monitor
-        if app.is_paused and not args.no_resume:
+        # 启动进度在 start() 之前输出 — start() 中途抛错时用户仍看得到进入启动
+        print("[cli.monitor] starting…", file=sys.stderr, flush=True)
+        result = await app.start(StartOptions(respect_paused=not args.no_resume))
+        if result.state == "paused":
             print(
                 "[cli.monitor] settings.paused=true;skipped. 用 --no-resume 强制启动",
                 file=sys.stderr,
             )
             return 1
+        if result.state != "ready":
+            # 统一顺序下 monitor 先于 bootstrap 启动;CLI 失败退出前显式停掉,
+            # 否则注入 app/monitor 的调用路径不走 finally 的 shutdown 会残留 worker。
+            if result.monitor_started:
+                try:
+                    await monitor.stop()
+                except Exception:
+                    log.exception("[cli.monitor] rollback monitor.stop failed")
+            print(
+                f"[cli.monitor] bootstrap state={result.state};请先在 GUI 完成登录后重试",
+                file=sys.stderr,
+            )
+            return 1
 
+        # --no-resume 标志:覆盖 settings.paused=True 强制启动(策略仍在调用方)
         if app.is_paused and args.no_resume:
             log.warning("[cli.monitor] --no-resume: 强制启动(忽略 .env 中 TG_PAUSED=true)")
 
         print(
-            f"[cli.monitor] subscribed={len(subscribed)} channels;starting…",
+            f"[cli.monitor] subscribed={result.whitelist_count} channels;listening…",
             file=sys.stderr,
             flush=True,
         )
 
-        await monitor.start()
         await stop.wait()
         print("[cli.monitor] stopped", file=sys.stderr, flush=True)
         return 0
