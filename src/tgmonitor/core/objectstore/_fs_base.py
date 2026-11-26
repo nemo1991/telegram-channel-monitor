@@ -25,12 +25,72 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import secrets
+import time
 from abc import abstractmethod
 from pathlib import Path
 from typing import AsyncIterator, BinaryIO
 
 from tgmonitor.core.objectstore.base import ObjectMeta, ObjectStore, probe_writable
+
+# `_replace_atomic` 的重试节奏:Windows 上目标刚被另一个写者替换掉时,
+# 旧文件对象短暂处于 delete-pending,此刻再替换会得到 ACCESS_DENIED;
+# 通常几毫秒内释放。
+_REPLACE_ATTEMPTS = 6
+_REPLACE_DELAY_S = 0.01
+
+
+def _without_extended_prefix(path: Path) -> Path:
+    """去掉 Windows 长路径前缀 `\\\\?\\`(`\\\\?\\UNC\\server\\share` → `\\\\server\\share`)。
+
+    只做字面规范化,不做任何解析 —— 调用方用它来比较两个路径是否同一位置。
+    """
+    text = str(path)
+    if text.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + text[len("\\\\?\\UNC\\") :])
+    if text.startswith("\\\\?\\"):
+        return Path(text[len("\\\\?\\") :])
+    return path
+
+
+def _replace_atomic(src: Path, dst: Path) -> None:
+    """`os.replace` + Windows 短暂拒绝的重试(2.1.7)。
+
+    同一目标被两个写者先后替换(并发下载同一媒体)时,Windows 上后一个会
+    撞上前一个留下的 delete-pending 旧文件,得到 `PermissionError`。
+    这是瞬时状态,退避重试即可;持续失败(真权限问题)照常上抛 —— 对象本体
+    由前一个写者完整写入,不会留下半成品。
+    """
+    delay = _REPLACE_DELAY_S
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
+def _mkdir_parents(path: Path) -> None:
+    """`mkdir(parents=True, exist_ok=True)` + Windows 短暂拒绝的重试。
+
+    两个线程同时创建同一个新目录时,Windows 对后来者返回 ACCESS_DENIED 而
+    不是 ALREADY_EXISTS,此时目录尚不可见,`exist_ok` 也兜不住。瞬时状态,
+    退避重试后目录已就位,`exist_ok` 生效。
+    """
+    delay = _REPLACE_DELAY_S
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
 
 class LocalFsStoreBase(ObjectStore):
@@ -63,9 +123,22 @@ class LocalFsStoreBase(ObjectStore):
         ...
 
     def _ensure_inside_root(self, path: Path) -> None:
+        root = self._root.resolve()
         try:
-            path.relative_to(self._root.resolve())
+            path.relative_to(root)
+            return
         except ValueError as e:
+            # Windows:父目录正被另一线程创建的那个瞬间,`Path.resolve()` 可能
+            # 返回长路径形式 `\\?\C:\...`,与 root 的短路径形式字面不等,但
+            # 指向同一位置(2.1.7:并发首次写入同一目录时踩到)。去掉前缀再比
+            # 一次;仍不在 root 内才判越界。`\\?\` 形式不接受 `..` 与 `/`,
+            # 规范化只会消掉这处字面差异,不会放宽越界判定。
+            if os.name == "nt":
+                try:
+                    _without_extended_prefix(path).relative_to(_without_extended_prefix(root))
+                    return
+                except ValueError:
+                    pass
             raise ValueError(f"key escapes root: {path}") from e
 
     def local_path(self, key: str) -> Path | None:
@@ -100,11 +173,11 @@ class LocalFsStoreBase(ObjectStore):
         否则 FULL 策略下下载 100MB+ 视频同步写盘会阻塞 qasync 主事件
         循环,UI 卡顿。中途失败清掉 .part 半成品,对象本体不出现。
         """
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _mkdir_parents(path.parent)
         tmp = LocalFsStoreBase._tmp_path_for(path)
         try:
             tmp.write_bytes(data)
-            tmp.replace(path)
+            _replace_atomic(tmp, path)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
@@ -154,7 +227,7 @@ class LocalFsStoreBase(ObjectStore):
         self._ensure_inside_root(path)
 
         def _open_tmp() -> tuple[BinaryIO, Path]:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            _mkdir_parents(path.parent)
             tmp = self._tmp_path_for(path)
             return tmp.open("wb"), tmp
 
@@ -169,7 +242,7 @@ class LocalFsStoreBase(ObjectStore):
                     await asyncio.to_thread(f.write, chunk)
             finally:
                 await asyncio.to_thread(f.close)
-            await asyncio.to_thread(tmp.replace, path)
+            await asyncio.to_thread(_replace_atomic, tmp, path)
         except BaseException:
             # 中途失败:清掉 .part 半成品(对象本体从未出现,原子性保持)
             await asyncio.to_thread(lambda: tmp.unlink(missing_ok=True))

@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -481,3 +482,95 @@ def test_tmp_names_are_unique_per_writer(tmp_path) -> None:
     assert len(names) == 200
     name = names.pop()
     assert name.startswith(".tgmonitor-") and name.endswith(".jpg.part")
+
+
+# ---- P2-2 Windows 竞态(并发首次写入同一目录时踩到)---------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("\\\\?\\C:\\Users\\me\\media\\x.bin", "C:\\Users\\me\\media\\x.bin"),
+        ("\\\\?\\UNC\\server\\share\\media\\x.bin", "\\\\server\\share\\media\\x.bin"),
+        ("C:\\Users\\me\\media\\x.bin", "C:\\Users\\me\\media\\x.bin"),
+    ],
+)
+def test_without_extended_prefix_is_a_pure_text_normalization(given: str, expected: str) -> None:
+    from tgmonitor.core.objectstore._fs_base import _without_extended_prefix
+
+    assert str(_without_extended_prefix(Path(given))) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="长路径前缀仅 Windows 的 resolve() 会产生")
+async def test_ensure_inside_root_accepts_extended_length_prefix(tmp_path) -> None:
+    """Windows 上 `resolve()` 在父目录正被创建的瞬间返回 `\\?\\C:\\...`,不能误判越界。"""
+    store = local_store.LocalObjectStore(root=tmp_path)
+    (tmp_path / "media").mkdir()
+    extended = Path("\\\\?\\" + str(tmp_path / "media" / "x.bin"))
+
+    store._ensure_inside_root(extended)  # 不抛
+
+    with pytest.raises(ValueError):
+        store._ensure_inside_root(Path("\\\\?\\" + str(tmp_path.parent / "outside.bin")))
+
+
+def test_replace_retries_transient_permission_error(monkeypatch, tmp_path) -> None:
+    """目标刚被另一个写者替换掉 → Windows 短暂 ACCESS_DENIED → 重试后成功。"""
+    import tgmonitor.core.objectstore._fs_base as fs_base
+
+    real_replace = os.replace
+    attempts: list[int] = []
+    src, dst = tmp_path / "a.part", tmp_path / "a.bin"
+    src.write_bytes(b"x")
+
+    def _flaky_replace(s, d):
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise PermissionError(13, "Access is denied (delete pending)")
+        real_replace(s, d)
+
+    monkeypatch.setattr(fs_base.os, "replace", _flaky_replace)
+    monkeypatch.setattr(fs_base, "_REPLACE_DELAY_S", 0.001)
+    fs_base._replace_atomic(src, dst)
+
+    assert len(attempts) == 3
+    assert dst.read_bytes() == b"x" and not src.exists()
+
+
+def test_replace_gives_up_on_persistent_permission_error(monkeypatch, tmp_path) -> None:
+    """真权限问题不该无限重试 —— 用尽次数后照常上抛。"""
+    import tgmonitor.core.objectstore._fs_base as fs_base
+
+    def _always_denied(_s, _d):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(fs_base.os, "replace", _always_denied)
+    monkeypatch.setattr(fs_base, "_REPLACE_ATTEMPTS", 3)
+    monkeypatch.setattr(fs_base, "_REPLACE_DELAY_S", 0.001)
+    src = tmp_path / "a.part"
+    src.write_bytes(b"x")
+
+    with pytest.raises(PermissionError):
+        fs_base._replace_atomic(src, tmp_path / "a.bin")
+
+
+def test_mkdir_parents_retries_transient_permission_error(monkeypatch, tmp_path) -> None:
+    """两个线程同时创建同一新目录 → Windows 对后来者返回 ACCESS_DENIED。"""
+    import tgmonitor.core.objectstore._fs_base as fs_base
+
+    calls: list[int] = []
+    target = tmp_path / "new" / "dir"
+    real_mkdir = Path.mkdir
+
+    def _flaky_mkdir(self, *args, **kwargs):
+        calls.append(1)
+        if self == target and len(calls) == 1:
+            raise PermissionError(13, "Access is denied")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", _flaky_mkdir)
+    monkeypatch.setattr(fs_base, "_REPLACE_DELAY_S", 0.001)
+    fs_base._mkdir_parents(target)
+
+    assert len(calls) >= 2
+    assert target.is_dir()
