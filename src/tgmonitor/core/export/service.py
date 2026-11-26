@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from tgmonitor.core.dto import (
-    ExportFormat,
     ExportRequest,
     ExportResult,
     MediaExportRequest,
@@ -142,7 +141,7 @@ class ExportService:
             exporter = EXPORTERS.get(request.format)
             object_store_arg: ObjectStore | None = (
                 self._objects
-                if request.format == ExportFormat.ZIP or request.include_thumbnails
+                if EXPORTERS.needs_object_store(request.format) or request.include_thumbnails
                 else None
             )
             bytes_written = await exporter.render(
@@ -290,7 +289,7 @@ class ExportService:
             # `ObjectStore | None`,再交给 `render` 的协议签名。
             object_store_arg: ObjectStore | None = (
                 self._objects
-                if request.format == ExportFormat.ZIP or request.include_thumbnails
+                if EXPORTERS.needs_object_store(request.format) or request.include_thumbnails
                 else None
             )
             bytes_written = await exporter.render(

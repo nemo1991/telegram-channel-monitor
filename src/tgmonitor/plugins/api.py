@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any, Mapping, Protocol
 
 from tgmonitor.core.dto import ChannelDTO, MediaDTO, MessageDTO
 from tgmonitor.core.events import Event, EventBus, NotificationRequested
+from tgmonitor.core.export.base import Exporter
 from tgmonitor.plugins.manifest import PluginManifest
 
 Subscriber = Any  # 与 core.events.Subscriber 对齐,避免在此重复 Callable 别名
@@ -222,3 +224,15 @@ class Plugin(Protocol):
     def activate(self, ctx: PluginContext) -> None: ...
 
     def deactivate(self) -> None: ...
+
+
+class ExporterProvider(Protocol):
+    """可选能力:声明 `exporters` 的插件可提供自定义导出格式。
+
+    只有 manifest.capabilities 含 `"export"` 时宿主才读本属性 —— 避免在
+    `PluginApi` 上加注册方法(那会把能力写入权下放到窄门面,门面必然腐烂)。
+    注册 / 注销完全由 host 驱动:插件只声明 exporter 类或实例,不自己碰
+    全局 `EXPORTERS`,这样 crash / deactivate 时宿主能统一回收。
+    """
+
+    exporters: Sequence[Exporter | type[Exporter]]

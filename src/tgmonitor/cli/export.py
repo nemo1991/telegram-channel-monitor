@@ -17,6 +17,7 @@ from tgmonitor.core.dto import (
     MediaType,
 )
 from tgmonitor.core.events import ExportDone
+from tgmonitor.core.export.base import EXPORTERS
 from tgmonitor.core.monitor.service import MonitorService
 
 
@@ -46,13 +47,19 @@ async def run_export(
         ctx.bus.subscribe(ExportDone, _on_done)
 
         if cmd == "messages":
+            # 2026-11-26:格式校验运行时走注册表(插件在 bootstrap 才注册),
+            # 不再用 `ExportFormat(args.format)` 反解 —— 插件 str 格式不在枚举里。
+            if args.format not in EXPORTERS.available():
+                raise CliError(
+                    f"未知导出格式 {args.format};可用: {', '.join(EXPORTERS.message_formats())}"
+                )
             date_from = parse_date(args.date_from) if getattr(args, "date_from", None) else None
             date_to = parse_date(args.date_to) if getattr(args, "date_to", None) else None
             request = ExportRequest(
                 channel_ids=list(getattr(args, "channel_ids", None) or []),
                 date_from=date_from,
                 date_to=date_to,
-                format=ExportFormat(args.format),
+                format=args.format,
                 out_path=args.out,
                 include_metadata=not getattr(args, "no_metadata", False),
                 include_thumbnails=getattr(args, "include_thumbnails", False),
