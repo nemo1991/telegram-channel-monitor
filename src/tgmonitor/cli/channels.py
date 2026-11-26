@@ -51,6 +51,13 @@ async def run_channels(
             emit(data, as_json=getattr(args, "json", False), text_rows=rows())
 
         elif cmd == "refresh":
+            # 写操作(2.1.6 P2 #17):refresh 会把"已在 TG 退出"的频道置
+            # tg_subscribed=False 并级联停掉其监听(发 ChannelUnmonitored),
+            # 与 add/remove 同一确认边界。
+            if not getattr(args, "yes", False):
+                raise CliError(
+                    "channels refresh 会级联停掉已在 Telegram 退出频道的监听,请加 --yes 确认"
+                )
             refreshed = await ctx.channels.refresh_joined_channels()
             emit(
                 {"refreshed": len(refreshed)},

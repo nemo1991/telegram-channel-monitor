@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tgmonitor.core.dto import ActivityDTO
+from tgmonitor.core.storage._sqlite_common import _ensure_utc
 
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
@@ -28,7 +29,8 @@ async def append_activity(self: PostgresRepository, activity: ActivityDTO) -> No
             "(event_type, occurred_at, icon, title, detail, severity, channel_id, "
             "telegram_msg_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             activity.event_type,
-            activity.occurred_at,
+            # 2026-11-25 P2-7:naive datetime 视为 UTC(全 PG 写路径统一)。
+            _ensure_utc(activity.occurred_at),
             activity.icon,
             activity.title,
             activity.detail,

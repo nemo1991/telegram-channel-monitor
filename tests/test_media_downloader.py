@@ -538,3 +538,93 @@ async def test_download_one_progress_not_invoked_when_skipped(
     # skip 命中 → 没回调
     assert received == []
     assert out2.download_status == MediaDownloadStatus.DONE
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-25 P2 #36:流式下载(download_file_to → 临时文件 → put_stream)
+# 主媒体走流式路径,内存 O(chunk);max_bytes 超限由 download_file_to 内部
+# 中止返 None → FAILED。缩略图(≤50KB)仍走 bytes 版 download_file。
+# ---------------------------------------------------------------------------
+
+
+class _StreamClient(FakeTelegramClient):
+    """`download_file_to` 替身 — 模拟 telegram 组新 API 的流式落盘契约:
+
+    - 成功:把 bytes 写入 `dest_path` 并返回该 Path
+    - 失败 / max_bytes 超限:返回 None(不抛)
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_max_bytes: int | None | object = "unset"
+
+    async def download_file_to(  # type: ignore[override]
+        self,
+        file_id: str,
+        dest_path: Path,
+        *,
+        progress_callback=None,
+        max_bytes=None,
+    ) -> Path | None:
+        data = await self.download_file(file_id, progress_callback=progress_callback)
+        if data is None:
+            return None
+        self.seen_max_bytes = max_bytes
+        if max_bytes is not None and len(data) > max_bytes:
+            return None
+        dest_path.write_bytes(data)  # noqa: ASYNC240 — 测试 fake 同步写盘
+        return dest_path
+
+
+async def test_download_one_streams_via_download_file_to(
+    tmp_path: Path, objects: LocalObjectStore, storage
+) -> None:
+    """P2 #36:client 实现 download_file_to → 走流式路径(临时文件 + put_stream)。
+
+    旧实现 download_file 整文件进内存(数 GB 视频 RAM 峰值 = 文件大小);
+    新路径落临时文件分块写入 ObjectStore,最终 bytes 语义不变。
+    """
+    client = _StreamClient()
+    payload = b"STREAM-PAYLOAD" * 64
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage)
+
+    out = await dl.download_one(msg_pk=10, media=_make_media(file_size=len(payload)))
+
+    assert out.download_status == MediaDownloadStatus.DONE
+    assert out.object_key
+    assert out.file_size == len(payload)
+    assert await objects.get(out.object_key) == payload
+    # max_bytes 透传给 download_file_to(内部超限中止由 client 侧执行)
+    assert client.seen_max_bytes == dl.max_bytes
+
+
+async def test_download_one_streaming_max_bytes_abort_returns_failed(
+    objects: LocalObjectStore, storage
+) -> None:
+    """P2 #36:流式下载超 max_bytes → download_file_to 返 None → FAILED 不抛。"""
+    client = _StreamClient()
+    payload = b"BIG" * 100_000  # 300 KB
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage, max_bytes=1024)
+
+    out = await dl.download_one(msg_pk=11, media=_make_media(file_size=None))
+
+    assert out.download_status == MediaDownloadStatus.FAILED
+    assert out.download_error
+    assert out.object_key is None
+
+
+async def test_download_one_falls_back_to_bytes_without_download_file_to(
+    objects: LocalObjectStore, storage
+) -> None:
+    """client 无 download_file_to(测试替身 / 过渡期)→ 回退 bytes 路径,行为不变。"""
+    client = FakeTelegramClient()
+    payload = b"FALLBACK" * 10
+    client.set_download("fid-A", payload)
+    dl = _make_dl(client, objects, storage)
+
+    out = await dl.download_one(msg_pk=12, media=_make_media(file_size=len(payload)))
+
+    assert out.download_status == MediaDownloadStatus.DONE
+    assert await objects.get(out.object_key) == payload

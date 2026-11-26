@@ -200,6 +200,50 @@ def test_close_event_unlinks_staged_video(
     assert dlg._video_tmp_path is None
 
 
+# 2026-11-25 2.1.4 P2 #40:accept()/reject() 不触发 closeEvent — done() 收口清理
+
+
+def _make_video_dialog(monkeypatch: pytest.MonkeyPatch) -> tuple:
+    """造一个带视频 item 的 LightboxDialog(QMediaPlayer mock),返回 (dlg, tmpfile)。"""
+    from tgmonitor.ui.widgets import lightbox_dialog
+
+    _FakeMediaPlayer.instances.clear()
+    monkeypatch.setattr(lightbox_dialog, "QMediaPlayer", _FakeMediaPlayer)
+    item = MediaItem(video=b"\x00\x00\x00\x18ftypmp42")
+    dlg = LightboxDialog(items=[item])
+    tmpfile = dlg._video_tmp_path
+    assert tmpfile is not None
+    assert os.path.isfile(tmpfile)
+    return dlg, tmpfile
+
+
+def test_accept_unlinks_staged_video(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    """accept()(Esc / 右键 / 双击路径)→ tmpfile 被删,不留 $TMPDIR 残留。"""
+    dlg, tmpfile = _make_video_dialog(monkeypatch)
+    dlg.accept()
+    assert not os.path.isfile(tmpfile)
+    assert dlg._video_tmp_path is None
+
+
+def test_reject_unlinks_staged_video(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    """reject() 路径 → tmpfile 同样被删(done() 统一收口)。"""
+    dlg, tmpfile = _make_video_dialog(monkeypatch)
+    dlg.reject()
+    assert not os.path.isfile(tmpfile)
+    assert dlg._video_tmp_path is None
+
+
+def test_close_after_accept_is_idempotent(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """accept() 后再 close() — 清理幂等,无二次 unlink 报错(tmp 已不存在)。"""
+    dlg, tmpfile = _make_video_dialog(monkeypatch)
+    dlg.accept()
+    assert not os.path.isfile(tmpfile)
+    dlg.close()  # closeEvent + reject→done 再清一轮,幂等
+    assert dlg._video_tmp_path is None
+
+
 # ---- 滚轮 / 行为边界 ----
 
 

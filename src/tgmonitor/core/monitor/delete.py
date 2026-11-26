@@ -56,13 +56,12 @@ class DeleteManager:
         self,
         items: list[tuple[int, int]],
         cancel_event: asyncio.Event | None = None,
-    ) -> int:
+    ) -> tuple[int, list[tuple[int, int, str]]]:
         """2026-09-08 v1.7.0:批量删 N 条消息 + 清孤儿 + 发 N 次 MessageDeleted。
 
         按 (channel_id,) 分组后各调 `storage.delete_messages` 一次性 SQL,
         复用 `_delete_with_orphan_check` 的 refcount 语义(串行,保证共享
-        object_key 的两条消息被删时 refcount 正确递减)。单条失败不阻断,
-        返成功条数。
+        object_key 的两条消息被删时 refcount 正确递减)。单条失败不阻断。
 
         2026-09-11 v1.7.4 (regression fix):`cancel_event` 可选 — 每条 RPC
         前查 `cancel_event.is_set()`,True 则 break(不 publish,不发
@@ -70,11 +69,17 @@ class DeleteManager:
         兼容旧调用点 + 让 AppService.delete_messages_batch 走真批量路径
         而非退化为 per-item。
 
+        2026-11-25 P2 #32:返回值从裸 int 改为 `(succeeded, failures)` —
+        失败条目 `(cid, mid, reason)` 逐条收集,让 BatchService 能把部分
+        失败明细组装进 BatchDone.failures(旧实现吞异常只 log,「查看失败
+        详情」拿空列表)。
+
         Out of scope(v1.8+):整体 refcount 收集优化(N×media → 1 round-trip)。
         """
         if not items:
-            return 0
+            return 0, []
         succeeded: list[tuple[int, int]] = []
+        failures: list[tuple[int, int, str]] = []
         cb = self._rt.delete_with_orphan_check
         assert cb is not None
         for cid, mid in items:
@@ -83,12 +88,13 @@ class DeleteManager:
             try:
                 await cb(cid, mid)
                 succeeded.append((cid, mid))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 log.exception("delete_messages(%s, %s) failed", cid, mid)
+                failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
         for cid, mid in succeeded:
             await self._rt.bus.publish(MessageDeleted(channel_id=cid, telegram_msg_id=mid))
-        return len(succeeded)
+        return len(succeeded), failures
 
     async def _handle_message_deleted(self, event: MessageDeleted) -> None:
         """2026-08-27 v1.4.0 PR #11:Telegram 推送消息删除 → 落库删 row +

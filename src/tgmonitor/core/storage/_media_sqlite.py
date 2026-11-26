@@ -66,7 +66,10 @@ async def list_media(
     assert self._db is not None
     where_sql, params = _media_where_clause(channel_ids, status, media_type, search, undownloaded)
     sort_col, nulls_last = _MEDIA_SORT_COLUMN[sort]
-    nulls_clause = " NULLS LAST" if nulls_last else ""
+    # 2026-11-25 P2-44:SIZE 空值统一用 `{col} IS NULL` 前置键排最后
+    # (SQLite 0/1 布尔序),替换原先的 NULLS LAST — 与 PG 端逐字一致,
+    # 消除两后端 NULL 排序位置分叉。
+    nulls_key = f"{sort_col} IS NULL, " if nulls_last else ""
     sql = (
         "SELECT m.*, me.id AS media_id, me.type AS media_type,"
         "       me.mime_type, me.file_name, me.file_size, me.width, me.height,"
@@ -76,9 +79,11 @@ async def list_media(
         "       ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY me.id) - 1 AS media_idx "
         "FROM messages m JOIN media me ON me.message_id = m.id "
         f"WHERE {where_sql} "
-        f"ORDER BY {sort_col} {sort_dir.value.upper()}{nulls_clause}, m.id DESC, media_idx ASC"
+        f"ORDER BY {nulls_key}{sort_col} {sort_dir.value.upper()}, m.id DESC, media_idx ASC"
     )
-    if limit:
+    # 2026-11-25 P2-5:limit=0 语义 = 空结果(不再当"无界")— 原truthiness
+    # 判断把 0 当 False 跳过 LIMIT,意外返回全表;与 PG 端同步改 `is not None`。
+    if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
     async with self._lock:

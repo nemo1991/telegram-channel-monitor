@@ -89,14 +89,15 @@ class ChannelService:
     async def monitor_channel(self, channel: ChannelDTO) -> None:
         """对本应用**开启监听**一个频道 — upsert 元数据 + 设 monitored=True + 发事件。
 
-        先 upsert 完整信息(标题等),再设监听标志 —
-        后者用 set_channel_monitored 不会改其他字段。
+        2026-11-25 P2 #37:写路径原子化 — 旧实现 `upsert_channel(channel)` +
+        `set_channel_monitored(id, True)` 两步独立写库,第二步失败会留下
+        「元数据已写、监听标志未开」的半状态;改为 storage 单语句原子入口
+        `upsert_channel_and_set_monitored`(upsert 全字段且 monitored 强制 True)。
 
         v2.0.3 D7:core 门控 — 未 ready 直接拒绝,不产生任何写库副作用。
         """
         require_ready(self._client, "开启监听")
-        await self._storage.upsert_channel(channel)
-        await self._storage.set_channel_monitored(channel.id, True)
+        await self._storage.upsert_channel_and_set_monitored(channel)
         await self._bus.publish(ChannelMonitored(channel=channel))
 
     async def unmonitor_channel(self, channel_id: int) -> None:
@@ -156,18 +157,23 @@ class ChannelService:
             return []
 
         joined_ids = {ch.id for ch in joined}
-        # 1) TG 列表里的频道:建档/更新元数据 + 写 tg_subscribed=True(不碰 monitored)。
+        # 1) TG 列表里的频道:P2 #37 原子入口 — 建档/更新元数据 + 写
+        #    tg_subscribed=True(不碰 monitored)单步完成,消除两步写中途
+        #    异常留「元数据新、tg_subscribed 旧」的半状态。
         for ch in joined:
-            await self._storage.upsert_channel_metadata(ch)
-            await self._storage.set_channel_tg_subscribed(ch.id, True)
+            await self._storage.upsert_channel_metadata_and_set_tg_subscribed(ch)
 
         # 2) 库里有行但不在 TG 列表 → TG 退订,级联停监听(保留行与历史)。
+        #    双标志经 P2 #37 原子入口单事务落库(None=不动 monitored)。
         for existing in await self._storage.list_channels():
             if existing.id in joined_ids:
                 continue
-            await self._storage.set_channel_tg_subscribed(existing.id, False)
+            await self._storage.set_channel_flags(
+                existing.id,
+                tg_subscribed=False,
+                monitored=False if existing.is_monitored else None,
+            )
             if existing.is_monitored:
-                await self._storage.set_channel_monitored(existing.id, False)
                 if self._monitor is not None:
                     self._monitor.remove_from_whitelist(existing.id)
                 await self._bus.publish(ChannelUnmonitored(channel_id=existing.id))

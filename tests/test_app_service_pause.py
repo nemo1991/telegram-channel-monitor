@@ -211,3 +211,32 @@ async def test_pause_resume_pause_resume_cycle(bus, monitor, client) -> None:
     assert client.stop.await_count == 2
     assert client.start.await_count == 2
     assert monitor.start.await_count == 2
+
+
+# ---- P2 #35:monitor.start 失败保持 paused ----
+
+
+async def test_resume_monitor_monitor_start_failure_keeps_paused(bus, monitor, client) -> None:
+    """P2 #35 回归:`monitor.start()` 抛错时**不** flip paused、不发 Resumed。
+
+    旧实现 monitor.start 失败后照样 flip `_is_paused=False` + 发
+    MonitoringResumed — UI 显示「监听中」但实时流 / 下载 worker 实际没起来,
+    是假状态。新实现与 client.start 失败分支对齐:保持 paused 让用户重试。
+    """
+    monitor.start.side_effect = RuntimeError("monitor start boom")
+
+    events: list[MonitoringResumed] = []
+
+    async def _capture(e: MonitoringResumed) -> None:
+        events.append(e)
+
+    bus.subscribe(MonitoringResumed, _capture)
+
+    app = _make_app_service(bus, monitor, client)
+    await app.pause_monitor()
+    await app.resume_monitor()  # monitor.start 失败 → 内部 catch,不发 Resumed
+
+    assert app.is_paused is True, "monitor.start 失败必须保持 paused(P2 #35)"
+    assert len(events) == 0, "monitor.start 失败不得发 MonitoringResumed(P2 #35)"
+    # client.start 已成功(失败分支在它之前)
+    assert client.start.await_count == 1

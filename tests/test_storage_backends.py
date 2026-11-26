@@ -995,3 +995,30 @@ async def test_in_mem_update_pin_sets_true(in_mem_repo):
     await in_mem_repo.update_message_pin(100, 1, False)
     msg = await in_mem_repo.get_message(100, 1)
     assert msg is not None and msg.is_pinned is False
+
+
+# ---- P2 回归(2026-11-25)----
+
+
+async def test_list_media_limit_zero_returns_empty(seeded_repo):
+    """P2-5 回归:limit=0 语义 = 空结果,不得当"无界"返回全表。
+
+    旧实现 `if limit:` 把 0 当 False 跳过 LIMIT — SQLite 端意外返回全表。
+    """
+    rows = await seeded_repo.list_media(limit=0)
+    assert rows == []
+
+
+async def test_list_messages_tag_filter_pushdown(meta_seeded_repo):
+    """P2-14 回归:list_messages(tag=) SQL 下推 — limit 截断前过滤不漏项。
+
+    meta 种子里仅 msg 102 带 tag("tech","ai")。limit=1 时命中的也是它 —
+    若过滤发生在截断之后(旧 CLI 行为),tagged 消息会被最新 N 条挤掉。
+    """
+    rows = await meta_seeded_repo.list_messages([1, 2], limit=1, tag="tech")
+    assert [m.telegram_msg_id for m in rows] == [102]
+    # 无 limit 全量:精确匹配只命中 102(101 是 favorite、200 是 pinned)
+    rows = await meta_seeded_repo.list_messages([1, 2], tag="tech")
+    assert [m.telegram_msg_id for m in rows] == [102]
+    # 不存在的 tag → 空结果
+    assert await meta_seeded_repo.list_messages([1, 2], tag="nope") == []

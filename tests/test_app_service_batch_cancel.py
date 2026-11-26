@@ -1,28 +1,50 @@
 """2026-09-17 PR 4 mega-split:`AppService.cancel_current_batch` + 跨 batch 取消测试。
 
 7 tests:
-- cancel_current_batch 设 _cancel_event / 多次 set 安全
-- cancel 在 pin / react 循环中段(与 mark_read 同模式)— 锁定在 test_app_service_batch_mark_read.py
+- cancel_current_batch set 当前 op 的局部 Event(P2 #31)/ op 结束置 None
+- cancel 在 pin / react 循环中段
+- 并发两个批量,cancel 只作用于最近注册的 op(P2 #31 回归)
 - BatchProgress 含 elapsed_seconds + rate_per_second(v1.4.0+)— pin / react 两个 op 验证
 - _compute_rate 除零返回零(v1.4.0+ 兜底)
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from tgmonitor.core.app_service import AppService
 from tgmonitor.core.events import BatchDone, BatchProgress, EventBus
 
 
-async def test_cancel_current_batch_sets_event(batch_app: AppService) -> None:
-    """v1.7.3:`cancel_current_batch()` 必须 set `_cancel_event`。"""
-    assert not batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
+async def test_cancel_current_batch_sets_current_op_event(
+    batch_app: AppService, collected: list
+) -> None:
+    """v1.7.3 + P2 #31:cancel_current_batch set 当前 op 的局部 Event。
+
+    旧实现是单一共享 Event(无 op 也 set,靠下一 op 开头 clear);新实现
+    每 op 创建局部 Event,op 结束(含异常)置回 None — 无 op 进行时
+    cancel 是 no-op,不会把取消信号悬挂到下一个 op 上。
+    """
+    observed: dict = {}
+
+    async def _side_effect(*_args, **_kwargs):
+        ev = batch_app.batch._cancel_event  # type: ignore[attr-defined]
+        observed["during_op"] = ev
+        observed["set_before"] = ev.is_set()
+        batch_app.batch.cancel_current_batch()
+        observed["set_after"] = ev.is_set()
+
+    batch_app.client.pin_messages.side_effect = _side_effect  # type: ignore[attr-defined]
+    await batch_app.batch.pin_messages([(1, 1)])
+
+    assert observed["during_op"] is not None
+    assert observed["set_before"] is False
+    assert observed["set_after"] is True
+    # op 结束后引用清空 → cancel 变 no-op(不抛、不悬挂)
+    assert batch_app.batch._cancel_event is None  # type: ignore[attr-defined]
     batch_app.batch.cancel_current_batch()
-    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
-    # 多次调用安全(再次 set 已 set 的 Event)
-    batch_app.batch.cancel_current_batch()
-    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
+    assert batch_app.batch._cancel_event is None  # type: ignore[attr-defined]
 
 
 async def test_cancel_pin_stops_mid_loop(batch_app: AppService, collected: list) -> None:
@@ -75,7 +97,50 @@ async def test_multiple_cancel_calls_safe(batch_app: AppService) -> None:
     batch_app.batch.cancel_current_batch()
     batch_app.batch.cancel_current_batch()
     batch_app.batch.cancel_current_batch()
-    assert batch_app.batch._cancel_event.is_set()  # type: ignore[attr-defined]
+    # 无 op 进行时 _cancel_event 为 None,cancel 是 no-op(P2 #31)
+    assert batch_app.batch._cancel_event is None  # type: ignore[attr-defined]
+
+
+async def test_concurrent_ops_cancel_targets_latest_op_only(
+    batch_app: AppService, collected: list
+) -> None:
+    """P2 #31 回归:并发两个批量,cancel 只作用于最近注册的 op。
+
+    旧实现单一 Event + 各 op 开头 clear():op2 启动后 cancel,set 的是
+    共享 Event — op1 的循环也看到 is_set 被连带取消。新实现每 op 局部
+    Event:op2(op1 之后注册)被取消,op1 不受影响跑完全部条目。
+    """
+
+    # op1:pin 5 个频道(每频道 1 条 → 5 次 RPC),每次 RPC 慢 0.02s
+    async def _slow_pin(_cid, _mids, **_kw):
+        await asyncio.sleep(0.02)
+
+    batch_app.client.pin_messages.side_effect = _slow_pin  # type: ignore[attr-defined]
+
+    # op2:add_reaction 2 条(逐条 RPC,慢 0.02s)
+    async def _slow_react(_cid, _mid, _emoji, **_kw):
+        await asyncio.sleep(0.02)
+
+    batch_app.client.add_reaction.side_effect = _slow_react  # type: ignore[attr-defined]
+
+    op1 = asyncio.create_task(
+        batch_app.batch.pin_messages([(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)])
+    )
+    await asyncio.sleep(0.005)  # 让 op1 注册自己的 Event 并进入第一条 RPC
+    op2 = asyncio.create_task(batch_app.batch.add_reaction([(7, 1), (7, 2)], "🔥"))
+    await asyncio.sleep(0.005)  # 让 op2 注册(覆盖"当前 op"引用)
+    batch_app.batch.cancel_current_batch()  # 作用于 op2
+
+    r1 = await op1
+    r2 = await op2
+
+    assert r2 == 1, f"op2 第 2 条前应被取消(实际成功 {r2})"
+    assert r1 == 5, f"op1 不应被 op2 的 cancel 波及,应跑完全部条目(实际 {r1})"
+    done = [e for e in collected if isinstance(e, BatchDone)]
+    d1 = next(d for d in done if d.op == "pin")
+    d2 = next(d for d in done if d.op == "react")
+    assert d1.error is None
+    assert d2.error == "cancelled"
 
 
 async def test_batch_progress_emits_elapsed_and_rate_for_pin(

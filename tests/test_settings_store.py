@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.settings_store import (
@@ -10,6 +14,7 @@ from tgmonitor.core.settings_store import (
     diff_settings,
     parse_env_file,
     settings_to_pairs,
+    update_env_paused,
     update_env_with_settings,
     write_env_file,
 )
@@ -340,3 +345,36 @@ def test_close_on_exit_defaults_true_and_roundtrips(tmp_path: Path) -> None:
     assert read_close_on_exit(env_path) is False
     env_path.write_text("TG_CLOSE_ON_EXIT=yes\n", encoding="utf-8")
     assert read_close_on_exit(env_path) is True
+
+
+# ---- P2 #38:.env 落盘权限 0600 ----
+
+# Windows 无 POSIX 权限位语义:os.chmod 只切只读位,stat 恒报 0o666,
+# 权限断言仅在 POSIX 平台有效(src 端 chmod 保留,Windows 上无害)。
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="Windows 无 POSIX 0o600 权限位语义")
+
+
+@posix_only
+def test_write_env_file_sets_0600(tmp_path: Path) -> None:
+    """P2 #38:.env 含明文 secret,落盘后权限必须收紧到 0o600。"""
+    env = parse_env_file(tmp_path / ".env")
+    env.pairs["TG_API_HASH"] = "secret-hash-value"
+    p = tmp_path / ".env"
+    write_env_file(env, p)
+    assert (p.stat().st_mode & 0o777) == 0o600, (
+        f".env 权限应为 0600,实际 {oct(p.stat().st_mode & 0o777)}"
+    )
+
+
+@posix_only
+def test_update_env_tightens_existing_0644_file(tmp_path: Path) -> None:
+    """P2 #38:已存在 0644 的 .env,保形更新后权限同样收紧到 0o600。"""
+    p = tmp_path / ".env"
+    p.write_text("TG_API_ID=123\nTG_PAUSED=false\n", encoding="utf-8")
+    os.chmod(p, 0o644)
+    update_env_paused(p, True)
+    assert (p.stat().st_mode & 0o777) == 0o600, (
+        f"更新后 .env 权限应为 0600,实际 {oct(p.stat().st_mode & 0o777)}"
+    )
+    # 内容保形更新仍正确
+    assert "TG_PAUSED=true" in p.read_text(encoding="utf-8")

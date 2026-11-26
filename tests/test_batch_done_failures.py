@@ -3,9 +3,8 @@
 PR 4 plan:`failures: list[tuple[int, int, str]]` 列出每条失败的 `(cid, mid,
 error_str)` 三元组 — 给「查看失败详情」按钮弹 dialog 用(v1.7.5 P0-J)。
 
-7 个 batch op × 1 failure-isolation 测试:
+6 个 batch op × 1 failure-isolation 测试:
 - `delete_messages_batch` — 走 `monitor.delete_messages`
-- `mark_messages_read` — 走 `client.mark_messages_read` (per-cid grouping)
 - `forward_messages` — 走 `client.forward_messages` (per-cid grouping)
 - `pin_messages` — 走 `client.pin_messages` (per-cid grouping)
 - `unpin_messages` — 走 `client.unpin_messages` (per-cid grouping)
@@ -86,37 +85,6 @@ async def test_batch_done_failures_delete_messages(bus: EventBus) -> None:
     assert (100, 1, "db locked") in done.failures
     assert (100, 2, "db locked") in done.failures
     assert (200, 3, "db locked") in done.failures
-
-
-# ============== mark_messages_read ==============
-
-
-async def test_batch_done_failures_mark_messages_read(bus: EventBus) -> None:
-    """`mark_messages_read` 单 cid 失败 → 该 cid 的所有 mid 列入 failures。"""
-    svc = _make_app(bus)
-
-    # 替换 client.mark_messages_read:cid=100 抛,cid=200 成功
-    async def _side_effect(cid: int, msg_ids: list[int]) -> None:
-        if cid == 100:
-            raise RuntimeError("mark_read 100 failed")
-
-    svc.client.mark_messages_read = AsyncMock(side_effect=_side_effect)  # type: ignore[attr-defined]
-    captured = _capture_batch_done(bus)
-
-    items = [(100, 1), (100, 2), (200, 3), (200, 4)]
-    await svc.batch.mark_messages_read(items)
-
-    assert len(captured) == 1
-    done = captured[0]
-    assert done.op == "mark_read"
-    assert done.failed == 2
-    assert done.succeeded == 2
-    # cid=100 的两条失败
-    assert (100, 1, "mark_read 100 failed") in done.failures
-    assert (100, 2, "mark_read 100 failed") in done.failures
-    # cid=200 的两条成功 — 不在 failures
-    assert (200, 3, "...") not in done.failures
-    assert (200, 4, "...") not in done.failures
 
 
 # ============== forward_messages ==============
@@ -274,3 +242,37 @@ async def test_batch_done_failures_uses_class_name_when_str_empty(
     assert len(captured) == 1
     # 失败 reason 用类名
     assert captured[0].failures == [(100, 1, "EmptyStrError")]
+
+
+# ============== delete_messages_batch 部分失败(P2 #32)==============
+
+
+async def test_batch_done_failures_delete_messages_partial(bus: EventBus) -> None:
+    """P2 #32 回归:批量删**部分**失败 → failures 逐条列出失败三元组。
+
+    旧实现 monitor.delete_messages 吞掉单条异常只 log、返成功数,
+    BatchDone.failures 恒为 [] —「查看失败详情」拿空列表。
+    新契约:delete_messages 返回 `(succeeded, failures)`,BatchService
+    把 failures 原样组装进 BatchDone。
+    """
+    svc = _make_app(bus)
+
+    # patch monitor 的删除 seam:mid==2 失败,其余成功
+    async def _delete(cid: int, mid: int) -> None:
+        if mid == 2:
+            raise RuntimeError("row locked")
+
+    svc.monitor._delete_with_orphan_check = _delete  # type: ignore[attr-defined]
+    captured = _capture_batch_done(bus)
+
+    items = [(100, 1), (100, 2), (100, 3)]
+    await svc.batch.delete_messages_batch(items)
+
+    assert len(captured) == 1
+    done = captured[0]
+    assert done.op == "delete"
+    assert done.succeeded == 2
+    assert done.failed == 1
+    assert done.failures == [(100, 2, "row locked")], (
+        f"部分失败必须逐条进 failures(P2 #32),got {done.failures}"
+    )

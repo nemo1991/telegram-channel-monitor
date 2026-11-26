@@ -89,11 +89,14 @@ async def test_list_joined_channels_proxies_client(
 # ============================================================
 
 
-async def test_monitor_channel_upserts_then_subscribes_then_emits(
+async def test_monitor_channel_uses_atomic_upsert_then_emits(
     bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
 ) -> None:
-    """顺序约束:upsert 元数据 → set subscribed → emit。
-    顺序反了会导致 metadata 丢失。
+    """2026-11-25 P2 #37:monitor_channel 走 storage 原子入口。
+
+    旧实现 `upsert_channel` + `set_channel_monitored` 两步独立写库,第二步
+    失败留半状态;现在单入口 `upsert_channel_and_set_monitored` 一步完成,
+    落库成功才 emit ChannelMonitored。
     """
     ch = ChannelDTO(id=1, title="news")
     events: list[ChannelMonitored] = []
@@ -106,24 +109,15 @@ async def test_monitor_channel_upserts_then_subscribes_then_emits(
     svc = _make_service(bus, fake_client, fake_storage)
     await svc.monitor_channel(ch)
 
-    # upsert 收到完整 DTO
-    assert fake_storage.upsert_channel.await_count == 1
-    assert fake_storage.upsert_channel.await_args.args[0] == ch
-    # set_monitored 收到 (id, True)
-    assert fake_storage.set_channel_monitored.await_count == 1
-    assert fake_storage.set_channel_monitored.await_args.args == (1, True)
+    # 原子入口收到完整 DTO
+    assert fake_storage.upsert_channel_and_set_monitored.await_count == 1
+    assert fake_storage.upsert_channel_and_set_monitored.await_args.args[0] == ch
+    # 旧两步路径不再出现
+    fake_storage.upsert_channel.assert_not_awaited()
+    fake_storage.set_channel_monitored.assert_not_awaited()
     # emit 事件(忽略 occurred_at 时间戳 — `Event` 基类 default_factory 每次都新生成)
     assert len(events) == 1
     assert events[0].channel == ch
-    # 顺序:upsert 必先于 set_monitored(用 mock call_args_list 抓顺序)
-    call_order: list[str] = []
-    for c in fake_storage.mock_calls:
-        name = c[0]
-        if name in ("upsert_channel", "set_channel_monitored"):
-            call_order.append(name)
-    assert call_order == ["upsert_channel", "set_channel_monitored"], (
-        f"顺序错:call_order={call_order}"
-    )
 
 
 async def test_unmonitor_channel_propagates_storage_errors(
@@ -224,3 +218,53 @@ def test_monitored_ids_returns_empty_when_monitor_absent(
     """P2-M3:monitor=None 启动期退化 → 空白名单(不抛,与读语义对齐)。"""
     svc = _make_service(bus, fake_client, fake_storage, monitor=None)
     assert svc.monitored_ids() == frozenset()
+
+
+# ============================================================
+# 2026-11-25 P2 #37:refresh_joined_channels 原子写路径
+# ============================================================
+
+
+async def test_refresh_joined_channels_uses_atomic_write_paths(
+    bus: EventBus, fake_client: AsyncMock, fake_storage: AsyncMock
+) -> None:
+    """P2 #37 回归:refresh 级联的 per-channel 多步写收进 storage 原子入口。
+
+    - TG 列表里的频道 → 单入口 `upsert_channel_metadata_and_set_tg_subscribed`;
+    - 不在列表的 monitored 频道 → 单入口 `set_channel_flags(tg=False, monitored=False)`;
+    - 不在列表的未监听频道 → `set_channel_flags(tg=False, monitored=None)`(不动标志)。
+    旧实现每频道 2 条独立写库语句,中途异常留「元数据新 / 标志旧」半状态。
+    """
+    joined = ChannelDTO(id=10, title="joined")
+    fake_client.list_joined_channels.return_value = [joined]
+    fake_storage.list_channels.return_value = [
+        ChannelDTO(id=10, title="joined"),
+        ChannelDTO(id=20, title="left-monitored", is_monitored=True, is_tg_subscribed=True),
+        ChannelDTO(id=30, title="left-idle", is_monitored=False),
+    ]
+
+    unmonitored: list[ChannelUnmonitored] = []
+
+    async def _on(e: ChannelUnmonitored) -> None:
+        unmonitored.append(e)
+
+    bus.subscribe(ChannelUnmonitored, _on)
+
+    svc = _make_service(bus, fake_client, fake_storage)
+    await svc.refresh_joined_channels()
+
+    # 1) joined 频道:原子入口一次到位,不再走旧两步
+    fake_storage.upsert_channel_metadata_and_set_tg_subscribed.assert_awaited_once_with(joined)
+    fake_storage.upsert_channel_metadata.assert_not_awaited()
+    fake_storage.set_channel_tg_subscribed.assert_not_awaited()
+
+    # 2) 级联退订:双标志单入口(monitored=False 仅对 monitored 频道)
+    calls = fake_storage.set_channel_flags.await_args_list
+    assert len(calls) == 2
+    by_id = {c.args[0]: c.kwargs for c in calls}
+    assert by_id[20] == {"tg_subscribed": False, "monitored": False}
+    assert by_id[30] == {"tg_subscribed": False, "monitored": None}
+    fake_storage.set_channel_monitored.assert_not_awaited()
+
+    # 3) 事件只对 monitored 频道发
+    assert [e.channel_id for e in unmonitored] == [20]

@@ -1,9 +1,17 @@
 """HTML Exporter — Jinja2 模板,可内嵌 base64 缩略图。
 
-缩略图来源:`object_store.get(media.thumb_key)`,内嵌为 `data:image/jpeg;base64,...`。
+缩略图来源:`storage.list_thumbnails_for_message` → `object_store.get(...)`,
+内嵌为 `data:image/jpeg;base64,...`。
 
 2026-08-27 v1.4.0 PR #17:data URI 设 256KB 上限(见 `MAX_THUMB_DATA_URI_BYTES`),
 超出改占位文,避免大缩略图冻死浏览器。
+
+2026-11-25 P2-2.1.4 #13:缩略图 data URI 不再挂在 `MediaDTO.thumb_data_uri`
+动态属性上(依赖 dataclass 未开 slots,且 `try/except pass` 吞错;DTO 一旦
+加 slots 缩略图会静默消失)— 改由独立渲染行 dict `{"msg": m, "thumbs":
+[uri|None, ...]}` 承载,DTO 保持纯净;缩略图查询从逐 media `get_thumbnail`
+的 N+1 改为逐消息一次 `list_thumbnails_for_message`(不动 storage ABC 的
+最小批量方案);读对象失败从静默吞掉改为 `log.warning`。
 """
 
 from __future__ import annotations
@@ -14,7 +22,7 @@ import mimetypes
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, select_autoescape
 
@@ -63,7 +71,8 @@ h2 { margin-top: 2em; }
 {% for cid, msgs in channels %}
 <section>
   <h2>{{ channels_title[cid] }}</h2>
-  {% for m in msgs %}
+  {% for row in msgs %}
+  {% set m = row.msg %}
   <div class="msg">
     <div class="meta">
       {{ m.date.strftime('%Y-%m-%d %H:%M:%S') if m.date else '' }}
@@ -83,8 +92,9 @@ h2 { margin-top: 2em; }
     {% if m.media %}
     <div class="media">
     {% for med in m.media %}
-      {% if med.thumb_data_uri %}
-        <img src="{{ med.thumb_data_uri }}" alt="{{ med.type.value }}" title="{{ med.file_name or '' }}">
+      {% set thumb_uri = row.thumbs[loop.index0] if row.thumbs else none %}
+      {% if thumb_uri %}
+        <img src="{{ thumb_uri }}" alt="{{ med.type.value }}" title="{{ med.file_name or '' }}">
       {% else %}
         <span class="ph">附件: {{ med.type.value }} {{ med.file_name or '' }}</span>
       {% endif %}
@@ -117,6 +127,54 @@ class HtmlExporter(Exporter):
         self._env = Environment(autoescape=select_autoescape(["html"]))
         self._tmpl = self._env.from_string(TEMPLATE)
 
+    async def _collect_thumb_uris(
+        self,
+        m: MessageDTO,
+        object_store: ObjectStore | None,
+        storage: StorageRepository | None,
+    ) -> list[str | None]:
+        """P2-2.1.4 #13:收集一条消息每个 media 的缩略图 data URI。
+
+        - 缩略图行按消息一次 `list_thumbnails_for_message` 查询(替代逐
+          media `get_thumbnail` 的 N+1;不动 storage ABC 的最小批量方案)
+        - 返回列表与 `m.media` 下标对齐;无 thumb / 超限 / 读取失败 → None
+          (模板走占位文)
+        - 读对象失败 `log.warning`,不再 `except: pass` 静默吞
+        """
+        uris: list[str | None] = [None] * len(m.media)
+        if not m.media or object_store is None or storage is None:
+            return uris
+        thumbs = await storage.list_thumbnails_for_message(m.channel_id, m.telegram_msg_id)
+        by_idx = {t.media_idx: t for t in thumbs}
+        for idx, med in enumerate(m.media):
+            thumb = by_idx.get(idx)
+            if not thumb or not thumb.object_key:
+                continue
+            try:
+                blob = await object_store.get(thumb.object_key)
+            except Exception:  # noqa: BLE001 — 单张失败不拖垮整体导出
+                log.warning(
+                    "html export: thumb 读取失败,跳过: msg_id=%s idx=%d key=%s",
+                    m.telegram_msg_id,
+                    idx,
+                    thumb.object_key,
+                    exc_info=True,
+                )
+                continue
+            # 2026-08-27 v1.4.0 PR #17:thumb > 256KB 不内嵌,改占位文。
+            # 经验阈值,过大 base64 会冻死浏览器渲染。
+            if len(blob) > MAX_THUMB_DATA_URI_BYTES:
+                log.info(
+                    "thumb too large, skip inline: key=%s size=%d > %d",
+                    thumb.object_key,
+                    len(blob),
+                    MAX_THUMB_DATA_URI_BYTES,
+                )
+                continue
+            mime = _guess_thumb_mime(thumb.object_key, med.mime_type)
+            uris[idx] = f"data:{mime};base64,{base64.b64encode(blob).decode()}"
+        return uris
+
     async def render(
         self,
         out_path: Path,
@@ -132,37 +190,15 @@ class HtmlExporter(Exporter):
 
         2026-09-10 v1.7.3:`include_metadata=False` 时模板不输出 ★ / 标签 / 备注 block
         (用户主动选择只导出文本+媒体,不掺私人标注)。
+        2026-11-25 P2-2.1.4 #13:渲染行 dict 承载缩略图 data URI,不污染 DTO。
         """
-        # 准备模板数据
-        grouped: dict[int, list[MessageDTO]] = defaultdict(list)
+        # 准备模板数据:每条 message 包一行 dict {"msg": m, "thumbs": [uri|None, ...]}
+        # (P2 #13:不再给 MediaDTO 挂动态属性 thumb_data_uri)
+        want_thumbs = include_thumbnails and object_store is not None and storage is not None
+        grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for m in messages:
-            grouped[m.channel_id].append(m)
-
-        if include_thumbnails and object_store is not None and storage is not None:
-            for m in messages:
-                for idx, med in enumerate(m.media):
-                    # 2026-09-29:thumb 走独立 thumbnails 表,从 storage.get_thumbnail 拿
-                    thumb = await storage.get_thumbnail(m.channel_id, m.telegram_msg_id, idx)
-                    if thumb and thumb.object_key:
-                        try:
-                            blob = await object_store.get(thumb.object_key)
-                            # 2026-08-27 v1.4.0 PR #17:thumb > 256KB 不内嵌,
-                            # 改占位文(thumb_data_uri 留 None → 模板走 <span>)。
-                            # 经验阈值,过大 base64 会冻死浏览器渲染。
-                            if len(blob) > MAX_THUMB_DATA_URI_BYTES:
-                                log.info(
-                                    "thumb too large, skip inline: key=%s size=%d > %d",
-                                    thumb.object_key,
-                                    len(blob),
-                                    MAX_THUMB_DATA_URI_BYTES,
-                                )
-                                continue
-                            mime = _guess_thumb_mime(thumb.object_key, med.mime_type)
-                            med.thumb_data_uri = (  # type: ignore[attr-defined]
-                                f"data:{mime};base64,{base64.b64encode(blob).decode()}"
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
+            thumbs = await self._collect_thumb_uris(m, object_store, storage) if want_thumbs else []
+            grouped[m.channel_id].append({"msg": m, "thumbs": thumbs})
 
         channels_title = {cid: (ch.title if ch else f"#{cid}") for cid, ch in channels.items()}
         html = self._tmpl.render(

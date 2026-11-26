@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import AsyncIterator, Callable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
@@ -127,18 +128,15 @@ class UnconfiguredTelegramClient(TelegramClient):
         """
         return None
 
-    async def mark_messages_read(
+    async def download_file_to(
         self,
-        channel_id: int,
-        msg_ids: list[int],
-    ) -> None:
-        """2026-09-09 v1.7.x:无凭据不可发 Telegram RPC,no-op。
-
-        兜底实现:满足 `TelegramClient` Protocol 完整性(否则 mypy 把本类
-        视作 abstract,`factory.build_telegram_client` 实例化失败)。调用
-        `AppService.mark_messages_read` 前已检查 `_is_paused`,正常路径不会
-        走到本方法。
-        """
+        file_id: str,
+        dest_path,
+        *,
+        progress_callback=None,
+        max_bytes: int | None = None,
+    ) -> Path | None:
+        """无凭据不可下载,返 None(契约与 download_file 一致,不抛)。"""
         return None
 
     async def forward_messages(
@@ -177,7 +175,7 @@ class UnconfiguredTelegramClient(TelegramClient):
         channel_id: int,
         *,
         before_msg_id: int = 0,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> AsyncIterator[MessageDTO]:
         """无凭据无历史,空迭代。"""
         if False:  # pragma: no cover — 仅让函数构成 async generator,永不执行

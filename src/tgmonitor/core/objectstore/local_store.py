@@ -6,20 +6,20 @@
 
 2026-11-25 P1-N3:`connect/close/_ensure_inside_root/get/exists/delete/
 stat/open_read/stream_read` 与 Folder 后端逐字重复,已上提到 `_fs_base.py`
-共享基类。本模块只保留平铺布局特有的 `_path` / `put`(sha256 自动补) /
-`iter_keys`。
+共享基类。本模块只保留平铺布局特有的 `_path` / `iter_keys`。
+
+2026-11-25 #21:`put`(含 sha256 自动回填)与 Folder 后端逐字重复,
+一并上提 `_fs_base.py`;两子类 sha256 回填行为从此一致。
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 from tgmonitor.core.objectstore._fs_base import LocalFsStoreBase
-from tgmonitor.core.objectstore.base import ObjectMeta
 
 
 def _safe_key(key: str) -> Path:
@@ -44,31 +44,6 @@ class LocalObjectStore(LocalFsStoreBase):
         return (self._root / rel).resolve()
 
     # ---- 操作 ----
-
-    async def put(self, key: str, data: bytes, meta: ObjectMeta | None = None) -> str:
-        """原子写:.part + rename;若 caller 没传 sha256,自动补一个到 meta。
-
-        写盘 + sha256 是重 IO/CPU,放 `asyncio.to_thread` — 否则 FULL 策略下
-        下载 100MB+ 视频同步写盘会阻塞 qasync 主事件循环,UI 卡顿。
-        """
-        path = self._path(key)
-        self._ensure_inside_root(path)
-
-        def _write() -> str | None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # 原子写:写到 .part 再 rename
-            tmp = path.with_suffix(path.suffix + ".part")
-            tmp.write_bytes(data)
-            tmp.replace(path)
-            # 若 caller 没传 sha256,自动算一个(大文件哈希也 off-loop)
-            if meta is not None and meta.sha256 is None:
-                return hashlib.sha256(data).hexdigest()
-            return None
-
-        digest = await asyncio.to_thread(_write)
-        if meta is not None and digest is not None:
-            meta.sha256 = digest
-        return key
 
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
         """枚举所有 key — `os.walk(root)` 走 to_thread,产相对路径 key。

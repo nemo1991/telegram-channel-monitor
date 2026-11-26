@@ -248,8 +248,9 @@ class MediaMixin(_Base):
         """下载未下载 media 原文件(2026-11-22 v2.0.9 FR-06)。
 
         后台 fire app.media.download_media(force=False);core 发 MediaDownloaded
-        事件 → `_on_media_downloaded` 订阅者刷新列表。不在 on_success 碰 widget
-        (run_coro 回调跑在后台 loop 线程,触碰 Qt widget 会 SIGSEGV)。
+        事件 → `_on_media_downloaded` 订阅者刷新列表。(run_coro 的 on_success /
+        on_error 回调由 qasync loop 执行 — qasync loop 跑在 Qt 主线程,回调
+        也在 Qt 主线程执行,可安全触碰 Qt widget;2.1.6 P2 #43 修正旧描述。)
         """
 
         async def _go() -> None:

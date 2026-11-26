@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import AsyncIterator, Callable
 
 from tgmonitor.core.dto import ChannelDTO, MessageDTO
@@ -80,8 +81,6 @@ class FakeTelegramClient(TelegramClient):
         self._raise_after_n: int | None = None
         # 媒体下载测试 hooks(REVIEW M2.1 接入)
         self._downloads: dict[str, bytes | None] = {}
-        # 2026-09-08 v1.7.0:mark_messages_read 注入记录(按 cid 分组)
-        self._read_log: dict[int, list[int]] = {}
         # 2026-09-09 v1.7.2:批量 forward / pin / react 注入记录
         # forward:list of (from_cid, to_cid, sorted_msg_ids) — 顺序无关
         # pin:按 from_cid 分组的 msg_ids(已合 unpin) — 测试用 union 即可
@@ -191,17 +190,53 @@ class FakeTelegramClient(TelegramClient):
             await progress_callback(total, total)
         return data
 
+    async def download_file_to(
+        self,
+        file_id: str,
+        dest_path: Path,
+        *,
+        progress_callback=None,
+        max_bytes: int | None = None,
+    ) -> Path | None:
+        """Fake 流式下载:把注入的 bytes 写到 dest_path,行为对齐真实现。
+
+        - set_download(file_id, bytes) → 写 dest_path(不存在则创建),返 dest_path。
+        - set_download(file_id, None) → 不写文件,返 None(模拟失败)。
+        - max_bytes 超限(data 大于 max_bytes)→ 不写文件,返 None(模拟
+          真实现的中途中止 + 删半成品;fake 里文件尚未创建,等价于清理完成)。
+        - progress_callback:与 download_file 相同的多 chunk 模拟,完成发终值。
+        """
+        await asyncio.sleep(0)
+        data = self._downloads.get(file_id)
+        if data is None:
+            return None
+        if max_bytes is not None and len(data) > max_bytes:
+            return None
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_bytes(data)
+        if progress_callback is not None:
+            total = len(data)
+            for pct in (0, total // 3, 2 * total // 3):
+                if pct > 0:
+                    await progress_callback(pct, total)
+            await progress_callback(total, total)
+        return dest_path
+
     async def iter_chat_history(
         self,
         channel_id: int,
         *,
         before_msg_id: int = 0,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> AsyncIterator[MessageDTO]:
         """Fake 全量同步分页历史:模拟"从 before_msg_id 之前拉到最早"。
 
         - max_id 来自注入的 `set_history(channel_id, max_id, count)`;count 条
           按升序 telegram_msg_id 排,以"before_msg_id 之前"为起点 yield。
+        - `limit=None` 全量;`limit=N` 与真实现语义对齐(2026-11-25 P2-23):
+          `before_msg_id=0` 时取**最新 N 条**;`before_msg_id>0` 时从起点
+          向旧方向(本 fake 的 yield 顺序)最多 N 条。
         - 每次 yield 后 `await asyncio.sleep(0)` 让出 loop,模拟网络。
         - 支持 inject 错误:`raise_after_n_messages` → 第 N+1 条 yield 前抛
           `TelegramRateLimitError`。
@@ -216,7 +251,11 @@ class FakeTelegramClient(TelegramClient):
         # before_msg_id>0 → 从其前一条(before_msg_id-1 或更早)开始。
         start = max(1, max_id - count + 1) if before_msg_id == 0 else max(1, before_msg_id - 1)
         end = max_id
-        for yielded, mid in enumerate(range(start, end + 1)):
+        ids: list[int] = list(range(start, end + 1))
+        if limit is not None:
+            # before_msg_id=0 的升序窗口里,"最新 N 条"= 末尾 N 条。
+            ids = ids[-limit:] if before_msg_id == 0 else ids[:limit]
+        for yielded, mid in enumerate(ids):
             if self._raise_after_n is not None and yielded == self._raise_after_n:
                 self._raise_after_n = None
                 from tgmonitor.core.telegram.errors import (
@@ -245,20 +284,6 @@ class FakeTelegramClient(TelegramClient):
             self._all_streams.remove(s)
         except ValueError:
             pass  # close() 路径已清空
-
-    async def mark_messages_read(self, channel_id: int, msg_ids: list[int]) -> None:
-        """2026-09-08 v1.7.0:Fake 替身 — 记录 mark_read 调用到 `self._read_log`。
-
-        测试通过 `client.read_log[cid]` 断言被标已读的 msg_ids 列表。
-        """
-        if not msg_ids:
-            return
-        self._read_log.setdefault(channel_id, []).extend(msg_ids)
-
-    @property
-    def read_log(self) -> dict[int, list[int]]:
-        """按 channel_id 分组的 mark_messages_read 调用历史(测试断言用)。"""
-        return self._read_log
 
     async def forward_messages(
         self, from_chat_id: int, to_chat_id: int, msg_ids: list[int]

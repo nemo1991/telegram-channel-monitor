@@ -54,20 +54,23 @@ async def test_app_login_without_credentials_raises(bus) -> None:
 
 
 async def test_app_subscribe_unsubscribe(batch_app: AppService, collected: list) -> None:
-    """monitor_channel → channels → storage.upsert_channel + set_channel_monitored(True);
+    """monitor_channel → channels → storage 原子入口 upsert_channel_and_set_monitored;
     unmonitor_channel → storage.set_channel_monitored(False) — 2026-07-31
     修复后走 set_channel_monitored 简化路径。
 
     回归:v1.5.0 PR #A2 把 facade 拆 3 个子 service,本测试确保 subscribe /
     unsubscribe 没绕过 channels 直调。
+    2026-11-25 P2 #37:subscribe 路径两步写(upsert + set flag)收进单原子
+    入口 upsert_channel_and_set_monitored。
     """
     # v2.0.3 D7:域服务入口有 ready 门控,正常业务路径测试默认已登录。
     batch_app.client.state = "ready"
     chan = ChannelDTO(id=42, title="test")
     await batch_app.channels.monitor_channel(chan)
-    # subscribe 路径:upsert_channel + set_channel_monitored(True) 均被调
-    batch_app.channels._storage.upsert_channel.assert_awaited_once_with(chan)  # type: ignore[attr-defined]
-    batch_app.channels._storage.set_channel_monitored.assert_awaited_with(42, True)  # type: ignore[attr-defined]
+    # subscribe 路径:原子入口被调,旧两步不再出现
+    batch_app.channels._storage.upsert_channel_and_set_monitored.assert_awaited_once_with(chan)  # type: ignore[attr-defined]
+    batch_app.channels._storage.upsert_channel.assert_not_awaited()  # type: ignore[attr-defined]
+    batch_app.channels._storage.set_channel_monitored.assert_not_awaited()  # type: ignore[attr-defined]
     await batch_app.channels.unmonitor_channel(42)
     # unsubscribe 路径:set_channel_monitored(42, False)
     batch_app.channels._storage.set_channel_monitored.assert_awaited_with(42, False)  # type: ignore[attr-defined]

@@ -140,6 +140,26 @@ class SqliteRepository(StorageRepository):
     async def set_channel_tg_subscribed(self, channel_id: int, tg_subscribed: bool) -> None:
         return await _channels.set_channel_tg_subscribed(self, channel_id, tg_subscribed)
 
+    async def upsert_channel_and_set_monitored(self, channel: ChannelDTO) -> None:
+        """P2 #37:原子 upsert + 置监听 — thin delegate → `_channels_sqlite`."""
+        return await _channels.upsert_channel_and_set_monitored(self, channel)
+
+    async def upsert_channel_metadata_and_set_tg_subscribed(self, channel: ChannelDTO) -> None:
+        """P2 #37:原子 metadata upsert + 置 TG 订阅 — thin delegate."""
+        return await _channels.upsert_channel_metadata_and_set_tg_subscribed(self, channel)
+
+    async def set_channel_flags(
+        self,
+        channel_id: int,
+        *,
+        monitored: bool | None = None,
+        tg_subscribed: bool | None = None,
+    ) -> None:
+        """P2 #37:双标志单事务设置 — thin delegate → `_channels_sqlite`."""
+        return await _channels.set_channel_flags(
+            self, channel_id, monitored=monitored, tg_subscribed=tg_subscribed
+        )
+
     async def count_tg_subscribed(self) -> int:
         return await _channels.count_tg_subscribed(self)
 
@@ -174,6 +194,15 @@ class SqliteRepository(StorageRepository):
 
     async def update_message(self, message: MessageDTO) -> None:
         return await _messages.update_message(self, message)
+
+    async def update_message_media(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media: list[MediaDTO],
+    ) -> None:
+        """P2 #36:定向重写 media 行 — thin delegate → `_messages_sqlite`."""
+        return await _messages.update_message_media(self, channel_id, telegram_msg_id, media)
 
     async def update_message_interactions(
         self,
@@ -219,6 +248,7 @@ class SqliteRepository(StorageRepository):
         favorite_only: bool = False,
         tag_only: bool = False,
         pinned_only: bool = False,
+        tag: str = "",
     ) -> list[MessageDTO]:
         return await _messages.list_messages(
             self,
@@ -231,6 +261,7 @@ class SqliteRepository(StorageRepository):
             favorite_only=favorite_only,
             tag_only=tag_only,
             pinned_only=pinned_only,
+            tag=tag,
         )
 
     async def count_messages(self, channel_id: int) -> int:

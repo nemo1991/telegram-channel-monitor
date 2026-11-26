@@ -160,7 +160,11 @@ def _apply_field(editable: EditableSettings, key: str, value: str) -> None:
       避免 to_settings() 用旧 BOOL 覆盖新 policy(v2.0.9 FR-05 约定)。
     """
     if key not in EditableSettings.__dataclass_fields__:
-        raise ValueError(f"未知配置键: {key}")
+        # 2.1.6 P2 #16:业务错误走 CliError(main() 捕获 → stderr `error: ...`
+        # + 退出码 1),不能裸 ValueError 让 traceback 直出。
+        from tgmonitor.cli._common import CliError
+
+        raise CliError(f"未知配置键: {key}")
 
     if key == "media_max_bytes":
         try:

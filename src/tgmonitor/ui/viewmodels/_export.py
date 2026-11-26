@@ -97,7 +97,8 @@ class ExportMixin(_Base):
     # payload (request_id,)
     export_cancelled = Signal(object)
     # 2026-09-09 v1.7.2:批量操作进度/完成 — payload BatchProgress / BatchDone。
-    # MainWindow 接到 → BatchProgressDialog 进度更新 / accept。
+    # BatchProgressDialog 已于 2.1.6 移除;信号保留作透传面(状态栏/transient
+    # 等后续消费方经 MainWindow 接线)。
     batch_progress = Signal(object)
     batch_done = Signal(object)
 
@@ -140,19 +141,13 @@ class ExportMixin(_Base):
         self.export_progress.emit(e)
 
     async def _on_batch_progress(self, e: object) -> None:
-        """2026-09-09 v1.7.2:转发 AppService batch 进度 → Qt signal。
-
-        MainWindow 接到 → BatchProgressDialog 进度条 + 状态标签更新。
-        """
+        """2026-09-09 v1.7.2:转发 AppService batch 进度 → Qt signal。"""
         if not isinstance(e, BatchProgress):
             return
         self.batch_progress.emit(e)
 
     async def _on_batch_done(self, e: object) -> None:
-        """2026-09-09 v1.7.2:转发 AppService batch 完成 → Qt signal。
-
-        MainWindow 接到 → BatchProgressDialog 收尾(accept / 标完成)。
-        """
+        """2026-09-09 v1.7.2:转发 AppService batch 完成 → Qt signal。"""
         if not isinstance(e, BatchDone):
             return
         self.batch_done.emit(e)

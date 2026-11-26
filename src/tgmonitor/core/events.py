@@ -243,8 +243,8 @@ class ExportDone(Event):
 
 @dataclass
 class BatchProgress(Event):
-    """2026-09-09 v1.7.2:批量操作进度 — delete / mark_read / forward / pin /
-    unpin / add_reaction / remove_reaction 共用。
+    """2026-09-09 v1.7.2:批量操作进度 — delete / forward / pin / unpin /
+    add_reaction / remove_reaction 共用。
 
     `op` 用于 UI 在同一 dialog 上区分当前批量动作标题(批量删除 / 批量转发)。
     `processed` 累加,`total` 在批量开始时一次 publish 已知值,UI 拿来算百分比。

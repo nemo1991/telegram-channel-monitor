@@ -9,6 +9,9 @@
 - 2026-08-27 v1.4.0 PR #17:`file_name` / `download_error` /
   `channel_title` 走 `_guard_csv_cell` 防 Excel 公式注入(CWE-1236)
   — `file_name` 是主攻击面(用户控制)
+- 2026-11-25 P2-2.1.4 #10/#11:
+  - `tags` 列 join 前逐 tag 走 `_guard_csv_cell`(与 csv_exporter 一致)
+  - 写盘 encoding 改 `utf-8-sig`(带 BOM),Windows Excel 直接双击不乱码
 
 实现说明:为不破坏 `Exporter.render` ABC 协议,把每条目标 media 单独包成
 一个 1-element `MediaDTO` 列表的临时 MessageDTO(覆盖原始 `media` 字段),
@@ -83,8 +86,12 @@ class MediaListCsvExporter(Exporter):
         include_metadata: bool = True,
         storage: StorageRepository | None = None,
     ) -> int:
-        """写 per-media CSV → 返回字节数。"""
-        with out_path.open("w", encoding="utf-8", newline="") as f:  # noqa: ASYNC240 — 渲染写盘同步
+        """写 per-media CSV → 返回字节数。
+
+        P2-2.1.4 #11:encoding 用 `utf-8-sig`(带 BOM)—— Windows Excel
+        双击打开中文不乱码。
+        """
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:  # noqa: ASYNC240 — 渲染写盘同步
             w = csv.DictWriter(f, fieldnames=MEDIA_CSV_COLUMNS)
             w.writeheader()
             for m in messages:
@@ -118,8 +125,11 @@ class MediaListCsvExporter(Exporter):
                         "object_key": med.object_key or "",
                         "object_backend": med.object_backend or "",
                         # 2026-09-10 v1.7.3:用户元数据 — `include_metadata=False` 时写空串。
+                        # P2-2.1.4 #10:join 前逐 tag guard(tag 用户可控,公式注入面)。
                         "is_favorite": (m.is_favorite if include_metadata else ""),
-                        "tags": ("|".join(m.tags) if include_metadata else ""),
+                        "tags": (
+                            "|".join(_guard_csv_cell(t) for t in m.tags) if include_metadata else ""
+                        ),
                         "notes": (_guard_csv_cell(m.notes) if include_metadata else ""),
                     }
                 )

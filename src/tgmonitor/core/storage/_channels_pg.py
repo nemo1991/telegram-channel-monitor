@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import asyncpg
 
 from tgmonitor.core.dto import ChannelDTO
+from tgmonitor.core.storage._sqlite_common import _ensure_utc
 
 if TYPE_CHECKING:
     from tgmonitor.core.storage.postgres_repo import PostgresRepository
@@ -88,10 +89,11 @@ async def upsert_channel(self: PostgresRepository, channel: ChannelDTO) -> None:
             channel.username,
             channel.kind,
             channel.member_count,
-            channel.created_at,
+            # 2026-11-25 P2-7:naive datetime 视为 UTC(P2-7 全 PG 写路径统一)。
+            _ensure_utc(channel.created_at),
             channel.is_monitored,
             channel.is_tg_subscribed,
-            channel.last_synced_at,
+            _ensure_utc(channel.last_synced_at),
             channel.photo_local_key,
             channel.is_verified,
             channel.is_scam,
@@ -135,11 +137,11 @@ async def upsert_channel_metadata(self: PostgresRepository, channel: ChannelDTO)
             channel.username,
             channel.kind,
             channel.member_count,
-            channel.created_at,
+            _ensure_utc(channel.created_at),
             # 首次插入给默认值(False),后续 DO UPDATE 两个标志都不动
             channel.is_monitored,
             channel.is_tg_subscribed,
-            channel.last_synced_at,
+            _ensure_utc(channel.last_synced_at),
             channel.photo_local_key,
             channel.is_verified,
             channel.is_scam,
@@ -227,6 +229,137 @@ async def set_channel_tg_subscribed(
             f"#{channel_id}",
             tg_subscribed,
         )
+
+
+async def upsert_channel_and_set_monitored(self: PostgresRepository, channel: ChannelDTO) -> None:
+    """P2 #37:全字段 upsert + monitored 强制 TRUE(单条语句,天然原子)。
+
+    与 `upsert_channel` 唯一差异:monitored 列写 TRUE 而非 caller 值 —
+    替代旧 `upsert_channel + set_channel_monitored` 两步组合。
+    """
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO channels
+                (id, title, username, kind, member_count, created_at,
+                 monitored, tg_subscribed, last_synced_at, photo_local_key,
+                 is_verified, is_scam, is_fake, has_protected_content)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                username = EXCLUDED.username,
+                kind = EXCLUDED.kind,
+                member_count = EXCLUDED.member_count,
+                created_at = EXCLUDED.created_at,
+                monitored = TRUE,
+                tg_subscribed = EXCLUDED.tg_subscribed,
+                last_synced_at = EXCLUDED.last_synced_at,
+                photo_local_key = EXCLUDED.photo_local_key,
+                is_verified = EXCLUDED.is_verified,
+                is_scam = EXCLUDED.is_scam,
+                is_fake = EXCLUDED.is_fake,
+                has_protected_content = EXCLUDED.has_protected_content
+            """,
+            channel.id,
+            channel.title,
+            channel.username,
+            channel.kind,
+            channel.member_count,
+            _ensure_utc(channel.created_at),
+            channel.is_tg_subscribed,
+            _ensure_utc(channel.last_synced_at),
+            channel.photo_local_key,
+            channel.is_verified,
+            channel.is_scam,
+            channel.is_fake,
+            channel.has_protected_content,
+        )
+
+
+async def upsert_channel_metadata_and_set_tg_subscribed(
+    self: PostgresRepository, channel: ChannelDTO
+) -> None:
+    """P2 #37:只更元数据 + tg_subscribed 强制 TRUE(单条语句,天然原子)。
+
+    与 `upsert_channel_metadata` 的差异:DO UPDATE 额外把 tg_subscribed
+    置 TRUE;monitored 标志保持旧值(与 metadata-only 语义一致)。
+    """
+    assert self._pool is not None
+    async with self._pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO channels
+                (id, title, username, kind, member_count, created_at,
+                 monitored, tg_subscribed, last_synced_at, photo_local_key,
+                 is_verified, is_scam, is_fake, has_protected_content)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                username = EXCLUDED.username,
+                kind = EXCLUDED.kind,
+                member_count = EXCLUDED.member_count,
+                created_at = EXCLUDED.created_at,
+                tg_subscribed = TRUE,
+                last_synced_at = EXCLUDED.last_synced_at,
+                photo_local_key = EXCLUDED.photo_local_key,
+                is_verified = EXCLUDED.is_verified,
+                is_scam = EXCLUDED.is_scam,
+                is_fake = EXCLUDED.is_fake,
+                has_protected_content = EXCLUDED.has_protected_content
+            """,
+            channel.id,
+            channel.title,
+            channel.username,
+            channel.kind,
+            channel.member_count,
+            _ensure_utc(channel.created_at),
+            channel.is_monitored,
+            _ensure_utc(channel.last_synced_at),
+            channel.photo_local_key,
+            channel.is_verified,
+            channel.is_scam,
+            channel.is_fake,
+            channel.has_protected_content,
+        )
+
+
+async def set_channel_flags(
+    self: PostgresRepository,
+    channel_id: int,
+    *,
+    monitored: bool | None = None,
+    tg_subscribed: bool | None = None,
+) -> None:
+    """P2 #37:双标志原子设置(conn.transaction() 单事务,None=不动)。
+
+    旧路径两条独立语句,中途异常留「TG 已退订、监听仍开」中间态;包进
+    单事务后要么全落、要么全不落。未建档时沿用 set_* 的 id-stub 语义。
+    """
+    assert self._pool is not None
+    async with self._pool.acquire() as conn, conn.transaction():
+        if tg_subscribed is not None:
+            await conn.execute(
+                """
+                INSERT INTO channels (id, title, tg_subscribed)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (id) DO UPDATE SET tg_subscribed = EXCLUDED.tg_subscribed
+                """,
+                channel_id,
+                f"#{channel_id}",
+                tg_subscribed,
+            )
+        if monitored is not None:
+            await conn.execute(
+                """
+                INSERT INTO channels (id, title, monitored)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (id) DO UPDATE SET monitored = EXCLUDED.monitored
+                """,
+                channel_id,
+                f"#{channel_id}",
+                monitored,
+            )
 
 
 async def count_tg_subscribed(self: PostgresRepository) -> int:

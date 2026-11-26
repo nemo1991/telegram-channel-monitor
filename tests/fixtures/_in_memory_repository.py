@@ -186,6 +186,31 @@ class InMemoryRepository(StorageRepository):
                 has_protected_content=existing.has_protected_content,
             )
 
+    async def upsert_channel_and_set_monitored(self, channel: ChannelDTO) -> None:
+        """P2 #37:全字段 upsert + monitored=True(内存单次赋值,天然原子)。"""
+        self.channels[channel.id] = dataclasses.replace(channel, is_monitored=True)
+
+    async def upsert_channel_metadata_and_set_tg_subscribed(self, channel: ChannelDTO) -> None:
+        """P2 #37:metadata-only upsert + tg_subscribed=True;已存在行 monitored 不动。"""
+        await self.upsert_channel_metadata(dataclasses.replace(channel, is_tg_subscribed=True))
+        existing = self.channels.get(channel.id)
+        # upsert_channel_metadata 只在首次插入写 tg_subscribed;已存在行需强制 True。
+        if existing is not None and not existing.is_tg_subscribed:
+            self.channels[channel.id] = dataclasses.replace(existing, is_tg_subscribed=True)
+
+    async def set_channel_flags(
+        self,
+        channel_id: int,
+        *,
+        monitored: bool | None = None,
+        tg_subscribed: bool | None = None,
+    ) -> None:
+        """P2 #37:双标志原子设置(None=不动);未建档沿用 id-stub 语义。"""
+        if monitored is not None:
+            await self.set_channel_monitored(channel_id, monitored)
+        if tg_subscribed is not None:
+            await self.set_channel_tg_subscribed(channel_id, tg_subscribed)
+
     async def count_tg_subscribed(self) -> int:
         return sum(1 for c in self.channels.values() if c.is_tg_subscribed)
 
@@ -258,6 +283,29 @@ class InMemoryRepository(StorageRepository):
     async def update_message(self, message: MessageDTO) -> None:
         await self.save_message(message)
 
+    async def update_message_media(
+        self,
+        channel_id: int,
+        telegram_msg_id: int,
+        media: list[MediaDTO],
+    ) -> None:
+        """P2 #36:只替换 media 列表,不碰 text / views 等其它字段。
+
+        下载完成回写专用 — 语义与 SQL 后端一致:消息不存在 no-op;
+        替换后重估 `_media_by_fid` 索引(与 save_message 的收敛逻辑一致)。
+        """
+        key = (channel_id, telegram_msg_id)
+        msg = self.messages.get(key)
+        if msg is None:
+            return  # idempotent — 下载期间消息被删的竞态
+        msg.media = list(media)
+        for fid in {m.telegram_file_id for m in msg.media if m.telegram_file_id}:
+            best = self._find_done_by_fid(fid)
+            if best is None:
+                self._media_by_fid.pop(fid, None)
+            else:
+                self._media_by_fid[fid] = best
+
     async def delete_message(self, channel_id: int, telegram_msg_id: int) -> None:
         key = (channel_id, telegram_msg_id)
         old = self.messages.pop(key, None)
@@ -316,6 +364,7 @@ class InMemoryRepository(StorageRepository):
         favorite_only: bool = False,
         tag_only: bool = False,
         pinned_only: bool = False,
+        tag: str = "",
     ) -> list[MessageDTO]:
         out = []
         search_lo = search.lower() if search else ""
@@ -334,6 +383,10 @@ class InMemoryRepository(StorageRepository):
             if tag_only and not m.tags:
                 continue
             if pinned_only and not m.is_pinned:
+                continue
+            # 2026-11-25 P2-14:tag 精确匹配(tags 数组含该元素),与 SQL 后端
+            # `json_each value = ?` / `$n = ANY(tags)` 对齐。
+            if tag and tag not in m.tags:
                 continue
             out.append(m)
         # 归一化为 aware UTC 再排序 — 测试 fixture 默认 datetime() 是 naive,
