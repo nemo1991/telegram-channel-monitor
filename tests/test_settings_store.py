@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+import pytest
 
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, Settings
 from tgmonitor.core.settings_store import (
@@ -346,7 +349,14 @@ def test_close_on_exit_defaults_true_and_roundtrips(tmp_path: Path) -> None:
 
 # ---- P2 #38:.env 落盘权限 0600 ----
 
+# Windows 无 POSIX 权限位语义:os.chmod 只切只读位,stat 恒报 0o666,
+# 权限断言仅在 POSIX 平台有效(src 端 chmod 保留,Windows 上无害)。
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows 无 POSIX 0o600 权限位语义"
+)
 
+
+@posix_only
 def test_write_env_file_sets_0600(tmp_path: Path) -> None:
     """P2 #38:.env 含明文 secret,落盘后权限必须收紧到 0o600。"""
     env = parse_env_file(tmp_path / ".env")
@@ -358,6 +368,7 @@ def test_write_env_file_sets_0600(tmp_path: Path) -> None:
     )
 
 
+@posix_only
 def test_update_env_tightens_existing_0644_file(tmp_path: Path) -> None:
     """P2 #38:已存在 0644 的 .env,保形更新后权限同样收紧到 0o600。"""
     p = tmp_path / ".env"
