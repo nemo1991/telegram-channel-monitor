@@ -5,6 +5,51 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.1.7] - 2026-11-26
+
+主题:**修复 + 加固** — 落地 2.1.7 发版前全面审核报告(`docs/CODE-REVIEW-2.1.7.md`)
+的 **P1 × 9** 与部分 P2,4 个 PR(#165 / #166 / #167 / #168,125 文件 +2289/-872)。
+无 schema 迁移,无命令增删;设计类条目留 2.1.8+。
+
+### 修复(安全 / 稳定性)
+- **「打开媒体」扩展名白名单**:本地落盘与 S3 暂存两条路径都只放行图片 / 视频 /
+  音频 / 文档 / 压缩包类扩展名;`.bat` / `.exe` / `.html` / `.svg` 等不再被系统
+  默认程序直接打开。
+- pause / resume 不再累积事件订阅(原每次 `start()` 重复登记、`stop()` 不退订)。
+- 更新队列满时关流不再永久挂死:关流哨兵改 `put_nowait`,事件总线 `aclose` 加 2s 超时。
+- 消息页日期预设(今天 / 7 天 / 30 天)与导出日期按本地时区计算,不再把 naive 本地
+  时间当成 UTC。
+- 并发批量操作的取消标记互不覆盖。
+- 对象存储:落盘临时文件名唯一(`.tgmonitor-<hex>.part`);修复 Windows 下连续
+  `os.replace` 与并发 `mkdir` 的竞态;孤儿清理只跳过临时文件,名字以 `.part` 结尾的
+  真实文件不受影响。
+- `.env` 以 `0600` 权限创建。
+
+### CLI
+- `config show` / `config get` 对 `db_dsn` / `proxy` 中的凭据脱敏;SOCKS5 代理地址
+  解析失败的报错不再回显密码。
+- 7 处用法提示与 2 处登录提示由已删除的 `tgmonitor xxx` 更正为 `tgmon-cli xxx`。
+
+### 测试 / CI
+- 覆盖率成为门禁:`--fail-under=70`(当前 71%),coverage job 不再 `continue-on-error`。
+- integration job 断言零 skip:Docker 或 PG 没起来时直接失败,不再静默全绿。
+- 存储契约用例加第三后端 Postgres(42 项首次在真 PG 上执行)。
+- 三份手写清单守护测试(存储 / monitor / CLI)改为按目录自动发现。
+- 删除失效的 `legacy` marker hook 与 `--include-legacy`,以及空转的 `windows-paint-probe` job。
+- ruff 版本取自 `uv.lock` 并加 `uv lock --check`;RUF100 进门禁,清理 256 条失效 `noqa`。
+- 新增 `tests/test_review_217_fixes.py`(61 项)。
+
+### 文档
+- `AGENTS.md` / `SECURITY.md` / `.env.example` 按现状重写;`.env.example` 覆盖全部 22 个
+  有效配置字段。
+- 10 份点时间文档(PRD / 重构计划 / 旧审核)迁入 `docs/history/`,新增 `docs/README.md` 索引。
+- README 修正:仓库根目录的 `.env` 不会被读取(配置放数据目录);`channels refresh`
+  需 `--yes`。
+
+### 升级注意
+- 「打开媒体」遇到白名单外的扩展名会拒绝并提示,可改用「打开所在文件夹」或「复制路径」。
+- `SECURITY.md` 的联系邮箱原为占位符,已移除,漏洞上报走 GitHub Security Advisories。
+
 ## [2.1.6] - 2026-11-26
 
 主题:**修复** — 落地 2.1.4 审核报告全部 **P2 × 44**(7 个 commit 按归属分组,
@@ -5031,7 +5076,8 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
 <!-- 维护备注:发版时把下面的 compare 基点改成上一个 tag(例:v2.1.6...HEAD → v2.1.7...HEAD),否则链接会像 v1.8.2 那样过期。 -->
-[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.6...HEAD
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.7...HEAD
+[2.1.7]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.6...v2.1.7
 [1.8.2]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.7.5...v1.8.0
