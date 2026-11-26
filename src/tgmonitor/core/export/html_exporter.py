@@ -152,7 +152,7 @@ class HtmlExporter(Exporter):
                 continue
             try:
                 blob = await object_store.get(thumb.object_key)
-            except Exception:  # noqa: BLE001 — 单张失败不拖垮整体导出
+            except Exception:
                 log.warning(
                     "html export: thumb 读取失败,跳过: msg_id=%s idx=%d key=%s",
                     m.telegram_msg_id,

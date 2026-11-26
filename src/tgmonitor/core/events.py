@@ -483,12 +483,12 @@ class EventBus:
         for fn in subs:
             try:
                 await fn(event)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("event subscriber raised: %r", fn)
         for fn in self._wild:
             try:
                 await fn(event)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("wildcard subscriber raised: %r", fn)
 
     def publish_async(self, event: Event) -> asyncio.Task:

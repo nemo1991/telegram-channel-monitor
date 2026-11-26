@@ -2,14 +2,15 @@
 
 v2.0.0:`seeded_repo` / `meta_seeded_repo` parametrize `inmemory` + `sqlite`
 双后端(SQLite 是 v2.0.0 默认后端,真实文件 IO,验证 roundtrip + 落盘)。
-Postgres 无本地集成测试桩(需 testcontainers PG)— 走
-`tests/integration/test_pg_repo_parity.py` 跑真服务。
+2026-11-26 2.1.7:加第三后端 `pg`(带 `integration` marker,真 PG),本文件的
+同一组契约断言三后端通吃;PG 专属路径另有 `tests/integration/`。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
 import pytest_asyncio
 
 from tests.conftest import InMemoryRepository, make_message
@@ -148,34 +149,46 @@ async def _seed_meta_messages(repo: StorageRepository) -> None:
 # ---- parametrize fixtures ----
 # v2.0.0:`seeded_repo` / `meta_seeded_repo` parametrize `inmemory` + `sqlite`
 # 双后端 — SQLite 是 v2.0.0 默认后端,与 InMemory 替身跑同一组契约断言。
-# Postgres parity 走 `tests/integration/test_pg_repo_parity.py`(testcontainers)。
+# 2026-11-26 2.1.7:加第三后端 `pg` —— 这组 list_media / list_messages / 用户元数据
+# 契约此前只对 InMemory + SQLite 断言,PG 的对齐靠 `tests/integration/` 里另写的
+# 用例(覆盖面各写各的,天然漂移)。现在同一组断言直接跑在真 PG 上:
+#   - `pg` 参数带 `integration` marker → 默认 addopts `-m 'not integration'`
+#     被 deselect,本地离线跑零成本;CI integration job 用 `-m integration` 选中。
+#   - 无 Docker 时 `pg_engine` 自动 skip(CI 断言 skipped == 0)。
 # 本地定义 — 范围清晰,只在 test_storage_backends.py 内部用,不放
 # tests/fixtures/_storage.py 与其它后端测试共享(seed 是这个文件的 spec)。
 
+_PG_PARAM = pytest.param("pg", marks=pytest.mark.integration)
 
-@pytest_asyncio.fixture(params=["inmemory", "sqlite"])
+
+async def _open_param_repo(request, tmp_path) -> StorageRepository:
+    """按 fixture 参数开后端;调用方负责 close()。"""
+    if request.param == "inmemory":
+        return InMemoryRepository()
+    if request.param == "pg":
+        from tests.fixtures._pg import open_pg_repo
+
+        # 真 PG:session 容器上造全新 schema(见 _pg.py),与 tmp_path 无关。
+        return await open_pg_repo(request.getfixturevalue("pg_engine"))
+    repo: StorageRepository = SqliteRepository(path=tmp_path / "test.db")
+    await repo.connect()
+    await repo.init_schema()
+    return repo
+
+
+@pytest_asyncio.fixture(params=["inmemory", "sqlite", _PG_PARAM])
 async def seeded_repo(request, tmp_path) -> StorageRepository:
     """主种子数据(4 条 media:跨 ch100/200/300,覆盖 DONE/FAILED/PENDING)。"""
-    if request.param == "inmemory":
-        repo: StorageRepository = InMemoryRepository()
-    else:
-        repo = SqliteRepository(path=tmp_path / "test.db")
-        await repo.connect()
-        await repo.init_schema()
+    repo = await _open_param_repo(request, tmp_path)
     await _seed_main_messages(repo)
     yield repo
     await repo.close()
 
 
-@pytest_asyncio.fixture(params=["inmemory", "sqlite"])
+@pytest_asyncio.fixture(params=["inmemory", "sqlite", _PG_PARAM])
 async def meta_seeded_repo(request, tmp_path) -> StorageRepository:
     """metadata 维度种子(频道 1/2 — 4 条覆盖 fav/tagged/pinned)。"""
-    if request.param == "inmemory":
-        repo: StorageRepository = InMemoryRepository()
-    else:
-        repo = SqliteRepository(path=tmp_path / "test.db")
-        await repo.connect()
-        await repo.init_schema()
+    repo = await _open_param_repo(request, tmp_path)
     await _seed_meta_messages(repo)
     yield repo
     await repo.close()

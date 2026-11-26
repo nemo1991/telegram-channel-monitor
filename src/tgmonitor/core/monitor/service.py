@@ -56,7 +56,7 @@ from tgmonitor.core.events import (
 from tgmonitor.core.monitor._runtime import MonitorRuntime
 from tgmonitor.core.monitor.backfill import BackfillRunner
 from tgmonitor.core.monitor.delete import DeleteManager
-from tgmonitor.core.monitor.downloader import MediaDownloader  # noqa: F401  # re-export
+from tgmonitor.core.monitor.downloader import MediaDownloader  # re-export
 from tgmonitor.core.monitor.event_handlers import EventHandlers
 from tgmonitor.core.monitor.orchestrator import Orchestrator
 from tgmonitor.core.monitor.whitelist import WhitelistManager
@@ -651,7 +651,7 @@ class MonitorService:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 — 单条失败不影响 worker
+            except Exception as e:
                 log.exception("download media failed: msg_pk=%s idx=%d", msg.id, idx)
                 updated = dataclasses.replace(
                     med,
@@ -692,7 +692,7 @@ class MonitorService:
                         msg.channel_id,
                         msg.telegram_msg_id,
                     )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 log.exception(
                     "update media status failed: channel=%s msg_id=%s: %s",
                     msg.channel_id,
@@ -726,7 +726,7 @@ class MonitorService:
                 msg_pk=(msg.channel_id, msg.telegram_msg_id),
                 media=med,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception(
                 "download thumb failed: channel=%s msg_id=%s idx=%d",
                 msg.channel_id,
@@ -740,7 +740,7 @@ class MonitorService:
         thumb = dataclasses.replace(thumb, media_idx=idx)
         try:
             await self.storage.save_thumbnail(thumb)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception(
                 "save_thumbnail failed: channel=%s msg_id=%s idx=%d",
                 msg.channel_id,

@@ -105,7 +105,7 @@ class BackfillRunner:
             if channel_id not in self._rt.unavailable_channels:
                 self._rt.unavailable_channels.add(channel_id)
                 log.warning("backfill channel %s skipped: %s", label, e)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("backfill channel %s failed", label)
         else:
             # 本轮成功 → 清除不可用标记(若之前被跳过,恢复后可重新 warning)
@@ -174,7 +174,7 @@ class BackfillRunner:
             cb = self._rt.backfill_all
             assert cb is not None
             await cb()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("immediate backfill on reconnect failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(

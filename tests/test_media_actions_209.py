@@ -18,22 +18,22 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import (  # noqa: E402
+import pytest
+from PySide6.QtWidgets import (
     QApplication,
     QListWidgetItem,
     QMenu,
     QToolButton,
 )
 
-from tgmonitor.core.dto import (  # noqa: E402
+from tgmonitor.core.dto import (
     MediaDownloadStatus,
     MediaDTO,
     MediaType,
     MessageDTO,
 )
-from tgmonitor.ui.widgets._mm_base import _RowKey  # noqa: E402
-from tgmonitor.ui.widgets.media_manager_widget import (  # noqa: E402
+from tgmonitor.ui.widgets._mm_base import _RowKey
+from tgmonitor.ui.widgets.media_manager_widget import (
     MediaManagerWidget,
 )
 

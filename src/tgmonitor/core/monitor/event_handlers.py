@@ -71,7 +71,7 @@ class EventHandlers:
                 event.views,
                 len(event.reactions) if event.reactions else 0,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("update interactions failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(
@@ -119,7 +119,7 @@ class EventHandlers:
                 event.telegram_msg_id,
                 event.is_pinned,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("update pin failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(
@@ -199,7 +199,7 @@ class EventHandlers:
                 event.is_fake,
                 event.has_protected_content,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("handle ChannelMetadataChanged failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(
@@ -226,7 +226,7 @@ class EventHandlers:
                 event.channel_id,
                 event.new_title,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("handle ChannelTitleChanged failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(
@@ -267,7 +267,7 @@ class EventHandlers:
                 event.local_path,
                 photo_to_set,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("handle ChannelPhotoChanged failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(

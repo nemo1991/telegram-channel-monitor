@@ -94,7 +94,7 @@ class LoopThread:
         try:
             drain = asyncio.run_coroutine_threadsafe(_cancel_pending(), self.loop)
             drain.result(timeout=self._DRAIN_TIMEOUT_S)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # loop 已停 / 已卡死时不阻塞 teardown;撤掉未执行的 drain 后走兜底。
             if drain is not None:
                 drain.cancel()

@@ -27,7 +27,7 @@ def _make_message(channel_id: int = 100, msg_id: int = 42, media_count: int = 1)
     """
     media = [MediaDTO(type=MediaType.PHOTO, file_name=f"m{i}.jpg") for i in range(media_count)]
     return make_message(
-        id=1,  # noqa: A002 — 故意覆盖 id(工厂默认 0)
+        id=1,
         channel_id=channel_id,
         msg_id=msg_id,
         date=datetime(2026, 9, 1, 12, 0, 0),

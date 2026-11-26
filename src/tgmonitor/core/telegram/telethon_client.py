@@ -148,7 +148,7 @@ class _TelethonUpdateStream(UpdateStream):
         if self._on_close is not None:
             try:
                 self._on_close(self)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("UpdateStream on_close callback failed")
 
     def __aiter__(self) -> AsyncIterator[MessageDTO]:
@@ -243,7 +243,7 @@ class TelethonTelegramClient:
             return
         try:
             self._bus.publish_async(event)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("publish %s failed", type(event).__name__)
 
     def _auth_error(self, source: str, exc: BaseException) -> None:
@@ -350,7 +350,7 @@ class TelethonTelegramClient:
             return
         try:
             await self._client.disconnect()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("disconnect failed", exc_info=True)
 
     async def _reset_session(self) -> None:
@@ -383,7 +383,7 @@ class TelethonTelegramClient:
             self._set_state(
                 "error", detail=f"启动超时({self._BOOT_TIMEOUT:.0f}s)— 网络或代理不可达"
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("start: unexpected")
             await self._disconnect_quietly()
             self._set_state("error", detail=_extract_error_detail(e))
@@ -467,7 +467,7 @@ class TelethonTelegramClient:
                     self._reconnecting = True
                     try:
                         await self._client.connect()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         log.debug("watchdog reconnect failed", exc_info=True)
                     finally:
                         self._reconnecting = False
@@ -551,7 +551,7 @@ class TelethonTelegramClient:
         if old is not None:
             try:
                 await old.log_out()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("log_out failed; forcing local session reset", exc_info=True)
                 try:
                     await old.disconnect()
@@ -704,7 +704,7 @@ class TelethonTelegramClient:
                     result.append(dto)
         except ClientClosingError:
             log.info("list_joined_channels: aborted (client closing)")
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("list_joined_channels failed")
         log.info("list_joined_channels done: %d channels", len(result))
         return result
@@ -733,7 +733,7 @@ class TelethonTelegramClient:
                 mc = getattr(full.full_chat, "participants_count", None)
                 if mc:
                     dto.member_count = mc
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.debug("GetFullChannel failed for %s", channel_id, exc_info=True)
         return dto
 
@@ -856,7 +856,7 @@ class TelethonTelegramClient:
         if progress_callback is not None:
             try:
                 await progress_callback(len(data), len(data))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("progress final emit failed")
         return data
 
@@ -995,7 +995,7 @@ class TelethonTelegramClient:
             try:
                 size = dest_path.stat().st_size  # noqa: ASYNC240 — 本地 stat,同步即可
                 await progress_callback(size, size)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("progress final emit failed")
         return dest_path
 

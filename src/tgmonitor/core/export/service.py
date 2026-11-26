@@ -23,11 +23,10 @@ from tgmonitor.core.dto import (
     ExportResult,
     MediaExportRequest,
     MediaExportRowDTO,
-    MessageDTO,  # noqa: F401 — 2026-08-25 PR #7:dispatcher 用 dataclasses.replace
+    MessageDTO,
 )
 from tgmonitor.core.events import EventBus, ExportDone, ExportProgress
 
-# noqa: F401 — 触发 @exporter 装饰器,把所有具体 Exporter 注册到 EXPORTERS。
 # 不能改 __init__.py(会被 ruff 报 unused),但放 service.py 里也无副作用,且
 # 保证只要 ExportService 被 import,EXPORTERS 就 ready。
 from tgmonitor.core.export import (  # noqa: F401
@@ -162,7 +161,7 @@ class ExportService:
             )
             await self._bus.publish(ExportDone(request_id=req_id, result=result))
             yield
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("export selected failed")
             await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
             raise
@@ -310,7 +309,7 @@ class ExportService:
             )
             await self._bus.publish(ExportDone(request_id=req_id, result=result))
             yield
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("export failed")
             await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
             raise
@@ -375,7 +374,7 @@ class ExportService:
             )
             await self._bus.publish(ExportDone(request_id=req_id, result=result))
             yield
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("media export failed")
             await self._bus.publish(ExportDone(request_id=req_id, error=str(e)))
             raise

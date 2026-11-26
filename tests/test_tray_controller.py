@@ -20,8 +20,8 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
-from tgmonitor.ui.controllers.tray_controller import TrayController  # noqa: E402
+from tgmonitor.ui.controllers._base import MainWindowCtx
+from tgmonitor.ui.controllers.tray_controller import TrayController
 
 
 def _make_ctx() -> tuple[MainWindowCtx, dict[str, MagicMock]]:

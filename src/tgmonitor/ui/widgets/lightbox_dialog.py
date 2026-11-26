@@ -403,7 +403,7 @@ class LightboxDialog(QDialog):
 
         try:
             self._attach_video_to_canvas(tmp_path)
-        except Exception:  # noqa: BLE001 — QMediaPlayer 构造 / signal connect 都可能 throw
+        except Exception:
             log.warning("Lightbox: QMediaPlayer setup failed", exc_info=True)
             self._show_video_fallback()
 
@@ -418,7 +418,7 @@ class LightboxDialog(QDialog):
         self._player = QMediaPlayer(self)
         self._player.setVideoOutput(self._video_widget)
         self._player.setSource(QUrl.fromLocalFile(tmp_path))
-        self._player.errorOccurred.connect(self._on_video_error)  # noqa: F821 — Qt slot
+        self._player.errorOccurred.connect(self._on_video_error)
         # 把 _canvas 替换成 _video_widget — layout 接管
         outer = self.layout()
         assert outer is not None
@@ -448,7 +448,7 @@ class LightboxDialog(QDialog):
         if self._fallback_fn is not None:
             try:
                 self._fallback_fn()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("Lightbox: fallback_fn raised", exc_info=True)
             # 关掉自己 — fallback 走系统 viewer 后 Lightbox 没意义继续存在
             self.accept()
@@ -512,7 +512,7 @@ class LightboxDialog(QDialog):
                 pass
             # 解绑 QLabel 上的 QMovie — 传空 QMovie(Qt 接受此 idiom)
             try:
-                self._canvas.setMovie(QMovie())  # noqa: F821 — 解绑 idiom
+                self._canvas.setMovie(QMovie())
             except RuntimeError:  # pragma: no cover
                 pass
             self._movie = None
@@ -559,12 +559,12 @@ class LightboxDialog(QDialog):
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 os.close(fd)
                 raise
             self._video_tmp_path = path
             return path
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("Lightbox: _stage_video_tmp failed", exc_info=True)
             return None
 
@@ -707,14 +707,14 @@ class LightboxDialog(QDialog):
 
     # ---- 鼠标交互 ----
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt 签名固定
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 — Qt 签名固定
         """双击关闭(单图模式体感)"""
         if event is None or event.button() != Qt.LeftButton:
             super().mouseDoubleClickEvent(event)
             return
         self.accept()
 
-    def mousePressEvent(self, event) -> None:  # noqa: ANN001, N802 — Qt API
+    def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt API
         """右键 / 单击空白处关闭"""
         if event is None:
             # Qt 总传非 None event,此分支为 type-narrowing 防御
@@ -849,7 +849,7 @@ class LightboxDialog(QDialog):
 
     # ---- 关闭时清理 ----
 
-    def done(self, result: int) -> None:  # noqa: N802 — Qt 签名
+    def done(self, result: int) -> None:
         """accept() / reject() / close 的统一收口:停 player + unlink 视频 tmpfile。
 
         QDialog 的 accept() / reject() 最终都走 done(),但**不触发

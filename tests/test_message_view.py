@@ -19,9 +19,9 @@ from datetime import datetime
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-from tests.fixtures._factories import make_message  # noqa: E402
-from tgmonitor.core.dto import MessageDTO  # noqa: E402
-from tgmonitor.ui.widgets.message_view import (  # noqa: E402
+from tests.fixtures._factories import make_message
+from tgmonitor.core.dto import MessageDTO
+from tgmonitor.ui.widgets.message_view import (
     MessageItemDelegate,
     MessageListModel,
     MessageView,

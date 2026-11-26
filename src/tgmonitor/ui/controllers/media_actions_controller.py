@@ -134,7 +134,7 @@ class MediaActionsController:
             for cid, mid, idx in items:
                 try:
                     await self._ctx.app.media.retry_media(cid, mid, idx)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception(
                         "batch retry failed: %s/%s/%d",
                         cid,

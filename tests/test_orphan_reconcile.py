@@ -201,12 +201,12 @@ async def test_s3_reconcile_with_iter_keys(
             super().__init__(bucket="test-bucket")
             self.deleted: list[str] = []
 
-        async def connect(self) -> None:  # noqa: D401
+        async def connect(self) -> None:
             # 不真接 SDK;标记 session 非 None 让 _client() 进入 async with,
             # 但我们 override delete 绕开 aioboto3 调用。
             self._session = True  # type: ignore[assignment]
 
-        async def iter_keys(self, prefix: str = ""):  # noqa: ARG002
+        async def iter_keys(self, prefix: str = ""):
             yield "media/orphan.jpg"  # 没被 storage 引用 → orphan
             yield "media/keep.jpg"  # 被 storage 引用 → keep
             yield "media/other.png"  # 没被引用 → orphan
@@ -342,7 +342,7 @@ async def test_reconcile_reentrant_skips_with_empty_event(
     proceed = _asyncio.Event()
     original_iter = objectstore.iter_keys
 
-    async def hanging_iter_keys(prefix: str = ""):  # noqa: ARG001
+    async def hanging_iter_keys(prefix: str = ""):
         iter_started.set()
         await proceed.wait()
         async for k in original_iter(prefix=prefix):

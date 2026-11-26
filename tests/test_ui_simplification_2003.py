@@ -15,19 +15,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+import pytest
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.core.dto import ChannelDTO  # noqa: E402
-from tgmonitor.core.events import (  # noqa: E402
+from tgmonitor.core.dto import ChannelDTO
+from tgmonitor.core.events import (
     EventBus,
     LoginStateChanged,
 )
-from tgmonitor.core.monitor.service import MonitorService  # noqa: E402
-from tgmonitor.ui.controllers.app_state_controller import AppStateController  # noqa: E402
-from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget  # noqa: E402
-from tgmonitor.ui.widgets.settings_page import SettingsPage  # noqa: E402
-from tgmonitor.ui.widgets.status_bar import StatusBar  # noqa: E402
+from tgmonitor.core.monitor.service import MonitorService
+from tgmonitor.ui.controllers.app_state_controller import AppStateController
+from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget
+from tgmonitor.ui.widgets.settings_page import SettingsPage
+from tgmonitor.ui.widgets.status_bar import StatusBar
 
 # ---------------------------------------------------------------- D1/D2
 

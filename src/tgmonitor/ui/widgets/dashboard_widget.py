@@ -487,7 +487,7 @@ class DashboardWidget(QWidget):
         """从 storage 拉最近 N 条;best-effort,失败按空列表处理。"""
         try:
             return await self._app.storage.list_activities(self._ACTIVITY_LOAD_LIMIT)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("list_activities failed", exc_info=True)
             return []
 
@@ -513,7 +513,7 @@ class DashboardWidget(QWidget):
         """库内 TG 订阅频道数;best-effort,取数失败按 0 处理。"""
         try:
             return await self._app.storage.count_tg_subscribed()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("count_tg_subscribed failed", exc_info=True)
             return 0
 
@@ -557,7 +557,7 @@ class DashboardWidget(QWidget):
             return []
         try:
             bucket = await self._app.storage.aggregate_per_channel(monitored_ids)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("aggregate_per_channel failed", exc_info=True)
             bucket = {}
 

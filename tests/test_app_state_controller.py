@@ -15,14 +15,14 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
+import pytest
 
-from tgmonitor.core.events import (  # noqa: E402
+from tgmonitor.core.events import (
     LoginStateChanged,
     NotificationRequested,
 )
-from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
-from tgmonitor.ui.controllers.app_state_controller import (  # noqa: E402
+from tgmonitor.ui.controllers._base import MainWindowCtx
+from tgmonitor.ui.controllers.app_state_controller import (
     AppStateController,
 )
 

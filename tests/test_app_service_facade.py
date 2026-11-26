@@ -69,7 +69,7 @@ async def test_facade_objects_setter_syncs_to_media_service(app: AppService) -> 
     app.objects = new_objects  # type: ignore[assignment]
     media_svc = _find_sub_service(app, "list_media")
     assert media_svc is not None
-    assert media_svc._objects is new_objects  # noqa: SLF001 — explicit sync contract
+    assert media_svc._objects is new_objects
 
 
 async def test_facade_storage_setter_syncs_to_sub_services(app: AppService) -> None:
@@ -95,7 +95,7 @@ async def test_facade_storage_setter_syncs_to_sub_services(app: AppService) -> N
             None,
         )
         assert sub_svc is not None, f"未找到 {expected_cls} 子 service"
-        assert sub_svc._storage is new_storage  # noqa: SLF001
+        assert sub_svc._storage is new_storage
 
 
 # ---- subscribe_updates(2026-11-11 Phase 3-C1:从 SubscriptionService 收回 facade)----

@@ -83,7 +83,7 @@ class WhitelistManager:
         # 不阻断 reconfigure 的其余提交(保留原白名单,下一次订阅/退订事件会修正)。
         try:
             subscribed = await storage.list_monitored_channels()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("update_backends: 从新 storage 重载白名单失败,保持原白名单")
             return
         self.set_whitelist(c.id for c in subscribed)

@@ -15,20 +15,10 @@
 
 from __future__ import annotations
 
-import os
+import pytest
+from PySide6.QtWidgets import QApplication
 
-# 2026-10-02 v1.12.1:`test_bell_button_auth_error_shows_and_counts` 在 Windows offscreen
-# 平台 `qapp.processEvents()` 后偶发 access violation / SIGSEGV(v1.12.0 push 后
-# CI 首次爆,与 `test_main_window_delete_feedback` 同根:`asyncio.run` 跑完后 nested Qt
-# event loop pump 触 paint event 路径 race。套 `windows_qt_paint_skip`。
-# 2026-11-15:去掉强制 `offscreen`,并把 `windows_qt_paint_skip` 从 `sys.platform`
-# 三平台无差别跳过改为按 QPA 精确跳过,恢复本地真机覆盖(PR #45 同法)。
-import sys
-
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
-
-from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
+from tgmonitor.ui.widgets.status_bar import (
     StatusBar,
     _ActivityLabel,
     _ErrorBellButton,
@@ -36,23 +26,10 @@ from tgmonitor.ui.widgets.status_bar import (  # noqa: E402
     _UnifiedStateLabel,
 )
 
-
-def _paint_race_skipped() -> bool:
-    # `TG_WIN32_PAINT_PROBE=1`(CI windows-paint-probe job 置位)强制不跳过,在 Windows 上
-    # 实跑这些测试,验证 6.12 + qloop 治理后 race 是否消失。
-    if os.environ.get("TG_WIN32_PAINT_PROBE"):
-        return False
-    return os.environ.get("QT_QPA_PLATFORM") == "offscreen" or sys.platform == "win32"
-
-
-windows_qt_paint_skip = pytest.mark.skipif(
-    _paint_race_skipped(),
-    reason=(
-        "Qt offscreen paint path race 在 `asyncio.run` 嵌套 `qapp.processEvents()`"
-        "触发:CI 的 Qt offscreen 平台(QT_QPA_PLATFORM=offscreen) + Windows `windows`"
-        "QPA 仍偶发。本地 macOS/Linux 真机(cocoa/xcb)不属本 race,仍跑。"
-    ),
-)
+# 2026-11-26 2.1.7:本文件原有的 `windows_qt_paint_skip` 标记(及 CI 的
+# windows-paint-probe job / `TG_WIN32_PAINT_PROBE` 开关)已删除 —— PySide6 6.12 +
+# qloop 治理后 paint race 消失,标记早已没有任何测试在用,job 每次空转 30s。
+# 本文件全部测试在三平台(含 Windows `windows` QPA)实跑。
 
 # ======================== LEFT 区子组件 ========================
 

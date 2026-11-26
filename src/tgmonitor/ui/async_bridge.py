@@ -69,18 +69,18 @@ def run_coro[T](
         _PENDING_FUTS.discard(f)
         try:
             result = f.result()
-        except BaseException as exc:  # noqa: BLE001  # asyncio.CancelledError 也是 BaseException
+        except BaseException as exc:  # asyncio.CancelledError 也是 BaseException
             log.exception("%s failed", error_label)
             if on_error is not None:
                 try:
                     on_error(exc)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("on_error callback for %s raised", error_label)
             return
         if on_success is not None:
             try:
                 on_success(result)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("on_success callback for %s raised", error_label)
 
     fut.add_done_callback(_on_done)

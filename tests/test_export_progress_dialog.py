@@ -7,13 +7,13 @@ import os
 # offscreen:跑测试不弹真窗口
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from unittest.mock import MagicMock  # noqa: E402
+from unittest.mock import MagicMock
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+import pytest
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.core.events import ExportProgress  # noqa: E402
-from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog  # noqa: E402
+from tgmonitor.core.events import ExportProgress
+from tgmonitor.ui.widgets.export_progress_dialog import ExportProgressDialog
 
 # `qapp` from tests/conftest.py — session-scope,多文件复用单例
 

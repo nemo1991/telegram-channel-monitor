@@ -19,10 +19,10 @@ from collections.abc import Callable
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
 
-from tgmonitor.ui.shutdown import run_shutdown_coro_sync  # noqa: E402
+from tgmonitor.ui.shutdown import run_shutdown_coro_sync
 
 
 def _run_with_qasync(

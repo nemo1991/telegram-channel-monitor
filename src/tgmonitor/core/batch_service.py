@@ -162,7 +162,7 @@ class BatchService:
                     items, cancel_event=cancel_event
                 )
                 failures.extend(op_failures)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.exception("delete_messages_batch 全批失败")
                 deleted = 0
                 for cid, mid in items:
@@ -208,7 +208,7 @@ class BatchService:
                         await self._client.forward_messages(from_cid, to_chat_id, chunk)
                         success += len(chunk)
                         await self._publish_batch_progress("forward", success, len(items))
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         log.exception(
                             "forward_messages(%s → %s, %d) failed", from_cid, to_chat_id, len(chunk)
                         )
@@ -252,7 +252,7 @@ class BatchService:
                     await self._client.pin_messages(cid, msg_ids)
                     success += len(msg_ids)
                     await self._publish_batch_progress("pin", success, len(items))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.exception("pin_messages(cid=%s) failed", cid)
                     for mid in msg_ids:
                         failures.append((cid, mid, str(exc) or exc.__class__.__name__))
@@ -292,7 +292,7 @@ class BatchService:
                     await self._client.unpin_messages(cid, msg_ids)
                     success += len(msg_ids)
                     await self._publish_batch_progress("unpin", success, len(items))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.exception("unpin_messages(cid=%s) failed", cid)
                     for mid in msg_ids:
                         failures.append((cid, mid, str(exc) or exc.__class__.__name__))
@@ -335,7 +335,7 @@ class BatchService:
                     await self._client.add_reaction(cid, mid, emoji, is_big=is_big)
                     success += 1
                     await self._publish_batch_progress("react", success, len(items))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.exception("add_reaction(%s, %s, %s) failed", cid, mid, emoji)
                     failures.append((cid, mid, str(exc) or exc.__class__.__name__))
             await self._bus.publish(
@@ -371,7 +371,7 @@ class BatchService:
                     await self._client.remove_reaction(cid, mid, emoji)
                     success += 1
                     await self._publish_batch_progress("unreact", success, len(items))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.exception("remove_reaction(%s, %s, %s) failed", cid, mid, emoji)
                     failures.append((cid, mid, str(exc) or exc.__class__.__name__))
             await self._bus.publish(

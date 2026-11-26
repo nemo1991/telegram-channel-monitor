@@ -223,7 +223,7 @@ class QrLoginDialog(QDialog):
         self._set_busy(False)
         self.status_label.setText(f"{self.tr('二维码登录失败')}: {msg}")
 
-    def done(self, result: int) -> None:  # noqa: N802 — Qt 签名
+    def done(self, result: int) -> None:
         """accept() / reject() / 窗口关闭的统一收口:cancel 等待 + 退订 EventBus。
 
         QDialog 的 accept() / reject() 不触发 closeEvent(登录成功走

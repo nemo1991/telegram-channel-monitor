@@ -120,7 +120,7 @@ async def reconfigure(app: AppService, new_settings: Settings) -> None:
                 if pending is not None:
                     try:
                         await pending.close()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         log.exception("关闭未提交的新后端失败")
             raise
 
@@ -227,7 +227,7 @@ async def validate_backends(app: AppService, new_settings: Settings) -> None:
     except BaseException:
         try:
             await new_storage.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("关闭校验用的 storage 失败")
         raise
     try:
@@ -241,7 +241,7 @@ async def validate_backends(app: AppService, new_settings: Settings) -> None:
     except BaseException:
         try:
             await new_objects.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("关闭校验用的 objectstore 失败")
         raise
     try:
@@ -271,7 +271,7 @@ async def _build_storage(new_settings: Settings) -> StorageRepository:
         # 新库未就绪:关掉已建连接再上抛,不留泄漏;旧 storage 不动
         try:
             await new_storage.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("关闭未就绪的新 storage 失败")
         raise
     return new_storage
@@ -291,7 +291,7 @@ async def _build_objects(new_settings: Settings) -> ObjectStore:
     except BaseException:
         try:
             await new_objects.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("关闭未就绪的新 objectstore 失败")
         raise
     return new_objects

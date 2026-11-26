@@ -20,13 +20,13 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
+import pytest
 
-from tests.fixtures._factories import make_message  # noqa: E402
-from tgmonitor.core.dto import ChannelDTO  # noqa: E402
-from tgmonitor.core.events import MessageDeleted  # noqa: E402
-from tgmonitor.ui.controllers._base import MainWindowCtx  # noqa: E402
-from tgmonitor.ui.controllers.message_stream_controller import (  # noqa: E402
+from tests.fixtures._factories import make_message
+from tgmonitor.core.dto import ChannelDTO
+from tgmonitor.core.events import MessageDeleted
+from tgmonitor.ui.controllers._base import MainWindowCtx
+from tgmonitor.ui.controllers.message_stream_controller import (
     MessageStreamController,
 )
 

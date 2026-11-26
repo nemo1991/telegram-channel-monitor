@@ -88,7 +88,7 @@ class DeleteManager:
             try:
                 await cb(cid, mid)
                 succeeded.append((cid, mid))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.exception("delete_messages(%s, %s) failed", cid, mid)
                 failures.append((cid, mid, str(exc) or exc.__class__.__name__))
         # 只 publish 成功的(让 UI remove_row;失败的保持原样,用户可重试)
@@ -104,7 +104,7 @@ class DeleteManager:
             cb = self._rt.delete_with_orphan_check
             assert cb is not None
             await cb(event.channel_id, event.telegram_msg_id)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("handle MessageDeleted failed: %s", e)
             await self._rt.bus.publish(
                 ErrorOccurred(
@@ -133,7 +133,7 @@ class DeleteManager:
                 # 2026-08-25 PR #3:refcount 下沉到 storage 后端
                 # (SQL count / InMemory 顺序扫)。
                 n = await rt.storage.count_media_by_object_key(key)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("count media by key failed: %s", key)
                 continue
             if n == 0 and rt.objects is not None:
@@ -145,7 +145,7 @@ class DeleteManager:
                         telegram_msg_id,
                         key,
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.warning(
                         "monitor delete bytes %s failed (already gone?)",
                         key,

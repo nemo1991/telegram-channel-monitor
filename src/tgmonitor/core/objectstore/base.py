@@ -71,7 +71,7 @@ class ObjectStore(ABC):
         key: str,
         chunk_iter: AsyncIterator[bytes],
         meta: ObjectMeta | None = None,
-    ) -> ObjectMeta:  # noqa: D417 — 默认实现,三个生产后端均已 override
+    ) -> ObjectMeta:
         """分块流式写入(2026-11-25 #27,为 Telegram 大文件直传铺垫)。
 
         契约:
@@ -116,7 +116,7 @@ class ObjectStore(ABC):
         data = await self.get(key)
         return BytesIO(data)
 
-    async def open_write(self, key: str, meta: ObjectMeta | None = None) -> BinaryIO:  # noqa: D401
+    async def open_write(self, key: str, meta: ObjectMeta | None = None) -> BinaryIO:
         """打开写流;默认 `NotImplementedError`(Local 不支持 seek-write,S3 / FS 才用)。"""
         raise NotImplementedError
 

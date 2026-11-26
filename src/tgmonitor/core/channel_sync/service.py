@@ -249,7 +249,7 @@ class ChannelSyncService:
             cancelled = await self._sleep_or_cancel(e.retry_after_seconds)
             if cancelled:
                 ch_result.error = "cancelled"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("sync channel %d failed", cid)
             ch_result.error = f"{type(e).__name__}: {e}"
             await self._emit_progress(

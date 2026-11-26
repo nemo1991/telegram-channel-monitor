@@ -236,7 +236,7 @@ class Orchestrator:
                             await _require(rt.handle_edited)(msg)
                         else:
                             await _require(rt.handle_message)(msg)
-                    except Exception as e:  # noqa: BLE001
+                    except Exception as e:
                         log.exception("handle message failed: %s", e)
                         await rt.bus.publish(
                             ErrorOccurred(
@@ -247,7 +247,7 @@ class Orchestrator:
                         )
                 # 正常退出(流关闭)
                 break
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 log.exception("monitor loop crashed, will reconnect in %.1fs: %s", backoff, e)
                 await rt.bus.publish(
                     ErrorOccurred(source="monitor.loop", message=str(e), exception=e)

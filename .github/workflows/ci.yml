@@ -86,48 +86,22 @@ jobs:
         shell: bash
         run: uv run python -m pytest -v --tb=short
 
-  windows-paint-probe:
-    # 探索性:验证 PySide6 6.12 + qloop 治理后,Windows `windows` QPA 下的 paint/processEvents
-    # race 是否消失。`TG_WIN32_PAINT_PROBE=1` 让 4 个 win32 跳过的测试强制在 Windows 上实跑。
-    # continue-on-error:崩了不阻塞 main 合并,仅作证据;绿了再正式撤 win32 跳过。
-    name: pytest (windows-paint-probe, py3.13)
-    runs-on: windows-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Install dependencies
-        run: uv sync --all-extras --group dev -q
-
-      - name: Run paint-race tests with probe override
-        env:
-          PYTHONPATH: src
-          QT_QPA_PLATFORM: windows
-          QT_LOGGING_RULES: "*.warning=false"
-          TG_WIN32_PAINT_PROBE: "1"
-        shell: bash
-        # 2026-11-16 v2.0.2:顶部搜索功能移除,test_search_bar.py 已删除;
-        # 2026-11-21:手机号+验证码登录移除,test_login_dialog.py 已删除,
-        # 均从 probe 列表同步去掉(否则 pytest exit 4: file not found)。
-        run: uv run python -m pytest -v --tb=short tests/test_status_bar.py
-
   coverage:
-    # 覆盖率是纯观测指标(不设阈值、暂无 codecov),同一份代码三平台各收一份
-    # 只是重复;单独在 ubuntu 收一份即可。独立 job 还把插桩的 hang 风险与
-    # 平台门控隔离:即使该 job 超时或挂起,也不会让 push / PR 的测试门控变红,
-    # 且能单独重跑。若它连续失败需单独排查,不要直接恢复平台内插桩。
+    # 覆盖率在 ubuntu 单独收一份(三平台各收一份只是重复);独立 job 把插桩与
+    # 平台门控隔离,能单独重跑。
+    #
+    # 2026-11-26 2.1.7 起是**门禁**(`--fail-under=70`),不再是纯观测:此前
+    # `continue-on-error` + 无阈值,覆盖率从多高掉到多低都不会让任何 PR 变红。
+    # 阈值取 CI 实测(行 74.28% / 分支 57.08% / 合计 71.18%)下方约 1 个点的
+    # 余量 —— 只拦「断崖式下跌」,不逼人为数字写无意义测试;建议只升不降。
+    #
+    # 旧注释记录的 hang 风险仍适用于本 job,但 2026-10-22 起 pytest-timeout
+    # (300s / thread)已把无期限 hang 变成一次带全线程栈的**指名失败**,
+    # 这正是想要的行为:失败会阻塞合并并留下现场,而不是被 continue-on-error
+    # 吞掉。若它连续失败需单独排查,不要直接恢复平台内插桩或去掉阈值。
     name: coverage (ubuntu, py3.13)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -163,13 +137,15 @@ jobs:
         run: |
           uv run coverage run -m pytest -v --tb=short
           uv run coverage xml -o coverage.xml
+          # 阈值依据见 job 头注释;`coverage report` 在阈值未达时退出码 2 → job 红。
+          uv run coverage report --fail-under=70
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v5
         with:
           name: coverage-ubuntu-py3.13
           path: coverage.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
   lint:
     name: ruff
@@ -185,12 +161,27 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      # uv tool run 临时拉 ruff,免完整 uv sync(不装 PySide6 等大包)。0 容忍门控。
+      # uv.lock 是 ruff 版本的单一真源。此前 `--from "ruff>=0.5"` 每次 CI 都临时拉
+      # **最新** ruff,而本地 / pre-commit 用锁定版 —— 上游一发新版(新增规则、
+      # 改 format 口径)就会在没人改代码的情况下让 CI 变红,本地却复现不了。
+      # 仍走 `uv tool run`(免完整 uv sync 装 PySide6 等大包),只是版本钉到锁定值。
+      - name: Resolve locked ruff version
+        id: ruff
+        shell: bash
+        run: echo "version=$(grep -A1 '^name = "ruff"$' uv.lock | grep '^version' | head -1 | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Show ruff version
+        run: echo "locked ruff=${{ steps.ruff.outputs.version }}"
+
+      # lock 与 pyproject 脱节(改了依赖没 `uv lock`)时直接失败,不等运行期才发现。
+      - name: Check uv.lock is up to date
+        run: uv lock --check
+
       - name: Run ruff check
-        run: uv tool run --from "ruff>=0.5" ruff check src tests
+        run: uv tool run --from "ruff==${{ steps.ruff.outputs.version }}" ruff check src tests
 
       - name: Run ruff format check
-        run: uv tool run --from "ruff>=0.5" ruff format --check src tests
+        run: uv tool run --from "ruff==${{ steps.ruff.outputs.version }}" ruff format --check src tests
 
   mypy:
     name: mypy (ubuntu, py${{ matrix.python-version }})
@@ -260,4 +251,38 @@ jobs:
         env:
           PYTHONPATH: src
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest -m integration -v
+        run: uv run pytest -m integration -v --junitxml=junit-integration.xml
+
+      # 门禁:`pg_engine` 在无 Docker 时 `pytest.skip`(本地开发的善意兜底),而 skip
+      # 不影响 pytest 退出码 —— 此前 Docker 没起来 / 镜像拉不到 / 容器启动超时,
+      # integration job 照样**全绿**,整条真 PG 验证静默消失。2026-11-26 2.1.7 起
+      # parse junit 断言:零 skip、用例数非零、且三后端 parametrize 的 `pg` 项实跑过
+      # (防止 fixture 参数被悄悄去掉后本 job 退化成只跑旧用例)。
+      - name: Assert integration tests actually ran
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("junit-integration.xml").getroot()
+          cases = root.findall(".//testcase")
+          skipped = [c for c in cases if c.find("skipped") is not None]
+          errors = [c for c in cases if c.find("error") is not None or c.find("failure") is not None]
+          pg_cases = [c for c in cases if "[pg" in c.get("name", "")]
+          print(f"integration: {len(cases)} cases, {len(pg_cases)} pg-parametrized, {len(skipped)} skipped")
+          assert cases, "junit 里一个用例都没有 —— integration job 空转"
+          assert not errors, f"{len(errors)} 个用例失败 / 出错"
+          assert not skipped, "有集成测试被 skip(CI runner 上应有 Docker):\n" + "\n".join(
+              f"  {c.get('classname')}::{c.get('name')}: "
+              f"{(c.find('skipped').get('message') or '')[:120]}" for c in skipped
+          )
+          assert pg_cases, "没有任何 `[pg]` 参数化用例 —— 三后端 parametrize 丢了"
+          PY
+
+      - name: Upload junit artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: junit-integration
+          path: junit-integration.xml
+          if-no-files-found: ignore

@@ -30,13 +30,13 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import asyncio  # noqa: E402
-from typing import Any  # noqa: E402
+import asyncio
+from typing import Any
 
-import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox, QWidget  # noqa: E402
+import pytest
+from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
-from tgmonitor.core.events import AuthErrorOccurred  # noqa: E402
+from tgmonitor.core.events import AuthErrorOccurred
 
 # ============== helpers ==============
 

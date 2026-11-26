@@ -204,7 +204,7 @@ class RenderMixin(_Base):
         self._vm = vm
         try:
             vm.thumbnail_loaded.connect(self._on_thumbnail_loaded)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("set_view_model: connect thumbnail_loaded failed")
 
     def _on_thumbnail_loaded(
@@ -438,7 +438,7 @@ class RenderMixin(_Base):
                     idx,
                     med,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("vm.load_thumbnail dispatch failed")
 
     def _make_thumb_click_handler(self, key: _RowKey, thumb: QLabel) -> Callable[[Any], None]:

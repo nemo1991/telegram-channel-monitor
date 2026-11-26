@@ -89,7 +89,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from tgmonitor.ui.widgets.dashboard_widget import DashboardWidget  # noqa: E402
 
 
-def _dashboard_stub(qapp: QApplication, joined_count: int = 7):  # noqa: ANN202
+def _dashboard_stub(qapp: QApplication, joined_count: int = 7):
     from tgmonitor.core.config import Settings
 
     app = MagicMock()

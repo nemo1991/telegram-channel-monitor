@@ -15,13 +15,13 @@ import os
 # offscreen:跑测试不弹真窗口
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from unittest.mock import MagicMock, patch  # noqa: E402
+from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QObject  # noqa: E402
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon  # noqa: E402
+from PySide6.QtCore import QObject
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
-from tgmonitor.core.events import QuitRequested  # noqa: E402
-from tgmonitor.ui.widgets.tray_icon import TrayIcon  # noqa: E402
+from tgmonitor.core.events import QuitRequested
+from tgmonitor.ui.widgets.tray_icon import TrayIcon
 
 # `qapp` from tests/conftest.py — session-scope QApplication 单例
 
@@ -36,7 +36,7 @@ class _DummyParent(QObject):
         super().__init__()
         self.show_called = False
 
-    def show(self) -> None:  # noqa: D401 — 替 MagicMock
+    def show(self) -> None:
         self.show_called = True
 
 

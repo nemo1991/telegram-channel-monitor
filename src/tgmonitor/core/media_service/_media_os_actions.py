@@ -621,7 +621,7 @@ async def download_media(
                     ms, channel_id, telegram_msg_id, media_idx
                 ),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("download media failed: %s", e)
             updated = dataclasses.replace(
                 new_med,
@@ -714,7 +714,7 @@ async def retry_media(
     if old_object_key and ms._objects is not None:
         try:
             await ms._objects.delete(old_object_key)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning(
                 "retry pre-clean bytes %s failed",
                 old_object_key,
@@ -740,7 +740,7 @@ async def retry_media(
                     ms, channel_id, telegram_msg_id, media_idx
                 ),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("retry download failed: %s", e)
             updated = dataclasses.replace(
                 new_med,

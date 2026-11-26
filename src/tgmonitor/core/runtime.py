@@ -115,7 +115,7 @@ async def bootstrap(
                 stuck,
                 time.monotonic() - t,
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("[bootstrap] reset_stuck_downloads failed; continuing startup")
 
     # 2026-11-17 v2.0.4 FR-05:活动持久化订阅者 —— 注册下移到 app 构造之后,
@@ -195,7 +195,7 @@ async def bootstrap(
     # 活动持久化订阅者 —— 传 getter(lambda)而非实例:reconfigure 替换
     # app.storage 后,订阅者每次落库重新求值,自动写新库(见 P0-C2 注释)。
     # 订阅者内部吞异常,落库失败不阻断主流程。
-    from tgmonitor.core.activity import make_persistence_subscriber  # noqa: PLC0415
+    from tgmonitor.core.activity import make_persistence_subscriber
 
     bus.subscribe_all(make_persistence_subscriber(lambda: app.storage))
 
@@ -219,10 +219,10 @@ async def shutdown(app: AppService, monitor: MonitorService) -> None:
     if isinstance(monitor, MonitorService):
         try:
             await monitor.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("shutdown: monitor.stop() failed")
     if isinstance(app, AppService):
         try:
             await app.shutdown()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("shutdown: app.shutdown() failed")

@@ -70,7 +70,7 @@ class CsvExporter(Exporter):
         storage: StorageRepository | None = None,  # 2026-09-29:缩略图独立表读用(CSV 不用,签名对齐)
     ) -> int:
         """写 CSV → 返回字节数(便于进度回报)。"""
-        with out_path.open("w", encoding="utf-8-sig", newline="") as f:  # noqa: ASYNC240 — 渲染线程受 GIL 阻塞,文件写入是 sync-only
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()
             for m in messages:

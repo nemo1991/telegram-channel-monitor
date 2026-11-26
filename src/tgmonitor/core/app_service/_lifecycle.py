@@ -114,11 +114,11 @@ async def pause_monitor(app: AppService, source: str = "tray") -> None:
     if app.monitor is not None:
         try:
             await app.monitor.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("pause_monitor: monitor.stop failed")
     try:
         await app.client.stop()
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("pause_monitor: client.stop failed")
     app._is_paused = True
     # 2026-09-04 v1.6.6:写 .env(TG_PAUSED=true)—失败 log.warning 不抛,
@@ -126,7 +126,7 @@ async def pause_monitor(app: AppService, source: str = "tray") -> None:
     if app.env_path is not None:
         try:
             update_env_paused(app.env_path, True)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("pause_monitor: failed to persist paused state to .env")
     await app.bus.publish(MonitoringPaused(source=source))
 
@@ -159,7 +159,7 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
     log.info("resume_monitor: source=%s", source)
     try:
         await app.client.start()
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("resume_monitor: client.start failed")
         # 启动失败仍尝试重建 monitor + 发 Resumed 事件让 UI 复位?
         # — 失败时**不**发 Resumed,保持 paused 状态让用户重试
@@ -167,7 +167,7 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
     if app.monitor is not None:
         try:
             await app.monitor.start()
-        except Exception:  # noqa: BLE001
+        except Exception:
             # P2 #35:monitor.start 失败同样保持 paused — 不 flip、不发
             # Resumed、不写 .env,让 UI 停在「暂停中」等用户重试。
             log.exception("resume_monitor: monitor.start failed, keep paused")
@@ -179,7 +179,7 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
     if app.env_path is not None:
         try:
             update_env_paused(app.env_path, False)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("resume_monitor: failed to persist paused state to .env")
     await app.bus.publish(MonitoringResumed(source=source))
 
@@ -206,7 +206,7 @@ async def shutdown(app: AppService) -> None:
         await asyncio.wait_for(app.client.close(), timeout=2.0)
     except TimeoutError:
         log.error("client.close() 超时(2s)— 后台任务可能残留,下次启动 client 自愈 401")
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("client.close() failed")
     # 2026-11-25 P2 #33:storage / objects close 同样包 2s hard timeout —
     # 之前只有 client 有超时,这两步任何一段 hang 都会让整个 shutdown 卡死
@@ -216,13 +216,13 @@ async def shutdown(app: AppService) -> None:
         await asyncio.wait_for(app.storage.close(), timeout=2.0)
     except TimeoutError:
         log.error("storage.close() 超时(2s)— 未 flush 的写入可能丢失")
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("storage.close() failed")
     try:
         await asyncio.wait_for(app.objects.close(), timeout=2.0)
     except TimeoutError:
         log.error("objects.close() 超时(2s)— 上传中的对象可能未完成")
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("objects.close() failed")
 
 

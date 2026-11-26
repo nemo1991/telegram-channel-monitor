@@ -254,7 +254,7 @@ class _ErrorBellButton(QPushButton):
           2. 铃铛按钮显示 + 自增计数(纯图标「铃铛」 → 「铃铛 N」)
           3. 弹 QMessageBox.warning(icon=Critical,非自动消失)
         """
-        from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+        from PySide6.QtWidgets import QMessageBox
 
         if not isinstance(e, AuthErrorOccurred):
             return
@@ -269,7 +269,7 @@ class _ErrorBellButton(QPushButton):
         kind = _auth_source_kind(e.source)
         # 取当前 widget 所在的顶层窗口作 parent(dialog 模态中心正确);widget 单独
         # 弹出时取 widget 顶层窗口做父;若 widget 尚未加入窗口树,fallback widget 自身。
-        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication
 
         qt_app = QApplication.instance()
         parent = self.window() if self.window() is not None else self

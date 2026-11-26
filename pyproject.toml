@@ -10,7 +10,7 @@ authors = [{ name = "forcetone" }]
 dependencies = [
     # UI
     # 6.12 解禁(本 PR):6.12.0 的两类破坏性变更已全部根治 ——
-    # (1) loadFromData 的 format 运行时由 bytes 改为 str:`ui/lightbox_dialog.py`
+    # (1) loadFromData 的 format 运行时由 bytes 改为 str:`ui/widgets/lightbox_dialog.py`
     #     两处已省略 format(6.11/6.12 均成立);
     # (2) 退出 SIGSEGV 经归因(诊断探针 60 次零崩)+ 治理坐实是**测试侧**跨线程
     #     loop fixture + widget 累积,非生产代码问题 —— 已统一为全会话单后台
@@ -83,11 +83,18 @@ skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
 # 2026-11-25 v2.1.3 P4:渐进引入复杂度 / 宽泛异常门禁。
-# - BLE:宽泛 except 必须显式 # noqa 知情抑制(此前 142 处已带,新开 6 处)。
+# - BLE001:静默吞掉任意异常(不记 `logging.exception`、不重抛)必须显式
+#   `# noqa: BLE001` 知情抑制。except 块里已经 `log.exception(...)` 或
+#   重新抛出的不触发 —— 此前 156 处 noqa 全部属于"本就不触发",2.1.7 清掉后
+#   全 src 零命中、零豁免:新增的静默吞异常必须逐条说明。
 # - C90:圈复杂度上限 15,仅 app.py:run() 组合根入口(23)已知豁免。
-# - ANN 暂不开启:全 src 94 处,其中 23 处 Any 注解是第三方边界的刻意选择,
-#   强开会逼出无意义 `-> Any`;待 core 边界 Any 收窄后再评估(见重构计划 P4)。
-select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC", "BLE", "C90"]
+# - RUF100:失效的 `# noqa` 即错误(2026-11-26 2.1.7)。豁免注释会随代码
+#   演化悄悄失效 —— 清理前全仓 254 条 `noqa` 什么都没压制(107 条 BLE001、
+#   96 条 E402 等),读者以为"这里有意豁免"其实规则根本没触发。
+# - ANN 暂不开启:全 src 129 处,其中 69 处 Any 注解(ANN401)是第三方边界的
+#   刻意选择,强开会逼出无意义 `-> Any`;待 core 边界 Any 收窄后再评估
+#   (见重构计划 P4)。
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "ASYNC", "BLE", "C90", "RUF100"]
 ignore = [
     "E501",   # line length
     "UP042",  # str + Enum is fine for pydantic-settings / json roundtrip

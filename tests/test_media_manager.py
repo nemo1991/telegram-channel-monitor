@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import aioboto3
 import pytest
 
-from tests.fixtures._s3_client import (  # noqa: E402
+from tests.fixtures._s3_client import (
     FakeS3Session,
 )
 from tgmonitor.core.dto import (
@@ -204,7 +204,7 @@ async def test_retry_failed_resets_to_pending_and_redownloads(
     download_calls: list[tuple] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):
             download_calls.append((msg_pk, media.telegram_file_id, force))
             return dataclasses.replace(
                 media,
@@ -571,7 +571,7 @@ async def test_download_pending_uses_force_false(
     download_calls: list[tuple] = []
 
     class _StubDownloader:
-        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):  # noqa: ARG002
+        async def download_one(self, *, msg_pk, media, force=False, progress_callback=None):
             download_calls.append((msg_pk, media.telegram_file_id, force))
             return dataclasses.replace(
                 media,
