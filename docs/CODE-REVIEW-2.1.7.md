@@ -16,7 +16,7 @@
 | [#165](https://github.com/nemo1991/telegram-channel-monitor/pull/165) PR-A 止血 | 「打开媒体」扩展名白名单；事件订阅一次性化；关流哨兵改 `put_nowait` + `aclose` 加超时；日期预设 / 导出日期转 aware；`config show/get` 对 URL 类字段脱敏；README 三处失效；`.part` 唯一临时名 + Windows `os.replace` / `mkdir` 竞态重试；`.env` 以 `0600` 创建。新增 `tests/test_review_217_fixes.py` 61 项 | P1-1 / 2 / 3 / 6 / 7 / 8；P2-1 / 2 / 5；2.1.4 的 P2-38 |
 | [#166](https://github.com/nemo1991/telegram-channel-monitor/pull/166) A2 | 删除失效的 `legacy` marker hook 与 `--include-legacy` | P1-4 |
 | [#167](https://github.com/nemo1991/telegram-channel-monitor/pull/167) PR-B 门禁加固 | coverage 去掉 `continue-on-error` 并加 `--fail-under=70`；integration 输出 junit 并断言零 skip；`seeded_repo` / `meta_seeded_repo` 加第三后端 `pg`（42 项）；三份手写清单守卫改目录自动发现；删空转的 `windows-paint-probe`；ruff 版本取自 `uv.lock` + `uv lock --check`；RUF100 进门禁，清 256 条失效 noqa（74 个文件 AST 等价） | P1-5 / 10；P2-9 / 21 / 28；P2-23 的 CLI 部分；P2-41；P2-42 的 CI 侧 |
-| PR-C 文档校准 | AGENTS.md 重写（只写现状，6.12 归因史迁 `history/`）；SECURITY.md 重写；`.env.example` 补全到全部 22 个有效字段；CHANGELOG 2.1.6 数字勘误 + `[Unreleased]` 基点；10 份点时间文档迁 `docs/history/` 并加状态头 + `docs/README.md` 索引；陈旧文案清理（7 处 CLI 用法提示 + 2 处登录提示指向已删的 `tgmonitor` 命令、docstring / 模块头 / issue 模板坏链） | P2-30 / 31 / 32 / 34 / 35；P2-33 的勘误与链接 |
+| [#168](https://github.com/nemo1991/telegram-channel-monitor/pull/168) PR-C 文档校准 | AGENTS.md 重写（只写现状，6.12 归因史迁 `history/`）；SECURITY.md 重写；`.env.example` 补全到全部 22 个有效字段；CHANGELOG 2.1.6 数字勘误 + `[Unreleased]` 基点；10 份点时间文档迁 `docs/history/` 并加状态头 + `docs/README.md` 索引；陈旧文案清理（7 处 CLI 用法提示 + 2 处登录提示指向已删的 `tgmonitor` 命令、docstring / 模块头 / issue 模板坏链） | P2-30 / 31 / 32 / 34 / 35；P2-33 的勘误与链接 |
 
 **回填后的基线**：默认门禁收集 1177 项（1175 passed / 2 skipped），integration 标记 105 项；分支覆盖率 71%（13,533 语句），CI 阈值 70；CI 7 个 job，全部阻塞合并。
 
