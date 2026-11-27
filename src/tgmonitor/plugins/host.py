@@ -15,6 +15,7 @@ objectstore.connect 的降级策略一致。
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -32,7 +33,13 @@ from tgmonitor.plugins.api import (
     UiContribution,
     _DelegatingPluginApi,
 )
-from tgmonitor.plugins.config import PluginConfig, read_all_config, read_enabled
+from tgmonitor.plugins.config import (
+    PluginConfig,
+    read_all_config,
+    read_enabled,
+    write_all_config,
+    write_enabled,
+)
 from tgmonitor.plugins.loader import DiscoveredPlugin, discover_all
 from tgmonitor.plugins.manifest import PluginManifest
 
@@ -85,6 +92,14 @@ class PluginHost:
         # 运行期钩子状态 — 与 _activated(装配期)分离。start_all/stop_all 幂等,
         # 由 AppService.start/shutdown + pause/resume 驱动,可反复切换。
         self._running = False
+        # 阶段 4 插件管理页:发现缓存 + 激活依赖快照 + 状态订阅。
+        # 热 enable 需要重建 PluginContext(bus / 域服务 / settings),这些在
+        # bootstrap 时才有;activate_all 成功后留快照,运行期 enable 复用。
+        self._discovered: dict[str, DiscoveredPlugin] = {}
+        self._bus: EventBus | None = None
+        self._app_services: dict[str, Any] = {}
+        self._settings_view: SettingsView | None = None
+        self._state_listeners: list[Callable[[], None]] = []
 
     @property
     def plugins_dir(self) -> Path:
@@ -113,8 +128,14 @@ class PluginHost:
         self._activated = True
 
         discovered = discover_all(self._plugins_dir)
+        self._discovered = {item.manifest.id: item for item in discovered}
+        # 留激活依赖快照 —— 运行期 enable 要用同一 bus / 域服务 / settings
+        # 重建 PluginContext,不能让热启用拿到一个空门面。
+        self._bus = bus
+        self._app_services = dict(app_services)
+        self._settings_view = SettingsView.from_settings(settings)
+
         enabled = read_enabled(self._plugins_dir)
-        settings_view = SettingsView.from_settings(settings)
         activated: list[PluginRecord] = []
 
         for item in discovered:
@@ -124,51 +145,62 @@ class PluginHost:
                     manifest=item.manifest, state=PluginState.DISABLED, source=item.source
                 )
                 continue
-            if not item.manifest.is_compatible(self._api_version):
-                self._records[pid] = PluginRecord(
-                    manifest=item.manifest,
-                    state=PluginState.FAILED,
-                    source=item.source,
-                    error=(
-                        f"需要插件 API >= {item.manifest.min_app_version}, 当前 {self._api_version}"
-                    ),
-                )
-                log.warning("插件 %s 版本不兼容,跳过", pid)
-                continue
-            for cap in item.manifest.unknown_capabilities():
-                log.warning("插件 %s 声明了未知能力 %s,宿主将忽略", pid, cap)
-
-            ctx = self._build_context(item, bus, app_services, settings_view)
-            try:
-                plugin = item.factory()
-                plugin.activate(ctx)
-                # export 能力:activate 成功后才注册 —— 插件可能按 config
-                # 决定提供哪些格式,且激活失败时不应留下残留格式。
-                export_formats = self._register_exporters(plugin, item.manifest)
-                # ui 能力:activate 成功后才读贡献 —— 插件可能按 config 决定
-                # 是否贡献页面。只取数据 + factory,不构造任何 Qt 对象。
-                ui_contribution = self._read_ui_contribution(plugin, item.manifest)
-            except Exception as exc:
-                log.exception("插件 %s activate 失败,已隔离", pid)
-                ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
-                self._records[pid] = PluginRecord(
-                    manifest=item.manifest,
-                    state=PluginState.FAILED,
-                    source=item.source,
-                    error=str(exc),
-                )
-            else:
-                self._records[pid] = PluginRecord(
-                    manifest=item.manifest,
-                    state=PluginState.ACTIVE,
-                    source=item.source,
-                    plugin=plugin,
-                    context=ctx,
-                    export_formats=export_formats,
-                    ui_contribution=ui_contribution,
-                )
-                activated.append(self._records[pid])
+            rec = self._activate_one(item)
+            self._records[pid] = rec
+            if rec.state is PluginState.ACTIVE:
+                activated.append(rec)
         return activated
+
+    def _activate_one(self, item: DiscoveredPlugin) -> PluginRecord:
+        """激活单个插件 — activate_all 与热 enable 共用的唯一激活路径。
+
+        版本门禁 / 未知能力警告 / activate / exporter 注册 / ui 贡献读取都
+        收在这里,保证启动激活与运行期热启用行为完全一致。失败返回 FAILED
+        记录(不写 `_records`,由调用方决定何时落账)。
+        """
+        pid = item.manifest.id
+        if not item.manifest.is_compatible(self._api_version):
+            log.warning("插件 %s 版本不兼容,跳过", pid)
+            return PluginRecord(
+                manifest=item.manifest,
+                state=PluginState.FAILED,
+                source=item.source,
+                error=(
+                    f"需要插件 API >= {item.manifest.min_app_version}, 当前 {self._api_version}"
+                ),
+            )
+        for cap in item.manifest.unknown_capabilities():
+            log.warning("插件 %s 声明了未知能力 %s,宿主将忽略", pid, cap)
+
+        assert self._bus is not None and self._settings_view is not None
+        ctx = self._build_context(item, self._bus, self._app_services, self._settings_view)
+        try:
+            plugin = item.factory()
+            plugin.activate(ctx)
+            # export 能力:activate 成功后才注册 —— 插件可能按 config
+            # 决定提供哪些格式,且激活失败时不应留下残留格式。
+            export_formats = self._register_exporters(plugin, item.manifest)
+            # ui 能力:activate 成功后才读贡献 —— 插件可能按 config 决定
+            # 是否贡献页面。只取数据 + factory,不构造任何 Qt 对象。
+            ui_contribution = self._read_ui_contribution(plugin, item.manifest)
+        except Exception as exc:
+            log.exception("插件 %s activate 失败,已隔离", pid)
+            ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
+            return PluginRecord(
+                manifest=item.manifest,
+                state=PluginState.FAILED,
+                source=item.source,
+                error=str(exc),
+            )
+        return PluginRecord(
+            manifest=item.manifest,
+            state=PluginState.ACTIVE,
+            source=item.source,
+            plugin=plugin,
+            context=ctx,
+            export_formats=export_formats,
+            ui_contribution=ui_contribution,
+        )
 
     def _register_exporters(self, plugin: Plugin, manifest: PluginManifest) -> tuple[str, ...]:
         """把插件声明的 exporter 注册到全局注册表,返回注册到的 format key。
@@ -295,9 +327,152 @@ class PluginHost:
                     log.exception("插件 %s deactivate 失败", pid)
         self._activated = False
 
+    # ------------------------------------------------------------------
+    # 热切换 API(阶段 4 插件管理页)
+    # ------------------------------------------------------------------
+
+    def subscribe_state(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """订阅插件状态变更 — UI 管理页据此刷新列表/导航页。
+
+        返回退订函数(幂等),供 widget 析构时解绑,避免单例持有已销毁视图。
+        通知失败只记日志,不影响 enable/disable 主流程。
+        """
+        if listener not in self._state_listeners:
+            self._state_listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._state_listeners:
+                self._state_listeners.remove(listener)
+
+        return unsubscribe
+
+    def _notify_state(self) -> None:
+        for listener in list(self._state_listeners):
+            try:
+                listener()
+            except Exception:
+                log.exception("插件状态变更通知失败,已隔离")
+
+    def refresh_discovered(self) -> tuple[str, ...]:
+        """重跑双通道发现,把新出现的插件登记进记录表。
+
+        只登记新插件为 DISABLED(默认安全),**不改动已有插件的状态**——
+        否则热切换后的 ACTIVE/DISABLED 会被发现流程冲掉。已卸载插件的旧
+        记录保留(状态仍是 DISABLED/FAILED),避免误删用户配置命名空间;
+        `enable` 时会对不在 `_discovered` 的 id 拒绝。返回新发现的 id。
+        """
+        found = discover_all(self._plugins_dir)
+        self._discovered = {item.manifest.id: item for item in found}
+        fresh: list[str] = []
+        for pid, item in self._discovered.items():
+            if pid not in self._records:
+                self._records[pid] = PluginRecord(
+                    manifest=item.manifest, state=PluginState.DISABLED, source=item.source
+                )
+                fresh.append(pid)
+        if fresh:
+            self._notify_state()
+        return tuple(fresh)
+
+    def enable(self, plugin_id: str) -> bool:
+        """热启用一个已发现插件 — 即时生效,无需重启。
+
+        与 `activate_all` 走同一条 `_activate_one` 路径:版本门禁 / activate /
+        exporter 注册 / ui 贡献读取完全一致。成功后:
+        - 写 `enabled.json`(持久化启用意图,重启仍生效);
+        - 若宿主已处于运行期(`_running`)则立即调该插件 `start()`;
+        - 通知状态订阅者刷新 UI。
+        失败返回 False 并标 FAILED,不改其它插件。重复启用 ACTIVE 插件幂等。
+        """
+        if plugin_id not in self._discovered:
+            log.warning("插件 %s 未发现,无法启用", plugin_id)
+            return False
+        rec = self._records.get(plugin_id)
+        if rec is not None and rec.state is PluginState.ACTIVE:
+            return True
+
+        activated = self._activate_one(self._discovered[plugin_id])
+        self._records[plugin_id] = activated
+        if activated.state is not PluginState.ACTIVE:
+            self._notify_state()
+            return False
+
+        try:
+            write_enabled(
+                self._plugins_dir,
+                frozenset(set(read_enabled(self._plugins_dir)) | {plugin_id}),
+            )
+        except Exception:
+            log.exception("插件 %s 启用清单写盘失败", plugin_id)
+
+        if self._running and activated.plugin is not None:
+            hook = getattr(activated.plugin, "start", None)
+            if hook is not None:
+                try:
+                    hook()
+                except Exception:
+                    log.exception("插件 %s 热启用 start 失败,已隔离", plugin_id)
+        self._notify_state()
+        return True
+
+    def disable(self, plugin_id: str) -> bool:
+        """热停用插件 — 即时撤销能力,无需重启。
+
+        顺序:start() 的逆操作 → 注销 exporter → 退订事件 → deactivate()
+        → 从 `enabled.json` 移除 → 标 DISABLED → 通知 UI。每步失败只记日志,
+        保证停用总能走完(与 deactivate_all 同策略)。重复停用幂等。
+        """
+        rec = self._records.get(plugin_id)
+        if rec is None or rec.state is PluginState.DISABLED:
+            return True
+
+        if self._running and rec.plugin is not None:
+            hook = getattr(rec.plugin, "stop", None)
+            if hook is not None:
+                try:
+                    hook()
+                except Exception:
+                    log.exception("插件 %s 热停用 stop 失败,已隔离", plugin_id)
+        for fmt in rec.export_formats:
+            try:
+                EXPORTERS.unregister(fmt)
+            except Exception:
+                log.exception("插件 %s 注销导出格式 %s 失败", plugin_id, fmt)
+        if rec.context is not None:
+            rec.context.deactivate_hooks()
+        if rec.plugin is not None:
+            try:
+                rec.plugin.deactivate()
+            except Exception:
+                log.exception("插件 %s deactivate 失败", plugin_id)
+
+        try:
+            write_enabled(
+                self._plugins_dir,
+                frozenset(set(read_enabled(self._plugins_dir)) - {plugin_id}),
+            )
+        except Exception:
+            log.exception("插件 %s 启用清单写盘失败", plugin_id)
+
+        self._records[plugin_id] = PluginRecord(
+            manifest=rec.manifest, state=PluginState.DISABLED, source=rec.source
+        )
+        self._notify_state()
+        return True
+
     def config_for(self, plugin_id: str) -> dict[str, Any]:
         """读某插件配置命名空间 — UI 管理页读值用。"""
         return read_all_config(self._plugins_dir).get(plugin_id, {})
+
+    def save_config(self, plugin_id: str, data: dict[str, Any]) -> None:
+        """覆盖写某插件配置命名空间 — 只动自己 id 下的子树,其它插件不变。
+
+        KV 表格的 JSON 字面量解析在 UI 层完成(保留数字/布尔/数组类型),
+        宿主只负责原子写盘。写失败上抛,由对话框给用户提示。
+        """
+        all_config = read_all_config(self._plugins_dir)
+        all_config[plugin_id] = data
+        write_all_config(self._plugins_dir, all_config)
 
 
 # 进程级单例 — GUI / CLI 共用,复用 EXPORTERS 范式。

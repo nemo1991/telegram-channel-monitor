@@ -82,6 +82,8 @@ class SettingsPage(QWidget):
     # 里再弹窗 / exec 对话框,避免跨线程碰 widget(项目既有跨线程约定)。
     login_failed = Signal(str)
     qr_request_ok = Signal(str)  # payload = 二维码 URL(tg://login?token=…)
+    # 阶段 4:插件管理对话框热切换成功后 emit → MainWindow 重建插件 UI 页面。
+    plugins_changed = Signal()
 
     def __init__(
         self,
@@ -343,6 +345,20 @@ class SettingsPage(QWidget):
         session_row.addWidget(self.btn_qr_login)
         session_row.addWidget(self.btn_logout)
 
+        # 2026-11-27 阶段 4:插件管理入口 —— 挂在账户分组内部,不新增
+        # QGroupBox(布局测试硬断言恰好 7 个)。用 gb.layout() 底部追加按钮行,
+        # 与登录/登出入口同组但独立成行,不参与 _collect()/保存 .env。
+        plugin_row = QHBoxLayout()
+        self.btn_plugin_manager = QPushButton(self.tr("插件管理"))
+        self.btn_plugin_manager.setObjectName("settingsPluginManagerBtn")
+        self.btn_plugin_manager.setToolTip(self.tr("启用 / 停用插件与配置"))
+        self.btn_plugin_manager.clicked.connect(self._on_manage_plugins)
+        plugin_row.addWidget(self.btn_plugin_manager)
+        plugin_row.addStretch(1)
+        gb_layout = gb.layout()
+        assert isinstance(gb_layout, QVBoxLayout)
+        gb_layout.addLayout(plugin_row)
+
     def _build_channel_monitor(self, root: QVBoxLayout) -> None:
         """监听频道管理 — 从频道页迁入的 ChannelWidget 单实例(2.0.6)。
 
@@ -381,6 +397,23 @@ class SettingsPage(QWidget):
         self.btn_qr_login.setEnabled(not logged_in)
         self.btn_logout.setVisible(logged_in)
         self.btn_logout.setEnabled(logged_in)
+
+    def _on_manage_plugins(self) -> None:
+        """设置页「插件管理」— 打开管理对话框(构造注入单例 host)。
+
+        对话框热切换插件成功后发 `plugins_changed`,MainWindow 接线重建插件
+        UI 页面。host 单例在 bootstrap 时已激活,这里直接用;对话框关闭时
+        自行退订状态通知。对话框异常只记日志,不影响设置页其它操作。
+        """
+        from tgmonitor.plugins.host import PLUGIN_HOST
+        from tgmonitor.ui.widgets.plugin_manager_dialog import PluginManagerDialog
+
+        dlg = PluginManagerDialog(
+            PLUGIN_HOST,
+            self.window(),
+            on_changed=self.plugins_changed.emit,
+        )
+        dlg.exec()
 
     def _on_qr_login_clicked(self) -> None:
         """设置页「二维码登录」— 只校验/保存 api 凭据 → 生成二维码 → 弹扫码框。

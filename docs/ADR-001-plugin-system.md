@@ -138,8 +138,33 @@ QWidget / QIcon**（plugins 包顶层不 import Qt）。插件声明 `ui` 能力
 不调 `page_factory`，插件的 Qt import 只发生在 GUI —— 零 GUI 依赖契约不变。
 `VerticalNavBar` 内置的 4 项硬断言继续守护「默认导航」，插件项是追加场景，不放宽该断言。
 
-**「插件管理」页**留下一轮：它依赖上述扩展点先就位（自身即一个 UI 贡献 + 读
-`PluginHost.records()`），单独交付以保持每阶段可独立评审。
+**「插件管理」页**：落在设置页「账户凭证」分组内的一个按钮 + 独立对话框
+（`PluginManagerDialog`），**不新增导航项 / 分组** —— 导航 4 项与设置 7 分组
+两处硬断言继续守护「默认布局」，管理页是按需打开的覆盖层，不是常驻页面。
+对话框构造注入 `PluginHost` 单例，只经公开 API 操作（enable / disable /
+records / config_for / save_config / refresh_discovered），不碰启用清单与配置
+文件的读写细节。
+
+**启停语义 = 真热切换**（阶段 4 确认）：`enable` / `disable` 立即生效、无需重启。
+为此宿主在 `activate_all` 时留三份依赖快照 —— 发现缓存（热启用要重建
+`PluginContext`）、bus + 域服务映射、settings 视图；运行期 `enable` 走与启动
+**同一条** `_activate_one` 路径（版本门禁 / activate / exporter 注册 / ui 贡献
+读取完全一致），再写 `enabled.json` 持久化意图，若宿主已在运行期则立即调该
+插件 `start()`；`disable` 逆向拆除（stop → 注销 exporter → 退订 → deactivate
+→ 移出启用清单 → 标 DISABLED）。每步失败只记日志，保证停用总能走完。
+代码改动仍需重启 —— Python 模块不可真卸载，热切换只覆盖「已发现插件的
+启用/停用」，不覆盖插件代码更新。
+
+**配置编辑 = 通用 KV 表格**：`config.json` 无 schema，`{plugin_id: {key: value}}`
+的 value 可能是数字 / 布尔 / 数组 / 对象。表格 value 走 `json.loads` 字面量
+解析：合法 JSON 按解析值写回（保类型），非法输入当字符串；`save_config` 只覆盖
+目标 id 子树，其它插件配置不变。这样无 schema 也不破坏插件期望的值类型。
+
+**UI 页增量同步**：管理对话框热切换后发 `plugins_changed`，MainWindow 接线到
+`UiAssembler.refresh_plugin_pages()`。按 `plugin_id` 记账只增删状态变化的页，
+不重调未变化插件的 `page_factory()` —— 否则停用 A 会让 B 的页面状态（滚动位置
+/ 表单）丢失，不满足「真热切换」。`VerticalNavBar.remove_item(plugin_id)` 精确
+移除并同步后续按钮索引；内置 4 项不受影响。
 
 UI 插件代码只在 GUI 进程加载；CLI 路径不得 import 任何 Qt 模块，保持
 `tests/test_cli.py` 的零 GUI 依赖契约。`cli/` 与 `core/` 下不得新增插件实现文件。
@@ -210,7 +235,9 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
    三处手写启动序列收敛并同步 surface allowlist），再接插件 start / stop 钩子。
    P1-9 未修时钩子点不稳，不能先接。运行期钩子的形态（可选 / 联动 pause/resume /
    幂等）与触发点见决策 6。
-4. **CLI / UI 能力**：注册扩展点 + 两处守护测试放宽 + 导航注册 API +「插件管理」页（启用/停用/配置）。
+4. **CLI / UI 能力**：注册扩展点 + 导航注册 API +「插件管理」页（启用/停用/配置）。
+   导航 4 项与设置 7 分组的守护断言**不放宽** —— 插件项/管理页是追加与覆盖层场景。
+   管理页的真热切换语义、KV 配置类型保留、UI 增量同步见上文「插件管理页」段。
 5. **收尾**：示例插件、用户文档、CI 门禁、错误场景测试。
 
 ## 后果
