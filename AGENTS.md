@@ -4,15 +4,18 @@
 > 计划与点时间快照统一放 `docs/history/`(索引见 `docs/README.md`)。改代码时如与
 > 本文件矛盾,以实际代码为准并顺手更新本文件。
 >
-> 最后校准:2026-11-26(2.1.7)。文中的数字(用例数 / job 数 / 覆盖率)会漂移,
-> 标注了「以 … 为准」的地方请现查,不要照抄。
+> 最后校准:2026-11-27(2.1.7 + main 上的 3.0.0 插件系统)。文中的数字(用例数 / job 数 /
+> 覆盖率)会漂移,标注了「以 … 为准」的地方请现查,不要照抄。
 
 ## 项目概述
 
 **tgmonitor** — Telegram 频道监听桌面应用:监听白名单频道的新消息,自动落库并下载媒体,提供桌面 UI 查看、检索与导出。
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
-- 当前版本 **2.1.7**(以 `pyproject.toml` 为准)。
+- 当前版本 **2.1.7**(以 `pyproject.toml` 为准);**3.0.0 插件系统已在 main 落地但尚未发版**,
+  契约版本 `PLUGIN_API_VERSION=3.0.0` 与营销版本解耦。用法见
+  [`docs/PLUGIN-DEVELOPMENT.md`](docs/PLUGIN-DEVELOPMENT.md),决策见
+  [`docs/ADR-001-plugin-system.md`](docs/ADR-001-plugin-system.md)。
 - 包管理/构建:uv + hatchling,src 布局,console script 两个入口:`tgmon = tgmonitor.__main__:main`(**只启动 GUI**)、`tgmon-cli = tgmonitor.cli.main:main_tgmon_cli`(**独占 CLI**,13 个子命令含 `help`)。`tgmonitor` 命令 2.1.2 已删除 —— 新写文档 / 提示语不要再出现它。
 - 桌面打包:PyInstaller(`tgmonitor.spec`)→ Linux AppImage + macOS .app + Windows onedir zip;发布走 GitHub Release + SHA256SUMS。**纯 Python 后端,三平台均无需编译原生引擎**。
 - 许可证 MIT,作者 forcetone;项目注释与文档均用中文,新代码注释随项目习惯用中文。
@@ -79,6 +82,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 | `core/objectstore/` | base ABC + local_store(平铺)/ folder_store(两级分片)/ s3_store + factory,默认 **FOLDER** |
 | `core/export/` | base 注册表 `EXPORTERS` + `@exporter` 装饰器 + json/csv/markdown/html + 流式导出 service |
 | `cli/` | argparse 13 个子命令(含 `help`);裸 `asyncio.run()` 事件循环,无 PySide6。`main.py` 是注册表单一真源(`CLI_SUBCOMMANDS` + `_DISPATCH`);`_common.py` 收口 `cli_context` / `emit_json` / `progress` / `CliError` |
+| `plugins/` | 3.0.0 插件系统:`manifest` / `loader` / `host` / `api` / `config` / `cli`。双通道发现(entry-points + 本地目录)、发现 ≠ 启用、窄门面 `PluginContext`、两层生命周期;顶层零 Qt。宿主单例 `PLUGIN_HOST` 由 `core/runtime.py` 装配期激活、`AppService` 运行期驱动 start/stop,**不进 AppService 公开表面** |
 | `ui/` | PySide6 界面:`main_window.py`、`widgets/`、`viewmodels/`、`controllers/`、`icon.py`、`nav_bar.py`、`ui_assembler.py`、`shutdown.py`、`thumbnail.py`、`state_labels.py`;`async_bridge.py` 是跨线程样板;全局样式表 `ui/resources/style.qss` |
 
 ## 目录结构
@@ -92,6 +96,7 @@ core(AppService 组合根/生命周期 + 领域服务)
 ├── scripts/build_appimage.sh   # Linux AppImage 构建(唯一脚本;无 libtdjson 编译)
 ├── tgmonitor.spec              # PyInstaller 打包配置(纯 Python,binaries=[])
 ├── docs/                       # 文档:README.md 是索引;history/ 是点时间快照
+├── examples/                   # 插件活文档示例(本地目录插件 + CLI provider),CI 真实加载执行
 ├── .github/workflows/          # ci / build / audit
 └── pyproject.toml              # 构建 + 工具配置(ruff/mypy/pytest/coverage 全在这里)
 ```
@@ -155,14 +160,16 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 - **存储 parity 三后端通吃**:`tests/test_storage_backends.py` 的 `seeded_repo` / `meta_seeded_repo` 参数化 `inmemory` / `sqlite` / `pg`。`pg` 参数带 `integration` marker,默认 deselect;CI integration job 用 `-m integration` 选中在真 PG 上跑。
 - **集成测试**(`tests/integration/` + 上述 `pg` 参数,真 PG via testcontainers):本地无 Docker 自动 skip;**CI 断言零 skip**(`pg_engine` 起不来时 job 会红,不会静默全绿)。
 - **守护测试清单已改自动发现**(2.1.7):存储层「无裸 `subscribed` 列」、monitor「组件不反向持有宿主」、CLI「零 GUI 依赖 + 注册表三重对齐」都按目录 glob 扫描 —— **新增模块自动纳入,不需要登记**;若目录结构大改,先看对应的 inventory 元测试。
+- **插件守护**(3.0.0):`tests/test_plugin_*.py` + `test_app_service_surface.py` + `test_architecture.py` + `test_cli.py` 由 CI `plugin-contract` job 单独跑。`test_plugin_examples.py` 把 `examples/` 复制到临时目录用真实发现器 / 宿主执行(活文档);`test_plugin_error_scenarios.py` 断言失败后无幽灵订阅 / exporter;`test_plugin_api_surface.py` 锁死门面表面;示例插件顶层零 Qt 用子进程断言。**新增插件测试文件自动纳入该 job**(glob `test_plugin*.py`)。
 - 新增领域逻辑尽量走纯 core 单测(offline),不靠 UI 测试覆盖。
 
 ## CI/CD 与发布流程(`.github/workflows/`)
 
-- **ci.yml**(push/PR → main,7 个 job,全部阻塞合并,无 `continue-on-error`;以文件为准):
+- **ci.yml**(push/PR → main,8 个 job,全部阻塞合并,无 `continue-on-error`;以文件为准):
   - `pytest` × 3 平台(ubuntu / macOS / Windows × 3.13,裸 `python -m pytest`)
   - `coverage`(ubuntu,分支覆盖率,`coverage report --fail-under=70` **是门禁**)。插桩曾在 runner 上 hang,所以只放独立 job;hang 由 `pytest-timeout` 兜底成一次带线程栈的失败
   - `integration`(ubuntu,`-m integration` 跑真 PG;输出 junit 并断言用例数 > 0、零 skip、`[pg]` 参数化项实跑过)
+  - `plugin-contract`(ubuntu,单独跑 `test_plugin*.py` + 表面 / 架构 / CLI 守护;输出 junit 并断言用例数非零、零 skip、关键守护用例确实执行过,防「测试文件被删 → job 空转全绿」)
   - `ruff`(check + format;**版本取自 `uv.lock`**,另跑 `uv lock --check`)
   - `mypy`(单 job 整包)
   - 改 console script 入口必须同步 `ci.yml` 的 "Verify CLI entry" 步骤,否则三平台 pytest job 会秒红。
@@ -179,7 +186,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
   - macOS:`~/Library/Application Support/tgmonitor`
   - Linux:`$XDG_DATA_HOME/tgmonitor`(默认 `~/.local/share/tgmonitor`)
   - Windows:`%LOCALAPPDATA%\tgmonitor`(Local,非 Roaming)
-- 子目录:`session/`(Telethon session,`tgmonitor.session`)、`media/`、`logs/tgmonitor.log`(5MB × 3 轮转);SQLite 数据库 `tgmonitor.db` 与 `.env` 也在该目录。
+- 子目录:`session/`(Telethon session,`tgmonitor.session`)、`media/`、`plugins/`(3.0.0:`enabled.json` / `config.json` / 本地插件目录)、`logs/tgmonitor.log`(5MB × 3 轮转);SQLite 数据库 `tgmonitor.db` 与 `.env` 也在该目录。
 - `TG_LOG_LEVEL` 只读**进程环境变量**(不走 `.env`),排查监听问题时设 `DEBUG` 能看到 monitor 心跳。
 - 数据库:`TG_DB_BACKEND=sqlite`(默认)/ `postgres`;`TG_SQLITE_PATH` 自定义 SQLite 路径;`TG_DB_DSN` 配 PG。旧 `mongo` / `jsonl` 等非法值启动时由 `Settings.load_tolerant()` 回退默认 SQLITE 并弹提示,不阻断启动。
 - 代理:SOCKS5 走 `TG_PROXY`(`parse_socks5_proxy` → python-socks tuple → Telethon `proxy=`)。
@@ -194,6 +201,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## 扩展点
 
+- **插件(3.0.0,第三方无需改主程序)**:本地目录 + entry-points 双通道发现,默认不启用;经窄门面 `PluginContext` 开放事件 / 导出 / CLI / UI 能力,`PluginApi` 方法集合 allowlist 守护。用法与契约见 [`docs/PLUGIN-DEVELOPMENT.md`](docs/PLUGIN-DEVELOPMENT.md),最小示例见 `examples/`,决策见 `docs/ADR-001-plugin-system.md`。`schedule` 能力名已登记但宿主任务表未实现,不要声明。
 - **新增存储后端**(如 MySQL):在 `core/storage/` 实现 8 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。写路径的 datetime 参数过 `_ensure_utc`。
 - **新增对象存储后端**:在 `core/objectstore/` 实现 `ObjectStore` ABC,注册 factory(默认 FOLDER,平铺/分片可切换)。
 - **新增导出格式**:在 `core/export/` 用 `@exporter` 装饰器注册到 `EXPORTERS`,service 流式导出自动可见;含模板的(如 HTML)用 Jinja2。

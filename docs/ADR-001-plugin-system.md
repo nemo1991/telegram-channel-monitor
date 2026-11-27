@@ -252,7 +252,10 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
      CI 执行的活文档；子进程守护示例 `plugin.py` 顶层零 Qt import。
      `tests/test_plugin_error_scenarios.py` 覆盖失败后的系统完整性（幽灵订阅 /
      幽灵 exporter / 畸形发现输入 / 热写失败 / 钩子隔离 / CLI 错误路径）。
-   - **剩余**：用户文档（插件开发指南）、CI 门禁（把上述守护纳入独立 job）。
+   - **已落地**：用户文档 `docs/PLUGIN-DEVELOPMENT.md`（安装 / 启用 / 配置 / 五类能力 /
+     两层生命周期 / 限制与排错）；CI `plugin-contract` 独立 job 执行上述守护并用
+     junit 断言关键用例确实跑过、零 skip，防止「测试文件被删 → job 空转全绿」；
+     `tests/test_architecture.py` 补 `plugins/` 零 Qt / 零 UI 静态守护。
    - `schedule` 名实不符，示例不展示；等宿主任务表落地后补示例与门禁。
 
 ## 后果
