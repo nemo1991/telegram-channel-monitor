@@ -135,3 +135,42 @@ def test_cli_does_not_import_ui(py_file: Path) -> None:
             f"{py_file.relative_to(SRC)} 跨层 import tgmonitor.ui.* "
             f"(违反 cli 无 UI 边界): {[(line, name) for line, name in hits]}"
         )
+
+
+# ============================================================
+# plugins/ 严禁 PySide6 / qasync / tgmonitor.ui.*
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "py_file", _collect_py_files("plugins"), ids=lambda p: str(p.relative_to(SRC))
+)
+def test_plugins_does_not_import_qt_or_qasync(py_file: Path) -> None:
+    """`src/tgmonitor/plugins/` 任何位置都不得 import PySide6 / qasync。
+
+    插件在 CLI 进程也会被 `activate_all()` 激活；宿主包自身若先 import Qt，
+    CLI 零 GUI 依赖契约就从宿主侧被破坏，而不是插件作者的责任。
+    """
+    hits = _scan_forbidden_imports(py_file)
+    if hits:
+        raise AssertionError(
+            f"{py_file.relative_to(SRC)} 含禁止 import (违反 plugins 零 Qt 边界): "
+            f"{[(line, name) for line, name in hits]}"
+        )
+
+
+@pytest.mark.parametrize(
+    "py_file", _collect_py_files("plugins"), ids=lambda p: str(p.relative_to(SRC))
+)
+def test_plugins_does_not_import_ui(py_file: Path) -> None:
+    """`src/tgmonitor/plugins/` 不得跨层 import `tgmonitor.ui.*`。
+
+    UI 贡献只含数据 + factory(`UiContribution`),构造 QWidget 的责任在 GUI
+    装配期;宿主包反向依赖 ui 会让这条边界失去意义。
+    """
+    hits = _scan_subpackage_imports(py_file, package="plugins", sub_root="ui")
+    if hits:
+        raise AssertionError(
+            f"{py_file.relative_to(SRC)} 跨层 import tgmonitor.ui.* "
+            f"(违反 plugins 无 UI 边界): {[(line, name) for line, name in hits]}"
+        )
