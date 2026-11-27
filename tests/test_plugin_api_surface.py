@@ -29,7 +29,11 @@ ALLOWED_API_METHODS = {
     "download_media",
 }
 
-ALLOWED_CONTEXT_FIELDS = {"bus", "api", "config", "settings", "manifest"}
+# 3.0.0 阶段 6:schedule 以独立视图出现在上下文里,不往 PluginApi 加方法 ——
+# 门面按能力分区,避免 PluginApi 从「域服务窄门面」腐烂成第二个 god facade。
+ALLOWED_CONTEXT_FIELDS = {"bus", "api", "config", "scheduler", "settings", "manifest"}
+
+ALLOWED_SCHEDULER_METHODS = {"every", "after", "cancel", "status"}
 
 
 def test_plugin_api_methods_allowlist() -> None:
@@ -50,6 +54,7 @@ def test_plugin_context_fields_allowlist() -> None:
         bus=EventBusView(EventBus()),
         api=MagicMock(),  # type: ignore[arg-type]
         config=MagicMock(),
+        scheduler=MagicMock(),  # type: ignore[arg-type]
         settings=SettingsView.from_settings(MagicMock()),
         manifest=PluginManifest(id="x", name="x"),
     )
@@ -66,6 +71,22 @@ def test_plugin_context_has_no_raw_bus_or_client() -> None:
     fields = set(PluginContext.__dataclass_fields__)
     forbidden = {"client", "app", "app_service", "storage", "objects"}
     assert not (fields & forbidden), f"PluginContext 暴露了禁止字段: {fields & forbidden}"
+
+
+def test_scheduler_view_methods_allowlist() -> None:
+    """定时任务门面同样锁死:只能登记 / 取消 / 查状态,不交出 Task 或 loop。"""
+    from tgmonitor.plugins.schedule import SchedulerView
+
+    actual = {
+        name
+        for name, member in inspect.getmembers(SchedulerView)
+        if not name.startswith("_") and callable(member)
+    }
+    assert actual == ALLOWED_SCHEDULER_METHODS, (
+        f"SchedulerView 方法表面变更!\n"
+        f"  新增: {sorted(actual - ALLOWED_SCHEDULER_METHODS)}\n"
+        f"  移除: {sorted(ALLOWED_SCHEDULER_METHODS - actual)}"
+    )
 
 
 def test_api_duck_type_matches_protocol() -> None:

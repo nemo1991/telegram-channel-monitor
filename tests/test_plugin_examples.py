@@ -29,8 +29,9 @@ from tgmonitor.core.config import Settings
 from tgmonitor.core.events import EventBus, MessageReceived, NotificationRequested
 from tgmonitor.core.export.base import ExporterRegistry
 from tgmonitor.plugins.cli import CliCommandProvider
-from tgmonitor.plugins.config import write_enabled
+from tgmonitor.plugins.config import write_all_config, write_enabled
 from tgmonitor.plugins.host import PluginHost, PluginState
+from tgmonitor.plugins.schedule import JobStatus
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_PLUGIN = PROJECT_ROOT / "examples" / "plugins" / "demo_plugin"
@@ -98,7 +99,7 @@ def test_example_discovers_and_activates(activated):
     assert rec.state is PluginState.ACTIVE
     assert rec.source == "local"
     assert rec.manifest.id == "demo_plugin"
-    assert rec.manifest.capabilities == ("events", "export", "ui")
+    assert rec.manifest.capabilities == ("events", "export", "ui", "schedule")
     # export 能力由宿主在 activate 成功后注册
     assert registry.available() == ["demo-json"]
     assert registry.extension("demo-json") == ".demo.json"
@@ -146,6 +147,38 @@ async def test_example_runtime_hooks_are_live_and_idempotent(activated):
     assert plugin._running is False
     _host.stop_all()
     assert plugin._running is False
+
+
+async def test_example_schedule_job_is_host_managed(tmp_path, services, monkeypatch):
+    """示例的 schedule 由宿主任务表驱动：start 才跑、stop 停、deactivate 清空。"""
+    dst = tmp_path / "plugins"
+    shutil.copytree(EXAMPLE_PLUGIN, dst / "demo_plugin")
+    write_enabled(dst, frozenset({"demo_plugin"}))
+    # 示例默认 60 秒避免刷屏；测试调小间隔以真实观察任务执行。
+    write_all_config(dst, {"demo_plugin": {"tick_seconds": 0.02}})
+
+    registry = ExporterRegistry()
+    monkeypatch.setattr("tgmonitor.plugins.host.EXPORTERS", registry)
+    host = PluginHost(dst)
+    records = host.activate_all(EventBus(), app_services=services, settings=Settings.for_test())
+    assert len(records) == 1
+    plugin = records[0].plugin
+    assert plugin is not None
+    assert host.job_status("demo_plugin")[0].status is JobStatus.REGISTERED
+
+    host.start_all()
+    await asyncio.sleep(0.1)
+    assert plugin.tick_count >= 2
+    assert host.job_status("demo_plugin")[0].status is JobStatus.RUNNING
+
+    host.stop_all()
+    stopped = plugin.tick_count
+    await asyncio.sleep(0.05)
+    assert plugin.tick_count == stopped
+
+    host.deactivate_all()
+    await host.drain_tasks()
+    assert host.job_status("demo_plugin") == ()
 
 
 def test_example_deactivate_removes_all_capabilities(activated, qapp):
