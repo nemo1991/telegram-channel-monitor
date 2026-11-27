@@ -5,6 +5,79 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [3.0.0] - 2026-11-27
+
+主题:**插件系统 + 应用生命周期重构** — 3.0.0 规划全部落地。自 2.1.7 起 11 个 PR
+(#170~#180,61 文件 +7521/-319):插件系统六阶段(双通道发现 → 导出插件化 →
+运行期钩子 → CLI/UI 扩展点 → 管理页 → 示例与任务表)、P1-9 启动生命周期重构、
+用户文档与独立 CI 门禁。无数据库 schema 迁移,无既有 CLI 命令或配置字段删除;
+插件契约版本 `PLUGIN_API_VERSION=3.0.0` 与营销版本解耦。
+
+### 新功能:插件系统
+
+- **双通道发现 + 窄门面**(#171):本地目录 `<user_data_dir>/plugins/<id>/` 与
+  `tgmonitor.plugins` entry-points 双通道;发现 ≠ 启用,默认不启用,由
+  `enabled.json` 控制。插件只拿到 `PluginContext`(`bus` / `api` / `config` /
+  `settings` / `manifest` 与 `scheduler` / `notify()`),拿不到 AppService、
+  Telethon client 或 Qt 对象;manifest capabilities 白名单与 API 表面 allowlist
+  均由测试守护。
+- **导出格式插件化**(#172):`ExporterRegistry` key 从 `ExportFormat` 放宽为 `str`,
+  插件可注册自定义导出格式,由宿主统一登记/注销;激活失败回滚已注册格式,
+  不留「插件 FAILED 但格式仍活着」的幽灵能力。
+- **两层生命周期**(#175):装配期 `activate/deactivate` 留在
+  `runtime.bootstrap()/shutdown()`;运行期 `start()/stop()` 随
+  `AppService.start()/shutdown()` 与 `pause/resume` 联动,幂等且单插件失败隔离;
+  `shutdown()` 开头先停插件。
+- **CLI 扩展点**(#176):独立 entry-point group `tgmonitor.cli.commands`,插件自带
+  parser 与 async handler,绕开 `build_parser()` 早于 `bootstrap()` 的激活死结;
+  内置命令重名时优先,发现失败降级为无插件模式。注意 manifest 声明 `"cli"`
+  本身不生成命令。
+- **UI 扩展点与插件管理页**(#176/#177):host 收集 `UiContribution`,`UiAssembler`
+  按 `plugin_id` 增量注入/移除页面(停用 A 不重建 B 页);设置页新增「插件管理」
+  按钮,支持真热启用/停用与 KV 配置表(value 按 JSON 字面量解析保类型)。
+- **schedule 宿主任务表**(#180):`ctx.scheduler` 提供周期任务(可首跑立即)与
+  延时单次任务,按 `plugin_id` 记账;activate 登记 → `start_all` 物化 →
+  `pause` 取消 → `resume` 重启 → `shutdown` 取消 + 有界 drain(超时只告警,
+  不卡死退出)。回调异常只记日志并计入只读快照(状态/成功数/失败数/最后错误),
+  `PLUGIN_HOST.job_status(id)` 供诊断;显式 `cancel()` 跨 pause/resume 不被复活;
+  激活失败回滚已登记任务。`runtime.shutdown()` 在关闭 storage/objects **之前**
+  drain,避免任务还在写库时被断连。未声明 `schedule` 能力调用会抛
+  `PermissionError`。
+
+### 重构:应用启动与生命周期(P1-9)
+
+- `AppService.start()` 参数化为 `StartOptions`(`whitelist` / `start_monitor` /
+  `respect_paused` / `on_step`),返回 `StartResult`,启动序列按步骤收敛(#173)。
+- `reconfigure()` 改三段式准原子提交,校验失败不再留下「旧库已关、monitor 持旧引用」
+  的半完成态(#174)。
+- 并发 `reconfigure` 选择**拒绝重入**而非排队或吞掉:专用
+  `ReconfigureInProgressError` + UI 文案分支,避免「看起来成功其实被覆盖」(#174)。
+
+### 示例、文档与 CI
+
+- `examples/plugins/demo_plugin/` 与 `examples/cli_provider/` 是**活文档**:CI 真实
+  复制、发现、激活并执行,覆盖事件订阅 / 自定义导出 / UI 页面 / 定时任务与两层
+  生命周期;示例插件顶层零 Qt import,Qt 只在该 `page_factory()` 内加载(#178/#180)。
+- 新增 15 项错误场景测试:非法 manifest、重复 id、activate 失败回滚、UI getter
+  失败、热切换异常与导出幽灵格式等(#178)。
+- 新增 `docs/PLUGIN-DEVELOPMENT.md` 用户指南(安装 / 启用 / 配置 / 五类能力 /
+  两层生命周期 / 限制 / 排错);同步 `docs/README.md`、`README.md`、`AGENTS.md`
+  与 ADR-001(#179/#180)。
+- CI 新增独立 `plugin-contract` job(7→8 job):解析 junit 断言用例数非零、零 skip、
+  13 个关键守护用例确实执行过,防止测试文件被删/改名后 job 空转全绿;
+  `tests/test_architecture.py` 增加 `plugins/` 包零 PySide6/qasync、零
+  `tgmonitor.ui.*` 的 AST 静态守护(#179/#180)。
+- pre-commit ruff 钩子改从 `uv.lock` 解析版本;SECURITY.md 补漏洞上报邮箱(#170)。
+
+### 升级注意
+
+- 插件默认**不启用**:新装插件后需在「设置 → 插件管理」启用,或写
+  `<user_data_dir>/plugins/enabled.json`。
+- 插件是**进程内可信代码**,无沙箱;请只安装信任来源的插件。
+- `schedule` 不支持 cron 表达式;同步回调与 async 回调均可,但任务名须唯一、
+  间隔须为正有限数。
+- 既有 CLI 命令、配置字段与数据库 schema 无变化,2.1.7 的数据目录可直接升级。
+
 ## [2.1.7] - 2026-11-26
 
 主题:**修复 + 加固** — 落地 2.1.7 发版前全面审核报告(`docs/CODE-REVIEW-2.1.7.md`)
@@ -5076,7 +5149,8 @@ collection fragility / CI 升级 / UI 视觉 / 早期 review 残留 合并发布
 - 文档明确提示:不要把 `TG_API_ID` / `TG_API_HASH` / 验证码 / session 贴到 issue
 
 <!-- 维护备注:发版时把下面的 compare 基点改成上一个 tag(例:v2.1.6...HEAD → v2.1.7...HEAD),否则链接会像 v1.8.2 那样过期。 -->
-[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.7...HEAD
+[Unreleased]: https://github.com/nemo1991/telegram-channel-monitor/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.7...v3.0.0
 [2.1.7]: https://github.com/nemo1991/telegram-channel-monitor/compare/v2.1.6...v2.1.7
 [1.8.2]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/nemo1991/telegram-channel-monitor/compare/v1.8.0...v1.8.1

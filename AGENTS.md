@@ -4,7 +4,7 @@
 > 计划与点时间快照统一放 `docs/history/`(索引见 `docs/README.md`)。改代码时如与
 > 本文件矛盾,以实际代码为准并顺手更新本文件。
 >
-> 最后校准:2026-11-27(2.1.7 + main 上的 3.0.0 插件系统)。文中的数字(用例数 / job 数 /
+> 最后校准:2026-11-27(3.0.0)。文中的数字(用例数 / job 数 /
 > 覆盖率)会漂移,标注了「以 … 为准」的地方请现查,不要照抄。
 
 ## 项目概述
@@ -12,7 +12,7 @@
 **tgmonitor** — Telegram 频道监听桌面应用:监听白名单频道的新消息,自动落库并下载媒体,提供桌面 UI 查看、检索与导出。
 
 - Python `~=3.13.0`,GUI 用 **PySide6**,异步用 **qasync**(Qt 主线程即 asyncio 事件循环),Telegram 协议走 **Telethon**(纯 Python MTProto,`cryptg` 加速加密、`python-socks` 走 SOCKS5),单文件启动。
-- 当前版本 **2.1.7**(以 `pyproject.toml` 为准);**3.0.0 插件系统已在 main 落地但尚未发版**,
+- 当前版本 **3.0.0**(以 `pyproject.toml` 为准);插件系统随本次发版落地,
   契约版本 `PLUGIN_API_VERSION=3.0.0` 与营销版本解耦。用法见
   [`docs/PLUGIN-DEVELOPMENT.md`](docs/PLUGIN-DEVELOPMENT.md),决策见
   [`docs/ADR-001-plugin-system.md`](docs/ADR-001-plugin-system.md)。

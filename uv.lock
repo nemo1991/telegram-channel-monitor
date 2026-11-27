@@ -1373,7 +1373,7 @@ wheels = [
 
 [[package]]
 name = "tgmonitor"
-version = "2.1.7"
+version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
