@@ -212,7 +212,12 @@ jobs:
           ]
           required = (
               "test_example_discovers_and_activates",
+              "test_example_schedule_job_is_host_managed",
               "test_example_plugin_top_level_imports_no_qt",
+              "test_schedule_interval_start_stop_resume",
+              "test_schedule_callback_exception_isolated_and_recorded",
+              "test_activate_failure_drops_scheduled_jobs",
+              "test_scheduler_view_methods_allowlist",
               "test_ui_getter_failure_marks_failed_without_exporter_residue",
               "test_plugin_api_methods_allowlist",
               "test_plugin_context_fields_allowlist",

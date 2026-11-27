@@ -101,8 +101,8 @@ class PluginContext:
     bus: EventBusView      # 包装 subscribe/publish，deactivate 时统一退订
     api: PluginApi         # 窄写门面
     config: PluginConfig   # 按 plugin id 隔离的 KV，原子写
+    scheduler: SchedulerView # 定时任务登记/取消/状态，宿主统一回收
     settings: SettingsView # 只读快照
-    log: Logger
     def notify(self, level: str, title: str, body: str) -> None: ...
 ```
 
@@ -116,7 +116,7 @@ class PluginContext:
 | `export` | `ExporterRegistry` | key 从 `ExportFormat` 放宽到 `str`；`ExportFormat` 已是 `str, Enum`，值比较向后兼容；UI 下拉与 CLI choices 已派生自注册表 |
 | `cli` | `CliCommandProvider` + 独立 entry-point group `tgmonitor.cli.commands` | `build_parser(cli_providers=...)` 合并；`main()` 发现后路由；内置命令重名时优先 |
 | `ui` | `UiContribution`（nav_label / icon_name / page_factory） | `VerticalNavBar.add_item`；`UiAssembler.build_central` 遍历 ACTIVE 插件注入 |
-| `schedule` | host 内统一任务表（**尚未落地**） | 能力名已登记进 `KNOWN_CAPABILITIES`，但宿主没有任务表与 cancel 通道；插件声明它只能自生野任务。示例刻意不展示该能力，等任务表落地后再补 |
+| `schedule` | `SchedulerView`（ctx.scheduler）+ host 内统一 `TaskTable` | 插件只 `every()` / `after()` 登记；Task 的物化、pause/resume 启停、shutdown 取消回收全归宿主。不往 `PluginApi` 加方法 —— 按能力分区，避免门面腐烂 |
 
 ### CLI / UI 扩展点形态（阶段 4 细化）
 
@@ -169,6 +169,24 @@ records / config_for / save_config / refresh_discovered），不碰启用清单�
 UI 插件代码只在 GUI 进程加载；CLI 路径不得 import 任何 Qt 模块，保持
 `tests/test_cli.py` 的零 GUI 依赖契约。`cli/` 与 `core/` 下不得新增插件实现文件。
 
+**定时任务表（阶段 6 落地）**：`schedule` 以独立 `SchedulerView` 挂在 `PluginContext`，
+不进 `PluginApi` —— 后者是域服务写操作门面，调度是另一类宿主能力，与 `EventBusView`
+同构独立成视图，两者方法集合都由 `test_plugin_api_surface.py` allowlist 守护。语义：
+
+- 插件在 `activate()` / `start()` 里 `ctx.scheduler.every(seconds, cb, name=..., run_immediately=...)`
+  或 `after(seconds, cb, name=...)` 登记；未声明 `schedule` 却调用抛 `PermissionError`，
+  激活失败时连同订阅 / exporter 一起回滚登记，不留幽灵任务。
+- 登记只是**期望状态**；`start_all()` 才物化 Task，`stop_all()`（pause / shutdown）取消，
+  `start_all()`（resume）重建。单次任务完成 / 失败后不重启；插件显式 `cancel()` 跨
+  pause/resume 持久。同步钩子没有事件循环时只翻转期望状态，不创建 Task —— 这样
+  阶段 1~4 的同步单测与真实运行路径共用同一套语义，宿主方法签名不变。
+- 回调异常只记日志并计入只读快照（`status()`：状态 / 运行次数 / 失败次数 / 最后错误），
+  不冒泡、不影响其它插件。`deactivate` / `disable` 移除登记；`runtime.shutdown()` 在
+  关闭 storage / objects **之前** `await PLUGIN_HOST.drain_tasks()`，有界等待取消真正完成。
+- 调度粒度只做「周期」与「延时单次」，不做 cron 解析；需要 cron 的插件可在自己的
+  回调里判断时间窗口。任务回调是同步还是 async 都接受，同步回调运行在事件循环线程，
+  插件作者需自行避免阻塞 IO。
+
 ### 6. 生命周期与失败隔离
 
 生命周期分两层，**装配期**钩子由 runtime 驱动，**运行期**钩子由 AppService 驱动：
@@ -177,7 +195,7 @@ UI 插件代码只在 GUI 进程加载；CLI 路径不得 import 任何 Qt 模�
 runtime.bootstrap() 装配完成
   → 发现 + 读 enabled.json + 版本门禁
   → activate(ctx)  ── 异常 → 标记 FAILED + 日志，不阻断启动
-  → 装配期能力就位：事件订阅 / 导出格式 / CLI 命令 / UI 页面
+  → 装配期能力就位：事件订阅 / 导出格式 / CLI 命令 / UI 页面 / 定时任务登记
   ↓
 app.start() 会话就绪(state == "ready")
   → start_all()  ── 运行期工作开始（定时任务 / 消费等）
@@ -245,7 +263,7 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
 4. **CLI / UI 能力**：注册扩展点 + 导航注册 API +「插件管理」页（启用/停用/配置）。
    导航 4 项与设置 7 分组的守护断言**不放宽** —— 插件项/管理页是追加与覆盖层场景。
    管理页的真热切换语义、KV 配置类型保留、UI 增量同步见上文「插件管理页」段。
-5. **收尾（进行中）**：
+5. **收尾（已落地）**：
    - **已落地**：`examples/plugins/demo_plugin/`（本地目录通道，events/export/ui +
      两层生命周期 + 窄门面）与 `examples/cli_provider/`（独立 CLI entry-point 通道）。
      `tests/test_plugin_examples.py` 用真实发现器与宿主加载示例全链，使其成为会被
@@ -256,7 +274,10 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
      两层生命周期 / 限制与排错）；CI `plugin-contract` 独立 job 执行上述守护并用
      junit 断言关键用例确实跑过、零 skip，防止「测试文件被删 → job 空转全绿」；
      `tests/test_architecture.py` 补 `plugins/` 零 Qt / 零 UI 静态守护。
-   - `schedule` 名实不符，示例不展示；等宿主任务表落地后补示例与门禁。
+6. **schedule 落地（已落地）**：`SchedulerView` + 宿主 `TaskTable`，示例插件声明
+   `schedule` 并真实登记周期任务；`tests/test_plugin_schedule.py` 覆盖启停 / 恢复 /
+   单次完成 / 失败隔离 / 显式取消 / 激活失败回滚 / 热停用 / 同步无循环路径；
+   CI `plugin-contract` junit 追加关键守护断言。
 
 ## 后果
 

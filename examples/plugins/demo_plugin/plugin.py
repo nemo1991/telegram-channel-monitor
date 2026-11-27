@@ -1,4 +1,4 @@
-"""示例插件 — 展示已落地的三类能力（events / export / ui）与两层生命周期。
+"""示例插件 — 展示已落地的四类能力（events / export / ui / schedule）与两层生命周期。
 
 这是**活文档**：`tests/test_plugin_examples.py` 会把它复制到临时 plugins_dir，
 用真实的 `discover_local` + `PluginHost` 加载并执行全链。代码腐烂会被 CI 抓住，
@@ -8,9 +8,10 @@
 `PluginHost.activate_all()` 激活，顶层 import Qt 会破坏 CLI 零 GUI 依赖。
 UI 的 Qt import 推迟到 `page_factory()` 内部，只有 GUI 装配期才触发。
 
-`schedule` 能力刻意不展示：宿主目前只有能力名，没有统一任务表实现；插件若声明
-它只能自己起野任务，shutdown 时宿主不会回收。见 ADR-001 决策 5 的漂移说明。
-CLI 命令走独立的 `tgmonitor.cli.commands` entry-point 通道，见 `examples/cli_provider/`。
+`schedule` 走宿主统一任务表：插件只 `ctx.scheduler.every(...)` 登记，任务的
+物化、pause/resume 启停、shutdown 取消回收全部由宿主负责；插件**不**自己
+`asyncio.create_task()`。CLI 命令走独立的 `tgmonitor.cli.commands` entry-point
+通道，见 `examples/cli_provider/`。
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ MANIFEST = PluginManifest(
     name="示例插件",
     version="1.0.0",
     min_app_version="3.0.0",
-    capabilities=("events", "export", "ui"),
-    description="演示事件订阅、自定义导出格式、UI 页面与两层生命周期",
+    capabilities=("events", "export", "ui", "schedule"),
+    description="演示事件订阅、自定义导出格式、UI 页面、定时任务与两层生命周期",
 )
 
 
@@ -84,6 +85,7 @@ class DemoPlugin:
         self._ctx: PluginContext | None = None
         self._running = False
         self.message_count = 0
+        self.tick_count = 0
 
     # ---- 装配期：由 runtime.bootstrap() 驱动 ----
     def activate(self, ctx: PluginContext) -> None:
@@ -94,9 +96,19 @@ class DemoPlugin:
             ctx.config.set("greeting", "hello from demo_plugin")
         # 订阅记在 ctx.bus 里，宿主 deactivate 时统一退订；不要自己存裸 EventBus。
         ctx.bus.subscribe(MessageReceived, self._on_message)
+        # schedule 能力：只登记「做什么、多久一次」。Task 的物化 / pause 取消 /
+        # resume 重启 / shutdown 回收全由宿主任务表负责，插件不碰 asyncio API。
+        # 默认 60 秒避免示例在正常运行时刷屏；测试通过 config 改成极小间隔验证。
+        tick_seconds = float(ctx.config.get("tick_seconds", 60))
+        ctx.scheduler.every(
+            tick_seconds,
+            self._on_tick,
+            name="demo-tick",
+            run_immediately=True,
+        )
 
     def deactivate(self) -> None:
-        # 退订由宿主 ctx.deactivate_hooks() 统一处理，这里只清自有状态。
+        # 退订 / 任务回收由宿主统一处理，这里只清自有状态。
         self._ctx = None
         self._running = False
 
@@ -129,6 +141,10 @@ class DemoPlugin:
     async def _on_message(self, event: MessageReceived) -> None:
         self.message_count += 1
 
+    def _on_tick(self) -> None:
+        """定时任务回调：同步 callable 也支持，宿主会在事件循环里调用它。"""
+        self.tick_count += 1
+
     def _make_page(self) -> Any:
         """只有 GUI 装配期才会被调用 —— Qt import 留在这里，CLI 进程永不触发。"""
         from PySide6.QtCore import Qt
@@ -141,4 +157,5 @@ class DemoPlugin:
         layout.addWidget(title)
         layout.addWidget(QLabel("这个页面由插件贡献，宿主不认识它的内容。"))
         layout.addWidget(QLabel(f"已收到消息：{self.message_count}"))
+        layout.addWidget(QLabel(f"定时任务触发：{self.tick_count}"))
         return page

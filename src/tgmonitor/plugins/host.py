@@ -42,6 +42,7 @@ from tgmonitor.plugins.config import (
 )
 from tgmonitor.plugins.loader import DiscoveredPlugin, discover_all
 from tgmonitor.plugins.manifest import PluginManifest
+from tgmonitor.plugins.schedule import JobSnapshot, SchedulerView, TaskTable
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +101,9 @@ class PluginHost:
         self._app_services: dict[str, Any] = {}
         self._settings_view: SettingsView | None = None
         self._state_listeners: list[Callable[[], None]] = []
+        # schedule 能力:宿主统一任务表(按 plugin_id 分区),插件只经 SchedulerView
+        # 登记;Task 的物化 / 取消 / 回收都收在这里,不让插件起野任务。
+        self._tasks = TaskTable()
 
     @property
     def plugins_dir(self) -> Path:
@@ -193,7 +197,10 @@ class PluginHost:
                     EXPORTERS.unregister(fmt)
                 except Exception:
                     log.exception("插件 %s 回滚导出格式 %s 失败", pid, fmt)
-            ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
+            # 激活中途可能已登记定时任务 / 订阅,失败时必须一起回滚 —— 否则
+            # 插件 FAILED 但任务仍在跑(与 exporter 幽灵残留同一类 bug)。
+            self._tasks.drop_plugin(pid)
+            ctx.deactivate_hooks()
             return PluginRecord(
                 manifest=item.manifest,
                 state=PluginState.FAILED,
@@ -260,14 +267,26 @@ class PluginHost:
         app_services: Mapping[str, Any],
         settings_view: SettingsView,
     ) -> PluginContext:
-        """为每个插件构造独立上下文 — 独立 EventBusView(订阅记账隔离)。"""
+        """为每个插件构造独立上下文 — 订阅 / 任务记账都按插件 id 隔离。"""
+        pid = item.manifest.id
         return PluginContext(
-            bus=EventBusView(bus, owner=item.manifest.id),
+            bus=EventBusView(bus, owner=pid),
             api=_DelegatingPluginApi(app_services),
-            config=PluginConfig(self._plugins_dir, item.manifest.id),
+            config=PluginConfig(self._plugins_dir, pid),
+            scheduler=SchedulerView(
+                self._tasks,
+                pid,
+                item.manifest,
+                lambda: self._is_plugin_running(pid),
+            ),
             settings=settings_view,
             manifest=item.manifest,
         )
+
+    def _is_plugin_running(self, plugin_id: str) -> bool:
+        """该插件是否处于运行期 — 决定运行期登记的任务是否需要立即物化。"""
+        rec = self._records.get(plugin_id)
+        return self._running and rec is not None and rec.state is PluginState.ACTIVE
 
     def start_all(self) -> None:
         """会话就绪后启动全部 ACTIVE 插件的运行期钩子。幂等、失败隔离。
@@ -285,12 +304,14 @@ class PluginHost:
             if rec.state is not PluginState.ACTIVE or rec.plugin is None:
                 continue
             hook = getattr(rec.plugin, "start", None)
-            if hook is None:
-                continue
-            try:
-                hook()
-            except Exception:
-                log.exception("插件 %s start 失败,已隔离", pid)
+            if hook is not None:
+                try:
+                    hook()
+                except Exception:
+                    log.exception("插件 %s start 失败,已隔离", pid)
+            # 定时任务物化不依赖可选 start 钩子 —— 只写 activate 的插件也能
+            # 用 schedule;任务异常在 TaskTable 内隔离,这里不会被拖垮。
+            self._tasks.start_plugin(pid)
 
     def stop_all(self) -> None:
         """停止全部插件的运行期钩子。幂等、失败隔离。
@@ -304,13 +325,14 @@ class PluginHost:
         for pid, rec in self._records.items():
             if rec.state is not PluginState.ACTIVE or rec.plugin is None:
                 continue
+            # 先取消任务再调插件 stop:插件 stop 返回时,它的任务已不会再触发。
+            self._tasks.stop_plugin(pid)
             hook = getattr(rec.plugin, "stop", None)
-            if hook is None:
-                continue
-            try:
-                hook()
-            except Exception:
-                log.exception("插件 %s stop 失败", pid)
+            if hook is not None:
+                try:
+                    hook()
+                except Exception:
+                    log.exception("插件 %s stop 失败", pid)
 
     def deactivate_all(self) -> None:
         """停用全部插件:注销导出格式 → 退订事件 → 调插件 deactivate。幂等。
@@ -321,6 +343,8 @@ class PluginHost:
         """
         self.stop_all()
         for pid, rec in self._records.items():
+            # 撤上下文前先移除任务登记 —— deactivate 后插件不该再被重启。
+            self._tasks.drop_plugin(pid)
             for fmt in rec.export_formats:
                 try:
                     EXPORTERS.unregister(fmt)
@@ -413,13 +437,15 @@ class PluginHost:
         except Exception:
             log.exception("插件 %s 启用清单写盘失败", plugin_id)
 
-        if self._running and activated.plugin is not None:
-            hook = getattr(activated.plugin, "start", None)
-            if hook is not None:
-                try:
-                    hook()
-                except Exception:
-                    log.exception("插件 %s 热启用 start 失败,已隔离", plugin_id)
+        if self._running:
+            if activated.plugin is not None:
+                hook = getattr(activated.plugin, "start", None)
+                if hook is not None:
+                    try:
+                        hook()
+                    except Exception:
+                        log.exception("插件 %s 热启用 start 失败,已隔离", plugin_id)
+            self._tasks.start_plugin(plugin_id)
         self._notify_state()
         return True
 
@@ -434,13 +460,16 @@ class PluginHost:
         if rec is None or rec.state is PluginState.DISABLED:
             return True
 
-        if self._running and rec.plugin is not None:
-            hook = getattr(rec.plugin, "stop", None)
-            if hook is not None:
-                try:
-                    hook()
-                except Exception:
-                    log.exception("插件 %s 热停用 stop 失败,已隔离", plugin_id)
+        if self._running:
+            self._tasks.stop_plugin(plugin_id)
+            if rec.plugin is not None:
+                hook = getattr(rec.plugin, "stop", None)
+                if hook is not None:
+                    try:
+                        hook()
+                    except Exception:
+                        log.exception("插件 %s 热停用 stop 失败,已隔离", plugin_id)
+        self._tasks.drop_plugin(plugin_id)
         for fmt in rec.export_formats:
             try:
                 EXPORTERS.unregister(fmt)
@@ -481,6 +510,23 @@ class PluginHost:
         all_config = read_all_config(self._plugins_dir)
         all_config[plugin_id] = data
         write_all_config(self._plugins_dir, all_config)
+
+    # ------------------------------------------------------------------
+    # schedule 诊断 / 回收
+    # ------------------------------------------------------------------
+
+    def job_status(self, plugin_id: str) -> tuple[JobSnapshot, ...]:
+        """某插件的定时任务快照 — 只读,停用 / 激活失败后为空元组。"""
+        return self._tasks.snapshot(plugin_id)
+
+    async def drain_tasks(self) -> None:
+        """等待已取消任务真正回收(有界超时)。
+
+        `stop_all()` / `deactivate_all()` 是同步钩子,只能发出 cancel;真正
+        await 到任务结束必须在 async 上下文做。`runtime.shutdown()` 在关闭
+        storage / objects 之前 await 本方法,避免插件任务还在写库就被断连。
+        """
+        await self._tasks.drain()
 
 
 # 进程级单例 — GUI / CLI 共用,复用 EXPORTERS 范式。

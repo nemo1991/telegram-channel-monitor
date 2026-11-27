@@ -195,6 +195,7 @@ class MyPlugin:
 | `ctx.bus.publish(event)` / `await publish_and_wait(event)` | 发布领域事件 | fire-and-forget / 等待版 |
 | `ctx.api` | 有界读写域操作 | 方法集合被 allowlist 锁死，见下表 |
 | `ctx.config` | 自己的 KV 命名空间 | 读写立即落盘，不影响其它插件 |
+| `ctx.scheduler` | 定时任务登记 / 取消 / 状态 | 只操作自己的任务；需声明 `schedule` 能力，见 5.4 |
 | `ctx.settings` | 只读快照 | `data_root` / `media_policy` / `db_backend` / `objectstore_backend` |
 | `ctx.manifest` | 自己的清单 | 只读 |
 | `ctx.notify(level, title, body)` | 用户通知 | 转 `NotificationRequested` 事件，托盘 / 状态栏既有订阅者呈现 |
@@ -221,7 +222,7 @@ Telethon client、`StorageRepository`、裸 `EventBus` 或任何 Qt 对象。跨
 | `export` | ✅ 可用 | 插件提供 `Exporter` 实现，宿主在 `activate()` 成功后注册到 `EXPORTERS` |
 | `cli` | ✅ 可用，但**独立通道** | `tgmonitor.cli.commands` entry-point group；不走 `PluginHost` |
 | `ui` | ✅ 可用 | `UiContribution(nav_label, icon_name, page_factory)`，宿主在 GUI 装配期注入页面 |
-| `schedule` | ⚠️ **尚未落地** | 能力名已登记，但宿主没有统一任务表与取消通道；**不要声明它**（见 5.4） |
+| `schedule` | ✅ 可用 | `ctx.scheduler.every()` / `after()` 登记，宿主统一物化、启停与取消回收（见 5.4） |
 
 ### 5.1 导出（export）
 
@@ -310,13 +311,52 @@ bootstrap 在 parse 之后」的死结。所以 provider 自带 parser 与 async
 - 业务失败抛 `CliError`（退出码 1），未捕获的普通异常会冒泡并保留 traceback，便于诊断第三方代码；
 - provider 模块零 Qt import —— CLI 进程从入口就不加载 GUI。
 
-### 5.4 schedule：能力名已登记，实现未落地
+### 5.4 定时任务（schedule）
 
-`PluginManifest.capabilities` 接受 `"schedule"`，`KNOWN_CAPABILITIES` 也包含它，但**宿主目前没有
-统一任务表与 cancel 通道**。插件若声明它，只能自己起后台任务，而宿主在 `shutdown()` 时不会代为
-取消 —— 这正是 ADR-001 要避免的「野任务」。
+声明 `schedule` 能力后，用 `ctx.scheduler` 登记任务；**不要自己 `asyncio.create_task()`**。
+插件只说「做什么、多久一次」，Task 的物化、pause/resume 启停、退出回收全由宿主任务表负责。
 
-因此：**不要声明 `schedule`，也不要在插件里起无人回收的后台任务**。等宿主任务表落地后再补示例与门禁。
+```python
+# manifest / plugin.toml 的 capabilities 必须含 "schedule"
+def activate(self, ctx):
+    self._ctx = ctx
+    ctx.scheduler.every(30.0, self._refresh, name="refresh", run_immediately=True)
+    ctx.scheduler.after(5.0, self._warmup, name="warmup")
+
+async def _refresh(self):
+    ...
+
+def _warmup(self):
+    ...  # 同步 callable 也可以；它运行在事件循环线程，别做阻塞 IO
+```
+
+API（`SchedulerView` 的方法集合被 allowlist 锁死）：
+
+| 方法 | 语义 |
+|---|---|
+| `every(seconds, cb, *, name, run_immediately=False)` | 周期任务；`run_immediately=True` 时启动后先跑一次 |
+| `after(seconds, cb, *, name)` | 延时一次性任务，只执行一次 |
+| `cancel(name)` | 显式取消；跨 pause/resume 不再复活，返回是否命中 |
+| `status()` | 本插件任务快照（只读）：状态 / 成功次数 / 失败次数 / 最后错误 |
+
+生命周期与状态：
+
+- `activate()` 里的登记只是**期望状态**（`registered`），此时任务一次都不跑；会话就绪
+  （`AppService.start()` 返回 `ready`）后宿主才物化 Task 并开始执行。
+- `pause_monitor()` → 取消全部任务，周期任务回到 `registered`；`resume_monitor()` →
+  重新物化。单次任务一旦 `completed` / `failed` 就不再重启；插件显式 `cancel()` 的任务
+  保持 `cancelled`，不会被 pause/resume 复活。
+- `shutdown()` / 管理页停用 → 取消任务并移除登记；`runtime.shutdown()` 在关闭数据库 /
+  对象存储**之前**有界等待取消真正完成，不会留下还在写库的后台任务。
+- 回调抛异常只记日志并计入快照，不影响其它插件；周期任务下一轮照常执行。`status()`
+  里的 `status` 表示调度状态（周期任务的 `running` 指"仍在调度"，不代表上一次成功），
+  成功 / 失败看 `runs` / `failures` / `last_error`。
+- 名字必须在本插件内唯一，`seconds` 必须是正有限数；非法参数或声明 `schedule` 之外调用
+  `ctx.scheduler` 会抛错，激活阶段的错误会让插件变 `FAILED` 并回滚已登记任务。
+
+诊断：宿主侧 `PLUGIN_HOST.job_status(plugin_id)` 返回同样的只读快照；任务名会出现在
+asyncio Task 名里（`plugin:<id>:<name>`），完整失败栈在日志。示例见
+`examples/plugins/demo_plugin/plugin.py`（活文档，CI 真实加载执行）。
 
 ---
 
