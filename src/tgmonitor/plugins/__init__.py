@@ -14,7 +14,14 @@ CLI 加载本包不得触发任何 UI 框架。插件实例由第三方包提供
 `Plugin` Protocol 调用,跨边界载荷一律 DTO。详见 `docs/ADR-001-plugin-system.md`。
 """
 
-from tgmonitor.plugins.api import EventBusView, Plugin, PluginApi, PluginContext, SettingsView
+from tgmonitor.plugins.api import (
+    EventBusView,
+    Plugin,
+    PluginApi,
+    PluginContext,
+    SettingsView,
+    UiContribution,
+)
 from tgmonitor.plugins.host import PLUGIN_HOST, PluginHost
 from tgmonitor.plugins.manifest import PluginManifest
 
@@ -27,4 +34,5 @@ __all__ = [
     "PluginHost",
     "PluginManifest",
     "SettingsView",
+    "UiContribution",
 ]

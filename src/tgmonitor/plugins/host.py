@@ -29,6 +29,7 @@ from tgmonitor.plugins.api import (
     Plugin,
     PluginContext,
     SettingsView,
+    UiContribution,
     _DelegatingPluginApi,
 )
 from tgmonitor.plugins.config import PluginConfig, read_all_config, read_enabled
@@ -64,6 +65,8 @@ class PluginRecord:
     context: PluginContext | None = field(default=None, repr=False)
     # 本插件注册的导出格式 key — host 记账,deactivate 时逐个 unregister。
     export_formats: tuple[str, ...] = ()
+    # UI 页面贡献(阶段 4)— 只含数据 + factory,不含 QWidget/QIcon。
+    ui_contribution: UiContribution | None = None
 
 
 class PluginHost:
@@ -142,6 +145,9 @@ class PluginHost:
                 # export 能力:activate 成功后才注册 —— 插件可能按 config
                 # 决定提供哪些格式,且激活失败时不应留下残留格式。
                 export_formats = self._register_exporters(plugin, item.manifest)
+                # ui 能力:activate 成功后才读贡献 —— 插件可能按 config 决定
+                # 是否贡献页面。只取数据 + factory,不构造任何 Qt 对象。
+                ui_contribution = self._read_ui_contribution(plugin, item.manifest)
             except Exception as exc:
                 log.exception("插件 %s activate 失败,已隔离", pid)
                 ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
@@ -159,6 +165,7 @@ class PluginHost:
                     plugin=plugin,
                     context=ctx,
                     export_formats=export_formats,
+                    ui_contribution=ui_contribution,
                 )
                 activated.append(self._records[pid])
         return activated
@@ -186,6 +193,25 @@ class PluginHost:
             raise
         log.info("插件 %s 注册导出格式: %s", manifest.id, registered)
         return tuple(registered)
+
+    def _read_ui_contribution(
+        self, plugin: Plugin, manifest: PluginManifest
+    ) -> UiContribution | None:
+        """读插件声明的 UI 页面贡献(不做任何 Qt 构造)。
+
+        只在 manifest 声明 ui 能力时读;属性缺失 / 返回 None(插件按配置决定
+        不贡献)都返回 None。属性 getter 抛错向上抛 —— 由 `activate_all` 的
+        except 收口把插件标记 FAILED(与 exporter 注册失败同策略)。
+        """
+        if "ui" not in manifest.capabilities:
+            return None
+        raw = getattr(plugin, "ui_contribution", None)
+        if raw is None:
+            return None
+        if not isinstance(raw, UiContribution):
+            log.warning("插件 %s 的 ui_contribution 类型不符,忽略", manifest.id)
+            return None
+        return raw
 
     def _build_context(
         self,

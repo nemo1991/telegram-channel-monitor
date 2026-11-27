@@ -4,8 +4,11 @@
 就不 import `tgmonitor.app`,任何分支都加载不到 PySide6 / qasync。GUI 命令
 `tgmon` 完全不碰 CLI(见 `tgmonitor.__main__`)。
 
-`CLI_SUBCOMMANDS` + `_DISPATCH` 是命令注册表单一真源,新增子命令需在
-`build_parser()` 注册 + 两个集合同步。
+内置命令的单一真源是 `CLI_SUBCOMMANDS` + `_DISPATCH`,新增内置子命令需在
+`build_parser()` 注册 + 两个集合同步。插件命令(阶段 4)走独立的
+`tgmonitor.cli.commands` entry-point 通道,不进这两个集合 —— 这样既保留
+内置集合的精确守护,又让插件命令免于 bootstrap 前激活的死结(详见
+`plugins/cli.py`)。内置优先:插件与内置重名时被丢弃。
 
 `help` 子命令打印帮助总览;未知参数与组命令缺动作(channels/messages/
 media/export/config 未跟子动作)均由 argparse 报用法错误(退出码 2)。
@@ -16,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Sequence
 
 from tgmonitor.cli._common import CliError
 
@@ -23,6 +27,7 @@ from tgmonitor.cli._common import CliError
 # service 是纯 core 模块(已验证不 import Qt/qasync),不破坏 CLI"零 GUI 依赖"。
 from tgmonitor.core.export import service as _export_service  # noqa: F401
 from tgmonitor.core.export.base import EXPORTERS
+from tgmonitor.plugins.cli import CliCommandProvider
 
 # 命令注册表单一真源(新增子命令需与 _DISPATCH 同步)
 CLI_SUBCOMMANDS: frozenset[str] = frozenset(
@@ -79,10 +84,18 @@ _MEDIA_TYPES = [
 ]
 
 
-def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
-    """构造 argparse:顶层 + 全部子命令。
+def build_parser(
+    prog: str = "tgmon-cli",
+    *,
+    cli_providers: Sequence[CliCommandProvider] = (),
+) -> argparse.ArgumentParser:
+    """构造 argparse:顶层 + 内置子命令 + 插件子命令。
 
     `prog` 默认 `tgmon-cli`(唯一 CLI 命令);测试可传别名以核对 usage。
+    `cli_providers`:来自独立 entry-point 通道的插件命令,默认空 —— 直接调
+    `build_parser()` 的守护测试 / 冷启动路径零插件,行为与阶段 4 前一致。
+    每个 provider 有 `name` + `configure_parser(subparsers)`;重名内置命令
+    被跳过(内置优先,插件不能劫持)。
     """
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -283,6 +296,20 @@ def build_parser(prog: str = "tgmon-cli") -> argparse.ArgumentParser:
     # ---- help(2.1.1):打印帮助总览,等同 --help ----
     sub.add_parser("help", help="显示帮助总览")
 
+    # ---- 插件命令(阶段 4):独立 entry-point 通道,由 main() 发现后传入 ----
+    # 内置优先:与 CLI_SUBCOMMANDS 重名的 provider 直接跳过,防止劫持内置命令。
+    for provider in cli_providers:
+        name = provider.name
+        if not isinstance(name, str) or name in CLI_SUBCOMMANDS:
+            continue
+        try:
+            provider.configure_parser(sub)
+        except Exception:
+            # 插件 parser 构造失败不阻断 CLI —— 一个坏 provider 不应让 help 崩。
+            import logging
+
+            logging.getLogger(__name__).exception("插件命令 %s 注册 parser 失败,跳过", name)
+
     return parser
 
 
@@ -313,17 +340,38 @@ def main(argv: list[str] | None = None, *, prog: str = "tgmon-cli") -> int:
     本模块从不加载 Qt,与 GUI 命令 `tgmon` 完全解耦。
     """
     _ensure_utf8_stdio()
-    parser = build_parser(prog=prog)
+    # 插件命令走独立 entry-point 通道 —— 发现失败已在 cli.py 内逐隔离。
+    # 这里再包一层:即使通道整体不可用(如 monkeypatch / 环境异常),内置
+    # CLI 命令仍照常工作,插件能力降级为零。
+    from tgmonitor.plugins.cli import discover_cli_commands
+
+    try:
+        discovered = discover_cli_commands()
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("插件命令发现失败,以无插件模式继续")
+        discovered = []
+    # 内置优先:与 CLI_SUBCOMMANDS 重名的 provider 不进 registry(也不注册 parser)。
+    plugin_commands = {p.name: p for p in discovered if p.name not in CLI_SUBCOMMANDS}
+    parser = build_parser(prog=prog, cli_providers=list(plugin_commands.values()))
     args = parser.parse_args(argv)
-    if args.cmd == "help" or args.cmd not in _DISPATCH:
+    if args.cmd == "help":
         parser.print_help()
         return 0
 
-    import importlib
+    provider = plugin_commands.get(args.cmd)
+    if provider is None and args.cmd not in _DISPATCH:
+        parser.print_help()
+        return 0
 
-    mod_name, func_name = _DISPATCH[args.cmd]
-    run = getattr(importlib.import_module(mod_name), func_name)
     try:
+        if provider is not None:
+            return asyncio.run(provider.run(args)) or 0
+        import importlib
+
+        mod_name, func_name = _DISPATCH[args.cmd]
+        run = getattr(importlib.import_module(mod_name), func_name)
         return asyncio.run(run(args)) or 0
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr, flush=True)

@@ -114,9 +114,32 @@ class PluginContext:
 |---|---|---|
 | `events` | `EventBus.subscribe(event_type, fn)` / `publish` | 零改动；host 记账退订（`subscribe_all` 不可注销） |
 | `export` | `ExporterRegistry` | key 从 `ExportFormat` 放宽到 `str`；`ExportFormat` 已是 `str, Enum`，值比较向后兼容；UI 下拉与 CLI choices 已派生自注册表 |
-| `cli` | 新增 `CliCommandProvider` 注册表，`build_parser()` 合并 | 改 `tests/test_cli.py` 相等断言为「内置模块相等 + 插件命令来自 entry point」 |
-| `ui` | `UiContribution`（page factory + nav item + icon） | `VerticalNavBar` 加 `add_item`；`UiAssembler.build_central` 遍历注入；顺手补上 `assemble()` 的 `NotImplementedError` |
+| `cli` | `CliCommandProvider` + 独立 entry-point group `tgmonitor.cli.commands` | `build_parser(cli_providers=...)` 合并；`main()` 发现后路由；内置命令重名时优先 |
+| `ui` | `UiContribution`（nav_label / icon_name / page_factory） | `VerticalNavBar.add_item`；`UiAssembler.build_central` 遍历 ACTIVE 插件注入 |
 | `schedule` | host 内统一任务表 | shutdown 时统一 cancel，不允许插件自生野任务 |
+
+### CLI / UI 扩展点形态（阶段 4 细化）
+
+**CLI 走独立 entry-point 通道，不进 PluginHost**：`build_parser()` 在 `main()` 里、
+`bootstrap()` 之前执行，而插件 `activate(ctx)` 需要 `app_services`（域服务），后者
+只有 `cli_context()` bootstrap 之后才存在。若命令走统一 host 通道，会形成
+「parser 要命令 → 命令要激活 → 激活要 bootstrap → bootstrap 在 parse 之后」的死结。
+因此 `CliCommandProvider`（`name` + `configure_parser` + async `run`）从独立 group
+发现，`run(args)` 内部自行 `cli_context()` 拿 app；`build_parser()` 默认零插件
+（守护测试 / 冷启动行为不变），`main()` 把发现的 provider 传入。内置命令与插件
+重名时内置优先（插件不能劫持）。`tests/test_cli.py` 的内置集合精确断言**保持**
+—— 插件命令不进 `CLI_SUBCOMMANDS` / `_DISPATCH`，该断言守护的是内置表面。
+
+**UI 走 host 收集**：`UiContribution` 只含数据 + `Callable[[], QWidget]`，**不持有
+QWidget / QIcon**（plugins 包顶层不 import Qt）。插件声明 `ui` 能力 + `ui_contribution`
+属性，host 在 `activate()` 成功后收进 `PluginRecord`；`UiAssembler.build_central`
+在 GUI 装配期遍历 ACTIVE 插件调 `page_factory()`，`nav.add_item` 与 `stack.addWidget`
+同索引成对添加。单个插件 factory 抛错 / 返回非 QWidget 只记日志跳过。CLI 进程
+不调 `page_factory`，插件的 Qt import 只发生在 GUI —— 零 GUI 依赖契约不变。
+`VerticalNavBar` 内置的 4 项硬断言继续守护「默认导航」，插件项是追加场景，不放宽该断言。
+
+**「插件管理」页**留下一轮：它依赖上述扩展点先就位（自身即一个 UI 贡献 + 读
+`PluginHost.records()`），单独交付以保持每阶段可独立评审。
 
 UI 插件代码只在 GUI 进程加载；CLI 路径不得 import 任何 Qt 模块，保持
 `tests/test_cli.py` 的零 GUI 依赖契约。`cli/` 与 `core/` 下不得新增插件实现文件。

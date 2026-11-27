@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -250,3 +250,33 @@ class ExporterProvider(Protocol):
     """
 
     exporters: Sequence[Exporter | type[Exporter]]
+
+
+@dataclass(frozen=True)
+class UiContribution:
+    """插件的一个 UI 页面贡献 — page factory + nav item + icon。
+
+    刻意**不持有 QWidget / QIcon**(那会让 plugins 包 import Qt,破坏 CLI
+    零 GUI 依赖):`page_factory` 是无参 callable,返回 QWidget;宿主在 GUI
+    装配期调用它并把结果 reparent 进 QStackedWidget。`icon_name` 指向
+    `resources/icons/<name>.svg` 的内置图标名(第三方图标可通过后续资源通道
+    扩展,阶段 4 复用内置集)。`nav_label` 是已经翻译好的展示文本。
+
+    `page_factory` 抛异常由宿主隔离(跳过该页),不影响其它页与主窗口装配。
+    """
+
+    nav_label: str
+    icon_name: str
+    page_factory: Callable[[], Any]
+
+
+class UiContributionProvider(Protocol):
+    """可选能力:声明 `ui_contribution` 的插件可贡献一个 UI 页面。
+
+    只有 manifest.capabilities 含 `"ui"` 时宿主才读本属性。返回 None 表示
+    插件按配置决定不贡献页面(如未设置 token)。与 `ExporterProvider` 同构:
+    插件只声明数据,宿主驱动注入;UI 代码只在 GUI 进程加载(CLI bootstrap
+    也会激活插件,但 `page_factory` 不会被调用,因此不触发 Qt import)。
+    """
+
+    ui_contribution: UiContribution | None

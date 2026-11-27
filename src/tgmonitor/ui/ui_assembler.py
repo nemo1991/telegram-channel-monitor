@@ -169,6 +169,13 @@ class UiAssembler:
         )
         stack.addWidget(settings_page)
 
+        # 4+: 插件 UI 页面(阶段 4)— host 已激活(启动顺序 bootstrap → MainWindow),
+        # 遍历 ACTIVE 插件的 ui_contribution。每个贡献 factory → QWidget,同时
+        # nav.add_item(同索引)与 stack.addWidget 必须成对,否则索引错位。
+        # 失败隔离:单个插件 factory 抛错或返回非 QWidget 只记日志并跳过,
+        # 不阻断窗口装配;返回非 QWidget 时也不加导航项(避免空页)。
+        self._add_plugin_pages(nav, stack)
+
         stack.setCurrentIndex(0)
         right_layout.addWidget(stack, 1)
 
@@ -216,6 +223,35 @@ class UiAssembler:
             "status_bar": status_bar,
             "media_refresh_debounce": media_refresh_debounce,
         }
+
+    def _add_plugin_pages(self, nav: VerticalNavBar, stack: QStackedWidget) -> None:
+        """注入插件 UI 页面 — nav 与 stack 同索引成对添加。
+
+        ADR-001 阶段 4:host 在 bootstrap 时已收集 ACTIVE 插件的
+        `ui_contribution`(纯数据 + factory,不含 Qt 对象)。这里在 GUI 装配期
+        才调 factory —— CLI 进程永不走到本方法,故插件的 Qt import 只发生在
+        GUI。单个插件失败(缺图标 / factory 抛错 / 返回非 QWidget)只记日志
+        并跳过,不影响其它页与主窗口。
+        """
+        import logging
+
+        from tgmonitor.plugins.host import PLUGIN_HOST
+
+        log = logging.getLogger(__name__)
+        for pid, rec in PLUGIN_HOST.records().items():
+            contribution = rec.ui_contribution
+            if contribution is None:
+                continue
+            try:
+                page = contribution.page_factory()
+                if not isinstance(page, QWidget):
+                    log.warning("插件 %s 的 page_factory 未返回 QWidget,跳过", pid)
+                    continue
+                nav_idx = nav.add_item(contribution.icon_name, contribution.nav_label)
+                stack.addWidget(page)
+                assert nav_idx == stack.count() - 1, "nav 与 stack 索引必须对齐"
+            except Exception:
+                log.exception("插件 %s UI 页面注入失败,跳过", pid)
 
     def assemble(self) -> dict[str, object]:
         """编排入口 —— plan-batch3 目标 1 step 1.5 落地。"""
