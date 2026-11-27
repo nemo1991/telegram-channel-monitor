@@ -202,15 +202,15 @@ app.start() 会话就绪(state == "ready")
 - 钩子实现在 `PluginHost.start_all()` / `stop_all()`：只对 ACTIVE 插件生效、`_running`
   守卫保证幂等、单插件异常逐隔离。`deactivate_all()` 进入装配拆除前先 `stop_all()`
   兜底，覆盖「未经过 AppService 直接调 runtime.shutdown」的路径。
+- 宿主不进 `AppService` 公开表面：接入用 `PLUGIN_HOST` 单例 + lazy import，surface
+  allowlist 与 4 元组返回签名都不变。
+
 **装配期失败回滚（阶段 5 加固）**：`_activate_one` 的顺序是 activate → exporter
 注册 → ui 贡献读取。若 ui 读取抛错而 exporter 已注册，必须回滚已注册格式 ——
 否则插件被标 FAILED 但导出格式仍可被流程取到，成为「幽灵能力」。现在 except 分支
 在退订之外逐个 `EXPORTERS.unregister()`，`test_ui_getter_failure_marks_failed_without_exporter_residue`
 守护该不变量。同类失败语义：`enabled.json` / `config.json` 写盘失败只记日志不抛，
 状态订阅者抛错被隔离，stop 钩子抛错不妨碍其它插件 stop。
-
-- 宿主不进 `AppService` 公开表面：接入用 `PLUGIN_HOST` 单例 + lazy import，surface
-  allowlist 与 4 元组返回签名都不变。
 
 插件自身异常一律降级：加载/激活失败记 `FAILED`；事件订阅者异常已被 `EventBus` 吞掉；
 停用失败只记日志继续。`enable` / `disable` 可热切换（只涉及订阅与能力注册），
