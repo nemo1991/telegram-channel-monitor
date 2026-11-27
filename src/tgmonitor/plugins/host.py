@@ -174,6 +174,9 @@ class PluginHost:
 
         assert self._bus is not None and self._settings_view is not None
         ctx = self._build_context(item, self._bus, self._app_services, self._settings_view)
+        # exporter 注册在 ui 读取之前 —— 两者之间失败时必须回滚已注册格式,
+        # 否则会留下「插件 FAILED 但导出格式还活着」的幽灵能力。
+        export_formats: tuple[str, ...] = ()
         try:
             plugin = item.factory()
             plugin.activate(ctx)
@@ -185,6 +188,11 @@ class PluginHost:
             ui_contribution = self._read_ui_contribution(plugin, item.manifest)
         except Exception as exc:
             log.exception("插件 %s activate 失败,已隔离", pid)
+            for fmt in export_formats:
+                try:
+                    EXPORTERS.unregister(fmt)
+                except Exception:
+                    log.exception("插件 %s 回滚导出格式 %s 失败", pid, fmt)
             ctx.deactivate_hooks()  # 激活中途可能已订阅,失败时回滚订阅
             return PluginRecord(
                 manifest=item.manifest,
