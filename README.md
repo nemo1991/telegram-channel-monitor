@@ -20,6 +20,7 @@
 ## ✨ 特性
 
 - 🧩 **UI 与 core 严格分离** — UI 只依赖 AppService 组合根 + 按域服务 + `EventBus` + DTO
+- 🔧 **插件系统(3.0.0,main 已落地、尚未发版)** — 本地目录 / entry-points 双通道发现,经窄门面扩展事件 / 导出 / CLI / UI,启用 / 停用即时生效;见 [插件开发指南](docs/PLUGIN-DEVELOPMENT.md)
 - 🗄️ **多数据库后端** — SQLite(默认,单文件零部署) / PostgreSQL(可选,多设备/大规模)
 - 📦 **多对象存储后端** — 本地平铺 / 本地两级分片(默认) / S3(AWS / MinIO / 阿里 OSS)
 - 🔌 **纯 Python Telegram 后端** — Telethon MTProto + cryptg 加密加速 + python-socks 代理,零原生编译
@@ -170,6 +171,7 @@ core(组合根 + 领域服务)
 - **`core/` 禁止 import PySide6** — 领域逻辑与 UI 解耦,可离线单测
 - **跨边界只传 DTO**,不传 Telegram / ORM / Qt 对象
 - **四套可插拔抽象** — 新增存储 / 对象存储 / 导出 / Telegram 后端 = 加一个实现类 + 注册
+- **`plugins/`(3.0.0)** — 进程内可信插件经唯一接缝 `PluginHost` 接入,只拿窄门面 `PluginContext`;默认禁用、失败隔离、不进 `AppService` 公开表面
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -202,7 +204,8 @@ tgmonitor/
 ├── .env                   # 配置
 ├── session/               # Telethon session(tgmonitor.session)
 ├── tgmonitor.db           # SQLite 数据库(默认;messages / media / channels 表)
-└── media/                 # 本地对象存储(local / folder)
+├── media/                 # 本地对象存储(local / folder)
+└── plugins/               # 3.0.0:enabled.json / config.json / 本地插件目录(尚未发版)
 ```
 
 ---
@@ -240,6 +243,8 @@ uv run ruff check src tests                              # lint
 ```
 
 开发 / 提交规范、新增后端步骤、代理与 Telethon 调试见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+插件安装 / 开发 / 能力边界见 [插件开发指南](docs/PLUGIN-DEVELOPMENT.md),最小示例见
+[`examples/`](examples/README.md)。
 
 ---
 
