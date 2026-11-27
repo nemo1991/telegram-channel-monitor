@@ -251,6 +251,12 @@ async def shutdown(app: AppService, monitor: MonitorService) -> None:
         PLUGIN_HOST.deactivate_all()
     except Exception:
         log.exception("shutdown: plugin deactivate failed")
+    # deactivate_all 是同步钩子:cancel 只能投递,任务真正结束要 await。
+    # 在关 storage / objects **之前**回收,避免插件定时任务还在写库被断连。
+    try:
+        await PLUGIN_HOST.drain_tasks()
+    except Exception:
+        log.exception("shutdown: plugin task drain failed")
 
     if isinstance(monitor, MonitorService):
         try:

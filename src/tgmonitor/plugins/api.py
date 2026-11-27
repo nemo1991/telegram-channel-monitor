@@ -6,6 +6,8 @@
   subscribe_all);
 - `api`:`PluginApi` — 有界写操作 + 只读查询,委托既有域服务;
 - `config`:`PluginConfig` — 按插件 id 隔离的 KV;
+- `scheduler`:`SchedulerView` — 定时任务登记 / 取消 / 状态,宿主统一回收(声明
+  `schedule` 能力才可用);与 `EventBusView` 同构的独立视图,不进 `PluginApi`;
 - `settings`:`SettingsView` — 只读配置快照;
 - `notify()` — 转 `NotificationRequested` 事件,复用托盘/状态栏既有订阅者。
 
@@ -26,6 +28,7 @@ from tgmonitor.core.dto import ChannelDTO, MediaDTO, MessageDTO
 from tgmonitor.core.events import Event, EventBus, NotificationRequested
 from tgmonitor.core.export.base import Exporter
 from tgmonitor.plugins.manifest import PluginManifest
+from tgmonitor.plugins.schedule import SchedulerView
 
 Subscriber = Any  # 与 core.events.Subscriber 对齐,避免在此重复 Callable 别名
 
@@ -194,12 +197,13 @@ class PluginContext:
     """宿主交给插件的完整上下文 — 唯一可访问的宿主能力面。
 
     `activate()` 收到本对象后不应长期持有裸 `EventBus` / `AppService`;
-    订阅走 `bus`,域操作走 `api`,自有配置走 `config`。
+    订阅走 `bus`,域操作走 `api`,自有配置走 `config`,定时任务走 `scheduler`。
     """
 
     bus: EventBusView
     api: PluginApi
     config: Any  # PluginConfig — 避免与 config 模块同名导致的循环 import
+    scheduler: SchedulerView
     settings: SettingsView
     manifest: PluginManifest
 
@@ -215,8 +219,9 @@ class PluginContext:
 class Plugin(Protocol):
     """插件实现契约 — 第三方包提供,宿主通过本协议调用。
 
-    约定:`manifest` 是类属性(发现阶段无需实例化即可读);四个钩子都同步
-    (插件内部自己起后台任务,host 只管生命周期钩子)。
+    约定:`manifest` 是类属性(发现阶段无需实例化即可读);四个钩子都同步。
+    需要后台任务时走 `ctx.scheduler` 登记,由宿主任务表统一物化 / 取消 ——
+    host 既管生命周期钩子,也管任务回收,插件不自己起无人回收的 Task。
 
     **装配期** `activate` / `deactivate`:由 `runtime.bootstrap()/shutdown()`
     驱动,只做拿 ctx / 订阅 / 注册 exporter 与反向拆除。
