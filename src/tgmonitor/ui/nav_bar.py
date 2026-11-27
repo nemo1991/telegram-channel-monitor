@@ -232,6 +232,7 @@ class VerticalNavBar(QWidget):
         vbox.setContentsMargins(0, 16, 0, 0)
         vbox.setSpacing(4)
         vbox.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._layout: QVBoxLayout = vbox  # add_item 插按钮用(避免 self.layout() 的 Optional)
 
         # 顶部 12px 留白 — 替代之前的 Unicode `●` logo(单字符跨字体
         # 渲染不一致,看着像占位)。v2.0.10 起页头已移除,留白保留作视觉呼吸。
@@ -274,3 +275,23 @@ class VerticalNavBar(QWidget):
         """外部切 tab 的入口 — 越界静默忽略。"""
         if 0 <= idx < len(self._buttons):
             self._on_btn_clicked(idx)
+
+    def add_item(self, icon_name: str, label: str) -> int:
+        """追加一个导航项(插件 UI 扩展点)— 返回新按钮索引。
+
+        插件项排在内置 4 项之后,索引由 `_buttons` 长度自然分配 ——
+        `_on_btn_clicked` 按索引高亮 / 发 `current_changed`,无需改信号语义。
+        图标名指向 `resources/icons/<name>.svg`,与内置项共用 `tinted_action_icon`
+        着色链路(不存在的文件由 `tinted_action_icon` 走既有兜底)。
+
+        调用方(`UiAssembler`)负责把同索引的页面加入 QStackedWidget,否则索引
+        会错位 —— 两个容器必须同步增删。
+        """
+        idx = len(self._buttons)
+        btn = _NavButton(idx, icon_name, label)
+        btn.clicked.connect(self._on_btn_clicked)
+        self._buttons.append(btn)
+        # 插在 stretch 之前:布局尾部是 addStretch(1)(永远是最后一个 item),
+        # 新按钮要排在它前面,否则会出现在导航条最底、与内置项间留一大段空白。
+        self._layout.insertWidget(self._layout.count() - 1, btn, 0, Qt.AlignHCenter)
+        return idx
