@@ -89,8 +89,12 @@ class PluginManifest:
 
 class Plugin(Protocol):
     manifest: PluginManifest
+    # 装配期（runtime.bootstrap / shutdown 驱动）
     def activate(self, ctx: PluginContext) -> None: ...
     def deactivate(self) -> None: ...
+    # 运行期（AppService 驱动，阶段 3 新增，可选钩子）
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
 
 @dataclass(frozen=True)
 class PluginContext:
@@ -119,13 +123,39 @@ UI 插件代码只在 GUI 进程加载；CLI 路径不得 import 任何 Qt 模�
 
 ### 6. 生命周期与失败隔离
 
+生命周期分两层，**装配期**钩子由 runtime 驱动，**运行期**钩子由 AppService 驱动：
+
 ```
 runtime.bootstrap() 装配完成
   → 发现 + 读 enabled.json + 版本门禁
   → activate(ctx)  ── 异常 → 标记 FAILED + 日志，不阻断启动
-  → 运行期：事件订阅 / 导出格式 / CLI 命令 / UI 页面 / 定时任务
-  → runtime.shutdown()：先 deactivate（退订 + cancel 任务），再 monitor.stop()，最后 app.shutdown()
+  → 装配期能力就位：事件订阅 / 导出格式 / CLI 命令 / UI 页面
+  ↓
+app.start() 会话就绪(state == "ready")
+  → start_all()  ── 运行期工作开始（定时任务 / 消费等）
+  ↓
+运行期：pause → stop_all()；resume 成功 → start_all()
+  ↓
+退出：app.shutdown() → stop_all()；runtime.shutdown() → deactivate_all()（内部先 stop_all 兜底）
+        → monitor.stop() → app.shutdown() → 关 client / storage / objects
 ```
+
+**运行期钩子（阶段 3）的决策**：
+
+- `start` / `stop` 是**可选钩子**：阶段 1/2 只实现 `activate`/`deactivate` 的插件视为
+  no-op（宿主用 `getattr` 检测，发现阶段不检查），保证老插件零改动可用。
+- **触发点**：`start()` 只在 `state == "ready"` 后触发——paused 短路与 bootstrap
+  非 ready（error / phone_required）都不 start（会话没连上，「就绪即干活」前提不成立）。
+  `pause_monitor()` 成功路径触发 stop，`resume_monitor()` 成功路径触发 start。
+- **联动 pause/resume** 而非只用 start/shutdown：原因是 paused 冷启动的插件若只靠
+  `app.start()` 触发，会在用户点「继续监听」后永久不启动（`resume_monitor()` 不重走
+  `app.start()`）。联动堵住这个缺口。代价是 `start`/`stop` 可能反复调用，故要求插件
+  钩子**幂等可重入**，且插件 start 失败只记日志、不拖垮监听态切换与启动。
+- 钩子实现在 `PluginHost.start_all()` / `stop_all()`：只对 ACTIVE 插件生效、`_running`
+  守卫保证幂等、单插件异常逐隔离。`deactivate_all()` 进入装配拆除前先 `stop_all()`
+  兜底，覆盖「未经过 AppService 直接调 runtime.shutdown」的路径。
+- 宿主不进 `AppService` 公开表面：接入用 `PLUGIN_HOST` 单例 + lazy import，surface
+  allowlist 与 4 元组返回签名都不变。
 
 插件自身异常一律降级：加载/激活失败记 `FAILED`；事件订阅者异常已被 `EventBus` 吞掉；
 停用失败只记日志继续。`enable` / `disable` 可热切换（只涉及订阅与能力注册），
@@ -155,7 +185,8 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
 2. **导出能力**：`ExporterRegistry` key 放宽到 `str`，插件可提供新导出格式。
 3. **生命周期门面**：先完成 2.1.7 审核遗留的 **P1-9**（`AppService.start()` 原子化，
    三处手写启动序列收敛并同步 surface allowlist），再接插件 start / stop 钩子。
-   P1-9 未修时钩子点不稳，不能先接。
+   P1-9 未修时钩子点不稳，不能先接。运行期钩子的形态（可选 / 联动 pause/resume /
+   幂等）与触发点见决策 6。
 4. **CLI / UI 能力**：注册扩展点 + 两处守护测试放宽 + 导航注册 API +「插件管理」页（启用/停用/配置）。
 5. **收尾**：示例插件、用户文档、CI 门禁、错误场景测试。
 

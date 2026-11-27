@@ -38,6 +38,21 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _signal_plugins(method: str) -> None:
+    """调用 PLUGIN_HOST 的运行期钩子(`start_all` / `stop_all`),失败只记日志。
+
+    插件钩子自身已在 host 内做逐插件隔离;这里再包一层是纵深防御 —— pause /
+    resume / shutdown 是生命周期关键路径,绝不能因为插件包 import 失败或宿主
+    意外抛错而中断(lazy import 也保证 core 不在模块加载期拖入 plugins)。
+    """
+    try:
+        from tgmonitor.plugins.host import PLUGIN_HOST
+
+        getattr(PLUGIN_HOST, method)()
+    except Exception:
+        log.exception("插件运行期钩子 %s 调用失败", method)
+
+
 async def bootstrap(app: AppService) -> tuple[str, str | None]:
     """应用启动时调用一次:自动检测本地 session,有效就直接 ready,无效走 login。
 
@@ -119,6 +134,9 @@ async def pause_monitor(app: AppService, source: str = "tray") -> None:
             update_env_paused(app.env_path, True)
         except Exception:
             log.exception("pause_monitor: failed to persist paused state to .env")
+    # 插件运行期钩子:暂停监听即停插件的「就绪态」工作(定时任务 / 消费等)。
+    # 注意在状态 flip 之后调 —— 插件若在 stop 里回读状态,看到的是已暂停。
+    _signal_plugins("stop_all")
     await app.bus.publish(MonitoringPaused(source=source))
 
 
@@ -172,6 +190,9 @@ async def resume_monitor(app: AppService, source: str = "tray") -> None:
             update_env_paused(app.env_path, False)
         except Exception:
             log.exception("resume_monitor: failed to persist paused state to .env")
+    # 插件运行期钩子:只有 client + monitor 都就绪(走到这里)才 start ——
+    # 与 P2 #35 的「假状态」防线一致,失败分支提前 return 不会启动插件。
+    _signal_plugins("start_all")
     await app.bus.publish(MonitoringResumed(source=source))
 
 
@@ -191,6 +212,11 @@ async def shutdown(app: AppService) -> None:
     `monitor.stop()` 内部已有 2s 自带超时(参见 service.py:200-228),
     这里不再包。
     """
+    # 插件运行期钩子:先停插件的「就绪态」工作,再停 monitor / 关后端。
+    # runtime.shutdown 会在 app.shutdown() 之前先 deactivate_all(内部已
+    # stop_all),这里再调是幂等的 —— 但覆盖了「直接调 app.shutdown()」的
+    # 路径(测试 / CLI 边缘),保证 stop 钩子总在后端关闭前跑。
+    _signal_plugins("stop_all")
     await stop_monitor(app)
     # 关 TelegramClient — 偶发 hang 给 2s hard timeout,失败仅 log。
     try:

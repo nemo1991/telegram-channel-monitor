@@ -292,6 +292,116 @@ def test_bad_module_does_not_block_other_plugin(tmp_path, services, settings):
     assert [r.manifest.id for r in activated] == ["good"]
 
 
+# ---------- runtime start/stop 钩子 ----------
+
+
+def test_start_stop_hooks_lifecycle(tmp_path, services, settings):
+    """可选 start/stop 钩子:activate → start → stop → deactivate 全链 + 幂等。"""
+    marker = tmp_path / "hooks.txt"
+    body = (
+        "from pathlib import Path\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        "class P:\n"
+        "    manifest = None\n"
+        "    def activate(self, ctx): MARKER.write_text('activated')\n"
+        "    def start(self): MARKER.write_text(MARKER.read_text() + '|started')\n"
+        "    def stop(self): MARKER.write_text(MARKER.read_text() + '|stopped')\n"
+        "    def deactivate(self): MARKER.write_text(MARKER.read_text() + '|deactivated')\n"
+    )
+    _make_plugin_dir(tmp_path, "hooks", body=body)
+    write_enabled(tmp_path, frozenset({"hooks"}))
+    host = PluginHost(tmp_path)
+    host.activate_all(EventBus(), app_services=services, settings=settings)
+
+    # 未 start 前 stop 是 no-op(幂等守卫)
+    host.stop_all()
+    host.start_all()
+    host.start_all()  # 重复 start 幂等
+    assert marker.read_text() == "activated|started"
+    host.stop_all()
+    host.stop_all()  # 重复 stop 幂等
+    assert marker.read_text() == "activated|started|stopped"
+    host.deactivate_all()
+    assert marker.read_text() == "activated|started|stopped|deactivated"
+    # deactivate 后 start 不再生效(插件已非 ACTIVE)
+    host.start_all()
+    assert marker.read_text() == "activated|started|stopped|deactivated"
+
+
+def test_start_stop_hooks_are_optional(tmp_path, services, settings):
+    """阶段 1/2 老插件(只实现 activate/deactivate)仍可激活,start/stop no-op。"""
+    _make_plugin_dir(tmp_path, "good")  # 默认类无 start/stop
+    write_enabled(tmp_path, frozenset({"good"}))
+    host = PluginHost(tmp_path)
+    activated = host.activate_all(EventBus(), app_services=services, settings=settings)
+    assert len(activated) == 1
+    host.start_all()  # 不抛
+    host.stop_all()  # 不抛
+
+
+def test_start_failure_isolated_and_state_unchanged(tmp_path, services, settings):
+    """单个插件 start 抛异常只记日志,不影响其它插件,也不改其 ACTIVE 态。"""
+    marker = tmp_path / "hooks.txt"
+    bad = (
+        "from pathlib import Path\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        "class P:\n"
+        "    manifest = None\n"
+        "    def activate(self, ctx): MARKER.write_text('bad:activated;')\n"
+        "    def start(self): raise RuntimeError('start boom')\n"
+        "    def stop(self): MARKER.write_text(MARKER.read_text() + 'bad:stopped;')\n"
+        "    def deactivate(self): pass\n"
+    )
+    good = (
+        "from pathlib import Path\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        "class P:\n"
+        "    manifest = None\n"
+        "    def activate(self, ctx):\n"
+        "        with MARKER.open('a') as f: f.write('good:activated;')\n"
+        "    def start(self):\n"
+        "        with MARKER.open('a') as f: f.write('good:started;')\n"
+        "    def stop(self):\n"
+        "        with MARKER.open('a') as f: f.write('good:stopped;')\n"
+        "    def deactivate(self): pass\n"
+    )
+    _make_plugin_dir(tmp_path, "bad", body=bad)
+    _make_plugin_dir(tmp_path, "good", body=good)
+    write_enabled(tmp_path, frozenset({"bad", "good"}))
+    host = PluginHost(tmp_path)
+    host.activate_all(EventBus(), app_services=services, settings=settings)
+
+    host.start_all()  # bad 抛错被吞,good 照常 start
+    content = marker.read_text()
+    assert "good:started" in content
+    assert host.records()["bad"].state is PluginState.ACTIVE  # 不改状态
+    host.stop_all()  # 两者 stop 都调用(bad 的 stop 正常)
+    content = marker.read_text()
+    assert "good:stopped" in content and "bad:stopped" in content
+
+
+def test_deactivate_all_stops_running_hooks_first(tmp_path, services, settings):
+    """即使没显式 stop_all(),deactivate_all() 内部也会先停运行期钩子。"""
+    marker = tmp_path / "hooks.txt"
+    body = (
+        "from pathlib import Path\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        "class P:\n"
+        "    manifest = None\n"
+        "    def activate(self, ctx): pass\n"
+        "    def start(self): pass\n"
+        "    def stop(self): MARKER.write_text('stopped')\n"
+        "    def deactivate(self): pass\n"
+    )
+    _make_plugin_dir(tmp_path, "x", body=body)
+    write_enabled(tmp_path, frozenset({"x"}))
+    host = PluginHost(tmp_path)
+    host.activate_all(EventBus(), app_services=services, settings=settings)
+    host.start_all()
+    host.deactivate_all()  # 未显式 stop
+    assert marker.read_text() == "stopped"
+
+
 # ---------- API delegation ----------
 
 

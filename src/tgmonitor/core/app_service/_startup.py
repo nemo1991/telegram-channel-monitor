@@ -99,6 +99,19 @@ async def start(app: AppService, options: StartOptions) -> StartResult:
     # Step 4:bootstrap Telegram 会话 — 触发 LoginStateChanged。
     on_step("bootstrap")
     state, detail = await app.bootstrap()
+
+    # 插件运行期钩子(AkA 阶段 3):会话真正就绪后 start。paused 分支已在
+    # Step 2 短路返回,不会走到这里 —— 冷启动暂停的插件留到 resume 时 start。
+    # bootstrap 非 ready(error / phone_required)同样不 start:会话没连上,
+    # 插件的「就绪即干活」前提不成立。失败在 host 内部隔离,不拖垮启动。
+    if state == "ready":
+        try:
+            from tgmonitor.plugins.host import PLUGIN_HOST
+
+            PLUGIN_HOST.start_all()
+        except Exception:
+            log.exception("start: 插件 start_all 失败,不阻断启动")
+
     return StartResult(
         state=state,
         detail=detail,

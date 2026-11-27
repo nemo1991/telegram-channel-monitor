@@ -215,8 +215,18 @@ class PluginContext:
 class Plugin(Protocol):
     """插件实现契约 — 第三方包提供,宿主通过本协议调用。
 
-    约定:`manifest` 是类属性(发现阶段无需实例化即可读);
-    `activate` / `deactivate` 同步(插件内部自己起后台任务,host 只管生命周期钩子)。
+    约定:`manifest` 是类属性(发现阶段无需实例化即可读);四个钩子都同步
+    (插件内部自己起后台任务,host 只管生命周期钩子)。
+
+    **装配期** `activate` / `deactivate`:由 `runtime.bootstrap()/shutdown()`
+    驱动,只做拿 ctx / 订阅 / 注册 exporter 与反向拆除。
+
+    **运行期** `start` / `stop`(3.0.0 阶段 3 新增,可选):由 `AppService`
+    驱动 —— `start()` 成功 / `resume_monitor()` 成功后调 `start()`,
+    `pause_monitor()` / `shutdown()` 时调 `stop()`。语义是「会话就绪,可以
+    开始干活」而非「已装配」。这两个方法是**可选钩子**:未实现的插件
+    (阶段 1/2 只写 activate/deactivate 的)被宿主视为 no-op,loader 契约
+    检查也不要求它们。钩子必须**幂等**:pause/resume 可反复触发 start/stop。
     """
 
     manifest: PluginManifest
@@ -224,6 +234,10 @@ class Plugin(Protocol):
     def activate(self, ctx: PluginContext) -> None: ...
 
     def deactivate(self) -> None: ...
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
 
 
 class ExporterProvider(Protocol):

@@ -55,6 +55,9 @@ def _is_plugin_cls(obj: object) -> TypeGuard[type[Plugin]]:
     用 `runtime_checkable` Protocol 的 isinstance 对类对象无效(它检查实例),
     所以这里直接查属性,允许第三方不 import tgmonitor.plugins 也能写插件
     (结构化契约,降低耦合)。TypeGuard 让 mypy 在检查后把它当 Plugin 类。
+
+    只检查装配期三件套 — 运行期 `start` / `stop` 是可选钩子,发现阶段不
+    要求;宿主调用时用 getattr 容错(兼容阶段 1/2 的老插件)。
     """
     return all(hasattr(obj, attr) for attr in ("manifest", "activate", "deactivate"))
 
