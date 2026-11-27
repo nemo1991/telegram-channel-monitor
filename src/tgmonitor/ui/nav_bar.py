@@ -104,12 +104,16 @@ class _NavButton(QWidget):
 
     clicked = Signal(int)
 
-    def __init__(self, index: int, icon_name: str, label: str) -> None:
+    def __init__(
+        self, index: int, icon_name: str, label: str, plugin_id: str | None = None
+    ) -> None:
         super().__init__()
         self._index = index
         self._active = False
         self._hovering = False
         self._icon_name = icon_name
+        # 插件项专属 id — 热切换时按 id 精确定位删除,内置项为 None。
+        self._plugin_id = plugin_id
 
         # 2.0.8:72×68 + 28px 图标容器(24px pixmap 居中留 2px padding),
         # 去掉旧 3px 透明左边框后文字标签 72px 正好铺满内容区,不再被裁切。
@@ -276,7 +280,7 @@ class VerticalNavBar(QWidget):
         if 0 <= idx < len(self._buttons):
             self._on_btn_clicked(idx)
 
-    def add_item(self, icon_name: str, label: str) -> int:
+    def add_item(self, icon_name: str, label: str, plugin_id: str | None = None) -> int:
         """追加一个导航项(插件 UI 扩展点)— 返回新按钮索引。
 
         插件项排在内置 4 项之后,索引由 `_buttons` 长度自然分配 ——
@@ -285,13 +289,43 @@ class VerticalNavBar(QWidget):
         着色链路(不存在的文件由 `tinted_action_icon` 走既有兜底)。
 
         调用方(`UiAssembler`)负责把同索引的页面加入 QStackedWidget,否则索引
-        会错位 —— 两个容器必须同步增删。
+        会错位 —— 两个容器必须同步增删。`plugin_id` 供热切换按 id 精确移除。
         """
         idx = len(self._buttons)
-        btn = _NavButton(idx, icon_name, label)
+        btn = _NavButton(idx, icon_name, label, plugin_id=plugin_id)
         btn.clicked.connect(self._on_btn_clicked)
         self._buttons.append(btn)
         # 插在 stretch 之前:布局尾部是 addStretch(1)(永远是最后一个 item),
         # 新按钮要排在它前面,否则会出现在导航条最底、与内置项间留一大段空白。
         self._layout.insertWidget(self._layout.count() - 1, btn, 0, Qt.AlignHCenter)
         return idx
+
+    def remove_item(self, plugin_id: str) -> bool:
+        """按 plugin_id 精确移除一个插件项 — 热切换停用插件时用。
+
+        移除后重排后续按钮的 `_index` 并同步 `_current`,保证索引与
+        QStackedWidget 页面仍一一对应。当前项被移除时回落到内置首页(0)
+        并发 `current_changed`,避免 stack 停在一个已消失的索引上。
+        未找到该 id 返回 False(幂等)。
+        """
+        target = next(
+            (i for i, btn in enumerate(self._buttons) if btn._plugin_id == plugin_id), None
+        )
+        if target is None:
+            return False
+
+        if self._current == target:
+            self._buttons[target].set_active(False)
+            self._buttons[0].set_active(True)
+            self._current = 0
+            self.current_changed.emit(0)
+        elif self._current > target:
+            self._current -= 1
+
+        btn = self._buttons.pop(target)
+        self._layout.removeWidget(btn)
+        btn.setParent(None)
+        btn.deleteLater()
+        for idx, remaining in enumerate(self._buttons[target:], start=target):
+            remaining._index = idx
+        return True

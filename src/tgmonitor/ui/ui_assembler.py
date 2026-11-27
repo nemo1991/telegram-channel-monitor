@@ -174,6 +174,9 @@ class UiAssembler:
         # nav.add_item(同索引)与 stack.addWidget 必须成对,否则索引错位。
         # 失败隔离:单个插件 factory 抛错或返回非 QWidget 只记日志并跳过,
         # 不阻断窗口装配;返回非 QWidget 时也不加导航项(避免空页)。
+        self._nav = nav
+        self._stack = stack
+        self._plugin_pages: dict[str, QWidget] = {}
         self._add_plugin_pages(nav, stack)
 
         stack.setCurrentIndex(0)
@@ -238,20 +241,62 @@ class UiAssembler:
         from tgmonitor.plugins.host import PLUGIN_HOST
 
         log = logging.getLogger(__name__)
+        pages = self._plugin_pages
         for pid, rec in PLUGIN_HOST.records().items():
             contribution = rec.ui_contribution
-            if contribution is None:
+            if contribution is None or pid in pages:
                 continue
             try:
                 page = contribution.page_factory()
                 if not isinstance(page, QWidget):
                     log.warning("插件 %s 的 page_factory 未返回 QWidget,跳过", pid)
                     continue
-                nav_idx = nav.add_item(contribution.icon_name, contribution.nav_label)
+                nav_idx = nav.add_item(contribution.icon_name, contribution.nav_label, pid)
                 stack.addWidget(page)
                 assert nav_idx == stack.count() - 1, "nav 与 stack 索引必须对齐"
+                self._plugin_pages[pid] = page
             except Exception:
                 log.exception("插件 %s UI 页面注入失败,跳过", pid)
+
+    def refresh_plugin_pages(self) -> None:
+        """热切换后增量同步插件页 — 只增删状态变化的插件,其它页原样保留。
+
+        "真热切换"要求:停用 A 插件不能让 B 插件的页面状态(滚动位置/表单)
+        丢失。全量重建会重调所有 `page_factory()`,破坏这个语义,故改为按
+        `plugin_id` 记账:
+        - 当前有页、host 已无贡献 → 移除 nav 项 + stack 页;
+        - 当前无页、host 有新贡献 → 调 factory 注入新页;
+        - 两者都有 → 不动,保留 widget 状态。
+        内置 4 项/页不受影响。由 `MainWindow` 接 `plugins_changed` 信号调用。
+        """
+        nav = getattr(self, "_nav", None)
+        stack = getattr(self, "_stack", None)
+        pages = getattr(self, "_plugin_pages", None)
+        if nav is None or stack is None or pages is None:
+            return
+
+        import logging
+
+        from tgmonitor.plugins.host import PLUGIN_HOST
+
+        log = logging.getLogger(__name__)
+        wanted: dict[str, object] = {}
+        for pid, rec in PLUGIN_HOST.records().items():
+            if rec.ui_contribution is not None:
+                wanted[pid] = rec.ui_contribution
+
+        # 移除已不再贡献 UI 的插件页(逆序无关 — 按对象移除,不靠索引)。
+        for pid in list(pages):
+            if pid in wanted:
+                continue
+            widget = pages.pop(pid)
+            nav.remove_item(pid)
+            stack.removeWidget(widget)
+            widget.deleteLater()
+            log.info("插件 %s UI 页面已移除", pid)
+
+        # 注入新增贡献 — _add_plugin_pages 内部用 pages 记账,只补缺失项。
+        self._add_plugin_pages(nav, stack)
 
     def assemble(self) -> dict[str, object]:
         """编排入口 —— plan-batch3 目标 1 step 1.5 落地。"""
@@ -324,6 +369,8 @@ class UiAssembler:
         """
         mw = self._mw
         # ---- 信号连接 ----
+        # 阶段 4:插件管理对话框热切换后重建插件页(nav + stack 同索引)。
+        mw.settings_page.plugins_changed.connect(self.refresh_plugin_pages)
         mw.nav.current_changed.connect(mw.stack.setCurrentIndex)
         # Media Manager 页切换时自动拉一次列表(VM 异步,首次可能空 → 等频道就绪)
         mw.nav.current_changed.connect(mw._on_nav_changed)
