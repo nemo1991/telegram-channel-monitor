@@ -2,5 +2,5 @@ id = "demo_plugin"
 name = "示例插件"
 version = "1.0.0"
 min_app_version = "3.0.0"
-capabilities = ["events", "export", "ui"]
-description = "演示事件订阅、自定义导出格式、UI 页面与两层生命周期"
+capabilities = ["events", "export", "ui", "schedule"]
+description = "演示事件订阅、自定义导出格式、UI 页面、定时任务与两层生命周期"

@@ -201,7 +201,7 @@ bash scripts/build_appimage.sh                 # Linux AppImage(仅 Linux)
 
 ## 扩展点
 
-- **插件(3.0.0,第三方无需改主程序)**:本地目录 + entry-points 双通道发现,默认不启用;经窄门面 `PluginContext` 开放事件 / 导出 / CLI / UI 能力,`PluginApi` 方法集合 allowlist 守护。用法与契约见 [`docs/PLUGIN-DEVELOPMENT.md`](docs/PLUGIN-DEVELOPMENT.md),最小示例见 `examples/`,决策见 `docs/ADR-001-plugin-system.md`。`schedule` 能力名已登记但宿主任务表未实现,不要声明。
+- **插件(3.0.0,第三方无需改主程序)**:本地目录 + entry-points 双通道发现,默认不启用;经窄门面 `PluginContext` 开放事件 / 导出 / CLI / UI / 定时任务五类能力,`PluginApi` 与 `SchedulerView` 方法集合都 allowlist 守护。用法与契约见 [`docs/PLUGIN-DEVELOPMENT.md`](docs/PLUGIN-DEVELOPMENT.md),最小示例见 `examples/`,决策见 `docs/ADR-001-plugin-system.md`。`schedule` 走 `ctx.scheduler` 登记 + 宿主 `TaskTable` 统一物化/取消,`runtime.shutdown()` 关后端前 `await PLUGIN_HOST.drain_tasks()`;不往 `PluginApi` 加调度方法。
 - **新增存储后端**(如 MySQL):在 `core/storage/` 实现 8 个按域 ABC(或组合 `StorageRepository`),注册到 factory,复用 DTO 与领域层,零改 UI。写路径的 datetime 参数过 `_ensure_utc`。
 - **新增对象存储后端**:在 `core/objectstore/` 实现 `ObjectStore` ABC,注册 factory(默认 FOLDER,平铺/分片可切换)。
 - **新增导出格式**:在 `core/export/` 用 `@exporter` 装饰器注册到 `EXPORTERS`,service 流式导出自动可见;含模板的(如 HTML)用 Jinja2。

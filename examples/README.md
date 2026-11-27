@@ -6,7 +6,7 @@
 
 | 示例 | 通道 | 展示内容 |
 |---|---|---|
-| [`plugins/demo_plugin/`](plugins/demo_plugin/) | 本地目录（`<user_data_dir>/plugins/<id>/`） | events / export / ui + 装配期与运行期两层生命周期 + 窄门面 |
+| [`plugins/demo_plugin/`](plugins/demo_plugin/) | 本地目录（`<user_data_dir>/plugins/<id>/`） | events / export / ui / schedule + 装配期与运行期两层生命周期 + 窄门面 |
 | [`cli_provider/`](cli_provider/) | 独立 entry-point `tgmonitor.cli.commands` | 第三方子命令 `demo-hello` |
 
 ## 本地目录示例：demo_plugin
@@ -28,12 +28,15 @@
   写自己的 KV 配置。订阅由宿主的 `ctx.deactivate_hooks()` 统一退订。
 - **运行期** `start()` / `stop()`：由 `AppService.start()` / `pause` / `resume` /
   `shutdown` 驱动，语义是「会话就绪」，可反复触发，**必须幂等**。
-- **窄门面**：只拿到 `ctx.bus` / `ctx.api` / `ctx.config` / `ctx.settings` /
-  `ctx.notify()`；拿不到 AppService、Telethon client 或 Qt 对象。
+- **窄门面**：只拿到 `ctx.bus` / `ctx.api` / `ctx.config` / `ctx.scheduler` /
+  `ctx.settings` / `ctx.notify()`；拿不到 AppService、Telethon client 或 Qt 对象。
 - **export**：声明 `DemoExporter`，格式 `demo-json`。注册与注销由宿主驱动，
   插件不碰全局注册表。
 - **ui**：`ui_contribution` 只返回数据与 factory；Qt import 在 `page_factory()`
   内部，因为本地插件在 CLI 进程也会被激活，顶层 import Qt 会破坏 CLI 零 GUI 依赖。
+- **schedule**：`ctx.scheduler.every()` 登记周期任务（`demo-tick`），插件**不**自己
+  `create_task()`；宿主负责 start 物化、pause 取消、resume 重启、shutdown 回收。
+  默认间隔 60 秒，测试把 config 的 `tick_seconds` 调小以真实观察执行。
 
 ## CLI 命令示例：cli_provider
 
@@ -46,9 +49,9 @@ CLI 命令走**独立** entry-point group，不经过 `PluginHost`：解析器�
 bootstrap，而插件激活依赖 bootstrap 后的域服务，统一通道会形成死结。
 provider 自带 parser 定义与 async handler，业务失败抛 `CliError` 由主入口转退出码。
 
-## 未展示的能力：schedule
+## 能力边界
 
-`PluginManifest.capabilities` 接受 `"schedule"`，宿主也把它列为已知能力，
-但**宿主尚无统一任务表实现**。插件若声明它，只能自行起后台任务，而宿主在
-shutdown 时不会代为取消——这正是 ADR-001 要避免的「野任务」。因此示例不声明
-该能力，等宿主任务表落地后再补示例。详见 `docs/ADR-001-plugin-system.md` 决策 5。
+五类能力全部有对应示例或独立通道：events / export / ui / schedule 在
+`demo_plugin`，cli 在 `cli_provider`（独立 entry-point 通道）。调度粒度只有
+「周期」与「延时单次」，不做 cron 解析；需要 cron 的插件在自己的回调里判断
+时间窗口。完整契约见 `docs/PLUGIN-DEVELOPMENT.md` 5.4 与 ADR-001 决策 5。
