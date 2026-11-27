@@ -1,6 +1,6 @@
 # ADR-002：`AppService` 生命周期门面与启动序列收敛（P1-9）
 
-Status: Accepted（范围经维护者 2026-11-26 确认）
+Status: Accepted（范围经维护者 2026-11-26 确认；决策 3 于 2026-11-27 经维护者确认细化）
 关联：`CODE-REVIEW-2.1.7.md` P1-9；`ADR-001-plugin-system.md` 阶段 3 前置
 
 ## 背景
@@ -39,7 +39,7 @@ ADR-001 把修好 P1-9 定为阶段 3「插件 start/stop 钩子」的前置：�
 |---|---|---|
 | 1 | 启动序列收敛力度 | **完整收敛**：统一顺序 + 三处调用方改造 + 删空壳 + 重写守护测试 |
 | 2 | reconfigure 原子化深度 | **准原子**：三段式重排，不改 monitor API |
-| 3 | `_reconfiguring` | **实现并发守卫**（按推荐默认处理；用户本项未明确选择，实现前可改） |
+| 3 | `_reconfiguring` | **实现并发守卫**：拒绝重入（不排队）+ 专用异常 `ReconfigureInProgressError` + UI 文案分支 |
 | 4 | PR 拆分 | **两个独立 PR**：A 启动序列、B 原子化 |
 
 ## 详细设计
@@ -86,15 +86,30 @@ class StartResult:
 
 严格原子（保证任意抛错点零半完成态）需改 monitor API 把 `MediaDownloader` 构造提前到预备段，本次不做。
 
-### 决策 3：`_reconfiguring` 并发守卫
+### 决策 3：`_reconfiguring` 并发守卫（拒绝重入）
 
-`reconfigure()` 开头检查：若已在重载中，直接拒绝（抛 `CliError`/领域异常，由调用方决定提示）而不是并发执行；`finally` 复位保持现状。这是行为变更——原实现允许异步重入，UI 快速重复保存会造成后端 swap 竞争。
+**决策**：`reconfigure()` 开头检查 `_reconfiguring`，已在重载中则抛专用异常 `ReconfigureInProgressError`，`finally` 复位。**拒绝而非排队**——配置保存是低频操作，重试成本极低；排队会累积多次后端重建，且用户在排队期间继续改表单会让 `.env` 写入顺序与后端切换顺序错开，更难诊断。
+
+**为什么不是「直接删除标志」**——两种方案的失败模式不对称，这不是实现成本问题：
+
+1. **竞态真实可达**：`settings_page.py` 把 `btn_apply.clicked` 直接连 `_on_apply`，无 `setEnabled(False)`、无防抖；`_on_apply` 每次经 `run_coro` 起协程。两段式提交的预备段要 `await` 新 storage 的 `connect + init_schema`、新 objectstore 的 `connect`——`asyncio` 单线程里多个协程仍会在 `await` 点交错，第二次点击可进入。
+2. **后果是静默损坏而非报错**：交错路径下，A 提交 `app.storage ← SA` 后，B 的阶段 2 读到 `old_storage = SA`，提交 `SB` 后 close 掉 A 刚建的新后端。中间窗口内 monitor 的域服务引用与 `app.storage` 指向不同实例，实时消息可能落进即将被关闭的后端；`app.settings` 与 `.env` 写入也各自独立。三者一致性完全取决于时序，且不抛异常——用户只看到"消息偶尔丢失""配置没生效"，极难定位。
+3. **PR-B 会放大窗口**：三段式把预备段独立出来，异步构建时间更长、可中断点更多。一边延长竞态窗口、一边拆掉唯一安全网，等于确定性提高故障概率。这两件事必须同期做。
+
+`_reconfiguring` 是 P1-3「两段式提交」不变量的运行时表达：单次原子 ≠ 多次串行，提交段必须独占。删掉它等于宣布这个前提不再保证。守卫最坏是用户看到一次保存失败再点一次；无守卫最坏是 `app` 持有已关闭 storage，只能重启恢复。低频管理操作应优先保证"绝不进入不可恢复状态"。
+
+**实施细节**：
+
+- 专用异常 `ReconfigureInProgressError` 定义在 `core/app_service/`（不放 `cli/`），返回码/文案由各调用方决定。
+- UI `_apply_failed` 目前把非 `OSError` 异常一律显示"后端配置未通过校验，已放弃保存"——守卫异常若走通用分支会误导用户去查数据库连接。须加专用分支显示"配置正在应用中，请稍后再试"。
+- core 守卫与 UI 禁用「应用」按钮是**纵深防御，不互相替代**：按钮禁用给即时反馈，core 守卫防 CLI 入口、测试直接调用及未来任何绕过 UI 的调用方。
+- 端点语义：重入失败发生在任何副作用之前（预备段构建之前），无需回滚。
 
 ## 影响面
 
-**源码**：`core/app_service/{app_service,_lifecycle,_reconfigure}.py`、`app.py`、`cli/{monitor,sync}.py`、`tests/test_app_service_surface.py`。
+**源码**：`core/app_service/{app_service,_lifecycle,_reconfigure}.py`、`app.py`、`cli/{monitor,sync}.py`、`tests/test_app_service_surface.py`；PR-B 另加 `ui/widgets/settings_page.py`（重入异常文案分支）。
 
-**测试**：`test_app_startup.py`（7 个重写）、`test_app_service_facade.py`（删 1）、`test_app_service.py`（fixture 改调）、新增 `start()` 参数化单测、`test_reconfigure.py` 新增提交段失败回滚用例。
+**测试**：`test_app_startup.py`（7 个重写）、`test_app_service_facade.py`（删 1）、`test_app_service.py`（fixture 改调）、新增 `start()` 参数化单测、`test_reconfigure.py` 新增三段式/失败回滚/重入拒绝用例。
 
 **调用方零改**：`core/runtime.py` 的 4 元组签名、`cli/_common.py` 的 `bootstrap()` 检查、`AppService` 导出/域服务表面均不动。
 

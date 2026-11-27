@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tgmonitor.core.app_service import ReconfigureInProgressError
 from tgmonitor.core.config import DBBackend, MediaPolicy, ObjectStoreBackend, _user_data_dir
 from tgmonitor.core.ops_gate import READY_STATE
 from tgmonitor.core.settings_store import (
@@ -875,6 +876,9 @@ class SettingsPage(QWidget):
             QMessageBox.warning(self, self.tr("校验失败"), "\n".join(errs))
             return
         new_settings = e.to_settings()
+        # 纵深防御:UI 禁用「保存」防连点;core 的 ReconfigureInProgressError
+        # 守卫防 CLI / 测试 / 未来绕过 UI 的调用方 —— 两者不互相替代。
+        self.btn_apply.setEnabled(False)
 
         async def _validate_and_apply() -> None:
             # reconfigure:存储/对象存储变更时先建新库验证,失败上抛(不落盘)
@@ -883,9 +887,19 @@ class SettingsPage(QWidget):
             update_env_with_settings(self._env_path, new_settings)
 
         def _applied(_result: object) -> None:
+            self.btn_apply.setEnabled(True)
             QMessageBox.information(self, self.tr("已应用"), self.tr("设置已保存并热重载"))
 
         def _apply_failed(exc: BaseException) -> None:
+            self.btn_apply.setEnabled(True)
+            # 重入是用户操作过快,不是配置错误 —— 不能误报「后端校验未通过」
+            if isinstance(exc, ReconfigureInProgressError):
+                QMessageBox.information(
+                    self,
+                    self.tr("正在应用"),
+                    self.tr("配置正在应用中,请稍后再试。"),
+                )
+                return
             if isinstance(exc, OSError):
                 QMessageBox.critical(self, self.tr(".env 写入失败"), str(exc))
                 return
