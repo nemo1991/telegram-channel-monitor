@@ -1,0 +1,25 @@
+# 独立 entry-point 包骨架：`pip install -e examples/cli_provider` 后，
+# `tgmon-cli demo-hello --name plugin` 即可看到插件命令出现在 help 里。
+#
+# 这里只演示 CLI 通道。若要用 entry-point 通道分发 Plugin 本体，把
+# examples/plugins/demo_plugin/plugin.py 放进包内，再加：
+#   [project.entry-points."tgmonitor.plugins"]
+#   demo_plugin = "plugin:DemoPlugin"
+# 两条通道可共存，同 id 时本地目录优先。
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tgmonitor-demo-cli-plugin"
+version = "1.0.0"
+description = "tgmonitor CLI 命令扩展点示例"
+requires-python = ">=3.13"
+dependencies = ["tgmonitor>=3.0.0"]
+
+[project.entry-points."tgmonitor.cli.commands"]
+demo_hello = "demo_cli:DemoHelloCommand"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

@@ -116,7 +116,7 @@ class PluginContext:
 | `export` | `ExporterRegistry` | key 从 `ExportFormat` 放宽到 `str`；`ExportFormat` 已是 `str, Enum`，值比较向后兼容；UI 下拉与 CLI choices 已派生自注册表 |
 | `cli` | `CliCommandProvider` + 独立 entry-point group `tgmonitor.cli.commands` | `build_parser(cli_providers=...)` 合并；`main()` 发现后路由；内置命令重名时优先 |
 | `ui` | `UiContribution`（nav_label / icon_name / page_factory） | `VerticalNavBar.add_item`；`UiAssembler.build_central` 遍历 ACTIVE 插件注入 |
-| `schedule` | host 内统一任务表 | shutdown 时统一 cancel，不允许插件自生野任务 |
+| `schedule` | host 内统一任务表（**尚未落地**） | 能力名已登记进 `KNOWN_CAPABILITIES`，但宿主没有任务表与 cancel 通道；插件声明它只能自生野任务。示例刻意不展示该能力，等任务表落地后再补 |
 
 ### CLI / UI 扩展点形态（阶段 4 细化）
 
@@ -205,6 +205,13 @@ app.start() 会话就绪(state == "ready")
 - 宿主不进 `AppService` 公开表面：接入用 `PLUGIN_HOST` 单例 + lazy import，surface
   allowlist 与 4 元组返回签名都不变。
 
+**装配期失败回滚（阶段 5 加固）**：`_activate_one` 的顺序是 activate → exporter
+注册 → ui 贡献读取。若 ui 读取抛错而 exporter 已注册，必须回滚已注册格式 ——
+否则插件被标 FAILED 但导出格式仍可被流程取到，成为「幽灵能力」。现在 except 分支
+在退订之外逐个 `EXPORTERS.unregister()`，`test_ui_getter_failure_marks_failed_without_exporter_residue`
+守护该不变量。同类失败语义：`enabled.json` / `config.json` 写盘失败只记日志不抛，
+状态订阅者抛错被隔离，stop 钩子抛错不妨碍其它插件 stop。
+
 插件自身异常一律降级：加载/激活失败记 `FAILED`；事件订阅者异常已被 `EventBus` 吞掉；
 停用失败只记日志继续。`enable` / `disable` 可热切换（只涉及订阅与能力注册），
 但**代码改动必须重启**——Python 模块无法真正卸载。
@@ -238,7 +245,15 @@ SettingsDiff → _what_label → reconfigure` 全链；插件自身配置不进�
 4. **CLI / UI 能力**：注册扩展点 + 导航注册 API +「插件管理」页（启用/停用/配置）。
    导航 4 项与设置 7 分组的守护断言**不放宽** —— 插件项/管理页是追加与覆盖层场景。
    管理页的真热切换语义、KV 配置类型保留、UI 增量同步见上文「插件管理页」段。
-5. **收尾**：示例插件、用户文档、CI 门禁、错误场景测试。
+5. **收尾（进行中）**：
+   - **已落地**：`examples/plugins/demo_plugin/`（本地目录通道，events/export/ui +
+     两层生命周期 + 窄门面）与 `examples/cli_provider/`（独立 CLI entry-point 通道）。
+     `tests/test_plugin_examples.py` 用真实发现器与宿主加载示例全链，使其成为会被
+     CI 执行的活文档；子进程守护示例 `plugin.py` 顶层零 Qt import。
+     `tests/test_plugin_error_scenarios.py` 覆盖失败后的系统完整性（幽灵订阅 /
+     幽灵 exporter / 畸形发现输入 / 热写失败 / 钩子隔离 / CLI 错误路径）。
+   - **剩余**：用户文档（插件开发指南）、CI 门禁（把上述守护纳入独立 job）。
+   - `schedule` 名实不符，示例不展示；等宿主任务表落地后补示例与门禁。
 
 ## 后果
 

@@ -17,6 +17,7 @@
 | [`CODE-REVIEW-2.1.7.md`](CODE-REVIEW-2.1.7.md) | 2.1.7 发版前全面审核报告(**本轮进行中**,各条目状态与对应 PR 见文内) | 维护者 |
 | [`ADR-001-plugin-system.md`](ADR-001-plugin-system.md) | 3.0.0 插件系统架构决策(已接受;进程内能力插件、双通道发现、窄写门面、五类能力) | 开发者 / 维护者 |
 | [`ADR-002-app-startup-lifecycle.md`](ADR-002-app-startup-lifecycle.md) | P1-9 生命周期门面重构决策(已接受;参数化 start、准原子 reconfigure、并发守卫,拆两个 PR) | 开发者 / 维护者 |
+| [`../examples/README.md`](../examples/README.md) | 插件示例两个最小可运行形态(本地目录插件、CLI 命令 provider),由 CI 真实加载验证 | 插件作者 |
 
 ## 历史文档(`history/`)
 
