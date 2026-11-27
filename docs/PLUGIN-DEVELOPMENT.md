@@ -81,7 +81,7 @@ my_plugin = "my_package:MyPlugin"
 GUI 入口：**设置 → 账户凭证 → 插件管理**。对话框列出全部已发现插件及状态，可：
 
 - **启用 / 停用**：立即生效（真热切换，无需重启）。停用会撤销事件订阅、注销导出格式、移除 UI 页面并停运行期钩子；
-- **重新发现**：扫描新装 / 移除的插件目录；
+- **重新发现**：重新扫描双通道发现结果（本地目录与 entry-points），登记新插件；
 - **编辑配置**：见下节。
 
 ### 2.3 插件配置
@@ -295,6 +295,9 @@ class DemoHelloCommand:
         return 0
 ```
 
+`capabilities` 里的 `"cli"` 只是**声明**，不会生成任何命令 —— 真正注册命令必须另写
+`tgmonitor.cli.commands` entry-point（provider 不经过 `PluginHost`，也不读 manifest）。
+
 为什么要独立通道：`build_parser()` 在 `main()` 里、`bootstrap()` 之前执行，而 `activate(ctx)`
 需要 bootstrap 后才有的域服务。统一通道会形成「parser 要命令 → 命令要激活 → 激活要 bootstrap →
 bootstrap 在 parse 之后」的死结。所以 provider 自带 parser 与 async handler，需要宿主能力时在
@@ -340,7 +343,7 @@ bootstrap 在 parse 之后」的死结。所以 provider 自带 parser 与 async
 ```bash
 # 只跑插件相关守护（本地复现 CI plugin-contract job）
 PYTHONPATH=src QT_QPA_PLATFORM=offscreen uv run pytest -v --tb=short \
-  tests/test_plugin_*.py tests/test_app_service_surface.py \
+  tests/test_plugin*.py tests/test_app_service_surface.py \
   tests/test_architecture.py tests/test_cli.py
 ```
 
