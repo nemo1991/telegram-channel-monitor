@@ -14,7 +14,8 @@ message_service / batch_service / media_service / auth_service),本 package
 同时导出 `StartOptions` / `StartResult` 供 GUI / CLI 调用方构造策略。
 """
 
+from tgmonitor.core.app_service._reconfigure import ReconfigureInProgressError
 from tgmonitor.core.app_service._startup import StartOptions, StartResult
 from tgmonitor.core.app_service.app_service import AppService
 
-__all__ = ["AppService", "StartOptions", "StartResult"]
+__all__ = ["AppService", "ReconfigureInProgressError", "StartOptions", "StartResult"]
