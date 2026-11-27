@@ -79,6 +79,9 @@ class PluginHost:
         self._api_version = api_version
         self._records: dict[str, PluginRecord] = {}
         self._activated = False
+        # 运行期钩子状态 — 与 _activated(装配期)分离。start_all/stop_all 幂等,
+        # 由 AppService.start/shutdown + pause/resume 驱动,可反复切换。
+        self._running = False
 
     @property
     def plugins_dir(self) -> Path:
@@ -200,11 +203,57 @@ class PluginHost:
             manifest=item.manifest,
         )
 
+    def start_all(self) -> None:
+        """会话就绪后启动全部 ACTIVE 插件的运行期钩子。幂等、失败隔离。
+
+        只对已 `activate` 成功(ACTIVE)的插件调可选 `start()`;未实现该钩子的
+        老插件视为 no-op。重复调用只生效一次(`_running` 守卫)—— 对应
+        app.start() 与 resume_monitor() 可能都走到「就绪」的场景。
+        单个插件 start 抛异常只记日志,不影响其它插件,也不改它的 ACTIVE 态
+        (启动失败可由插件自己在日志里定位,宿主不做半启动回滚)。
+        """
+        if not self._activated or self._running:
+            return
+        self._running = True
+        for pid, rec in self._records.items():
+            if rec.state is not PluginState.ACTIVE or rec.plugin is None:
+                continue
+            hook = getattr(rec.plugin, "start", None)
+            if hook is None:
+                continue
+            try:
+                hook()
+            except Exception:
+                log.exception("插件 %s start 失败,已隔离", pid)
+
+    def stop_all(self) -> None:
+        """停止全部插件的运行期钩子。幂等、失败隔离。
+
+        只作用于曾成功 `start_all` 的插件(`_running` 守卫),未 start 时 no-op。
+        单个插件 stop 抛异常只记日志,保证 pause / shutdown 总能走完。
+        """
+        if not self._running:
+            return
+        self._running = False
+        for pid, rec in self._records.items():
+            if rec.state is not PluginState.ACTIVE or rec.plugin is None:
+                continue
+            hook = getattr(rec.plugin, "stop", None)
+            if hook is None:
+                continue
+            try:
+                hook()
+            except Exception:
+                log.exception("插件 %s stop 失败", pid)
+
     def deactivate_all(self) -> None:
         """停用全部插件:注销导出格式 → 退订事件 → 调插件 deactivate。幂等。
 
         失败只记日志不抛,保证 shutdown 总能走完(与 runtime.shutdown 策略一致)。
+        进入装配期拆除前先 `stop_all()` —— shutdown 路径可能没经过 AppService
+        (如测试直接调 runtime.shutdown),确保运行期钩子先停下再撤上下文。
         """
+        self.stop_all()
         for pid, rec in self._records.items():
             for fmt in rec.export_formats:
                 try:
